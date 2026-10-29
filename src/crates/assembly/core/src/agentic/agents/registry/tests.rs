@@ -4,8 +4,9 @@ use super::{AgentRegistry, ExternalSubagentRegistration, ExternalSubagentRoute};
 use crate::agentic::agents::definitions::custom::{CustomMode, CustomSubagent, CustomSubagentKind};
 use crate::agentic::agents::registry::builtin::default_model_id_for_builtin_agent;
 use crate::agentic::agents::registry::types::{
-    subagent_source_from_custom_kind, AgentCategory, AgentEntry, AgentSource, CustomSubagentConfig,
-    SubAgentSource, SubagentListScope, SubagentOverrideState, SubagentQueryContext,
+    subagent_source_from_custom_kind, AgentCategory, AgentEntry, AgentInfo, AgentSource,
+    CustomSubagentConfig, SubAgentSource, SubagentListScope, SubagentOverrideState,
+    SubagentQueryContext,
 };
 use crate::agentic::agents::registry::visibility::{
     BuiltinSubagentExposure, SubagentVisibilityPolicy,
@@ -2501,4 +2502,141 @@ fn local_route_resolves_review_agents_as_session_primaries() {
             "{agent_type} must not resolve through a Local route"
         );
     }
+}
+
+fn acp_descriptor(
+    client_id: &str,
+    availability: openbitfun_runtime_ports::ExternalAgentAvailability,
+) -> openbitfun_runtime_ports::ExternalAgentDescriptor {
+    openbitfun_runtime_ports::ExternalAgentDescriptor {
+        client_id: client_id.to_string(),
+        name: format!("{client_id} name"),
+        description: None,
+        best_for: Some("Large refactors".to_string()),
+        readonly: false,
+        availability,
+    }
+}
+
+fn unavailable(
+    reason: openbitfun_runtime_ports::ExternalAgentUnavailableReason,
+) -> openbitfun_runtime_ports::ExternalAgentAvailability {
+    openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable {
+        reason,
+        detail: format!("{reason:?}"),
+    }
+}
+
+#[test]
+fn acp_agents_are_listed_read_only_with_their_availability() {
+    use openbitfun_runtime_ports::{ExternalAgentAvailability, ExternalAgentUnavailableReason};
+    let descriptors = vec![
+        acp_descriptor("claude-code", ExternalAgentAvailability::Available),
+        acp_descriptor(
+            "codex",
+            unavailable(ExternalAgentUnavailableReason::NotInstalled),
+        ),
+        acp_descriptor(
+            "gemini",
+            unavailable(ExternalAgentUnavailableReason::DelegationDisabled),
+        ),
+        acp_descriptor(
+            "opencode",
+            unavailable(ExternalAgentUnavailableReason::NotEnabled),
+        ),
+    ];
+
+    let listed = AgentRegistry::merge_acp_agents(Vec::new(), descriptors.clone(), true);
+    let ids: Vec<&str> = listed.iter().map(|agent| agent.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["acp:claude-code", "acp:codex", "acp:gemini", "acp:opencode"]
+    );
+    let claude = &listed[0];
+    assert_eq!(claude.key, "acp:claude-code");
+    assert_eq!(claude.source, AgentSource::External);
+    assert_eq!(claude.subagent_source, Some(SubAgentSource::External));
+    assert_eq!(claude.external_provider_label.as_deref(), Some("ACP"));
+    assert_eq!(claude.execution_kind.as_deref(), Some("acp"));
+    assert!(claude.effective_enabled);
+    assert!(claude.supports_follow_up);
+    assert!(claude.override_state.is_none());
+    assert!(claude.description.contains("Best for: Large refactors"));
+    for disabled in &listed[1..] {
+        assert!(!disabled.effective_enabled, "{}", disabled.id);
+        assert!(matches!(
+            disabled.external_availability,
+            Some(ExternalAgentAvailability::Unavailable { .. })
+        ));
+    }
+
+    let enabled_only = AgentRegistry::merge_acp_agents(Vec::new(), descriptors, false);
+    assert_eq!(enabled_only.len(), 1);
+    assert_eq!(enabled_only[0].id, "acp:claude-code");
+}
+
+#[test]
+fn acp_agents_never_shadow_an_existing_agent_id() {
+    use openbitfun_runtime_ports::ExternalAgentAvailability;
+    let existing: AgentInfo = serde_json::from_value(serde_json::json!({
+        "key": "acp:claude-code",
+        "id": "acp:claude-code",
+        "name": "Existing",
+        "description": "",
+        "isReadonly": true,
+        "isReview": false,
+        "toolCount": 0,
+        "defaultTools": [],
+        "promptCacheScopeKey": "existing",
+        "source": "builtin",
+        "path": null
+    }))
+    .expect("existing agent");
+    let merged = AgentRegistry::merge_acp_agents(
+        vec![existing],
+        vec![acp_descriptor(
+            "claude-code",
+            ExternalAgentAvailability::Available,
+        )],
+        true,
+    );
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].name, "Existing");
+}
+
+#[test]
+fn agent_info_without_execution_fields_decodes_and_round_trips() {
+    // Payload written before external agents were listed.
+    let legacy = serde_json::json!({
+        "key": "Explore",
+        "id": "Explore",
+        "name": "Explore",
+        "description": "Read-only search",
+        "isReadonly": true,
+        "isReview": false,
+        "toolCount": 2,
+        "defaultTools": ["Read", "Grep"],
+        "promptCacheScopeKey": "scope",
+        "source": "builtin",
+        "subagentSource": "builtin",
+        "path": null
+    });
+    let info: AgentInfo = serde_json::from_value(legacy).expect("legacy agent info");
+    assert!(info.execution_kind.is_none());
+    assert!(info.external_availability.is_none());
+    let encoded = serde_json::to_value(&info).unwrap();
+    assert!(encoded.get("executionKind").is_none());
+    assert!(encoded.get("externalAvailability").is_none());
+
+    let acp = serde_json::to_value(acp_agent_info_for_test()).unwrap();
+    assert_eq!(acp["executionKind"], "acp");
+    assert_eq!(acp["externalAvailability"]["state"], "unavailable");
+    assert_eq!(acp["externalAvailability"]["reason"], "not_installed");
+}
+
+fn acp_agent_info_for_test() -> AgentInfo {
+    super::acp_agents::acp_agent_info(acp_descriptor(
+        "claude-code",
+        unavailable(openbitfun_runtime_ports::ExternalAgentUnavailableReason::NotInstalled),
+    ))
 }

@@ -2,9 +2,10 @@
 
 use async_trait::async_trait;
 use openbitfun_runtime_ports::{
-    ExternalAgentAvailability, ExternalAgentContext, ExternalAgentEventSink, ExternalAgentExecutor,
-    ExternalAgentTurnEvent, ExternalAgentTurnOutcome, ExternalAgentTurnRequest,
-    ExternalAgentUnavailableReason, PortError, PortErrorKind, PortResult,
+    ExternalAgentAvailability, ExternalAgentContext, ExternalAgentDescriptor,
+    ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentListing, ExternalAgentTurnEvent,
+    ExternalAgentTurnOutcome, ExternalAgentTurnRequest, ExternalAgentUnavailableReason, PortError,
+    PortErrorKind, PortResult,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -280,6 +281,60 @@ fn turn_request_tolerates_unknown_and_missing_optional_fields() {
             "clientId": "claude-code",
             "context": { "openbitfunSessionId": "child-1" },
             "prompt": "task"
+        })
+    );
+}
+
+#[tokio::test]
+async fn executors_without_a_directory_list_no_agents() {
+    let executor = FakeExecutor::default();
+    assert!(executor
+        .list_agents(ExternalAgentListing::Configured)
+        .await
+        .is_empty());
+    assert!(executor
+        .list_agents(ExternalAgentListing::Probed)
+        .await
+        .is_empty());
+}
+
+#[test]
+fn agent_descriptor_round_trips_and_tolerates_missing_optional_fields() {
+    let decoded: ExternalAgentDescriptor = serde_json::from_value(json!({
+        "clientId": "claude-code",
+        "name": "Claude Code",
+        "availability": {
+            "state": "unavailable",
+            "reason": "not_installed",
+            "detail": "claude-code-acp not found"
+        },
+        "futureField": 1
+    }))
+    .expect("tolerant decode");
+
+    assert_eq!(decoded.description, None);
+    assert_eq!(decoded.best_for, None);
+    assert!(!decoded.readonly);
+    assert_eq!(
+        decoded.availability,
+        ExternalAgentAvailability::Unavailable {
+            reason: ExternalAgentUnavailableReason::NotInstalled,
+            detail: "claude-code-acp not found".to_string(),
+        }
+    );
+
+    let encoded = serde_json::to_value(&decoded).unwrap();
+    assert_eq!(
+        encoded,
+        json!({
+            "clientId": "claude-code",
+            "name": "Claude Code",
+            "readonly": false,
+            "availability": {
+                "state": "unavailable",
+                "reason": "not_installed",
+                "detail": "claude-code-acp not found"
+            }
         })
     );
 }

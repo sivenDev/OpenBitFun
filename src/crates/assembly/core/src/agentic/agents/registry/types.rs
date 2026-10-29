@@ -108,6 +108,13 @@ pub struct AgentInfo {
     pub external_provider_label: Option<String>,
     #[serde(default = "default_true")]
     pub supports_follow_up: bool,
+    /// `"acp"` for external agents that run their own model loop and tools;
+    /// absent for agents OpenBitFun executes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_kind: Option<String>,
+    /// Host-level availability of an external agent; absent for native agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_availability: Option<openbitfun_runtime_ports::ExternalAgentAvailability>,
 }
 
 fn default_true() -> bool {
@@ -222,6 +229,8 @@ impl AgentInfo {
                 .then(|| entry.visibility_policy.summary()),
             external_provider_label: None,
             supports_follow_up: true,
+            execution_kind: None,
+            external_availability: None,
         }
     }
 }

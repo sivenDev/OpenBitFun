@@ -904,5 +904,7 @@ fn external_agent_info(
             .then(|| SubagentVisibilityPolicy::public().summary()),
         external_provider_label: Some(entry.registration.provider_label.clone()),
         supports_follow_up: matches!(projection, ExternalAgentProjection::Primary),
+        execution_kind: None,
+        external_availability: None,
     }
 }

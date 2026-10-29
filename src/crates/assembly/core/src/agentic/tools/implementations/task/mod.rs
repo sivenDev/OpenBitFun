@@ -120,19 +120,49 @@ impl AgentExecutionTool {
         let workspace_id = context.and_then(|ctx| ctx.workspace_id());
         let parent_agent_type = context.and_then(|ctx| ctx.agent_type.as_deref());
         registry.load_custom_agents(workspace_id).await;
-        registry
+        let external_sources_supported = context.is_none_or(|ctx| {
+            !ctx.is_remote()
+                && ctx.delegation_policy().scope != openbitfun_runtime_ports::DelegationScope::Swarm
+        });
+        let agents = registry
             .get_subagents_for_query(&SubagentQueryContext {
                 parent_agent_type,
                 workspace_id,
                 list_scope: SubagentListScope::TaskVisible,
                 include_disabled: false,
-                external_sources_supported: context.is_none_or(|ctx| {
-                    !ctx.is_remote()
-                        && ctx.delegation_policy().scope
-                            != openbitfun_runtime_ports::DelegationScope::Swarm
-                }),
+                external_sources_supported,
             })
-            .await
+            .await;
+        match context {
+            Some(context) if external_sources_supported => {
+                Self::append_external_agents(context, agents).await
+            }
+            _ => agents,
+        }
+    }
+
+    /// Lists configured external agents only when admission would accept the
+    /// parent, so the catalog never offers a delegation that is refused.
+    async fn append_external_agents(
+        context: &ToolUseContext,
+        agents: Vec<AgentInfo>,
+    ) -> Vec<AgentInfo> {
+        let Some(executor) =
+            get_global_coordinator().and_then(|coordinator| coordinator.external_agent_executor())
+        else {
+            return agents;
+        };
+        let Ok(parent_ceiling) = Self::derive_parent_permission_runtime_ceiling(context).await
+        else {
+            return agents;
+        };
+        if Self::external_agent_parent_refusal(context, &parent_ceiling, false).is_some() {
+            return agents;
+        }
+        let descriptors = executor
+            .list_agents(openbitfun_runtime_ports::ExternalAgentListing::Configured)
+            .await;
+        crate::agentic::agents::AgentRegistry::merge_acp_agents(agents, descriptors, false)
     }
 
     async fn get_agents_types(&self, context: Option<&ToolUseContext>) -> Vec<String> {

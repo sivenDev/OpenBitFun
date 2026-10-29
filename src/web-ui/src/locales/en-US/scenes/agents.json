@@ -277,6 +277,17 @@
     "deleteAgent": "Delete",
     "externalActions": "External agent",
     "manageExternalAgent": "Manage in External Import",
+    "acp": {
+      "availability": "Availability reported by the external agent client",
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "executorMissing": "Not supported on this host",
+      "notEnabled": "Not enabled",
+      "delegationDisabled": "Delegation turned off",
+      "notInstalled": "Not installed",
+      "unsupportedContext": "Unavailable in this workspace",
+      "manage": "Manage in External Agents settings"
+    },
     "deleteConfirm": "Delete custom agent \"{{name}}\"? This cannot be undone.",
     "deleteSuccess": "Deleted \"{{name}}\"",
     "deleteFailed": "Delete failed: ",

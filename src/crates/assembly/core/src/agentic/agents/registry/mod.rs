@@ -1,3 +1,4 @@
+mod acp_agents;
 mod availability;
 mod builtin;
 pub(super) mod catalog;

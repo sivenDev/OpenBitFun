@@ -45,6 +45,31 @@ impl ExternalAgentAvailability {
     }
 }
 
+/// How much work `list_agents` may do to report availability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalAgentListing {
+    /// Configuration facts only; cheap enough to run on every turn.
+    Configured,
+    /// Also probes client commands so missing installs are reported.
+    Probed,
+}
+
+/// One external agent the host can offer for delegation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalAgentDescriptor {
+    pub client_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_for: Option<String>,
+    #[serde(default)]
+    pub readonly: bool,
+    pub availability: ExternalAgentAvailability,
+}
+
 /// Where a turn runs and which OpenBitFun session owns the external session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +141,12 @@ pub trait ExternalAgentExecutor: Send + Sync {
         client_id: &str,
         context: &ExternalAgentContext,
     ) -> ExternalAgentAvailability;
+
+    /// Lists the external agents this executor can run, with host-level
+    /// availability. Context-specific checks still go through `availability`.
+    async fn list_agents(&self, _listing: ExternalAgentListing) -> Vec<ExternalAgentDescriptor> {
+        Vec::new()
+    }
 
     /// Runs one turn. The first turn for an OpenBitFun session creates the
     /// external session; later turns reuse it, so follow-up prompts keep the

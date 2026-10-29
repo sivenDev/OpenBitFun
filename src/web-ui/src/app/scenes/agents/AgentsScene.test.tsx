@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { useAgentsStore } from './agentsStore';
 import { isLocallyManageableSubagent } from './agentVisibility';
+import { useSettingsStore } from '@/app/scenes/settings/settingsStore';
+import { useSceneStore } from '@/app/stores/sceneStore';
 
 const useAgentsListMock = vi.hoisted(() => vi.fn());
 const notificationInfoMock = vi.hoisted(() => vi.fn());
@@ -686,5 +688,59 @@ describeWithJsdom('AgentsScene', () => {
     expect(status?.textContent).toContain('agentsOverview.toolsUnsupported');
     // The tool summary picker must not render — the catalog is not available.
     expect(document.querySelector('[data-testid="agent-detail-tool-summary"]')).toBeNull();
+  });
+  it('shows ACP agent availability read-only and links to External Agents settings', async () => {
+    const acpAgent = {
+      key: 'acp:claude-code',
+      id: 'acp:claude-code',
+      name: 'Claude Code',
+      description: 'External agent Claude Code that works with its own tools, model, and context.',
+      isReadonly: false,
+      isReview: false,
+      toolCount: 0,
+      defaultTools: [],
+      defaultEnabled: false,
+      effectiveEnabled: false,
+      source: 'external',
+      subagentSource: 'external',
+      externalProviderLabel: 'ACP',
+      supportsFollowUp: true,
+      executionKind: 'acp',
+      externalAvailability: {
+        state: 'unavailable',
+        reason: 'not_installed',
+        detail: 'claude is not available on PATH',
+      },
+      agentKind: 'subagent' as const,
+      capabilities: [],
+    };
+    mockAgentsList({ allAgents: [acpAgent], filteredAgents: [acpAgent] });
+    const openDestination = vi.spyOn(useSettingsStore.getState(), 'openDestination')
+      .mockImplementation(() => undefined);
+    const openScene = vi.spyOn(useSceneStore.getState(), 'openScene')
+      .mockImplementation(() => undefined as never);
+    const { default: AgentsScene } = await import('./AgentsScene');
+
+    await act(async () => {
+      root.render(<AgentsScene />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === acpAgent.name)
+        ?.click();
+    });
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.querySelector('[data-testid="agent-detail-acp-availability"]')?.textContent)
+      .toBe('agentsOverview.acp.notInstalled');
+    expect(dialog?.querySelector('[data-testid="agent-detail-capabilities-section"]')).toBeNull();
+
+    await act(async () => {
+      dialog?.querySelector<HTMLButtonElement>('[data-testid="agent-detail-manage-acp"]')?.click();
+    });
+    expect(openDestination).toHaveBeenCalledWith({ pageId: 'tools.external-agents' });
+    expect(openScene).toHaveBeenCalledWith('settings');
+    openDestination.mockRestore();
+    openScene.mockRestore();
   });
 });

@@ -2498,3 +2498,26 @@ fn task_description_documents_external_agent_types() {
     assert!(description.contains("`acp:<client_id>`"));
     assert!(description.contains("do not pass `model_id`"));
 }
+
+#[test]
+fn external_agent_catalog_and_admission_share_the_parent_refusal() {
+    use openbitfun_runtime_ports::{PermissionEffect, PermissionRule, PermissionRuntimeCeiling};
+
+    let open = PermissionRuntimeCeiling::default();
+    let restricted = PermissionRuntimeCeiling::try_new(vec![PermissionRule {
+        action: "edit".to_string(),
+        resource: "*".to_string(),
+        effect: PermissionEffect::Deny,
+    }])
+    .expect("deny-only ceiling");
+    let refusal = |mode: &str, ceiling: &PermissionRuntimeCeiling, swarm: bool| {
+        AgentExecutionTool::external_agent_parent_refusal(&test_tool_context(mode), ceiling, swarm)
+    };
+
+    assert_eq!(refusal("Standard", &open, false), None);
+    assert!(refusal("Standard", &restricted, false)
+        .is_some_and(|reason| reason.contains("permission restrictions")));
+    assert!(refusal("Standard", &open, true).is_some_and(|reason| reason.contains("Swarm")));
+    assert!(refusal("DeepReview", &open, false).is_some_and(|reason| reason.contains("review")));
+    assert!(refusal("Minimal", &open, false).is_some_and(|reason| reason.contains("mode")));
+}

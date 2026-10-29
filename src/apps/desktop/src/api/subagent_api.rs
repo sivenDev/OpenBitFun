@@ -76,11 +76,21 @@ pub(super) async fn local_workspace_from_request(
     Ok(id)
 }
 
+/// `acp:<client_id>` entries are owned by the ACP client configuration.
+fn is_external_agent_type(subagent_id: &str) -> bool {
+    subagent_id.trim_start().starts_with("acp:")
+}
+
 fn reject_external_subagent_mutation(
     state: &AppState,
     subagent_id: &str,
     workspace: Option<&str>,
 ) -> Result<(), String> {
+    if is_external_agent_type(subagent_id) {
+        return Err(
+            "external_agent_read_only: manage ACP agents in External Agents settings".to_string(),
+        );
+    }
     if state
         .agent_registry
         .is_external_subagent_route(subagent_id, workspace)
@@ -662,5 +672,17 @@ pub async fn update_subagent_config(
             availability_updated,
             model_updated,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_external_agent_type;
+
+    #[test]
+    fn acp_agent_types_are_not_locally_manageable() {
+        assert!(is_external_agent_type("acp:claude-code"));
+        assert!(!is_external_agent_type("Explore"));
+        assert!(!is_external_agent_type("project::acp-helper"));
     }
 }

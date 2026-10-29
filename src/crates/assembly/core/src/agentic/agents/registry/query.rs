@@ -1,3 +1,4 @@
+use super::acp_agents::acp_agent_info;
 use super::availability::resolve_availability;
 use super::support::{
     get_mode_configs, get_subagent_overrides, load_project_subagent_overrides_local,
@@ -15,6 +16,7 @@ use crate::service::config::mode_config_canonicalizer::resolve_effective_tools;
 use openbitfun_agent_runtime::agents::{
     subagent_source_presentation_rank, BuiltinSubagentExposure,
 };
+use openbitfun_runtime_ports::{ExternalAgentDescriptor, ExternalAgentListing};
 use std::collections::HashSet;
 
 /// Append the dynamically registered tool families a mode Agent may use.
@@ -358,34 +360,34 @@ impl AgentRegistry {
                 .ok(),
             None => None,
         };
-        let map = self.read_agents();
-        let mut result: Vec<AgentInfo> = map
-            .values()
-            .filter(|entry| {
-                Self::entry_is_visible_for_query(
-                    entry,
-                    query,
-                    project_overrides.as_ref(),
-                    &user_overrides,
-                )
-            })
-            .map(|e| {
-                let mut agent_info = AgentInfo::from_agent_entry(e);
-                let availability = resolve_availability(
-                    e,
-                    query.parent_agent_type,
-                    project_overrides.as_ref(),
-                    &user_overrides,
-                );
-                agent_info.subagent_source = e.subagent_source;
-                agent_info.default_enabled = availability.default_enabled;
-                agent_info.effective_enabled = availability.effective_enabled;
-                agent_info.override_state = availability.override_state;
-                agent_info.state_reason = availability.state_reason;
-                agent_info
-            })
-            .collect();
-        drop(map);
+        let mut result: Vec<AgentInfo> = {
+            let map = self.read_agents();
+            map.values()
+                .filter(|entry| {
+                    Self::entry_is_visible_for_query(
+                        entry,
+                        query,
+                        project_overrides.as_ref(),
+                        &user_overrides,
+                    )
+                })
+                .map(|e| {
+                    let mut agent_info = AgentInfo::from_agent_entry(e);
+                    let availability = resolve_availability(
+                        e,
+                        query.parent_agent_type,
+                        project_overrides.as_ref(),
+                        &user_overrides,
+                    );
+                    agent_info.subagent_source = e.subagent_source;
+                    agent_info.default_enabled = availability.default_enabled;
+                    agent_info.effective_enabled = availability.effective_enabled;
+                    agent_info.override_state = availability.override_state;
+                    agent_info.state_reason = availability.state_reason;
+                    agent_info
+                })
+                .collect()
+        };
         if let Some(workspace_id) = query.workspace_id {
             if let Some(project_entries) = self.read_project_subagents().get(workspace_id) {
                 result.extend(
@@ -427,7 +429,40 @@ impl AgentRegistry {
                 result = self.apply_external_routes_to_query(workspace_id, result);
             }
         }
+        // The Task catalog adds executor agents itself, after checking that
+        // the parent session may delegate to them.
+        if query.external_sources_supported
+            && query.list_scope == SubagentListScope::RegistryManagement
+        {
+            let descriptors = match crate::agentic::coordination::get_global_coordinator()
+                .and_then(|coordinator| coordinator.external_agent_executor())
+            {
+                Some(executor) => executor.list_agents(ExternalAgentListing::Probed).await,
+                None => Vec::new(),
+            };
+            result = Self::merge_acp_agents(result, descriptors, query.include_disabled);
+        }
         Self::sort_subagents_for_presentation(result)
+    }
+
+    /// Appends executor agents, skipping unavailable ones unless disabled
+    /// entries are requested and never shadowing an existing agent id.
+    pub(crate) fn merge_acp_agents(
+        mut result: Vec<AgentInfo>,
+        descriptors: Vec<ExternalAgentDescriptor>,
+        include_disabled: bool,
+    ) -> Vec<AgentInfo> {
+        for descriptor in descriptors {
+            if !include_disabled && !descriptor.availability.is_available() {
+                continue;
+            }
+            let info = acp_agent_info(descriptor);
+            if result.iter().any(|existing| existing.id == info.id) {
+                continue;
+            }
+            result.push(info);
+        }
+        result
     }
 
     pub async fn can_parent_access_subagent(

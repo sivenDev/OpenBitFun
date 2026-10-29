@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openbitfun_core::runtime_ports::{
-    ExternalAgentAvailability, ExternalAgentContext, ExternalAgentEventSink, ExternalAgentExecutor,
-    ExternalAgentTurnEvent, ExternalAgentTurnOutcome, ExternalAgentTurnRequest,
-    ExternalAgentUnavailableReason, PortError, PortErrorKind, PortResult,
+    ExternalAgentAvailability, ExternalAgentContext, ExternalAgentDescriptor,
+    ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentListing, ExternalAgentTurnEvent,
+    ExternalAgentTurnOutcome, ExternalAgentTurnRequest, ExternalAgentUnavailableReason, PortError,
+    PortErrorKind, PortResult,
 };
 use openbitfun_core::util::errors::OpenBitFunError;
 use tokio::sync::mpsc;
@@ -26,12 +27,10 @@ impl AcpExternalAgentExecutor {
     }
 }
 
-/// Decides availability from configuration and requirement probe facts.
-fn availability_from_facts(
+/// Decides availability from configuration facts alone.
+fn configured_availability(
     client_id: &str,
     client: Option<&AcpClientInfo>,
-    probe: Option<&AcpClientRequirementProbe>,
-    remote: bool,
 ) -> ExternalAgentAvailability {
     let Some(client) = client.filter(|client| client.enabled) else {
         return ExternalAgentAvailability::Unavailable {
@@ -44,6 +43,20 @@ fn availability_from_facts(
             reason: ExternalAgentUnavailableReason::DelegationDisabled,
             detail: format!("ACP client '{client_id}' does not accept delegated work"),
         };
+    }
+    ExternalAgentAvailability::Available
+}
+
+/// Decides availability from configuration and requirement probe facts.
+fn availability_from_facts(
+    client_id: &str,
+    client: Option<&AcpClientInfo>,
+    probe: Option<&AcpClientRequirementProbe>,
+    remote: bool,
+) -> ExternalAgentAvailability {
+    let configured = configured_availability(client_id, client);
+    if !configured.is_available() {
+        return configured;
     }
     match probe {
         Some(probe) if probe.runnable => ExternalAgentAvailability::Available,
@@ -64,6 +77,36 @@ fn availability_from_facts(
             detail: format!("ACP client '{client_id}' has no requirement probe"),
         },
     }
+}
+
+/// Describes every configured client. Without probes, availability reflects
+/// configuration only; with probes, missing local installs are reported too.
+fn descriptors_from_facts(
+    clients: &[AcpClientInfo],
+    probes: Option<&[AcpClientRequirementProbe]>,
+) -> Vec<ExternalAgentDescriptor> {
+    clients
+        .iter()
+        .map(|client| {
+            let availability = match probes {
+                Some(probes) => availability_from_facts(
+                    &client.id,
+                    Some(client),
+                    probes.iter().find(|probe| probe.id == client.id),
+                    false,
+                ),
+                None => configured_availability(&client.id, Some(client)),
+            };
+            ExternalAgentDescriptor {
+                client_id: client.id.clone(),
+                name: client.name.clone(),
+                description: client.subagent.description.clone(),
+                best_for: client.subagent.best_for.clone(),
+                readonly: client.readonly,
+                availability,
+            }
+        })
+        .collect()
 }
 
 fn port_error(error: OpenBitFunError) -> PortError {
@@ -186,6 +229,27 @@ impl ExternalAgentExecutor for AcpExternalAgentExecutor {
         let probe = probes.iter().find(|probe| probe.id == client_id);
 
         availability_from_facts(client_id, client, probe, remote_connection_id.is_some())
+    }
+
+    async fn list_agents(&self, listing: ExternalAgentListing) -> Vec<ExternalAgentDescriptor> {
+        let clients = match self.service.list_clients().await {
+            Ok(clients) => clients,
+            Err(error) => {
+                log::warn!("Failed to list ACP clients for external agents: error={error}");
+                return Vec::new();
+            }
+        };
+        match listing {
+            ExternalAgentListing::Configured => descriptors_from_facts(&clients, None),
+            ExternalAgentListing::Probed => {
+                let probes = self
+                    .service
+                    .probe_client_requirements(None, false)
+                    .await
+                    .unwrap_or_default();
+                descriptors_from_facts(&clients, Some(&probes))
+            }
+        }
     }
 
     async fn run_turn(
@@ -345,6 +409,46 @@ mod tests {
                 false
             ),
             ExternalAgentAvailability::Available
+        );
+    }
+
+    #[test]
+    fn descriptors_list_every_client_with_configured_or_probed_availability() {
+        let mut described = client(true, true);
+        described.subagent.description = Some("Coding agent".to_string());
+        described.subagent.best_for = Some("Refactors".to_string());
+        let mut disabled = client(false, true);
+        disabled.id = "codex".to_string();
+        disabled.name = "Codex".to_string();
+        let clients = vec![described, disabled];
+
+        let configured = descriptors_from_facts(&clients, None);
+        assert_eq!(configured.len(), 2);
+        assert_eq!(configured[0].client_id, "claude-code");
+        assert_eq!(configured[0].name, "Claude Code");
+        assert_eq!(configured[0].description.as_deref(), Some("Coding agent"));
+        assert_eq!(configured[0].best_for.as_deref(), Some("Refactors"));
+        assert_eq!(
+            configured[0].availability,
+            ExternalAgentAvailability::Available
+        );
+        assert_eq!(
+            reason(configured[1].availability.clone()),
+            Some(ExternalAgentUnavailableReason::NotEnabled)
+        );
+
+        let probes = vec![probe(false, &["claude is not available on PATH"])];
+        let probed = descriptors_from_facts(&clients, Some(&probes));
+        assert_eq!(
+            probed[0].availability,
+            ExternalAgentAvailability::Unavailable {
+                reason: ExternalAgentUnavailableReason::NotInstalled,
+                detail: "claude is not available on PATH".to_string(),
+            }
+        );
+        assert_eq!(
+            reason(probed[1].availability.clone()),
+            Some(ExternalAgentUnavailableReason::NotEnabled)
         );
     }
 

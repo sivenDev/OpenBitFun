@@ -189,6 +189,36 @@ pub(super) struct ExternalAgentAdmissionFacts<'a> {
 }
 
 impl AgentExecutionTool {
+    /// Why the parent session may not delegate to any external agent, or
+    /// `None` when it may. The Task catalog and admission share this check.
+    pub(super) fn external_agent_parent_refusal(
+        context: &ToolUseContext,
+        parent_ceiling: &PermissionRuntimeCeiling,
+        parent_is_swarm: bool,
+    ) -> Option<&'static str> {
+        if Self::is_deep_review_context(Some(context)) {
+            return Some("is not available to review agents");
+        }
+        // Same mode set that previously received the legacy
+        // `acp__<client>__prompt` tools.
+        let parent_accepts_external_agents =
+            context.agent_type.as_deref().is_some_and(|agent_type| {
+                get_agent_registry()
+                    .get_agent(agent_type, context.workspace_id())
+                    .is_some_and(|agent| agent.include_dynamic_mcp_tools())
+            });
+        if !parent_accepts_external_agents {
+            return Some("is not available in this mode");
+        }
+        if !parent_ceiling.is_empty() {
+            return Some("cannot be delegated from a session with permission restrictions: the external agent's own tools cannot be held to them");
+        }
+        if parent_is_swarm {
+            return Some("is not available inside an Ultra Swarm");
+        }
+        None
+    }
+
     /// Admits an `acp:<client_id>` subagent only when no parent restriction
     /// would be lost and the host registered an executor for an enabled,
     /// delegation-accepting, runnable client.
@@ -208,32 +238,11 @@ impl AgentExecutionTool {
             model_override_requested,
             parent_ceiling,
         } = facts;
-        if Self::is_deep_review_context(Some(context)) {
+        if let Some(refusal) =
+            Self::external_agent_parent_refusal(context, parent_ceiling, parent_is_swarm)
+        {
             return Err(OpenBitFunError::tool(format!(
-                "external agent acp:{client_id} is not available to review agents"
-            )));
-        }
-        // Same mode set that previously received the legacy
-        // `acp__<client>__prompt` tools.
-        let parent_accepts_external_agents =
-            context.agent_type.as_deref().is_some_and(|agent_type| {
-                get_agent_registry()
-                    .get_agent(agent_type, context.workspace_id())
-                    .is_some_and(|agent| agent.include_dynamic_mcp_tools())
-            });
-        if !parent_accepts_external_agents {
-            return Err(OpenBitFunError::tool(format!(
-                "external agent acp:{client_id} is not available in this mode"
-            )));
-        }
-        if !parent_ceiling.is_empty() {
-            return Err(OpenBitFunError::tool(format!(
-                "external agent acp:{client_id} cannot be delegated from a session with permission restrictions: the external agent's own tools cannot be held to them"
-            )));
-        }
-        if parent_is_swarm {
-            return Err(OpenBitFunError::tool(format!(
-                "external agent acp:{client_id} is not available inside an Ultra Swarm"
+                "external agent acp:{client_id} {refusal}"
             )));
         }
         if model_override_requested {
@@ -269,7 +278,7 @@ impl AgentExecutionTool {
         }
     }
 
-    async fn derive_parent_permission_runtime_ceiling(
+    pub(super) async fn derive_parent_permission_runtime_ceiling(
         context: &ToolUseContext,
     ) -> OpenBitFunResult<PermissionRuntimeCeiling> {
         crate::agentic::permission_policy::load_parent_permission_runtime_ceiling(

@@ -277,6 +277,17 @@
     "deleteAgent": "刪除",
     "externalActions": "外部智能體",
     "manageExternalAgent": "前往外部匯入管理",
+    "acp": {
+      "availability": "外部智能體用戶端回報的可用狀態",
+      "available": "可用",
+      "unavailable": "不可用",
+      "executorMissing": "目前主機不支援",
+      "notEnabled": "未啟用",
+      "delegationDisabled": "未開啟委派",
+      "notInstalled": "未安裝",
+      "unsupportedContext": "目前工作區不可用",
+      "manage": "在外部智能體設定中管理"
+    },
     "deleteConfirm": "確定刪除自定義智能體「{{name}}」？此操作不可恢復。",
     "deleteSuccess": "已刪除「{{name}}」",
     "deleteFailed": "刪除失敗：",

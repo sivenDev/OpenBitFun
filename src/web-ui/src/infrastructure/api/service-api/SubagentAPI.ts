@@ -27,6 +27,18 @@ export interface SubagentVisibilitySummary {
   showInGlobalRegistry: boolean;
 }
 
+export type ExternalAgentUnavailableReason =
+  | 'executor_missing'
+  | 'not_enabled'
+  | 'delegation_disabled'
+  | 'not_installed'
+  | 'unsupported_context';
+
+/** Host-level availability of an external agent, as reported by its executor. */
+export type ExternalAgentAvailability =
+  | { state: 'available' }
+  | { state: 'unavailable'; reason: ExternalAgentUnavailableReason | string; detail: string };
+
 export interface SubagentInfo {
   key: string;
   id: string;
@@ -51,6 +63,9 @@ export interface SubagentInfo {
   configProfileMemberModeIds?: string[];
   externalProviderLabel?: string;
   supportsFollowUp?: boolean;
+  /** `acp` for external agents that run their own model loop and tools. */
+  executionKind?: string;
+  externalAvailability?: ExternalAgentAvailability;
 }
 
 export interface ListSubagentsOptions {

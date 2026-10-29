@@ -52,6 +52,7 @@ import './AgentsScene.scss';
 import './components/AgentDetailDialog.scss';
 import { useGallerySceneAutoRefresh } from '@/app/hooks/useGallerySceneAutoRefresh';
 import {
+  isAcpExternalAgent,
   isAgentInOverviewZone,
   isLocallyManageableSubagent,
 } from './agentVisibility';
@@ -62,7 +63,9 @@ import {
   buildSkillCoverageSourceMap,
   getModeSkillRuntimeStatus,
 } from '@/infrastructure/config/skillSourcePresentation';
-import type { SubagentInfo } from '@/infrastructure/api/service-api/SubagentAPI';
+import type { ExternalAgentAvailability, SubagentInfo } from '@/infrastructure/api/service-api/SubagentAPI';
+import { useSceneStore } from '@/app/stores/sceneStore';
+import { useSettingsStore } from '@/app/scenes/settings/settingsStore';
 import { useNotification } from '@/shared/notification-system';
 import {
   type ModelSelectOption,
@@ -142,6 +145,34 @@ function subagentSourceLabel(
   }
 }
 
+function acpAvailabilityLabel(
+  availability: ExternalAgentAvailability,
+  t: TFunction<'scenes/agents'>,
+): string {
+  if (availability.state === 'available') {
+    return t('agentsOverview.acp.available');
+  }
+  switch (availability.reason) {
+    case 'executor_missing':
+      return t('agentsOverview.acp.executorMissing');
+    case 'not_enabled':
+      return t('agentsOverview.acp.notEnabled');
+    case 'delegation_disabled':
+      return t('agentsOverview.acp.delegationDisabled');
+    case 'not_installed':
+      return t('agentsOverview.acp.notInstalled');
+    case 'unsupported_context':
+      return t('agentsOverview.acp.unsupportedContext');
+    default:
+      return t('agentsOverview.acp.unavailable');
+  }
+}
+
+function openExternalAgentSettings(): void {
+  useSettingsStore.getState().openDestination({ pageId: 'tools.external-agents' });
+  useSceneStore.getState().openScene('settings');
+}
+
 function subagentTooltipFields(
   subagent: SubagentInfo,
   t: TFunction<'scenes/agents'>,
@@ -159,7 +190,9 @@ function subagentTooltipFields(
     },
     ...(isExternal ? [{
       label: t('agentsOverview.capabilityTooltip.status'),
-      value: t('agentsOverview.capabilityTooltip.externalManaged'),
+      value: subagent.externalAvailability
+        ? acpAvailabilityLabel(subagent.externalAvailability, t)
+        : t('agentsOverview.capabilityTooltip.externalManaged'),
     }] : []),
   ];
 }
@@ -309,6 +342,7 @@ const AgentsHomeView: React.FC = () => {
   const selectedAgentIsExternal = (
     selectedAgent?.source ?? selectedAgent?.subagentSource
   ) === 'external';
+  const selectedAgentIsAcp = isAcpExternalAgent(selectedAgent);
   const selectedAgentModeConfig = useMemo(
     () => (isPrimaryAgent(selectedAgent) ? getModeConfig(selectedAgent.id) : null),
     [getModeConfig, selectedAgent],
@@ -987,6 +1021,19 @@ const AgentsHomeView: React.FC = () => {
                       />
                     </Tooltip>
                   </>
+                ) : (showingHarnessPreview || activeDetailSection === 'basic') && selectedAgentIsAcp ? (
+                  <Tooltip content={t('agentsOverview.acp.manage')}>
+                    <IconButton
+                      aria-label={t('agentsOverview.acp.manage')}
+                      size="sm"
+                      icon={<Icon name="settings" />}
+                      data-testid="agent-detail-manage-acp"
+                      onClick={() => {
+                        closeAgentDetails();
+                        openExternalAgentSettings();
+                      }}
+                    />
+                  </Tooltip>
                 ) : (showingHarnessPreview || activeDetailSection === 'basic') && selectedAgentIsExternal ? (
                   <Tooltip content={t('agentsOverview.manageExternalAgent')}>
                     <IconButton
@@ -1096,6 +1143,20 @@ const AgentsHomeView: React.FC = () => {
                       <StatusPill tone="neutral">
                         {t('agentCard.meta.externalProvider', { provider: selectedAgent.externalProviderLabel })}
                       </StatusPill>
+                    ) : null}
+                    {selectedAgent.externalAvailability ? (
+                      <Tooltip
+                        content={selectedAgent.externalAvailability.state === 'unavailable'
+                          ? selectedAgent.externalAvailability.detail
+                          : t('agentsOverview.acp.availability')}
+                      >
+                        <StatusPill
+                          tone={selectedAgent.externalAvailability.state === 'available' ? 'success' : 'warning'}
+                          data-testid="agent-detail-acp-availability"
+                        >
+                          {acpAvailabilityLabel(selectedAgent.externalAvailability, t)}
+                        </StatusPill>
+                      </Tooltip>
                     ) : null}
                     <StatusPill tone="neutral">
                       {t('agentsOverview.detail.followUp')} · {selectedAgent.supportsFollowUp === false

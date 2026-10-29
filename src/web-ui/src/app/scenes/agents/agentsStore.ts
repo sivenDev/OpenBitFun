@@ -28,6 +28,8 @@ type PrimaryAgentEntry = ModeInfo & {
   visibility?: never;
   externalProviderLabel?: never;
   supportsFollowUp?: never;
+  executionKind?: never;
+  externalAvailability?: never;
 };
 
 /** Invocation roles retain their own metadata instead of fabricating SubagentInfo for a Harness. */

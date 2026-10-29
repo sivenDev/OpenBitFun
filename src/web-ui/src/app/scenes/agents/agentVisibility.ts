@@ -41,3 +41,10 @@ export function isLocallyManageableSubagent(
 ): boolean {
   return (subagent.subagentSource ?? subagent.source) !== 'external';
 }
+
+/** ACP agents run their own model loop and are configured in External Agents settings. */
+export function isAcpExternalAgent(
+  subagent: { executionKind?: string | null } | null | undefined,
+): boolean {
+  return subagent?.executionKind === 'acp';
+}
