@@ -29,5 +29,14 @@ pub(crate) async fn init_agentic_system(
     system
         .coordinator
         .set_remote_exec_port(CoreRuntimeServicesProvider::remote_exec_port());
+    match crate::acp_cli::new_client_service().await {
+        Ok(service) => system.coordinator.set_external_agent_executor(Arc::new(
+            openbitfun_acp::client::AcpExternalAgentExecutor::new(service),
+        )),
+        Err(error) => tracing::warn!(
+            "External agent executor unavailable: failed to build ACP client service: {}",
+            error
+        ),
+    }
     Ok(system)
 }

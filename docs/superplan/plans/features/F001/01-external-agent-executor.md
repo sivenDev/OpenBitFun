@@ -2,7 +2,7 @@
 id: "F001-01"
 title: "宿主中立的外部智能体执行器（ACP）"
 type: "feature"
-status: "draft"
+status: "complete"
 summary: "把 ACP 回合执行从桌面宿主命令下沉为内核可调度、宿主中立的外部智能体执行器，独立 ACP 会话行为保持不变。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-29"
@@ -52,16 +52,22 @@ parent: "F001"
 - Create: `src/crates/contracts/runtime-ports/src/external_agent.rs`
 - Modify: `src/crates/contracts/runtime-ports/src/lib.rs`
 - Modify: `src/crates/contracts/runtime-ports/AGENTS.md`
-- Test: `src/crates/contracts/runtime-ports/src/external_agent.rs`
+- Modify: `src/crates/contracts/runtime-ports/Cargo.toml`
+- Modify: `scripts/core-boundaries/rules/feature-rules.mjs`
+- Modify: `scripts/core-boundaries/explicit-test-topology.mjs`
+- Modify: `scripts/check-core-boundaries.test.mjs`
+- Test: `src/crates/contracts/runtime-ports/tests/external_agent_port_contracts.rs`
 
 **Change Map:**
 - `external_agent.rs`：端口 trait、请求/事件/结果 DTO、可用性事实、取消入口
 - `AGENTS.md`：在 Guardrails 中写明这个端口的职责范围
+- 边界规则：新增 `external-agent-port`（依赖 `openbitfun-events`）、由 Core `agent-runtime` 转发、新增契约测试目标，形式与 `script-tool-runtime` 一致
 
 **Verification:**
-- `cargo test -p openbitfun-runtime-ports`
+- `cargo test --locked -p openbitfun-runtime-ports --no-default-features --features external-agent-port --test external_agent_port_contracts`
+- `pnpm run check:core-boundaries:test`
 
-- [ ] 端口和 DTO 已定义，假实现测试覆盖执行、追加、取消、不可用四种结果
+- [x] 端口和 DTO 已定义，假实现测试覆盖执行、追加（同会话的后续回合复用外部会话）、取消、不可用四种结果，以及跨版本容忍未知字段与缺失可选字段（5 passed）；边界规则自测 156 passed
 
 ## Task 2: 宿主中立的 ACP 事件投影与等价测试
 
@@ -81,7 +87,7 @@ parent: "F001"
 - `cargo test -p openbitfun-acp --no-default-features --features client,openbitfun-core/git --lib client::event_projection`
 - `cargo check -p openbitfun-desktop`
 
-- [ ] 投影已迁移，迁移前后同一组 ACP 流夹具产生相同的事件序列
+- [x] 投影已迁移；等价测试的期望载荷逐字段取自迁移前桌面端的内联投影，覆盖轮次切换、思考、文本、工具、用量、命令、计划、配置、完成、取消、轮次前内容报错与回合开始/失败载荷
 
 ## Task 3: ACP 执行器实现与宿主注册
 
@@ -89,16 +95,19 @@ parent: "F001"
 
 **Files:**
 - Create: `src/crates/interfaces/acp/src/client/executor.rs`
-- Modify: `src/crates/interfaces/acp/src/client/manager.rs`
+- Modify: `src/crates/interfaces/acp/src/client/mod.rs`
+- Modify: `src/crates/assembly/core/Cargo.toml`
 - Modify: `src/crates/assembly/core/src/agentic/coordination/coordinator.rs`
-- Modify: `src/apps/desktop/src/api/app_state.rs`
+- Modify: `src/apps/desktop/src/lib.rs`
 - Modify: `src/apps/cli/src/acp_cli.rs`
+- Modify: `src/apps/cli/src/agent/agentic_system.rs`
 - Test: `src/crates/interfaces/acp/src/client/executor.rs`
 
 **Change Map:**
-- `executor.rs`：端口实现，委托给 `AcpClientService` 的会话解析、流式提示、取消
-- `coordinator.rs`：持有可选的执行器注册，提供读取入口；未注册时返回「不可用」
-- `app_state.rs`、`acp_cli.rs`：构造 `AcpClientService` 后注册执行器
+- `executor.rs`：端口实现，委托给 `AcpClientService` 的会话解析、流式提示、取消；端口类型经 `openbitfun_core::runtime_ports` 引用，不新增 `acp` → `runtime-ports` 依赖边
+- `coordinator.rs`：持有可选的执行器注册，提供读取入口；未注册时返回「不可用」（`ExecutorMissing`）
+- `lib.rs`（桌面）：`AppState` 构造出 `AcpClientService` 后注册执行器
+- `acp_cli.rs`、`agentic_system.rs`（CLI）：构造不注册旧版提示工具的 `AcpClientService`，并在智能体系统初始化时注册执行器；构造失败只记录警告
 
 **Verification:**
 - `cargo test -p openbitfun-acp --no-default-features --features client,openbitfun-core/git --lib client::executor`
@@ -106,7 +115,12 @@ parent: "F001"
 - `cargo check -p openbitfun-desktop && cargo check -p openbitfun-cli`
 - `pnpm run check:core-boundaries`
 
-- [ ] 执行器用内存 ACP 流夹具通过执行、追加、取消测试；桌面与 CLI 都能编译并完成注册；边界检查通过
+- [x] 执行器的可用性判定、流事件到端口事件与回合结果的映射、错误类型映射有单元测试；`client::` 共 90 passed（含既有 `client::prompt::tests` 的内存流测试）；桌面与 CLI 编译通过并完成注册；边界检查通过
+
+**Evidence notes:**
+- 本地默认工具链 Rust 1.91.1 无法编译 `main` 上既有的 `atomic_try_update` 用法（`1377cc6d2`）；CI 使用最新 stable，本计划的 Rust 验证均以 `cargo +1.95.0` 执行。
+- 桌面编译前置：`pnpm install --frozen-lockfile`、`pnpm run plugin-host:prepare`、`pnpm run prepare:mobile-web`。
+- 未覆盖、转入 F001-02：`AcpExternalAgentExecutor::run_turn` 经真实 `prompt_agent_stream` 的端到端测试（本计划仅编译验证该路径）。
 
 ## References
 - `docs/superplan/rfcs/F001.md`

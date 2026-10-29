@@ -169,6 +169,11 @@ export const runtimePortsIntegrationTestTargets = [
     requiredFeatures: ['ptc-runtime'],
   },
   {
+    name: 'external_agent_port_contracts',
+    path: 'tests/external_agent_port_contracts.rs',
+    requiredFeatures: ['external-agent-port'],
+  },
+  {
     name: 'session_store_contracts',
     path: 'tests/session_store_contracts.rs',
     requiredFeatures: ['workspace-ports'],

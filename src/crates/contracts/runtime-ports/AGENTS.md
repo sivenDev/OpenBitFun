@@ -30,6 +30,12 @@ facts. It is an interface crate, not a runtime implementation crate.
   requests, availability, and cancellation contracts behind `ptc-runtime`.
   Node process supervision belongs to Services Integrations; tool admission
   and permission decisions stay in the Core tool pipeline.
+- `ExternalAgentExecutor` owns only availability facts, one-turn run requests
+  bound to an OpenBitFun session, streamed turn events, cancel, and close
+  behind `external-agent-port`. ACP protocol, client configuration, process
+  supervision, permission prompting, and session persistence stay in the
+  implementing adapter; Task/subagent policy stays in Core. Its DTOs may cross
+  versions, so keep them tolerant of unknown and missing optional fields.
 - `HookFunctionRuntime` owns only provider-neutral availability, single-worker
   start/transform-config/execute-tool/cancel/dispose requests, a complete
   plugin-generation registration **notification sink** (not a load response),
@@ -61,6 +67,7 @@ cargo test --locked -p openbitfun-runtime-ports --no-default-features --features
 cargo test --locked -p openbitfun-runtime-ports --no-default-features --features workspace-ports --test session_store_contracts
 cargo test --locked -p openbitfun-runtime-ports --no-default-features --features plugin-runtime --test plugin_runtime_contracts
 cargo test --locked -p openbitfun-runtime-ports --no-default-features --features ptc-runtime --test ptc_tool_port_contracts
+cargo test --locked -p openbitfun-runtime-ports --no-default-features --features external-agent-port --test external_agent_port_contracts
 node scripts/check-core-boundaries.mjs
 ```
 

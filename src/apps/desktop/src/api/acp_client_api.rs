@@ -4,9 +4,9 @@ use crate::api::app_state::AppState;
 use crate::startup_trace::DesktopStartupTrace;
 use openbitfun_acp::client::{
     AcpAvailableCommand, AcpClientInfo, AcpClientPermissionResponse, AcpClientRequirementProbe,
-    AcpClientStreamEvent, AcpSessionOptions, CreateAcpFlowSessionRecordResponse,
-    SetAcpSessionConfigOptionRequest, SetAcpSessionModelRequest,
-    SubmitAcpPermissionResponseRequest,
+    AcpProjectedEvent, AcpSessionOptions, AcpTurnEventProjector, AcpTurnProjectionTarget,
+    CreateAcpFlowSessionRecordResponse, SetAcpSessionConfigOptionRequest,
+    SetAcpSessionModelRequest, SubmitAcpPermissionResponseRequest,
 };
 use openbitfun_core::service::workspace::WorkspaceInfo;
 use openbitfun_runtime_ports::SessionStorePort;
@@ -205,24 +205,16 @@ pub struct ProbeAcpClientRequirementsRequest {
     pub force_refresh: bool,
 }
 
-fn emit_acp_model_round_completed(
+fn emit_projected(
     app_handle: &AppHandle,
-    session_id: &str,
-    turn_id: &str,
-    round_id: String,
-    has_tool_calls: bool,
+    events: Vec<AcpProjectedEvent>,
 ) -> Result<(), openbitfun_core::util::errors::OpenBitFunError> {
-    app_handle
-        .emit(
-            "agentic://model-round-completed",
-            serde_json::json!({
-                "sessionId": session_id,
-                "turnId": turn_id,
-                "roundId": round_id,
-                "hasToolCalls": has_tool_calls,
-            }),
-        )
-        .map_err(|e| openbitfun_core::util::errors::OpenBitFunError::service(e.to_string()))
+    for event in events {
+        app_handle
+            .emit(event.name, event.payload)
+            .map_err(|e| openbitfun_core::util::errors::OpenBitFunError::service(e.to_string()))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -414,23 +406,18 @@ pub async fn start_acp_dialog_turn(
         None => (None, None, None),
     };
 
-    app_handle
-        .emit(
-            "agentic://dialog-turn-started",
-            serde_json::json!({
-                "sessionId": session_id,
-                "turnId": turn_id,
-                "turnIndex": null,
-                "userInput": user_input,
-                "originalUserInput": original_user_input,
-                "userMessageMetadata": null,
-                "subagentParentInfo": null,
-            }),
-        )
-        .map_err(|e| e.to_string())?;
+    let mut projector = AcpTurnEventProjector::new(AcpTurnProjectionTarget {
+        session_id: session_id.clone(),
+        turn_id,
+        client_id: request.client_id.clone(),
+        subagent_parent_info: serde_json::Value::Null,
+    });
+    emit_projected(
+        &app_handle,
+        vec![projector.turn_started(&user_input, Some(&original_user_input))],
+    )
+    .map_err(|e| e.to_string())?;
     tokio::spawn(async move {
-        let mut current_round_id: Option<String> = None;
-        let mut current_round_has_tool_calls = false;
         let result = service
             .prompt_agent_stream(
                 &request.client_id,
@@ -441,252 +428,16 @@ pub async fn start_acp_dialog_turn(
                 session_storage_path,
                 request.timeout_seconds,
                 |event| {
-                    match event {
-                        AcpClientStreamEvent::ModelRoundStarted {
-                            round_id,
-                            round_index,
-                            disable_explore_grouping,
-                        } => {
-                            if let Some(previous_round_id) = current_round_id.take() {
-                                emit_acp_model_round_completed(
-                                    &app_handle,
-                                    &request.session_id,
-                                    &request.turn_id,
-                                    previous_round_id,
-                                    current_round_has_tool_calls,
-                                )?;
-                            }
-                            current_round_id = Some(round_id.clone());
-                            current_round_has_tool_calls = false;
-                            app_handle
-                                .emit(
-                                    "agentic://model-round-started",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "roundId": round_id,
-                                        "roundIndex": round_index,
-                                        "renderHints": {
-                                            "disableExploreGrouping": disable_explore_grouping,
-                                        },
-                                        "subagentParentInfo": null,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::AgentText(text) => {
-                            let round_id = current_round_id.clone().ok_or_else(|| {
-                                openbitfun_core::util::errors::OpenBitFunError::service(
-                                    "ACP text arrived before model round start".to_string(),
-                                )
-                            })?;
-                            app_handle
-                                .emit(
-                                    "agentic://text-chunk",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "roundId": round_id,
-                                        "text": text,
-                                        "subagentParentInfo": null,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::AgentThought(text) => {
-                            let round_id = current_round_id.clone().ok_or_else(|| {
-                                openbitfun_core::util::errors::OpenBitFunError::service(
-                                    "ACP thought arrived before model round start".to_string(),
-                                )
-                            })?;
-                            app_handle
-                                .emit(
-                                    "agentic://text-chunk",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "roundId": round_id,
-                                        "text": text,
-                                        "contentType": "thinking",
-                                        "isThinkingEnd": false,
-                                        "subagentParentInfo": null,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::ToolEvent(tool_event) => {
-                            let round_id = current_round_id.clone().ok_or_else(|| {
-                                openbitfun_core::util::errors::OpenBitFunError::service(
-                                    "ACP tool event arrived before model round start".to_string(),
-                                )
-                            })?;
-                            current_round_has_tool_calls = true;
-                            app_handle
-                                .emit(
-                                    "agentic://tool-event",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "roundId": round_id,
-                                        "toolEvent": tool_event,
-                                        "subagentParentInfo": null,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::ContextUsageUpdated(usage) => {
-                            app_handle
-                                .emit(
-                                    "agentic://acp-context-usage-updated",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "clientId": request.client_id,
-                                        "used": usage.used,
-                                        "size": usage.size,
-                                        "cost": usage.cost,
-                                        "subagentParentInfo": null,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::AvailableCommandsUpdated(commands) => {
-                            app_handle
-                                .emit(
-                                    "agentic://acp-available-commands-updated",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "clientId": request.client_id,
-                                        "commands": commands,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::PlanUpdated(entries) => {
-                            app_handle
-                                .emit(
-                                    "agentic://acp-plan-updated",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "clientId": request.client_id,
-                                        "entries": entries,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::ConfigOptionsUpdated(_) => {
-                            app_handle
-                                .emit(
-                                    "agentic://acp-session-options-changed",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "clientId": request.client_id,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::Completed => {
-                            if let Some(round_id) = current_round_id.take() {
-                                emit_acp_model_round_completed(
-                                    &app_handle,
-                                    &request.session_id,
-                                    &request.turn_id,
-                                    round_id,
-                                    current_round_has_tool_calls,
-                                )?;
-                            }
-                            app_handle
-                                .emit(
-                                    "agentic://dialog-turn-completed",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "subagentParentInfo": null,
-                                        "partialRecoveryReason": null,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                        AcpClientStreamEvent::Cancelled => {
-                            if let Some(round_id) = current_round_id.take() {
-                                emit_acp_model_round_completed(
-                                    &app_handle,
-                                    &request.session_id,
-                                    &request.turn_id,
-                                    round_id,
-                                    current_round_has_tool_calls,
-                                )?;
-                            }
-                            app_handle
-                                .emit(
-                                    "agentic://dialog-turn-cancelled",
-                                    serde_json::json!({
-                                        "sessionId": request.session_id,
-                                        "turnId": request.turn_id,
-                                        "subagentParentInfo": null,
-                                    }),
-                                )
-                                .map_err(|e| {
-                                    openbitfun_core::util::errors::OpenBitFunError::service(
-                                        e.to_string(),
-                                    )
-                                })?;
-                        }
-                    }
-                    Ok(())
+                    let events = projector
+                        .project(event)
+                        .map_err(openbitfun_core::util::errors::OpenBitFunError::service)?;
+                    emit_projected(&app_handle, events)
                 },
             )
             .await;
 
         if let Err(error) = result {
-            let _ = app_handle.emit(
-                "agentic://dialog-turn-failed",
-                serde_json::json!({
-                    "sessionId": request.session_id,
-                    "turnId": request.turn_id,
-                    "error": error.to_string(),
-                    "errorCategory": null,
-                    "errorDetail": null,
-                    "subagentParentInfo": null,
-                }),
-            );
+            let _ = emit_projected(&app_handle, vec![projector.turn_failed(&error.to_string())]);
         }
     });
 

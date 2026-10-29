@@ -6846,6 +6846,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "openbitfun-core-types",
+ "openbitfun-events",
  "openbitfun-product-domains",
  "serde",
  "serde_json",

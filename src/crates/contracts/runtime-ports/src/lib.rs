@@ -13,6 +13,8 @@ pub use openbitfun_core_types::{
     WorktreeSummary,
 };
 
+#[cfg(feature = "external-agent-port")]
+mod external_agent;
 #[cfg(feature = "hook-function-runtime")]
 mod hook_function;
 #[cfg(feature = "workspace-ports")]
@@ -29,6 +31,8 @@ mod ptc_tool;
 mod script_tool;
 #[cfg(feature = "web-search-port")]
 mod web_search;
+#[cfg(feature = "external-agent-port")]
+pub use external_agent::*;
 #[cfg(feature = "hook-function-runtime")]
 pub use hook_function::*;
 #[cfg(feature = "workspace-ports")]

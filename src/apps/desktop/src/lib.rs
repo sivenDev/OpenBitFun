@@ -700,6 +700,11 @@ pub async fn run() {
     };
     startup_timings.record_elapsed("initialize_app_state", step_started);
     startup_trace.record_elapsed_step("native_pre_tauri", "initialize_app_state", step_started);
+    if let Some(acp_client_service) = app_state.acp_client_service.clone() {
+        coordinator.set_external_agent_executor(Arc::new(
+            openbitfun_acp::client::AcpExternalAgentExecutor::new(acp_client_service),
+        ));
+    }
 
     // A Turn that is still executing exists nowhere durable but this log: the
     // persisted Session record stores a running Turn as idle so a restart never

@@ -1,6 +1,8 @@
 mod builtin_clients;
 mod config;
 mod dsh_profile;
+mod event_projection;
+mod executor;
 mod manager;
 mod prompt;
 mod remote_capability_store;
@@ -19,6 +21,10 @@ pub use config::{
     AcpClientRequirementProbe, AcpClientStatus, AcpClientSubagentConfig, AcpRequirementProbeItem,
     RemoteAcpClientRequirementSnapshot,
 };
+pub use event_projection::{
+    emit_projected_events, AcpProjectedEvent, AcpTurnEventProjector, AcpTurnProjectionTarget,
+};
+pub use executor::AcpExternalAgentExecutor;
 pub use manager::{
     AcpClientPermissionResponse, AcpClientService, AcpSessionConfigValue,
     CreateAcpFlowSessionRecordResponse, SetAcpSessionConfigOptionRequest,

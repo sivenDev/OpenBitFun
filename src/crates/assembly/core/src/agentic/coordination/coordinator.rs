@@ -1340,6 +1340,7 @@ pub struct ConversationCoordinator {
     thread_goal_operations: crate::agentic::keyed_lock::KeyedAsyncLock,
     terminal_port: OnceLock<Arc<dyn TerminalPort>>,
     remote_exec_port: OnceLock<Arc<dyn RemoteExecPort>>,
+    external_agent_executor: OnceLock<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>>,
     hook_registry: openbitfun_agent_runtime::native_hooks::RuntimeHookRegistry,
 }
 
@@ -2262,6 +2263,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             thread_goal_operations: crate::agentic::keyed_lock::KeyedAsyncLock::default(),
             terminal_port: OnceLock::new(),
             remote_exec_port: OnceLock::new(),
+            external_agent_executor: OnceLock::new(),
             hook_registry: crate::native_hooks::new_runtime_hook_registry(),
         }
     }
@@ -2583,6 +2585,41 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
 
     pub fn remote_exec_port(&self) -> Option<Arc<dyn RemoteExecPort>> {
         self.remote_exec_port.get().map(Arc::clone)
+    }
+
+    /// Registers the host's external agent executor (for example ACP). A host
+    /// that registers none cannot run external agent turns.
+    pub fn set_external_agent_executor(
+        &self,
+        executor: Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
+    ) {
+        if self.external_agent_executor.set(executor).is_err() {
+            log::warn!(
+                "External agent executor is already configured; ignoring duplicate injection"
+            );
+        }
+    }
+
+    pub fn external_agent_executor(
+        &self,
+    ) -> Option<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>> {
+        self.external_agent_executor.get().map(Arc::clone)
+    }
+
+    /// Availability of an external agent in `context`, reporting a missing
+    /// executor explicitly instead of failing later in the turn.
+    pub async fn external_agent_availability(
+        &self,
+        client_id: &str,
+        context: &openbitfun_runtime_ports::ExternalAgentContext,
+    ) -> openbitfun_runtime_ports::ExternalAgentAvailability {
+        match self.external_agent_executor() {
+            Some(executor) => executor.availability(client_id, context).await,
+            None => openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable {
+                reason: openbitfun_runtime_ports::ExternalAgentUnavailableReason::ExecutorMissing,
+                detail: "This host has no external agent executor".to_string(),
+            },
+        }
     }
 
     pub(super) fn execution_cancel_token_for_dialog_turn(

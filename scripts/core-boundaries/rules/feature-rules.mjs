@@ -124,6 +124,7 @@ export const optionalDependencyFeatureOwnerRules = [
     dependencies: [
       { depName: 'anyhow', ownerFeatures: ['workspace-ports'] },
       { depName: 'openbitfun-core-types', ownerFeatures: ['agent-api', 'ts'] },
+      { depName: 'openbitfun-events', ownerFeatures: ['external-agent-port'] },
       { depName: 'openbitfun-product-domains', ownerFeatures: ['permission', 'product-search', 'ts'] },
       { depName: 'tokio', ownerFeatures: ['remote-exec-port', 'terminal-port', 'workspace-ports'] },
       { depName: 'tokio-util', ownerFeatures: ['workspace-ports'] },
@@ -405,6 +406,7 @@ export const capabilityContractDependencyRules = [
     featureProfiles: {
       default: [],
       'agent-api': ['dep:openbitfun-core-types'],
+      'external-agent-port': ['dep:openbitfun-events'],
       'git-port': [],
       'hook-function-runtime': [],
       permission: ['dep:openbitfun-product-domains'],
@@ -458,6 +460,7 @@ export const capabilityContractDependencyRules = [
         [capabilityEdge(['permission', 'workspace-ports'])],
         [
           capabilityForwarder('agent-runtime', 'agent-api'),
+          capabilityForwarder('agent-runtime', 'external-agent-port'),
           capabilityForwarder('agent-runtime', 'git-port'),
           capabilityForwarder('agent-runtime', 'remote-exec-port'),
           capabilityForwarder('agent-runtime', 'remote-workspace-ports'),
@@ -897,6 +900,7 @@ export const coreClosedFeatureProfileRules = [
       'dep:openbitfun-agent-tools',
       'openbitfun-agent-tools/computer-use-contract',
       'openbitfun-runtime-ports/agent-api',
+      'openbitfun-runtime-ports/external-agent-port',
       'openbitfun-runtime-ports/git-port',
       'openbitfun-runtime-ports/remote-exec-port',
       'openbitfun-runtime-ports/remote-workspace-ports',

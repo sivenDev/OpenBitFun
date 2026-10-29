@@ -422,6 +422,17 @@ pub(crate) async fn run_external_client(
 }
 
 async fn create_client_service() -> Result<Arc<AcpClientService>> {
+    let service = new_client_service().await?;
+    service
+        .initialize_all()
+        .await
+        .map_err(|error| anyhow!(error.to_string()))?;
+    Ok(service)
+}
+
+/// Builds the ACP client service without registering the legacy per-client
+/// prompt tools, so it can back the external agent executor alone.
+pub(crate) async fn new_client_service() -> Result<Arc<AcpClientService>> {
     openbitfun_core::service::config::initialize_global_config()
         .await
         .map_err(|error| anyhow!(error.to_string()))?;
@@ -430,13 +441,7 @@ async fn create_client_service() -> Result<Arc<AcpClientService>> {
         .map_err(|error| anyhow!(error.to_string()))?;
     let path_manager = openbitfun_core::infrastructure::try_get_path_manager_arc()
         .map_err(|error| anyhow!(error.to_string()))?;
-    let service = AcpClientService::new(config_service, path_manager)
-        .map_err(|error| anyhow!(error.to_string()))?;
-    service
-        .initialize_all()
-        .await
-        .map_err(|error| anyhow!(error.to_string()))?;
-    Ok(service)
+    AcpClientService::new(config_service, path_manager).map_err(|error| anyhow!(error.to_string()))
 }
 
 async fn load_client_config_json(service: &Arc<AcpClientService>) -> Result<Value> {

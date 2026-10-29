@@ -552,6 +552,7 @@ test('portable contract crates expose only capability-local feature slices', asy
     new Set([
       'default',
       'agent-api',
+      'external-agent-port',
       'git-port',
       'hook-function-runtime',
       'permission',
@@ -570,6 +571,7 @@ test('portable contract crates expose only capability-local feature slices', asy
     ]),
   );
   assert.deepEqual(runtimePortFeatures['agent-api'], ['dep:openbitfun-core-types']);
+  assert.deepEqual(runtimePortFeatures['external-agent-port'], ['dep:openbitfun-events']);
   assert.deepEqual(runtimePortFeatures['hook-function-runtime'], []);
   assert.deepEqual(runtimePortFeatures['plugin-runtime'], []);
   assert.deepEqual(runtimePortFeatures['product-search'], ['dep:openbitfun-product-domains']);
@@ -812,6 +814,7 @@ function pathDependency(repoCratePath, options = {}) {
 const RUNTIME_PORT_FEATURE_PROFILES = {
   default: [],
   'agent-api': ['dep:openbitfun-core-types'],
+  'external-agent-port': ['dep:openbitfun-events'],
   'git-port': [],
   'hook-function-runtime': [],
   permission: ['dep:openbitfun-product-domains'],
@@ -1073,6 +1076,11 @@ test('contract and AI adapter tests keep reviewed feature and failure-domain top
       name: 'ptc_tool_port_contracts',
       path: 'tests/ptc_tool_port_contracts.rs',
       requiredFeatures: ['ptc-runtime'],
+    },
+    {
+      name: 'external_agent_port_contracts',
+      path: 'tests/external_agent_port_contracts.rs',
+      requiredFeatures: ['external-agent-port'],
     },
     {
       name: 'session_store_contracts',
