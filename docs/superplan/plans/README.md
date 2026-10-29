@@ -4,4 +4,17 @@
 
 ## Status
 
-No plans yet.
+| Type | Plans | Draft |
+| --- | --- | --- |
+| `feature` | 4 | 4 |
+
+## Plan Groups
+
+### Feature Plans
+
+| ID | Plan | Status | Created |
+| --- | --- | --- | --- |
+| `F001-01` | [宿主中立的外部智能体执行器（ACP）](features/F001/01-external-agent-executor.md) | `draft` | 2026-10-29 |
+| `F001-02` | [通过 Task 后台委派外部智能体](features/F001/02-task-delegation.md) | `draft` | 2026-10-29 |
+| `F001-03` | [智能体列表展示外部智能体与可用状态](features/F001/03-agent-list.md) | `draft` | 2026-10-29 |
+| `F001-04` | [外部智能体委派的远程场景](features/F001/04-remote-scenarios.md) | `draft` | 2026-10-29 |
