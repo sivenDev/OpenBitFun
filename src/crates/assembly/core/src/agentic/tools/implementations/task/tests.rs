@@ -2349,16 +2349,87 @@ async fn external_agent_admission(
     parent_is_swarm: bool,
     model_override_requested: bool,
 ) -> Result<(), String> {
-    AgentExecutionTool::ensure_external_agent_available(
+    external_agent_admission_in(
         coordinator,
         &test_tool_context("Standard"),
-        "session-1",
-        "claude-code",
         parent_is_swarm,
         model_override_requested,
+        &openbitfun_runtime_ports::PermissionRuntimeCeiling::default(),
+    )
+    .await
+}
+
+async fn external_agent_admission_in(
+    coordinator: &crate::agentic::coordination::ConversationCoordinator,
+    context: &ToolUseContext,
+    parent_is_swarm: bool,
+    model_override_requested: bool,
+    parent_ceiling: &openbitfun_runtime_ports::PermissionRuntimeCeiling,
+) -> Result<(), String> {
+    AgentExecutionTool::ensure_external_agent_available(
+        coordinator,
+        context,
+        "session-1",
+        "claude-code",
+        super::execution::ExternalAgentAdmissionFacts {
+            parent_is_swarm,
+            model_override_requested,
+            parent_ceiling,
+        },
     )
     .await
     .map_err(|error| error.to_string())
+}
+
+#[tokio::test]
+async fn external_agent_admission_never_widens_parent_restrictions() {
+    use openbitfun_runtime_ports::{
+        ExternalAgentAvailability, PermissionEffect, PermissionRule, PermissionRuntimeCeiling,
+    };
+
+    let (coordinator, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
+    coordinator.set_external_agent_executor(Arc::new(FixedAvailabilityExecutor(
+        ExternalAgentAvailability::Available,
+    )));
+
+    let restricted = PermissionRuntimeCeiling::try_new(vec![PermissionRule {
+        action: "edit".to_string(),
+        resource: "*".to_string(),
+        effect: PermissionEffect::Deny,
+    }])
+    .expect("deny-only ceiling");
+    let error = external_agent_admission_in(
+        &coordinator,
+        &test_tool_context("Standard"),
+        false,
+        false,
+        &restricted,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("permission restrictions"));
+
+    let error = external_agent_admission_in(
+        &coordinator,
+        &test_tool_context("DeepReview"),
+        false,
+        false,
+        &PermissionRuntimeCeiling::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("not available to review agents"));
+
+    let error = external_agent_admission_in(
+        &coordinator,
+        &test_tool_context("Minimal"),
+        false,
+        false,
+        &PermissionRuntimeCeiling::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("not available in this mode"));
 }
 
 #[tokio::test]

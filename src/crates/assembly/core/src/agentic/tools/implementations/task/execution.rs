@@ -182,17 +182,55 @@ async fn child_delegation_policy(
     }
 }
 
+pub(super) struct ExternalAgentAdmissionFacts<'a> {
+    pub(super) parent_is_swarm: bool,
+    pub(super) model_override_requested: bool,
+    pub(super) parent_ceiling: &'a PermissionRuntimeCeiling,
+}
+
 impl AgentExecutionTool {
-    /// Admits an `acp:<client_id>` subagent only when the host registered an
-    /// executor and the client is enabled, accepts delegation, and is runnable.
+    /// Admits an `acp:<client_id>` subagent only when no parent restriction
+    /// would be lost and the host registered an executor for an enabled,
+    /// delegation-accepting, runnable client.
+    ///
+    /// An external agent runs its own tools, so OpenBitFun cannot apply the
+    /// parent's permission ceiling or tool policy to it. Delegation is refused
+    /// instead of silently widening what the parent may do.
     pub(super) async fn ensure_external_agent_available(
         coordinator: &crate::agentic::coordination::ConversationCoordinator,
         context: &ToolUseContext,
         parent_session_id: &str,
         client_id: &str,
-        parent_is_swarm: bool,
-        model_override_requested: bool,
+        facts: ExternalAgentAdmissionFacts<'_>,
     ) -> OpenBitFunResult<()> {
+        let ExternalAgentAdmissionFacts {
+            parent_is_swarm,
+            model_override_requested,
+            parent_ceiling,
+        } = facts;
+        if Self::is_deep_review_context(Some(context)) {
+            return Err(OpenBitFunError::tool(format!(
+                "external agent acp:{client_id} is not available to review agents"
+            )));
+        }
+        // Same mode set that previously received the legacy
+        // `acp__<client>__prompt` tools.
+        let parent_accepts_external_agents =
+            context.agent_type.as_deref().is_some_and(|agent_type| {
+                get_agent_registry()
+                    .get_agent(agent_type, context.workspace_id())
+                    .is_some_and(|agent| agent.include_dynamic_mcp_tools())
+            });
+        if !parent_accepts_external_agents {
+            return Err(OpenBitFunError::tool(format!(
+                "external agent acp:{client_id} is not available in this mode"
+            )));
+        }
+        if !parent_ceiling.is_empty() {
+            return Err(OpenBitFunError::tool(format!(
+                "external agent acp:{client_id} cannot be delegated from a session with permission restrictions: the external agent's own tools cannot be held to them"
+            )));
+        }
         if parent_is_swarm {
             return Err(OpenBitFunError::tool(format!(
                 "external agent acp:{client_id} is not available inside an Ultra Swarm"
@@ -394,6 +432,27 @@ impl AgentExecutionTool {
                     "The target agent is outside the current delegation scope".to_string(),
                 ));
             }
+            // Follow-up input re-checks admission: the parent may have moved
+            // to a restricted mode since the external agent was spawned.
+            if let Some(client_id) = external_agent_client_id(&target_agent_type) {
+                let parent_ceiling =
+                    Self::derive_parent_permission_runtime_ceiling(context).await?;
+                Self::ensure_external_agent_available(
+                    &coordinator,
+                    context,
+                    &session_id,
+                    client_id,
+                    ExternalAgentAdmissionFacts {
+                        parent_is_swarm,
+                        model_override_requested: external_subagent_model_override_requested(
+                            invocation.model_id.as_deref(),
+                            invocation.inherit_parent_model,
+                        ),
+                        parent_ceiling: &parent_ceiling,
+                    },
+                )
+                .await?;
+            }
         }
         let mut model_id = invocation.model_id.clone();
         let mut inherit_parent_model = invocation.inherit_parent_model;
@@ -420,16 +479,21 @@ impl AgentExecutionTool {
                     None
                 } else if let Some(client_id) = requested_external_agent.as_deref() {
                     let subagent_type = invocation.subagent_type.clone().unwrap_or_default();
+                    let parent_ceiling =
+                        Self::derive_parent_permission_runtime_ceiling(context).await?;
                     Self::ensure_external_agent_available(
                         &coordinator,
                         context,
                         &session_id,
                         client_id,
-                        parent_is_swarm,
-                        external_subagent_model_override_requested(
-                            model_id.as_deref(),
-                            inherit_parent_model,
-                        ),
+                        ExternalAgentAdmissionFacts {
+                            parent_is_swarm,
+                            model_override_requested: external_subagent_model_override_requested(
+                                model_id.as_deref(),
+                                inherit_parent_model,
+                            ),
+                            parent_ceiling: &parent_ceiling,
+                        },
                     )
                     .await?;
                     logical_subagent_type = Some(subagent_type.clone());

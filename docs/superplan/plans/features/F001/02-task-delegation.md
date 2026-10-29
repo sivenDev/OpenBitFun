@@ -63,7 +63,7 @@ parent: "F001"
 **Change Map:**
 - `external_agent_turn.rs`：经执行器运行一轮回合，把执行器事件投影为子会话的模型轮次、文本、思考、工具事件；子会话取消令牌触发执行器取消；结果整形为 `ExecutionResult`，使完成、超时、取消、持久化路径原样适用
 - `coordinator.rs`：分支点在 `execute_hidden_subagent_internal` 里唯一的回合任务——`acp:` 类型走执行器，其余不变；前台、后台（`start_background_subagent` 进入同一函数）、`send_input` 共用
-- `execution.rs`：`acp:` 类型绕过本地子智能体目录，按执行器可用性准入；拒绝 `model_id`/`inherit` 覆盖与 Ultra Swarm 内委派
+- `execution.rs`：`acp:` 类型绕过本地子智能体目录，按执行器可用性准入；拒绝 `model_id`/`inherit` 覆盖与 Ultra Swarm 内委派。外部智能体自带工具，OpenBitFun 无法对其执行父会话的权限上限，因此父会话有任何权限限制（非空的权限上限）、处于 DeepReview、或所在模式不接受动态工具（与旧 `acp__` 工具的适用模式一致）时拒绝委派；`send_input` 追加输入时重新校验
 - `schema.rs`：说明 `acp:<client_id>` 类型；目录中的条目由 F001-03 的目录提供者加入
 - 偏差：`validation.rs`、`scheduler.rs`、`execution_engine.rs` 无需修改——现有输入解析已拒绝 `subagent_type` 与 `fork_context=true` 同用，回合分支只需一处
 
@@ -71,7 +71,8 @@ parent: "F001"
 - `cargo test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::coordination::external_agent_turn`
 - `cargo test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::tools::implementations::task`
 
-- [x] 假执行器测试覆盖：前台完成并流式输出、同一子会话的 `send_input` 复用外部会话、超时取消外部回合并返回部分结果、父回合取消级联、未注册执行器与不可用客户端、执行器错误类型、`fork_context` 拒绝、模型覆盖与 Swarm 拒绝（external_agent_turn 11 passed，task 88 passed）
+- [x] 准入测试覆盖：受限父会话、DeepReview、Minimal 模式均被拒绝（安全审查后补充）
+- [x] 假执行器测试覆盖：前台完成并流式输出、同一子会话的 `send_input` 复用外部会话、超时取消外部回合并返回部分结果、父回合取消级联、未注册执行器与不可用客户端、执行器错误类型、`fork_context` 拒绝、模型覆盖与 Swarm 拒绝（external_agent_turn 11 passed，task 89 passed）
 - 后台加 `AgentWait`：后台路径进入同一个 `execute_hidden_subagent_internal`，未单独测试——`start_background_subagent` 依赖进程级全局协调器，测试中无法隔离构造
 
 ## Task 2: 取消级联与权限归属
