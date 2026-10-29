@@ -19,3 +19,10 @@
 
 可选正文（一段话即可）：范围：...；验收：...；限制或非目标：...。
 -->
+
+## F001: 助理可委派任务给 Claude Code 智能体，并在智能体列表中显示
+
+- status: proposed
+- created: 2026-10-29
+
+范围：在设置中启用 Claude Code ACP 后，用户在助理会话中安排任务，助理能调用 Claude Code 智能体完成该任务，Claude Code 同时作为一个智能体出现在智能体列表中；验收：启用后智能体列表可见 Claude Code，助理会话中下达任务后由 Claude Code 执行并把结果返回助理；未启用 ACP 时不显示、不可调用；限制或非目标：不替代现有的独立 Claude Code ACP 会话入口。
