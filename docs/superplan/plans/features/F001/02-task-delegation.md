@@ -2,7 +2,7 @@
 id: "F001-02"
 title: "通过 Task 后台委派外部智能体"
 type: "feature"
-status: "draft"
+status: "approved"
 summary: "外部智能体作为 Task 的子智能体类型 acp:<client_id>，支持后台运行、AgentWait、追加指令、级联取消与可打开的子会话。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-29"

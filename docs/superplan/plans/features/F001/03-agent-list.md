@@ -2,7 +2,7 @@
 id: "F001-03"
 title: "智能体列表展示外部智能体与可用状态"
 type: "feature"
-status: "draft"
+status: "approved"
 summary: "启用的 ACP 外部智能体以执行方式字段出现在智能体列表中，显示可用状态与原因，详情链接到设置页。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-29"

@@ -2,7 +2,7 @@
 id: "F001-04"
 title: "外部智能体委派的远程场景"
 type: "feature"
-status: "draft"
+status: "approved"
 summary: "外部智能体委派在 SSH 远程工作区、手机端与 IM 远程控制、Peer Device Mode 下可用，Detached Dispatch 中明确报不支持。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-29"
