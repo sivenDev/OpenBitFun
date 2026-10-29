@@ -50,6 +50,16 @@ export function deriveSubagentExecutionStatus(
   }
 }
 
+/** True while the child turn is blocked on a tool approval (native or ACP). */
+export function subagentTurnAwaitsApproval(turn: DialogTurn | null | undefined): boolean {
+  if (deriveSubagentExecutionStatus(turn) !== 'running') {
+    return false;
+  }
+  return Boolean(turn?.modelRounds?.some(round => round.items.some(item => (
+    item.type === 'tool' && item.status === 'pending_confirmation'
+  ))));
+}
+
 function isActiveTurn(turn: DialogTurn | null | undefined): boolean {
   if (!turn) {
     return false;

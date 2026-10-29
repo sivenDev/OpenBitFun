@@ -2305,3 +2305,125 @@ fn deep_review_retry_scope_prompt_prepend_bounds_review_files() {
     assert!(prompt.contains("- src/crates/assembly/core/src/token.rs"));
     assert!(prompt.ends_with("Continue the security review."));
 }
+
+struct FixedAvailabilityExecutor(openbitfun_runtime_ports::ExternalAgentAvailability);
+
+#[async_trait]
+impl openbitfun_runtime_ports::ExternalAgentExecutor for FixedAvailabilityExecutor {
+    async fn availability(
+        &self,
+        _client_id: &str,
+        _context: &openbitfun_runtime_ports::ExternalAgentContext,
+    ) -> openbitfun_runtime_ports::ExternalAgentAvailability {
+        self.0.clone()
+    }
+
+    async fn run_turn(
+        &self,
+        _request: openbitfun_runtime_ports::ExternalAgentTurnRequest,
+        _sink: &dyn openbitfun_runtime_ports::ExternalAgentEventSink,
+    ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::ExternalAgentTurnOutcome>
+    {
+        unreachable!("admission tests never run a turn")
+    }
+
+    async fn cancel(
+        &self,
+        _client_id: &str,
+        _openbitfun_session_id: &str,
+    ) -> openbitfun_runtime_ports::PortResult<bool> {
+        Ok(false)
+    }
+
+    async fn close(
+        &self,
+        _client_id: &str,
+        _openbitfun_session_id: &str,
+    ) -> openbitfun_runtime_ports::PortResult<()> {
+        Ok(())
+    }
+}
+
+async fn external_agent_admission(
+    coordinator: &crate::agentic::coordination::ConversationCoordinator,
+    parent_is_swarm: bool,
+    model_override_requested: bool,
+) -> Result<(), String> {
+    AgentExecutionTool::ensure_external_agent_available(
+        coordinator,
+        &test_tool_context("Standard"),
+        "session-1",
+        "claude-code",
+        parent_is_swarm,
+        model_override_requested,
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tokio::test]
+async fn external_agent_admission_requires_a_registered_available_executor() {
+    use openbitfun_runtime_ports::{ExternalAgentAvailability, ExternalAgentUnavailableReason};
+
+    let (unregistered, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
+    let error = external_agent_admission(&unregistered, false, false)
+        .await
+        .unwrap_err();
+    assert!(error.contains("acp:claude-code is unavailable (ExecutorMissing)"));
+
+    let (disabled, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
+    disabled.set_external_agent_executor(Arc::new(FixedAvailabilityExecutor(
+        ExternalAgentAvailability::Unavailable {
+            reason: ExternalAgentUnavailableReason::DelegationDisabled,
+            detail: "delegation is off".to_string(),
+        },
+    )));
+    let error = external_agent_admission(&disabled, false, false)
+        .await
+        .unwrap_err();
+    assert!(error.contains("(DelegationDisabled): delegation is off"));
+
+    let (available, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
+    available.set_external_agent_executor(Arc::new(FixedAvailabilityExecutor(
+        ExternalAgentAvailability::Available,
+    )));
+    external_agent_admission(&available, false, false)
+        .await
+        .expect("an available external agent is admitted");
+    let error = external_agent_admission(&available, false, true)
+        .await
+        .unwrap_err();
+    assert!(error.contains("external_subagent_model_override_unsupported"));
+    let error = external_agent_admission(&available, true, false)
+        .await
+        .unwrap_err();
+    assert!(error.contains("not available inside an Ultra Swarm"));
+}
+
+#[tokio::test]
+async fn validate_input_rejects_fork_context_for_external_agents() {
+    let validation = AgentExecutionTool::new()
+        .validate_input(
+            &json!({
+                "action": "spawn",
+                "agent_id": "claude-fix",
+                "prompt": "Fix the parser",
+                "fork_context": true,
+                "subagent_type": "acp:claude-code"
+            }),
+            None,
+        )
+        .await;
+
+    assert!(!validation.result);
+    assert!(validation.message.as_deref().is_some_and(
+        |message| message.contains("subagent_type cannot be combined with fork_context=true")
+    ));
+}
+
+#[test]
+fn task_description_documents_external_agent_types() {
+    let description = AgentExecutionTool::new().render_description();
+    assert!(description.contains("`acp:<client_id>`"));
+    assert!(description.contains("do not pass `model_id`"));
+}

@@ -2387,6 +2387,8 @@
       "headerLinePrefix": "{{agentType}}",
       "headerLineSuffix": ": {{description}}",
       "defaultAgentKind": "Sub-agent",
+      "externalAgentLabel": "{{clientId}} (external agent)",
+      "externalAgentModel": "Chosen by the external agent",
       "cancelSession": "Cancel session: {{sessionId}}",
       "waitingConfirm": "Waiting for confirmation",
       "executing": "Executing...",

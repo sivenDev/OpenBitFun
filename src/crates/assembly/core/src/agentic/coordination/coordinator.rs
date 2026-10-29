@@ -2,6 +2,9 @@
 //!
 //! Top-level component that integrates all subsystems and provides a unified interface
 
+use super::external_agent_turn::{
+    external_agent_client_id, run_external_agent_turn, ExternalAgentTurn,
+};
 use super::{
     coordination_store::{BackgroundTaskRegistration, CoordinationStore},
     scheduler::{
@@ -11164,15 +11167,46 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             timeout_seconds,
             wait_ms
         );
-        let mut execution_task = tokio::spawn(async move {
-            execution_engine
-                .execute_dialog_turn(
-                    agent_type_for_execution,
-                    initial_messages,
-                    execution_context,
-                )
-                .await
-        });
+        let mut execution_task = match external_agent_client_id(&agent_type) {
+            Some(client_id) => {
+                drop((execution_engine, initial_messages, execution_context));
+                let turn = ExternalAgentTurn {
+                    executor: self.external_agent_executor(),
+                    event_queue: self.event_queue.clone(),
+                    agent_type: agent_type_for_execution,
+                    dialog_turn_id: dialog_turn_id.clone(),
+                    request: openbitfun_runtime_ports::ExternalAgentTurnRequest {
+                        client_id: client_id.to_string(),
+                        context: openbitfun_runtime_ports::ExternalAgentContext {
+                            openbitfun_session_id: session_id.clone(),
+                            workspace_path: subagent_workspace_path.clone(),
+                            remote_connection_id: session
+                                .config
+                                .is_remote_workspace()
+                                .then(|| session.config.remote_connection_id.clone())
+                                .flatten(),
+                            session_storage_path: subagent_session_storage_path
+                                .as_ref()
+                                .map(|path| path.to_string_lossy().into_owned()),
+                        },
+                        prompt: user_input_text.clone(),
+                        // The coordinator deadline below owns the timeout.
+                        timeout_seconds: None,
+                    },
+                    cancel_token: subagent_cancel_token.clone(),
+                };
+                tokio::spawn(run_external_agent_turn(turn))
+            }
+            None => tokio::spawn(async move {
+                execution_engine
+                    .execute_dialog_turn(
+                        agent_type_for_execution,
+                        initial_messages,
+                        execution_context,
+                    )
+                    .await
+            }),
+        };
         let abort_handle = execution_task.abort_handle();
 
         if subagent_parent_info.is_some() {
@@ -18876,7 +18910,7 @@ pub(crate) mod tests {
         test_coordinator_with_config(max_active_sessions, false)
     }
 
-    fn test_persistent_coordinator() -> (ConversationCoordinator, Arc<SessionManager>) {
+    pub(crate) fn test_persistent_coordinator() -> (ConversationCoordinator, Arc<SessionManager>) {
         test_coordinator_with_config(100, true)
     }
 

@@ -22,7 +22,12 @@ import { getReviewerContextBySubagentId } from '@/shared/services/reviewTeamServ
 import type { ReviewerContext } from '@/shared/services/reviewTeamService';
 import { openBtwSessionInAuxPane } from '../services/btwSessionPane';
 import { flowChatStore } from '../store/FlowChatStore';
-import { deriveSubagentExecutionStatus, findProjectedSession } from '../utils/subagentProjection';
+import {
+  deriveSubagentExecutionStatus,
+  findProjectedSession,
+  subagentTurnAwaitsApproval,
+} from '../utils/subagentProjection';
+import { acpClientIdFromAgentType } from '../utils/acpSession';
 import { sessionLineageLifecycleForSession } from '../utils/sessionLineage';
 import {
   SubagentAvatar,
@@ -282,8 +287,11 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
       readStringValue(linkedSubagentSession?.config?.agentType) ||
       inputSubagentType ||
       'Not provided';
-    const modelName =
-      readStringValue(toolItem.subagentModelDisplayName) ||
+    // External agents pick their own model; the child session's model
+    // binding is not what runs the turn.
+    const modelName = acpClientIdFromAgentType(agentType)
+      ? t('toolCards.taskTool.externalAgentModel')
+      : readStringValue(toolItem.subagentModelDisplayName) ||
       readStringValue(linkedSubagentSession?.config?.modelName) ||
       readStringValue(toolItem.subagentModelId) ||
       readStringValue(toolCall.input.model_id) ||
@@ -337,6 +345,8 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
     ? deriveSubagentExecutionStatus(linkedSubagentTurn)
     : null;
   const projectedSubagentIsRunning = projectedSubagentStatus === 'running';
+  const projectedSubagentAwaitsApproval = projectedSubagentStatus != null
+    && subagentTurnAwaitsApproval(linkedSubagentTurn);
   const reviewTaskOutcome = isReviewCoverageTask && !projectedSubagentIsRunning
     ? deriveReviewTaskOutcome(toolItem)
     : null;
@@ -345,7 +355,9 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
   const isCancelledResult = !projectedSubagentIsRunning && (
     readTaskWasCancelled(status, toolResult) || reviewTaskOutcome === 'stopped'
   );
-  const displayStatus = projectedSubagentIsRunning
+  const displayStatus = projectedSubagentAwaitsApproval
+    ? 'waiting'
+    : projectedSubagentIsRunning
     ? 'running'
     : isCancelledResult
     ? 'cancelled'
@@ -380,7 +392,10 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
       (taskInput?.description || '').trim() || t('toolCards.taskDetailPanel.untitled');
     const raw = taskInput?.agentType;
     let agentTypeLabel: string;
-    if (raw && raw !== 'Not provided') {
+    const externalClientId = acpClientIdFromAgentType(raw);
+    if (externalClientId) {
+      agentTypeLabel = t('toolCards.taskTool.externalAgentLabel', { clientId: externalClientId });
+    } else if (raw && raw !== 'Not provided') {
       const rc = taskInput?.isReviewCoverageTask ? null : taskInput?.reviewerContext;
       agentTypeLabel = taskInput?.isReviewCoverageTask
         ? t('toolCards.taskTool.reviewCoverageLabel')
@@ -481,6 +496,8 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
       ? t('toolCards.taskTool.failed')
       : isCancelledResult || displayStatus === 'cancelled'
         ? t('flowChatHeader.agentTreeStatus.cancelled')
+        : projectedSubagentAwaitsApproval
+        ? t('toolCards.taskTool.waitingConfirm')
         : capsuleLifecycle === 'completed'
           ? undefined
           : t(`flowChatHeader.agentTreeStatus.${capsuleLifecycle === 'finishing' ? 'running' : capsuleLifecycle}`);

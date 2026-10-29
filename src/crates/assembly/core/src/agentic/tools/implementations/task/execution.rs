@@ -1,5 +1,6 @@
 use super::*;
 use crate::agentic::agents::is_swarm_delegate_agent_type;
+use crate::agentic::coordination::external_agent_client_id;
 use crate::agentic::core::{SessionContinuationPolicy, SessionModelBindingPolicy};
 
 fn resolve_focused_review_model_selection(
@@ -182,6 +183,54 @@ async fn child_delegation_policy(
 }
 
 impl AgentExecutionTool {
+    /// Admits an `acp:<client_id>` subagent only when the host registered an
+    /// executor and the client is enabled, accepts delegation, and is runnable.
+    pub(super) async fn ensure_external_agent_available(
+        coordinator: &crate::agentic::coordination::ConversationCoordinator,
+        context: &ToolUseContext,
+        parent_session_id: &str,
+        client_id: &str,
+        parent_is_swarm: bool,
+        model_override_requested: bool,
+    ) -> OpenBitFunResult<()> {
+        if parent_is_swarm {
+            return Err(OpenBitFunError::tool(format!(
+                "external agent acp:{client_id} is not available inside an Ultra Swarm"
+            )));
+        }
+        if model_override_requested {
+            return Err(OpenBitFunError::tool(
+                "external_subagent_model_override_unsupported: external agents use their own model configuration"
+                    .to_string(),
+            ));
+        }
+        let availability = coordinator
+            .external_agent_availability(
+                client_id,
+                &openbitfun_runtime_ports::ExternalAgentContext {
+                    openbitfun_session_id: parent_session_id.to_string(),
+                    workspace_path: context
+                        .workspace_root()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                    remote_connection_id: context
+                        .workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.connection_id())
+                        .map(str::to_string),
+                    session_storage_path: None,
+                },
+            )
+            .await;
+        match availability {
+            openbitfun_runtime_ports::ExternalAgentAvailability::Available => Ok(()),
+            openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable { reason, detail } => {
+                Err(OpenBitFunError::tool(format!(
+                    "external agent acp:{client_id} is unavailable ({reason:?}): {detail}"
+                )))
+            }
+        }
+    }
+
     async fn derive_parent_permission_runtime_ceiling(
         context: &ToolUseContext,
     ) -> OpenBitFunResult<PermissionRuntimeCeiling> {
@@ -360,10 +409,31 @@ impl AgentExecutionTool {
         let mut logical_subagent_type = None;
         let mut continuation_policy = SessionContinuationPolicy::Reusable;
         let mut model_binding_policy = SessionModelBindingPolicy::Mutable;
+        let requested_external_agent = invocation
+            .subagent_type
+            .as_deref()
+            .and_then(external_agent_client_id)
+            .map(str::to_string);
         let subagent_type = match context_mode {
             SubagentContextMode::Fresh => {
                 if target_session_id.is_some() {
                     None
+                } else if let Some(client_id) = requested_external_agent.as_deref() {
+                    let subagent_type = invocation.subagent_type.clone().unwrap_or_default();
+                    Self::ensure_external_agent_available(
+                        &coordinator,
+                        context,
+                        &session_id,
+                        client_id,
+                        parent_is_swarm,
+                        external_subagent_model_override_requested(
+                            model_id.as_deref(),
+                            inherit_parent_model,
+                        ),
+                    )
+                    .await?;
+                    logical_subagent_type = Some(subagent_type.clone());
+                    Some(subagent_type)
                 } else {
                     let subagent_type = invocation.subagent_type.clone().ok_or_else(|| {
                         OpenBitFunError::tool(

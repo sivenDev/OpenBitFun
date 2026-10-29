@@ -223,7 +223,10 @@ export interface AcpPermissionOption {
 
 export interface AcpPermissionRequestEvent {
   permissionId: string;
+  /** ACP session id reported by the external agent. */
   sessionId: string;
+  /** Owning OpenBitFun session; absent from older backends. */
+  openbitfunSessionId?: string;
   toolCall?: {
     toolCallId?: string;
     title?: string;

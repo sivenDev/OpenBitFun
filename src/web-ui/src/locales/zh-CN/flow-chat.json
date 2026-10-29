@@ -2387,6 +2387,8 @@
       "headerLinePrefix": "{{agentType}}",
       "headerLineSuffix": "：{{description}}",
       "defaultAgentKind": "子代理",
+      "externalAgentLabel": "{{clientId}}（外部智能体）",
+      "externalAgentModel": "由外部智能体选择",
       "cancelSession": "取消会话：{{sessionId}}",
       "waitingConfirm": "等待确认",
       "executing": "执行中...",

@@ -3211,13 +3211,15 @@ pub async fn cancel_dialog_turn(
     app_state: State<'_, AppState>,
     request: CancelDialogTurnRequest,
 ) -> Result<(), String> {
-    if let Some(acp_client_service) = app_state.acp_client_service.as_ref() {
-        match acp_client_service
+    // A session can have both an ACP turn and a kernel turn: delegated
+    // external agents run their ACP turn inside a kernel subagent turn. Cancel
+    // both; only a standalone ACP session has no kernel turn to cancel.
+    let acp_cancelled = match app_state.acp_client_service.as_ref() {
+        Some(acp_client_service) => match acp_client_service
             .cancel_openbitfun_session(&request.session_id)
             .await
         {
-            Ok(true) => return Ok(()),
-            Ok(false) => {}
+            Ok(cancelled) => cancelled,
             Err(error) => {
                 log::error!(
                     "Failed to cancel ACP dialog turn: session_id={}, dialog_turn_id={}, error={}",
@@ -3227,10 +3229,11 @@ pub async fn cancel_dialog_turn(
                 );
                 return Err(format!("Failed to cancel ACP dialog turn: {}", error));
             }
-        }
-    }
+        },
+        None => false,
+    };
 
-    runtime
+    let runtime_result = runtime
         .agent_runtime()
         .cancel_turn(AgentTurnCancellationRequest {
             session_id: request.session_id.clone(),
@@ -3242,16 +3245,37 @@ pub async fn cancel_dialog_turn(
             cancel_descendants: true,
         })
         .await
-        .map_err(|e| {
+        .map(|_| ())
+        .map_err(|e| e.into_message());
+    settle_dialog_turn_cancellation(&request, acp_cancelled, runtime_result)
+}
+
+fn settle_dialog_turn_cancellation(
+    request: &CancelDialogTurnRequest,
+    acp_cancelled: bool,
+    runtime_result: Result<(), String>,
+) -> Result<(), String> {
+    match runtime_result {
+        Ok(()) => Ok(()),
+        Err(error) if acp_cancelled => {
+            log::debug!(
+                "ACP turn cancelled without a kernel turn: session_id={}, dialog_turn_id={}, runtime_error={}",
+                request.session_id,
+                request.dialog_turn_id,
+                error
+            );
+            Ok(())
+        }
+        Err(error) => {
             log::error!(
                 "Failed to cancel dialog turn: session_id={}, dialog_turn_id={}, error={}",
                 request.session_id,
                 request.dialog_turn_id,
-                e
+                error
             );
-            format!("Failed to cancel dialog turn: {}", e.into_message())
-        })
-        .map(|_| ())
+            Err(format!("Failed to cancel dialog turn: {}", error))
+        }
+    }
 }
 
 /// Request a recoverable interruption for a native local dialog turn. The
@@ -4314,6 +4338,38 @@ fn system_time_to_unix_secs(time: std::time::SystemTime) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dialog_turn_cancellation_settles_acp_and_kernel_turns_together() {
+        let request = CancelDialogTurnRequest {
+            session_id: "child-session".to_string(),
+            dialog_turn_id: "child-turn".to_string(),
+        };
+
+        // Delegated external agent: both the ACP turn and the kernel turn stop.
+        assert_eq!(
+            super::settle_dialog_turn_cancellation(&request, true, Ok(())),
+            Ok(())
+        );
+        // Standalone ACP session: no kernel turn is not an error.
+        assert_eq!(
+            super::settle_dialog_turn_cancellation(
+                &request,
+                true,
+                Err("no active turn".to_string())
+            ),
+            Ok(())
+        );
+        // Native session: a kernel cancellation failure is still reported.
+        assert_eq!(
+            super::settle_dialog_turn_cancellation(
+                &request,
+                false,
+                Err("no active turn".to_string())
+            ),
+            Err("Failed to cancel dialog turn: no active turn".to_string())
+        );
+    }
+
     use super::*;
     use openbitfun_core::service::session::{
         ModelRoundData, ToolCallData, ToolItemData, ToolResultData, TurnStatus, UserMessageData,

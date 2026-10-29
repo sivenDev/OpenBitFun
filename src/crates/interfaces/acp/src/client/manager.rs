@@ -159,6 +159,9 @@ pub struct AcpClientService {
     clients: DashMap<String, Arc<AcpClientConnection>>,
     pending_permissions: DashMap<String, PendingPermission>,
     session_permission_modes: DashMap<String, AcpClientPermissionMode>,
+    /// ACP session id -> owning OpenBitFun session id, so permission requests
+    /// can be attributed to the session (and its parent) that issued them.
+    session_owners: DashMap<String, String>,
 }
 
 struct PendingPermission {
@@ -235,6 +238,7 @@ impl AcpClientService {
             clients: DashMap::new(),
             pending_permissions: DashMap::new(),
             session_permission_modes: DashMap::new(),
+            session_owners: DashMap::new(),
         }))
     }
 
@@ -853,6 +857,7 @@ impl AcpClientService {
                 };
 
                 self.session_permission_modes.remove(&remote_session_id);
+                self.session_owners.remove(&remote_session_id);
                 let connection = cancel_handle
                     .as_ref()
                     .map(|handle| handle.connection.clone());
@@ -1608,6 +1613,8 @@ impl AcpClientService {
         );
         self.session_permission_modes
             .insert(remote_session_id.clone(), client.config.permission_mode);
+        self.session_owners
+            .insert(remote_session_id.clone(), openbitfun_session_id.to_string());
         if let Some(session_storage_path) = session_storage_path {
             self.session_persistence
                 .update_remote_session_state(
@@ -1700,12 +1707,14 @@ impl AcpClientService {
             },
         );
 
-        let payload = json!({
-            "permissionId": permission_id,
-            "sessionId": session_id,
-            "toolCall": request.tool_call,
-            "options": request.options,
-        });
+        let payload = permission_request_payload(
+            &permission_id,
+            &session_id,
+            self.session_owners
+                .get(&session_id)
+                .map(|owner| owner.value().clone()),
+            &request,
+        );
 
         if let Err(error) = emit_global_event(BackendEvent::Custom {
             event_name: "backend-event-acppermissionrequest".to_string(),
@@ -2714,6 +2723,26 @@ fn is_startup_timeout_error(error: &OpenBitFunError) -> bool {
     error.to_string().contains(STARTUP_TIMEOUT_ERROR_PREFIX)
 }
 
+/// `sessionId` stays the ACP session id for existing clients;
+/// `openbitfunSessionId` is additive and absent when the owner is unknown.
+fn permission_request_payload(
+    permission_id: &str,
+    acp_session_id: &str,
+    openbitfun_session_id: Option<String>,
+    request: &RequestPermissionRequest,
+) -> serde_json::Value {
+    let mut payload = json!({
+        "permissionId": permission_id,
+        "sessionId": acp_session_id,
+        "toolCall": request.tool_call,
+        "options": request.options,
+    });
+    if let Some(openbitfun_session_id) = openbitfun_session_id {
+        payload["openbitfunSessionId"] = json!(openbitfun_session_id);
+    }
+    payload
+}
+
 fn select_permission_by_kind(
     request: &RequestPermissionRequest,
     preferred: PermissionOptionKind,
@@ -2809,6 +2838,36 @@ mod tests {
         assert!(Arc::ptr_eq(&owned, &first));
         assert!(Arc::ptr_eq(&existing, &first));
         assert_eq!(clients.len(), 1);
+    }
+
+    #[test]
+    fn permission_requests_name_the_owning_openbitfun_session_when_known() {
+        let request = RequestPermissionRequest::new(
+            agent_client_protocol::schema::SessionId::new("acp-session-1".to_string()),
+            agent_client_protocol::schema::ToolCallUpdate::new(
+                "tool-1".to_string(),
+                agent_client_protocol::schema::ToolCallUpdateFields::new(),
+            ),
+            vec![PermissionOption::new(
+                "yes-once",
+                "Allow",
+                PermissionOptionKind::AllowOnce,
+            )],
+        );
+
+        let owned = permission_request_payload(
+            "acp_permission_1",
+            "acp-session-1",
+            Some("child-session".to_string()),
+            &request,
+        );
+        assert_eq!(owned["sessionId"], "acp-session-1");
+        assert_eq!(owned["openbitfunSessionId"], "child-session");
+        assert_eq!(owned["toolCall"]["toolCallId"], "tool-1");
+
+        let unknown =
+            permission_request_payload("acp_permission_2", "acp-session-1", None, &request);
+        assert!(unknown.get("openbitfunSessionId").is_none());
     }
 
     #[test]

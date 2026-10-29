@@ -1,5 +1,5 @@
 use super::query::merge_dynamic_mode_tools;
-use super::support::{merge_dynamic_acp_tools, merge_dynamic_mcp_tools};
+use super::support::merge_dynamic_mcp_tools;
 use super::{AgentRegistry, ExternalSubagentRegistration, ExternalSubagentRoute};
 use crate::agentic::agents::definitions::custom::{CustomMode, CustomSubagent, CustomSubagentKind};
 use crate::agentic::agents::registry::builtin::default_model_id_for_builtin_agent;
@@ -784,62 +784,25 @@ fn merge_dynamic_mcp_tools_appends_registered_mcp_tools_once() {
 }
 
 #[test]
-fn merge_dynamic_acp_tools_appends_registered_acp_subagents_once() {
-    let configured_tools = vec!["Read".to_string(), "AgentSpawn".to_string()];
-    let registered_tool_names = vec![
-        "Read".to_string(),
-        "AgentSpawn".to_string(),
-        "acp__codex__prompt".to_string(),
-        "acp__claude-code__prompt".to_string(),
-        "acp__codex__prompt".to_string(),
-    ];
-
-    let merged = merge_dynamic_acp_tools(configured_tools, &registered_tool_names);
-
-    assert_eq!(
-        merged,
-        vec![
-            "Read".to_string(),
-            "AgentSpawn".to_string(),
-            "acp__codex__prompt".to_string(),
-            "acp__claude-code__prompt".to_string(),
-        ]
-    );
-}
-
-#[test]
-fn merge_dynamic_acp_tools_ignores_other_tool_families() {
-    let configured_tools = vec!["Read".to_string()];
-    let registered_tool_names = vec![
-        "mcp__notion__notion-search".to_string(),
-        "PluginTool".to_string(),
-        "acptool__not__prefixed".to_string(),
-    ];
-
-    let merged = merge_dynamic_acp_tools(configured_tools.clone(), &registered_tool_names);
-
-    assert_eq!(merged, configured_tools);
-}
-
-#[test]
-fn merge_dynamic_mode_tools_appends_mcp_then_acp_tools() {
+fn merge_dynamic_mode_tools_appends_mcp_tools_but_not_legacy_acp_prompt_tools() {
     let resolved_tools = vec!["Read".to_string(), "AgentSpawn".to_string()];
     let registered_tool_names = vec![
         "Read".to_string(),
         "mcp__notion__notion-search".to_string(),
         "acp__codex__prompt".to_string(),
+        "acp__claude-code__prompt".to_string(),
         "AgentSpawn".to_string(),
     ];
 
     let merged = merge_dynamic_mode_tools(resolved_tools, &registered_tool_names, true);
 
+    // External agents are reached through AgentSpawn `acp:<client_id>`.
     assert_eq!(
         merged,
         vec![
             "Read".to_string(),
             "AgentSpawn".to_string(),
             "mcp__notion__notion-search".to_string(),
-            "acp__codex__prompt".to_string(),
         ]
     );
 }

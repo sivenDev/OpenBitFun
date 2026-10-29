@@ -47,6 +47,37 @@ describe('ACP permission notification bridge', () => {
     }]);
   });
 
+  it('flags the parent conversation when a delegated external agent waits for approval', () => {
+    addToolCard('tool-3');
+    const store = FlowChatStore.getInstance();
+    store.setState(prev => {
+      const sessions = new Map(prev.sessions);
+      const child = sessions.get('session-1')!;
+      sessions.set('session-1', {
+        ...child,
+        sessionKind: 'subagent',
+        parentSessionId: 'parent-session',
+      } as Session);
+      sessions.set('parent-session', {
+        ...child,
+        sessionId: 'parent-session',
+        dialogTurns: [],
+      } as Session);
+      return { ...prev, sessions, activeSessionId: 'other-session' };
+    });
+
+    expect(handleAcpPermissionRequestForToolCard({
+      permissionId: 'permission-3',
+      sessionId: 'acp-session-3',
+      openbitfunSessionId: 'session-1',
+      toolCall: { toolCallId: 'tool-3' },
+    })).toBe(true);
+
+    const sessions = store.getState().sessions;
+    expect(sessions.get('session-1')?.needsUserAttention).toBe('tool_confirm');
+    expect(sessions.get('parent-session')?.needsUserAttention).toBe('tool_confirm');
+  });
+
   it('waits to emit until a deferred ACP request has a matching tool card', () => {
     expect(handleAcpPermissionRequestForToolCard({
       permissionId: 'permission-2',

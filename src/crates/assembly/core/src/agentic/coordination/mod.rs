@@ -6,6 +6,7 @@ mod background_outcomes;
 mod control_conversation;
 mod coordination_store;
 mod delegation_context;
+mod external_agent_turn;
 pub use control_conversation::{
     ControlConversation, CreateControlConversationRequest, VoiceExchangeRequest,
 };
@@ -25,6 +26,7 @@ pub(crate) use background_outcomes::{
     BackgroundSubagentWaitResult, BackgroundSubagentWaitStatus,
 };
 pub(crate) use coordination_store::{validate_agent_id, DirectChildAgentRecord};
+pub(crate) use external_agent_turn::external_agent_client_id;
 
 pub use coordinator::get_global_coordinator;
 pub use scheduler::get_global_scheduler;

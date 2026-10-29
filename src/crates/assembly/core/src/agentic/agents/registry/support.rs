@@ -7,15 +7,13 @@ use crate::service::config::types::{AgentProfileConfig, AgentSubagentOverrideCon
 use crate::util::errors::OpenBitFunResult;
 use std::collections::HashMap;
 
-/// Tool-name prefixes of the tool families that are registered dynamically at
+/// Tool-name prefix of the MCP tool family, which is registered dynamically at
 /// runtime and therefore cannot appear in an Agent's static tool manifest.
 ///
-/// These mirror `openbitfun_agent_tools::{ACP_TOOL_PREFIX, MCP_TOOL_PREFIX}`, but
-/// are declared locally on purpose: both of those constants sit behind that
-/// crate's `acp-bridge` / `mcp-bridge` cargo features, while this module also
-/// compiles under `agent-runtime` alone, where neither feature is enabled.
+/// This mirrors `openbitfun_agent_tools::MCP_TOOL_PREFIX`, but is declared
+/// locally on purpose: that constant sits behind the crate's `mcp-bridge`
+/// cargo feature, while this module also compiles under `agent-runtime` alone.
 const DYNAMIC_MCP_TOOL_PREFIX: &str = "mcp__";
-const DYNAMIC_ACP_TOOL_PREFIX: &str = "acp__";
 
 pub(super) async fn get_mode_configs() -> HashMap<String, AgentProfileConfig> {
     if let Ok(config_service) = GlobalConfigManager::get_service().await {
@@ -154,24 +152,5 @@ pub(super) fn merge_dynamic_mcp_tools(
         configured_tools,
         registered_tool_names,
         &[DYNAMIC_MCP_TOOL_PREFIX],
-    )
-}
-
-/// Append the tools of every ACP client that is enabled as a subagent.
-///
-/// ACP clients are registered as regular tools (`acp__<client>__prompt`) rather
-/// than as agents, so without this step an ACP subagent the user explicitly
-/// enabled stays unreachable: the tool exists in the registry but no Agent
-/// manifest ever lists its name, and the manifest allowlist is what decides
-/// which tools reach the model. Like the MCP merge above, this only applies to
-/// Agents that accept dynamically registered tools.
-pub(super) fn merge_dynamic_acp_tools(
-    configured_tools: Vec<String>,
-    registered_tool_names: &[String],
-) -> Vec<String> {
-    merge_dynamic_tool_names(
-        configured_tools,
-        registered_tool_names,
-        &[DYNAMIC_ACP_TOOL_PREFIX],
     )
 }

@@ -1,7 +1,7 @@
 use super::availability::resolve_availability;
 use super::support::{
     get_mode_configs, get_subagent_overrides, load_project_subagent_overrides_local,
-    merge_dynamic_acp_tools, merge_dynamic_mcp_tools,
+    merge_dynamic_mcp_tools,
 };
 use super::AgentRegistry;
 use crate::agentic::agents::registry::types::{is_review_agent_entry, AgentEntry, AgentSource};
@@ -19,9 +19,11 @@ use std::collections::HashSet;
 
 /// Append the dynamically registered tool families a mode Agent may use.
 ///
-/// MCP tools and enabled ACP subagents are both created at runtime, so neither
-/// can be listed in a static Agent manifest. The manifest allowlist decides what
-/// the model ever sees, which is why both families have to be merged in here.
+/// MCP tools are created at runtime, so they cannot be listed in a static Agent
+/// manifest. Enabled ACP clients are delegated through `AgentSpawn` with
+/// `subagent_type: "acp:<client_id>"`; their legacy `acp__<client>__prompt`
+/// tools stay registered for explicit manifests and history, but are no longer
+/// merged into every mode.
 pub(super) fn merge_dynamic_mode_tools(
     resolved_tools: Vec<String>,
     registered_tool_names: &[String],
@@ -30,8 +32,7 @@ pub(super) fn merge_dynamic_mode_tools(
     if !include_dynamic_tools {
         return resolved_tools;
     }
-    let resolved_tools = merge_dynamic_mcp_tools(resolved_tools, registered_tool_names);
-    merge_dynamic_acp_tools(resolved_tools, registered_tool_names)
+    merge_dynamic_mcp_tools(resolved_tools, registered_tool_names)
 }
 
 impl AgentRegistry {

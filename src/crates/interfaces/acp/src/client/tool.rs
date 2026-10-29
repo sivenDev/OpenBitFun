@@ -183,6 +183,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_prompt_tool_results_still_render_for_history_replay() {
+        // Recorded `acp__<client>__prompt` result payload from older sessions.
+        let recorded = serde_json::json!({
+            "client_id": "claude-code",
+            "response": "Refactored the parser and added tests.",
+        });
+
+        assert_eq!(
+            render_acp_external_agent_result_for_assistant(&recorded),
+            "Refactored the parser and added tests."
+        );
+        assert_eq!(
+            render_acp_external_agent_result_message("Claude Code", &recorded),
+            "ACP agent 'Claude Code' responded:\nRefactored the parser and added tests."
+        );
+        assert_eq!(
+            render_acp_external_agent_result_for_assistant(&serde_json::json!({})),
+            "ACP agent completed without text output"
+        );
+    }
+
+    #[test]
     fn acp_agent_definition_for_config_preserves_tool_contract() {
         let config = AcpClientConfig {
             name: Some("Codex".to_string()),

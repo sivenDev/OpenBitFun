@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   deriveSubagentExecutionStatus,
   getSubagentProjectionState,
+  subagentTurnAwaitsApproval,
 } from './subagentProjection';
 import type { FlowChatState, Session } from '../types/flow-chat';
 
@@ -23,6 +24,19 @@ describe('getSubagentProjectionState', () => {
       .toBe('error');
     expect(deriveSubagentExecutionStatus({ status: 'cancelled', modelRounds: [] } as never))
       .toBe('cancelled');
+  });
+
+  it('reports a running child blocked on a tool approval', () => {
+    const turn = (status: string, toolStatus: string) => ({
+      status,
+      modelRounds: [{ isStreaming: false, items: [{ type: 'tool', status: toolStatus }] }],
+    }) as never;
+
+    expect(subagentTurnAwaitsApproval(turn('processing', 'pending_confirmation'))).toBe(true);
+    expect(subagentTurnAwaitsApproval(turn('processing', 'running'))).toBe(false);
+    // A settled turn is not waiting, even if a stale card still says so.
+    expect(subagentTurnAwaitsApproval(turn('cancelled', 'pending_confirmation'))).toBe(false);
+    expect(subagentTurnAwaitsApproval(null)).toBe(false);
   });
 
   it('projects only the last round when requested, including a streaming round', () => {

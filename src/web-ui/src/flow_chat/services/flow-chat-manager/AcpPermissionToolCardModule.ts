@@ -69,6 +69,13 @@ function applyAcpPermissionRequest(
   if (toolContext.sessionId !== activeSessionId) {
     store.setSessionNeedsAttention(toolContext.sessionId, 'tool_confirm');
   }
+  // A delegated external agent waits inside a subagent session; surface the
+  // approval on the parent conversation that launched it as well.
+  const owner = store.getState().sessions.get(toolContext.sessionId);
+  const parentSessionId = owner?.sessionKind === 'subagent' ? owner.parentSessionId : undefined;
+  if (parentSessionId && parentSessionId !== activeSessionId) {
+    store.setSessionNeedsAttention(parentSessionId, 'tool_confirm');
+  }
 
   // Emit only after the request is represented by an actionable tool card.
   globalEventBus.emit(PERMISSION_REQUEST_NOTIFICATION_EVENT, {

@@ -37,6 +37,15 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => {
     if (key === 'toolCards.taskTool.defaultAgentKind') {
       return 'Sub-agent';
     }
+    if (key === 'toolCards.taskTool.externalAgentLabel') {
+      return `${options?.clientId} (external agent)`;
+    }
+    if (key === 'toolCards.taskTool.externalAgentModel') {
+      return 'Chosen by the external agent';
+    }
+    if (key === 'toolCards.taskTool.waitingConfirm') {
+      return 'Waiting for confirmation';
+    }
     if (key === 'toolCards.taskTool.reviewCoverageLabel') {
       return 'Additional check';
     }
@@ -216,6 +225,32 @@ vi.mock('../store/FlowChatStore', () => ({
             endTime: 1800,
           }],
         }],
+        ...(['processing', 'awaiting-approval', 'cancelled', 'completed'] as const).map(state => [
+          `acp-child-${state}`,
+          {
+            sessionId: `acp-child-${state}`,
+            sessionKind: 'subagent',
+            parentSessionId: 'parent-session',
+            mode: 'acp:claude-code',
+            config: { agentType: 'acp:claude-code', modelName: 'fast' },
+            dialogTurns: [{
+              id: `acp-turn-${state}`,
+              status: state === 'awaiting-approval' ? 'processing' : state,
+              startTime: 1000,
+              modelRounds: [{
+                id: `acp-round-${state}`,
+                isStreaming: false,
+                items: [{
+                  id: `acp-tool-${state}`,
+                  type: 'tool',
+                  toolName: 'Edit',
+                  status: state === 'awaiting-approval' ? 'pending_confirmation' : 'completed',
+                  toolCall: { id: `acp-tool-${state}`, input: {} },
+                }],
+              }],
+            }],
+          },
+        ] as const),
         ['review-session-dynamic', {
           sessionId: 'review-session-dynamic',
           mode: 'CodeReview',
@@ -390,6 +425,73 @@ describeWithJsdom('TaskToolDisplay', () => {
       parentToolCallId: 'task-call-1',
     }));
     expect(onOpenInPanel).not.toHaveBeenCalled();
+  });
+
+  function externalAgentTaskItem(childSessionId: string): FlowToolItem {
+    return {
+      id: `task-${childSessionId}`,
+      type: 'tool',
+      toolName: 'AgentSpawn',
+      timestamp: Date.now(),
+      status: 'completed',
+      subagentSessionId: childSessionId,
+      toolCall: {
+        id: `task-call-${childSessionId}`,
+        input: {
+          action: 'spawn',
+          agent_id: 'claude-fix',
+          description: 'Fix the parser',
+          prompt: 'Fix the parser',
+          run_in_background: true,
+          subagent_type: 'acp:claude-code',
+        },
+      },
+      toolResult: {
+        success: true,
+        result: { status: 'started', run_in_background: true, agent_id: 'claude-fix' },
+        duration_ms: 12,
+      },
+    };
+  }
+
+  it.each([
+    ['acp-child-processing', 'running', undefined],
+    ['acp-child-awaiting-approval', 'waiting', 'Waiting for confirmation'],
+    ['acp-child-cancelled', 'cancelled', 'flowChatHeader.agentTreeStatus.cancelled'],
+    ['acp-child-completed', 'completed', undefined],
+  ])('projects the background external agent child %s as %s', async (childSessionId, cardStatus, statusLabel) => {
+    await act(async () => root.render(
+      <TaskToolDisplay toolItem={externalAgentTaskItem(childSessionId)} config={config} sessionId="parent-session" />,
+    ));
+
+    expect(container.querySelector(
+      `[data-openbitfun-tool-card="agent-control"][data-openbitfun-status="${cardStatus}"]`,
+    )).toBeTruthy();
+    const text = await previewText();
+    expect(text).toContain('claude-code (external agent)');
+    expect(text).toContain('Chosen by the external agent');
+    expect(text).not.toContain('acp:claude-code');
+    if (statusLabel) {
+      expect(text).toContain(statusLabel);
+    }
+  });
+
+  it('opens the external agent child session from its task card', async () => {
+    await act(async () => root.render(
+      <TaskToolDisplay
+        toolItem={externalAgentTaskItem('acp-child-processing')}
+        config={config}
+        sessionId="parent-session"
+      />,
+    ));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-agent-capsule-trigger]')!.click());
+
+    expect(mocks.openBtwSessionInAuxPane).toHaveBeenCalledWith(expect.objectContaining({
+      childSessionId: 'acp-child-processing',
+      parentSessionId: 'parent-session',
+      sessionKind: 'subagent',
+      subagentType: 'acp:claude-code',
+    }));
   });
 
   it('opens failed task details on the right without an inline disclosure', async () => {
