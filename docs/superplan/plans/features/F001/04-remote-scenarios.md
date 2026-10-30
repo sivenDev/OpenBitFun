@@ -161,7 +161,13 @@ parent: "F001"
 - 实测发现并修复两处缺陷：一是模型实际看到的智能体列表来自每轮快照（`skill_agent_snapshot.rs`），之前没有加入 `acp:` 条目，模型因此看不到 Claude Code；现在与 `AgentSpawn` 目录共用同一道准入检查。二是自动批准模式的会话中，外部智能体的权限请求没有人回答，会一直挂起；现在按会话权限模式自动批准。
 - 安全审查修正：外部智能体的权限请求现在先按子会话的有效权限策略判定，和原生工具用同一套判定：全局规则、会话权限模式、项目规则、智能体配置、父会话上限，以及已保存的授权。拒绝规则直接拒绝；允许规则和已保存授权直接通过；其余请求才询问用户，或在自动批准模式下自动通过。路径按原生文件工具的方式规范化，工作区外的路径额外检查 `external_directory`。策略无法解析时一律拒绝。实测：自动批准模式下加一条项目规则（`edit` 全部拒绝），Claude Code 的写文件请求被拒绝，文件未写入。
 - 后续发现（2026-10-30，F002-02 Task 5 本机模拟）：外部智能体回合不经过执行引擎，子会话从未收到 `DialogTurnCompleted`，桌面卡片在委派完成后仍显示「运行中」。协调器现已在外部与远程回合成功时补发该事件，见 F002-02 Task 5。
-- 未实测：SSH 远程工作区（本机没有 sshd，Docker 未运行；`~/.ssh/config` 中的主机是用户的真实服务器，未经同意不使用）；手机端远程控制与 Peer 模式（需要 relay 与第二台设备）。这三项目前只有单元测试证据。
+- SSH 远程工作区实测（2026-10-30，用户提供的测试机 macOS 12.7.6 x86_64，未安装 Claude Code）：
+  - 操作：桌面以密码 SSH 连接，在「远程主机」上创建工程 `shimo-ws`；之后在该工程的会话中要求 `AgentSpawn(acp:claude-code)`。
+  - 本机已安装 Claude Code（`ACP requirement probe … runnable=true`），但在远程工作区里检查的是远程主机（`Remote ACP requirement probe … tool_installed=false`）。
+  - 结果：`AgentSpawn` 立即失败，原文为「external agent acp:claude-code is unavailable (NotInstalled): claude is not available on remote PATH」。没有改用本机，桌面进程下没有启动任何 `claude` 子进程。
+  - 未做：远程主机上的成功委派与取消。这需要在远程主机安装并登录 Claude Code，由用户完成。
+  - 前置条件：未在本机配置中启用 claude-code 时，先报「NotEnabled」，不会检查远程主机。
+- 未实测：手机端远程控制与 Peer 模式。CLI 只在交互式 TUI 中提供 Peer 主机，模拟 relay 不提供手机网页；这两项目前只有单元测试证据。
 
 ## References
 - `docs/superplan/rfcs/F001.md`

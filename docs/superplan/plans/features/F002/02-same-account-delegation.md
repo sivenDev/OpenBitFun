@@ -220,6 +220,23 @@ parent: "F002"
 - Evidence：`pnpm --dir src/web-ui run test:run src/flow_chat/tool-cards/TaskToolDisplay.test.tsx src/flow_chat/components/ChatInputApprovalBand.test.tsx src/flow_chat/utils/remoteAgent.test.ts src/app/scenes/agents/AgentsScene.test.tsx src/app/scenes/agents/agentVisibility.test.ts`：79 passed；`pnpm run type-check:web`、`pnpm run i18n:audit`、`pnpm run check:web`：通过；`--lib remote_agent_turn`：9 passed（含 `remoteDeviceName`）。
 - 远程场景：两台同账号设备的实测尚未进行；Task 5 的本机模拟先覆盖目录、委派、取消与审批。
 - 模拟实测（2026-10-30，见 Task 5）：在真实桌面实例 A1（真实模型）中通过界面完成纯消息委派、审批（审批栏显示「此操作在 A4 Workstation 上执行」，允许后命令在 A4 执行）与取消（停止父回合后 A3 作业进入 `cancelled`）；智能体列表只列出同账号三台设备。实测发现两处界面问题并已修复：委派完成后 AgentSpawn 卡片一直显示「运行中」（见 Task 5 偏差）；审批栏标题显示原始 `remote:<设备>/<id>`，现显示「helper（远程智能体）」。
+- 两台机器实测（2026-10-30）：
+  - 环境：
+    - 发起方 A1：本机 macOS arm64 上的调试桌面（真实模型），由 `sim-devices.mjs` 启动，relay 绑定 `0.0.0.0`，经局域网访问。
+    - 目标：另一台真实电脑 macOS 12.7.6 x86_64，运行 `x86_64-apple-darwin` 交叉编译的 CLI（`daemon run`，模拟模型），作为同账号设备「Shimo Mac (x86_64)」加入。
+    - 接入方式：目标设备由 `serve_external_device` 写入会话并向 A1 开放智能体，不安装服务。
+  - 纯消息：AgentSpawn → AgentWait 拿回目标端回答；目标端作业 `succeeded`。
+  - 审批：审批栏写明「此操作在 Shimo Mac (x86_64) 上执行」；点「允许一次」后命令在目标机执行，`delegated.txt` 生成，作业 `succeeded`。
+  - 取消：停止父回合后目标端作业 `cancelRequestedAt` 落盘，状态 `cancelled`。
+  - 目标离线：停掉目标后，列表显示 `unavailable / offline`（「Shimo Mac (x86_64) is offline」），再委派立即失败并给出同一原因，不排队、不改用其他智能体。
+  - 发起方重启补收：目标端在等待审批时关闭并重启 A1，目标作业仍在等待。
+    - 实测发现缺陷：重启后的观察者丢弃了目标端的待审批请求，审批栏不再出现，作业会一直挂起。
+    - 修复：恢复观察时同样转发审批（`ResumedTaskSink` 使用 `PromptForwarder`，审批归属子会话的工作区与委派上下文）。
+    - 结果：重启约 3 秒后审批栏重新出现；无人操作 3 分钟以上也无人回答；点「允许一次」后目标执行完成。
+    - 同时修复：刚启动时设备目录尚未拉取，审批栏显示设备 id；现改为在转发审批时再取一次设备名。
+  - 未实测：编码任务（Git 基线同步）跨两台机器尚未做；真实 GitHub 账号登录未做（使用模拟账号）。
+  - 另见（不属本特性）：在等待中途关闭 A1 后，父会话中被打断的 AgentWait 调用没有对应的工具结果，继续在该会话发消息时模型服务返回 502「No tool output found for function call」；新开会话不受影响。
+  - Evidence：`--lib remote_agent_turn`：10 passed（新增 `a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits_on`）；`--lib agentic::coordination`：270 passed，1 failed（`remote_session_metadata_never_falls_back_to_a_local_workspace_binding`，干净 HEAD 上同样失败）。
 
 ## Task 5: 本机双账号多客户端模拟
 
@@ -252,6 +269,13 @@ parent: "F002"
 - 产品修复二：外部（`acp:`）与远程（`remote:`）子智能体回合不经过执行引擎，子会话从未收到 `DialogTurnCompleted`，界面卡片一直显示「运行中」。协调器现在在这类回合成功时补发该事件（失败与取消原本就由协调器发出）。该问题同样影响 F001 的外部智能体。
 - 审批栏标题对远程智能体显示「<开放项>（远程智能体）」。
 - 模拟中的设备使用模拟模型，回答是测试标记文本（如 `ACTIVE_TURN_STREAM_MARKER`），启动脚本会说明。
+- 跨机器扩展（2026-10-30，用于 Task 4 两台机器实测）：
+  - `OPENBITFUN_SIM_RELAY_BIND` 让 relay 绑定其他地址（如 `0.0.0.0`）；本机设备仍走回环。
+  - `OPENBITFUN_SIM_EXTERNAL_DEVICE_ID`/`_NAME` 为另一台电脑预置一个同账号设备，凭据写入模拟清单。
+  - 被忽略的 `serve_external_device` 在那台电脑上读取这些凭据，在本地写入会话、开放智能体并运行 `daemon run`，直到标记文件被删除。
+  - 每个模拟设备把守护进程输出写到其目录下的 `daemon.log`。
+  - 关闭 A1 不再结束模拟：按 Enter 或发送 SIGUSR1 重新启动 A1，用于发起方重启补收。
+- 模拟 relay 的数据库改为临时文件：`:memory:` 下连接池的每个连接各有一份空库，连接池替换连接后（约 30 分钟）relay 返回 500 并拒绝认证。
 
 **Evidence (2026-10-30):**
 - `cargo +1.95.0 test --locked -p openbitfun-cli --test cli_command_contracts delegation_simulation::`：1 passed（目录、另一账号不可达、纯消息、取消、审批后命令在目标执行），约 7–10 秒，连续三次稳定；结束后无残留守护进程与临时目录。`--test cli_command_contracts`：42 passed；`--bin openbitfun dispatch`：111 passed。

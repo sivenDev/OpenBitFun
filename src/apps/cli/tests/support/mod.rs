@@ -252,9 +252,13 @@ impl CliTestEnvironment {
     }
 
     pub(crate) fn std_command(&self) -> Command {
-        let mut command = openbitfun_services_core::process_manager::create_command(env!(
-            "CARGO_BIN_EXE_openbitfun"
-        ));
+        self.std_command_for(Path::new(env!("CARGO_BIN_EXE_openbitfun")))
+    }
+
+    /// Like `std_command`, for a CLI binary at another path (a test binary
+    /// copied to another machine cannot use its build-time path).
+    pub(crate) fn std_command_for(&self, binary: &Path) -> Command {
+        let mut command = openbitfun_services_core::process_manager::create_command(binary);
         command.current_dir(&self.workspace);
         self.apply_std_environment(&mut command);
         command

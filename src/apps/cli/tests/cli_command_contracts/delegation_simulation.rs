@@ -38,20 +38,32 @@ const OPEN_AGENT_ID: &str = "helper";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const JOB_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// A Relay on a loopback port with an in-memory account database.
+/// A Relay on a loopback port with a temporary account database.
 struct LocalRelay {
     url: String,
     database: Arc<db::DbPool>,
     server: tokio::task::JoinHandle<()>,
+    // A file, not `:memory:`: every pooled connection would open its own
+    // empty in-memory database, and the pool replaces connections over time.
+    _database_dir: tempfile::TempDir,
 }
 
 impl LocalRelay {
-    async fn start(port: u16) -> Self {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+    /// Binds `host` (`0.0.0.0` lets another machine join); devices on this
+    /// machine always reach it through loopback.
+    async fn start(host: &str, port: u16) -> Self {
+        let listener = tokio::net::TcpListener::bind((host, port))
             .await
             .expect("bind local relay");
-        let url = format!("http://{}", listener.local_addr().expect("relay address"));
-        let database = Arc::new(db::connect(":memory:").await.expect("relay database"));
+        let port = listener.local_addr().expect("relay address").port();
+        let url = format!("http://127.0.0.1:{port}");
+        let database_dir = tempfile::tempdir().expect("relay database directory");
+        let database_path = database_dir.path().join("relay.db");
+        let database = Arc::new(
+            db::connect(database_path.to_str().expect("relay database path"))
+                .await
+                .expect("relay database"),
+        );
         let app = build_relay_router(
             Arc::new(MemoryAssetStore::new()),
             Instant::now(),
@@ -70,6 +82,7 @@ impl LocalRelay {
             url,
             database,
             server,
+            _database_dir: database_dir,
         }
     }
 
@@ -118,13 +131,13 @@ fn random_secret() -> [u8; 32] {
 
 /// Writes a session a host restores at startup. The session store directory
 /// is process-global, so sessions are written one after another.
-fn write_session(home: &Path, relay: &LocalRelay, session: &AccountSession, device_id: &str) {
+fn write_session(home: &Path, relay_url: &str, session: &AccountSession, device_id: &str) {
     session_store::set_session_store_directory_for_test(home.to_path_buf());
     session_store::save_session_with_device(
         &session.token,
         &session.user_id,
         &session.master_key,
-        &relay.url,
+        relay_url,
         Some(device_id),
     )
     .expect("write simulated device session");
@@ -133,8 +146,11 @@ fn write_session(home: &Path, relay: &LocalRelay, session: &AccountSession, devi
 /// One simulated CLI device: isolated storage, a mock model, and a daemon
 /// that holds the account routing connection.
 struct SimulatedDevice {
-    device_id: &'static str,
-    device_name: &'static str,
+    device_id: String,
+    device_name: String,
+    /// The CLI this device runs; the build output unless another machine
+    /// names its copy.
+    binary: PathBuf,
     environment: CliTestEnvironment,
     _model: MockOpenAiServer,
     daemon: Option<tokio::process::Child>,
@@ -142,8 +158,8 @@ struct SimulatedDevice {
 
 impl SimulatedDevice {
     fn configure(
-        device_id: &'static str,
-        device_name: &'static str,
+        device_id: &str,
+        device_name: &str,
         model: MockOpenAiServer,
         tool_loop: bool,
     ) -> Self {
@@ -154,8 +170,9 @@ impl SimulatedDevice {
             environment.configure_mock_model(model.base_url());
         }
         Self {
-            device_id,
-            device_name,
+            device_id: device_id.to_string(),
+            device_name: device_name.to_string(),
+            binary: PathBuf::from(env!("CARGO_BIN_EXE_openbitfun")),
             environment,
             _model: model,
             daemon: None,
@@ -164,7 +181,7 @@ impl SimulatedDevice {
 
     /// Opens the Standard agent to `devices` through the shipped CLI command.
     fn open_agent(&self, devices: &[&str]) {
-        let mut command = self.environment.std_command();
+        let mut command = self.environment.std_command_for(&self.binary);
         command.args([
             "delegation",
             "open",
@@ -190,19 +207,35 @@ impl SimulatedDevice {
     }
 
     fn start_daemon(&mut self) {
-        let mut command = openbitfun_services_core::process_manager::create_tokio_command(env!(
-            "CARGO_BIN_EXE_openbitfun"
-        ));
+        let mut command =
+            openbitfun_services_core::process_manager::create_tokio_command(&self.binary);
         self.environment.apply_tokio_environment(&mut command);
         command
             .args(["daemon", "run"])
             .env("NO_PROXY", "127.0.0.1,localhost")
             .env("no_proxy", "127.0.0.1,localhost")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
             .kill_on_drop(true);
+        // Kept beside the device's home, so a daemon that stops early can
+        // be diagnosed; it is removed with the device.
+        match std::fs::File::create(self.daemon_log_path()) {
+            Ok(log) => {
+                let stderr = log.try_clone().map(Stdio::from).unwrap_or(Stdio::null());
+                command.stdout(Stdio::from(log)).stderr(stderr);
+            }
+            Err(_) => {
+                command.stdout(Stdio::null()).stderr(Stdio::null());
+            }
+        }
         self.daemon = Some(command.spawn().expect("start simulated device daemon"));
+    }
+
+    fn daemon_log_path(&self) -> PathBuf {
+        self.environment
+            .home_root()
+            .parent()
+            .unwrap_or_else(|| self.environment.home_root())
+            .join("daemon.log")
     }
 }
 
@@ -224,13 +257,13 @@ struct Simulation {
 }
 
 impl Simulation {
-    async fn start(relay_port: u16, requester_home: Option<&Path>) -> Self {
-        let relay = LocalRelay::start(relay_port).await;
+    async fn start(relay_host: &str, relay_port: u16, requester_home: Option<&Path>) -> Self {
+        let relay = LocalRelay::start(relay_host, relay_port).await;
         let requester = relay
             .seed_device(ACCOUNT_A, "sim-a", A1, "A1 Desktop", "desktop")
             .await;
         if let Some(home) = requester_home {
-            write_session(home, &relay, &requester, A1);
+            write_session(home, &relay.url, &requester, A1);
         }
 
         let approving_model = MockOpenAiServer::tool_sequence(vec![(
@@ -244,19 +277,25 @@ impl Simulation {
             SimulatedDevice::configure(B1, "B1 Desktop", MockOpenAiServer::immediate(), false),
         ];
         for device in &mut devices {
-            let (account, login) = if device.device_id == B1 {
+            let (account, login) = if device.device_id.as_str() == B1 {
                 (ACCOUNT_B, "sim-b")
             } else {
                 (ACCOUNT_A, "sim-a")
             };
             let session = relay
-                .seed_device(account, login, device.device_id, device.device_name, "cli")
+                .seed_device(
+                    account,
+                    login,
+                    &device.device_id,
+                    &device.device_name,
+                    "cli",
+                )
                 .await;
             write_session(
                 device.environment.home_root(),
-                &relay,
+                &relay.url,
                 &session,
-                device.device_id,
+                &device.device_id,
             );
             device.open_agent(&[A1]);
             device.start_daemon();
@@ -330,7 +369,7 @@ impl Simulation {
                 "otherAccount": B1,
             },
             "deviceHomes": self.devices.iter().map(|device| {
-                (device.device_id.to_string(), json!(device.environment.home_root()))
+                (device.device_id.clone(), json!(device.environment.home_root()))
             }).collect::<serde_json::Map<_, _>>(),
         })
     }
@@ -459,7 +498,7 @@ fn find_file(root: &Path, name: &str) -> bool {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn same_account_devices_take_delegated_jobs_and_other_accounts_cannot_reach_them() {
-    let simulation = Simulation::start(0, None).await;
+    let simulation = Simulation::start("127.0.0.1", 0, None).await;
     let rpc = simulation.rpc();
 
     // Catalog: a same-account device lists the agent it opened to A1.
@@ -549,7 +588,10 @@ async fn same_account_devices_take_delegated_jobs_and_other_accounts_cannot_reac
 /// `OPENBITFUN_SIM_REQUESTER_HOME` receives A1's session so a host started
 /// there joins as A1; `OPENBITFUN_SIM_REQUESTER_USER_ROOT` receives its
 /// config (see `write_requester_config`); `OPENBITFUN_SIM_RELAY_PORT` fixes
-/// the port.
+/// the port and `OPENBITFUN_SIM_RELAY_BIND=0.0.0.0` lets another machine
+/// reach it. `OPENBITFUN_SIM_EXTERNAL_DEVICE_ID` seeds one more account-A
+/// device for another machine; its session is in the manifest's `external`
+/// entry for `serve_external_device`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "started by scripts/dev/sim-devices.mjs"]
 async fn serve_simulated_devices() {
@@ -566,20 +608,47 @@ async fn serve_simulated_devices() {
             std::env::var_os("OPENBITFUN_SIM_REQUESTER_MODELS_FROM").map(PathBuf::from);
         write_requester_config(Path::new(&user_root), models_from.as_deref());
     }
-    let simulation = Simulation::start(relay_port, requester_home.as_deref()).await;
+    let relay_host =
+        std::env::var("OPENBITFUN_SIM_RELAY_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let simulation = Simulation::start(&relay_host, relay_port, requester_home.as_deref()).await;
+    let mut manifest = simulation.manifest();
+    if let Ok(device_id) = std::env::var("OPENBITFUN_SIM_EXTERNAL_DEVICE_ID") {
+        let device_name = std::env::var("OPENBITFUN_SIM_EXTERNAL_DEVICE_NAME")
+            .unwrap_or_else(|_| "External device".to_string());
+        let session = simulation
+            .relay
+            .seed_device(ACCOUNT_A, "sim-a", &device_id, &device_name, "cli")
+            .await;
+        manifest["external"] = json!({
+            "deviceId": device_id,
+            "deviceName": device_name,
+            "userId": session.user_id,
+            "token": session.token,
+            "deviceSecretHex": hex::encode(session.master_key),
+            "requesterDeviceId": A1,
+        });
+    }
 
     let staged = manifest_path.with_extension("partial");
     std::fs::write(
         &staged,
-        serde_json::to_vec_pretty(&simulation.manifest()).expect("encode manifest"),
+        serde_json::to_vec_pretty(&manifest).expect("encode manifest"),
     )
     .expect("write simulation manifest");
     restrict_to_owner(&staged);
     std::fs::rename(&staged, &manifest_path).expect("publish simulation manifest");
     eprintln!("simulation ready: {}", manifest_path.display());
 
-    // A launcher that dies without removing the manifest still closes our
-    // stdin, so the simulated daemons never outlive it.
+    wait_for_stop(&manifest_path).await;
+    let _ = std::fs::remove_file(&manifest_path);
+    eprintln!("simulation stopping");
+}
+
+/// Waits until `marker` is removed, or until stdin closes when
+/// `OPENBITFUN_SIM_STOP_ON_STDIN_EOF=1`: a launcher that dies without
+/// removing the marker still closes our stdin, so simulated daemons never
+/// outlive it.
+async fn wait_for_stop(marker: &Path) {
     let parent_gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
     if std::env::var("OPENBITFUN_SIM_STOP_ON_STDIN_EOF").as_deref() == Ok("1") {
         let parent_gone = parent_gone.clone();
@@ -588,11 +657,77 @@ async fn serve_simulated_devices() {
             parent_gone.store(true, std::sync::atomic::Ordering::SeqCst);
         });
     }
-    while manifest_path.exists() && !parent_gone.load(std::sync::atomic::Ordering::SeqCst) {
+    while marker.exists() && !parent_gone.load(std::sync::atomic::Ordering::SeqCst) {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    let _ = std::fs::remove_file(&manifest_path);
-    eprintln!("simulation stopping");
+}
+
+/// Runs one simulated device on another machine against a simulation
+/// started with `OPENBITFUN_SIM_RELAY_BIND=0.0.0.0` and
+/// `OPENBITFUN_SIM_EXTERNAL_DEVICE_ID`. `OPENBITFUN_SIM_EXTERNAL` names a
+/// JSON file with the manifest's `external` entry plus `relayUrl` (the
+/// simulation's address on the network) and `behavior` (`immediate`,
+/// `gated`, or `approval`); it is removed once read because it holds the
+/// device secret. The session is written here, since session files are
+/// bound to the machine that writes them. `OPENBITFUN_SIM_CLI_BIN` names
+/// this machine's `openbitfun`. Stops when `<file>.running` is removed or
+/// stdin closes (see `wait_for_stop`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run on another machine to join a simulation"]
+async fn serve_external_device() {
+    let request_path = PathBuf::from(
+        std::env::var_os("OPENBITFUN_SIM_EXTERNAL").expect("OPENBITFUN_SIM_EXTERNAL is required"),
+    );
+    let request: Value = serde_json::from_slice(
+        &std::fs::read(&request_path).expect("read external device request"),
+    )
+    .expect("decode external device request");
+    let _ = std::fs::remove_file(&request_path);
+    let text = |key: &str| {
+        request[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("external device request is missing {key}"))
+            .to_string()
+    };
+    let mut secret = [0_u8; 32];
+    hex::decode_to_slice(text("deviceSecretHex"), &mut secret).expect("device secret");
+    let session = AccountSession::new(text("token"), text("userId"), secret);
+
+    let (model, tool_loop) = match text("behavior").as_str() {
+        "gated" => (MockOpenAiServer::gated(), false),
+        "approval" => (
+            MockOpenAiServer::tool_sequence(vec![(
+                "ExecCommand".to_string(),
+                json!({ "cmd": "touch delegated.txt" }),
+            )]),
+            true,
+        ),
+        _ => (MockOpenAiServer::immediate(), false),
+    };
+    let mut device =
+        SimulatedDevice::configure(&text("deviceId"), &text("deviceName"), model, tool_loop);
+    if let Some(binary) = std::env::var_os("OPENBITFUN_SIM_CLI_BIN") {
+        device.binary = PathBuf::from(binary);
+    }
+    write_session(
+        device.environment.home_root(),
+        &text("relayUrl"),
+        &session,
+        &device.device_id,
+    );
+    device.open_agent(&[&text("requesterDeviceId")]);
+    device.start_daemon();
+
+    let marker = request_path.with_extension("running");
+    std::fs::write(
+        &marker,
+        device.environment.home_root().display().to_string(),
+    )
+    .expect("write running marker");
+    eprintln!("external device ready: {}", device.device_id);
+    wait_for_stop(&marker).await;
+    let _ = std::fs::remove_file(&marker);
+    eprintln!("external device stopping");
 }
 
 /// Writes A1's default config. With `models_from`, the `ai` section is read

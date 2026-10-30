@@ -19,6 +19,10 @@
 //   --no-build      fail instead of building a missing desktop or frontend
 //   --relay-port N  fix the Relay port (default: any free port)
 //
+// Closing the desktop keeps the devices running; press Enter (or send
+// SIGUSR1) to start A1 again, for example to see a delegation picked up
+// after a restart.
+//
 // Cargo and the desktop build use your rustup toolchain; set RUSTUP_TOOLCHAIN
 // to choose another one.
 import { spawn } from 'child_process';
@@ -224,25 +228,34 @@ async function main() {
       log('A1 has no model configured; add one in Settings, or rerun with --copy-models');
     }
     log('ask the assistant to delegate to one of the remote: agents above; Ctrl+C stops everything');
-    desktop = spawn(binary, [], {
-      cwd: repoRoot,
-      stdio: 'inherit',
-      windowsHide: true,
-      env: {
-        ...process.env,
-        OPENBITFUN_USER_ROOT: requesterUserRoot,
-        OPENBITFUN_E2E_USER_ROOT: requesterUserRoot,
-        OPENBITFUN_HOME: requesterHome,
-        OPENBITFUN_E2E_HOME: requesterHome,
-        OPENBITFUN_E2E_STORAGE_GUARD: '1',
-        OPENBITFUN_E2E_PACKAGED_FRONTEND: '1',
-        // The local Relay is on loopback; never route it through a proxy.
-        NO_PROXY: withLoopback(process.env.NO_PROXY),
-        no_proxy: withLoopback(process.env.no_proxy),
-      },
-    });
+    const desktopEnv = {
+      ...process.env,
+      OPENBITFUN_USER_ROOT: requesterUserRoot,
+      OPENBITFUN_E2E_USER_ROOT: requesterUserRoot,
+      OPENBITFUN_HOME: requesterHome,
+      OPENBITFUN_E2E_HOME: requesterHome,
+      OPENBITFUN_E2E_STORAGE_GUARD: '1',
+      OPENBITFUN_E2E_PACKAGED_FRONTEND: '1',
+      // The local Relay is on loopback; never route it through a proxy.
+      NO_PROXY: withLoopback(process.env.NO_PROXY),
+      no_proxy: withLoopback(process.env.no_proxy),
+    };
+    // Closing the desktop keeps the devices running, so a delegation can be
+    // picked up again after A1 restarts (Enter, or SIGUSR1, starts it).
+    const startDesktop = () => {
+      if (desktop && desktop.exitCode === null && desktop.signalCode === null) return;
+      desktop = spawn(binary, [], { cwd: repoRoot, stdio: 'inherit', windowsHide: true, env: desktopEnv });
+      desktop.on('exit', () => {
+        if (stopped) return;
+        log('the A1 desktop exited; the devices keep running. Press Enter to start it again, Ctrl+C to stop');
+      });
+    };
+    startDesktop();
+    process.on('SIGUSR1', startDesktop);
+    if (process.stdin.isTTY) {
+      process.stdin.on('data', startDesktop);
+    }
     exitCode = await new Promise((done) => {
-      desktop.on('exit', (code) => done(code ?? 0));
       simulation.on('exit', () => {
         log('the simulation stopped');
         done(1);
