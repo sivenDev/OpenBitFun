@@ -24,6 +24,11 @@ use super::store::{DispatchStore, WorkspaceLock};
 const TURN_SETTLEMENT_TIMEOUT_MS: u64 = 5_000;
 
 pub(crate) async fn run(job_id: String) -> Result<()> {
+    // The job has no guaranteed controller to answer an external agent's own
+    // prompts, so delegation to `acp:` agents fails with this reason.
+    crate::agent::agentic_system::disable_external_agents_for_process(
+        crate::agent::agentic_system::DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED,
+    );
     let store = DispatchStore::open_default()?;
     let Some(_worker_lease) = store.try_acquire_worker_lease(&job_id)? else {
         // A retry may briefly spawn a duplicate after its controller crashes.

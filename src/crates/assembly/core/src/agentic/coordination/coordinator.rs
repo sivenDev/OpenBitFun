@@ -4,7 +4,7 @@
 
 use super::external_agent_turn::{
     external_agent_client_id, external_agent_turn_context, run_external_agent_turn,
-    ExternalAgentTurn,
+    ExternalAgentPermissionRoute, ExternalAgentTurn,
 };
 use super::{
     coordination_store::{BackgroundTaskRegistration, CoordinationStore},
@@ -11176,6 +11176,11 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     session.config.is_remote_workspace(),
                     execution_context.workspace.as_ref(),
                 );
+                let permissions = ExternalAgentPermissionRoute::for_workspace(
+                    tool_pipeline.permission_request_manager(),
+                    execution_context.workspace.as_ref(),
+                    execution_context.permission_delegation.clone(),
+                );
                 drop((execution_engine, initial_messages, execution_context));
                 match turn_context {
                     Ok(context) => tokio::spawn(run_external_agent_turn(ExternalAgentTurn {
@@ -11190,6 +11195,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                             // The coordinator deadline below owns the timeout.
                             timeout_seconds: None,
                         },
+                        permissions,
                         cancel_token: subagent_cancel_token.clone(),
                     })),
                     Err(error) => tokio::spawn(async move { Err(error) }),

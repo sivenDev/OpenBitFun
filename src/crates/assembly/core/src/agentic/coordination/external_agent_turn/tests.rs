@@ -103,6 +103,7 @@ fn turn(
             prompt: "fix the parser".to_string(),
             timeout_seconds: None,
         },
+        permissions: None,
         cancel_token,
     }
 }
@@ -591,4 +592,172 @@ fn remote_sessions_without_a_resolved_connection_never_run_locally() {
             "unexpected error: {error}"
         );
     }
+}
+
+/// Asks one permission prompt and reports the decision as its answer.
+struct PromptingExecutor;
+
+#[async_trait]
+impl ExternalAgentExecutor for PromptingExecutor {
+    async fn availability(
+        &self,
+        _client_id: &str,
+        _context: &ExternalAgentContext,
+    ) -> ExternalAgentAvailability {
+        ExternalAgentAvailability::Available
+    }
+
+    async fn run_turn(
+        &self,
+        _request: ExternalAgentTurnRequest,
+        sink: &dyn ExternalAgentEventSink,
+    ) -> PortResult<ExternalAgentTurnOutcome> {
+        let decision = sink
+            .request_permission(ExternalAgentPermissionRequest {
+                tool_call_id: Some("acp-tool-1".to_string()),
+                title: "Run npm test".to_string(),
+                kind: ExternalAgentPermissionKind::Execute,
+                resources: vec!["npm test".to_string()],
+            })
+            .await?;
+        Ok(ExternalAgentTurnOutcome::Completed {
+            final_text: format!("{decision:?}"),
+        })
+    }
+
+    async fn cancel(&self, _client_id: &str, _openbitfun_session_id: &str) -> PortResult<bool> {
+        Ok(false)
+    }
+
+    async fn close(&self, _client_id: &str, _openbitfun_session_id: &str) -> PortResult<()> {
+        Ok(())
+    }
+}
+
+fn test_permission_manager() -> Arc<PermissionRequestManager> {
+    let root = std::env::temp_dir().join(format!(
+        "openbitfun-external-agent-permission-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Arc::new(
+        openbitfun_services_core::permission_store::ProjectPermissionSqliteStore::new(
+            root.join("permissions"),
+        ),
+    );
+    Arc::new(PermissionRequestManager::new(
+        store.clone(),
+        store,
+        Arc::new(
+            openbitfun_runtime_services::test_support::FakeRuntimePort::new(
+                openbitfun_runtime_ports::RuntimeServiceCapability::Clock,
+            ),
+        ),
+    ))
+}
+
+fn prompting_turn(
+    manager: Arc<PermissionRequestManager>,
+    cancel_token: CancellationToken,
+) -> ExternalAgentTurn {
+    let mut turn = turn(
+        None,
+        Arc::new(EventQueue::new(EventQueueConfig::default())),
+        cancel_token,
+    );
+    turn.executor = Some(Arc::new(PromptingExecutor));
+    turn.permissions = Some(ExternalAgentPermissionRoute {
+        manager,
+        project_id: "project-1".to_string(),
+        project_path: "/home/dev/project".to_string(),
+        delegation: Some(PermissionDelegationContext {
+            parent_session_id: "parent-session".to_string(),
+            parent_dialog_turn_id: Some("parent-turn".to_string()),
+            parent_tool_call_id: "task-call".to_string(),
+            subagent_type: "acp:claude-code".to_string(),
+        }),
+    });
+    turn
+}
+
+async fn first_pending(manager: &PermissionRequestManager) -> PermissionRequest {
+    for _ in 0..200 {
+        if let Some(request) = manager.interactive_pending_requests().into_iter().next() {
+            return request;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    panic!("no permission request was filed");
+}
+
+#[tokio::test]
+async fn external_agent_prompts_reach_the_parent_session_mailbox() {
+    let manager = test_permission_manager();
+    let running = tokio::spawn(run_external_agent_turn(prompting_turn(
+        manager.clone(),
+        CancellationToken::new(),
+    )));
+
+    let request = first_pending(&manager).await;
+    assert_eq!(request.session_id, "child-session");
+    assert_eq!(request.agent_id, "acp:claude-code");
+    assert_eq!(request.action, "bash");
+    assert_eq!(request.resources, vec!["npm test"]);
+    assert_eq!(request.tool_call_id.as_deref(), Some("acp-tool-1"));
+    assert_eq!(request.project_id, "project-1");
+    assert_eq!(request.source.kind, PermissionRequestSourceKind::Extension);
+    assert_eq!(
+        request
+            .delegation
+            .as_ref()
+            .map(|delegation| delegation.parent_session_id.as_str()),
+        Some("parent-session")
+    );
+    assert_eq!(request.display_metadata["riskDescription"], "Run npm test");
+
+    manager
+        .reply(
+            &request.request_id,
+            PermissionReply::Once,
+            openbitfun_runtime_ports::PermissionReplySource::User,
+        )
+        .await
+        .expect("reply");
+    let result = running.await.unwrap().expect("turn completes");
+    assert_eq!(final_text(&result), "AllowOnce");
+}
+
+#[tokio::test]
+async fn cancelling_the_turn_withdraws_a_pending_prompt() {
+    let manager = test_permission_manager();
+    let cancel_token = CancellationToken::new();
+    let running = tokio::spawn(run_external_agent_turn(prompting_turn(
+        manager.clone(),
+        cancel_token.clone(),
+    )));
+    first_pending(&manager).await;
+
+    cancel_token.cancel();
+    let result = running.await.unwrap().expect("turn completes");
+    assert_eq!(final_text(&result), "Cancelled");
+    assert!(manager.interactive_pending_requests().is_empty());
+}
+
+#[test]
+fn approvals_that_edit_input_are_not_treated_as_approval() {
+    assert_eq!(
+        permission_decision(PermissionWaitOutcome::Replied(
+            PermissionReply::OnceWithInput {
+                updated_input: serde_json::json!({ "command": "rm -rf /" }),
+            }
+        )),
+        ExternalAgentPermissionDecision::Reject
+    );
+    assert_eq!(
+        permission_decision(PermissionWaitOutcome::Replied(PermissionReply::Always)),
+        ExternalAgentPermissionDecision::AllowAlways
+    );
+    assert_eq!(
+        permission_action(ExternalAgentPermissionKind::Other),
+        "custom_tool"
+    );
 }

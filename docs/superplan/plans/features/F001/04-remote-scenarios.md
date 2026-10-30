@@ -88,28 +88,57 @@ parent: "F001"
 **Outcome:** 手机端、IM 和 CLI peer host 都能处理委派状态、取消和权限回答；Dispatch 中明确报不支持。
 
 **Files:**
-- Modify: `src/crates/services/services-integrations/src/remote_connect/`（`RemoteCommand` 与机器人命令路由中的委派状态、取消、权限）
-- Modify: `src/mobile-web/src/`（后台委派状态展示）
-- Modify: `src/apps/cli/src/peer_host/commands/mod.rs`
-- Modify: `src/crates/contracts/product-domains/src/remote_surface/table.rs`
-- Modify: `src/crates/assembly/core/src/agentic/tools/implementations/task/validation.rs`
-- Test: `src/apps/cli/src/peer_host/commands/mod.rs`
-- Test: `src/crates/contracts/product-domains/src/remote_surface/`
+- Modify: `src/crates/contracts/runtime-ports/src/external_agent.rs`
+- Create: `src/crates/interfaces/acp/src/client/permission_broker.rs`
+- Modify: `src/crates/interfaces/acp/src/client/manager.rs`
+- Modify: `src/crates/interfaces/acp/src/client/executor.rs`
+- Modify: `src/crates/interfaces/acp/src/client/mod.rs`
+- Modify: `src/crates/assembly/core/src/agentic/coordination/external_agent_turn.rs`
+- Modify: `src/crates/assembly/core/src/agentic/coordination/coordinator.rs`
+- Modify: `src/crates/assembly/core/src/agentic/tools/pipeline/tool_pipeline.rs`
+- Modify: `src/crates/assembly/core/src/service_agent_runtime.rs`
+- Modify: `src/mobile-web/src/components/PermissionMailbox.tsx`
+- Modify: `src/apps/cli/src/agent/agentic_system.rs`
+- Modify: `src/apps/cli/src/dispatch/worker.rs`
+- Test: `src/crates/contracts/runtime-ports/tests/external_agent_port_contracts.rs`
+- Test: `src/crates/interfaces/acp/src/client/permission_broker.rs`
+- Test: `src/crates/assembly/core/src/agentic/coordination/external_agent_turn/tests.rs`
+- Test: `src/crates/assembly/core/src/service_agent_runtime.rs`
+- Test: `src/mobile-web/tests/interaction-mailbox-browser.test.mjs`
+- Test: `src/apps/cli/src/agent/agentic_system.rs`
 
 **Change Map:**
-- `remote_connect/`：委派状态、取消、权限请求的远程命令与机器人回复
-- `peer_host/commands/mod.rs`：处理新命令，并保持 `cli_peer: HANDLED` 闭包一致
-- `table.rs`：新增或变更命令的行
-- `validation.rs`：Dispatch 交付形态下拒绝 `acp:` 类型
+- `external_agent.rs`：`ExternalAgentEventSink::request_permission`，以及权限请求、种类（未知种类按 `other` 解析）与决定的 DTO；默认实现返回 `NotAvailable`
+- `permission_broker.rs`、`manager.rs`、`executor.rs`：委派回合运行期间为其 OpenBitFun 会话登记权限中转；该会话的 ACP 权限请求交给回合，不再发出仅桌面可见的 `backend-event-acppermissionrequest`，也不使用独立会话的 600 秒超时；回合无法中转时回退到原有路径。独立 ACP 会话不受影响
+- `external_agent_turn.rs`、`coordinator.rs`、`tool_pipeline.rs`：内核把请求登记进与原生工具相同的权限邮箱，归属子会话并带父 Task 的委派上下文（动作映射为 `read`、`edit`、`bash`、`webfetch`、`custom_tool`）；回合取消时撤回待答请求；带修改输入的批准按拒绝处理，因为外部智能体的输入不由 OpenBitFun 管理
+- `service_agent_runtime.rs`：远程轮询（手机端与 IM 机器人共用）同步父会话的待答权限时，包含委派子会话发起的请求，与 `session_interaction_snapshot` 一致；`ConfirmTool` 按请求 id 或工具调用 id 应答
+- `PermissionMailbox.tsx`：手机端按 `delegation.parentSessionId` 展示子智能体请求；外部智能体请求不显示「修改后批准」
+- `agentic_system.rs`、`worker.rs`：Dispatch 工作进程登记一个始终返回 `UnsupportedContext` 的执行器，委派 `acp:` 时给出「Detached Dispatch 中不可用」的原因；目录中不列出外部智能体
+
+**Deviations:**
+- 没有新增 `RemoteCommand` 或桌面命令：远程控制复用已有的权限邮箱、`ConfirmTool`、`cancel_dialog_turn` 与 `get_session_interaction_mailbox`。因此注册表无新增行，`Unaudited` 数量不变（独立 ACP 命令仍在冻结的待审清单中）。
+- `peer_host/commands/mod.rs`、`validation.rs`、`table.rs` 未改动：Peer 模式下委派在对端内核执行，所需命令（`list_subagents`、`cancel_dialog_turn`、`respond_permission`、`get_session_interaction_mailbox`）在 CLI peer host 中已是 `HANDLED`；Dispatch 的拒绝在 CLI 进程装配处实现。
+- 修复了手机端与远程轮询只按 `sessionId` 过滤权限请求的问题。该问题同样影响原生子智能体的权限请求。
+- 桌面端委派的 ACP 权限现在出现在父会话的审批条中（桌面端已有按 `delegation.parentSessionId` 的路由），不再以 ACP 权限卡片的形式出现。
 
 **Verification:**
-- `cargo test -p openbitfun-product-domains --no-default-features remote_surface`
-- `cargo test -p openbitfun-cli --bin openbitfun peer_host::`
+- `cargo +1.95.0 test --locked -p openbitfun-runtime-ports --no-default-features --features external-agent-port --test external_agent_port_contracts`
+- `cargo +1.95.0 test -p openbitfun-acp --no-default-features --features client,openbitfun-core/git --lib client::`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::coordination::external_agent_turn`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features remote-connect --lib delegated_permission_tests`
+- `cargo +1.95.0 test -p openbitfun-cli --bin openbitfun -- peer_host:: agent::agentic_system dispatch::`
+- `cargo +1.95.0 test -p openbitfun-product-domains --no-default-features remote_surface`
+- `cargo +1.95.0 check -p openbitfun-desktop`
+- `pnpm --dir src/mobile-web run test:interaction-mailbox`
 - `pnpm run capabilities:generate && pnpm run capabilities:check`
 - `pnpm run type-check:mobile-web`
 - `pnpm run check:core-boundaries`
 
-- [ ] 注册表与闭包测试通过；手机端类型检查通过；Dispatch 拒绝路径有测试
+- [x] 端口契约 9、acp `client::` 96、external_agent_turn 17（含权限进入父会话邮箱、取消时撤回）、远程轮询过滤 1、CLI 192 + Dispatch 拒绝 1、注册表 20 passed；手机端邮箱浏览器测试 2 passed；能力清单生成无变化、检查通过；手机端类型检查与边界检查通过；桌面端编译通过
+
+**Evidence notes:**
+- ACP 管理器中的中转登记与回退路径只有纯函数与内核侧测试；没有在真实 ACP 进程上验证权限往返。
+- IM 机器人复用远程轮询与 `ConfirmTool`，本任务没有单独的机器人测试。
 
 ## Task 3: 远程场景实测记录
 

@@ -44,6 +44,9 @@ use super::config::{
     AcpClientRequirementProbe, AcpClientStatus, RemoteAcpClientRequirementSnapshot,
 };
 use super::dsh_profile::{ensure_bundled_profile, ensure_bundled_profile_remote};
+use super::permission_broker::{
+    external_permission_request, response_for_decision, BrokeredPermission, PermissionBroker,
+};
 use super::prompt::AcpPrompt;
 use super::remote_capability_store::RemoteAcpCapabilityStore;
 use super::remote_session::{preferred_resume_strategies, AcpRemoteSessionStrategy};
@@ -65,6 +68,7 @@ use super::stream::{
 };
 use super::tool::AcpAgentTool;
 use super::transport::{handle_transport_closed, AcpTransport};
+use openbitfun_core::runtime_ports::ExternalAgentPermissionDecision;
 
 const CONFIG_PATH: &str = "acp_clients";
 const CLIENT_STARTUP_TIMEOUT_SECS: u64 = 60;
@@ -162,6 +166,9 @@ pub struct AcpClientService {
     /// ACP session id -> owning OpenBitFun session id, so permission requests
     /// can be attributed to the session (and its parent) that issued them.
     session_owners: DashMap<String, String>,
+    /// OpenBitFun session id -> the delegated turn that answers its
+    /// permission prompts through the session's permission mailbox.
+    permission_brokers: DashMap<String, PermissionBroker>,
 }
 
 struct PendingPermission {
@@ -239,6 +246,7 @@ impl AcpClientService {
             pending_permissions: DashMap::new(),
             session_permission_modes: DashMap::new(),
             session_owners: DashMap::new(),
+            permission_brokers: DashMap::new(),
         }))
     }
 
@@ -1697,6 +1705,10 @@ impl AcpClientService {
             AcpClientPermissionMode::Ask => {}
         }
 
+        if let Some(response) = self.broker_permission_request(&session_id, &request).await {
+            return Ok(response);
+        }
+
         let permission_id = format!("acp_permission_{}", uuid::Uuid::new_v4());
         let (tx, rx) = oneshot::channel();
         self.pending_permissions.insert(
@@ -1737,6 +1749,45 @@ impl AcpClientService {
                 ))
             }
         }
+    }
+
+    /// Routes delegated turns' prompts to the owning OpenBitFun session's
+    /// mailbox. Waits without the standalone timeout: a remote controller may
+    /// answer late, and a cancelled turn answers `Cancelled` itself.
+    async fn broker_permission_request(
+        &self,
+        acp_session_id: &str,
+        request: &RequestPermissionRequest,
+    ) -> Option<RequestPermissionResponse> {
+        let owner = self.session_owners.get(acp_session_id)?.value().clone();
+        let broker = self.permission_brokers.get(&owner)?.value().clone();
+        let (reply, answer) = oneshot::channel();
+        broker
+            .send(BrokeredPermission {
+                request: external_permission_request(request),
+                reply,
+            })
+            .ok()?;
+        let decision = answer
+            .await
+            .unwrap_or(Some(ExternalAgentPermissionDecision::Cancelled))?;
+        Some(response_for_decision(request, decision))
+    }
+
+    /// Delegated turns call this before prompting; prompts for
+    /// `openbitfun_session_id` then reach `broker` instead of the desktop
+    /// permission event.
+    pub(crate) fn register_permission_broker(
+        &self,
+        openbitfun_session_id: &str,
+        broker: PermissionBroker,
+    ) {
+        self.permission_brokers
+            .insert(openbitfun_session_id.to_string(), broker);
+    }
+
+    pub(crate) fn clear_permission_broker(&self, openbitfun_session_id: &str) {
+        self.permission_brokers.remove(openbitfun_session_id);
     }
 
     fn permission_mode_for_session(&self, session_id: &str) -> AcpClientPermissionMode {
@@ -2743,7 +2794,7 @@ fn permission_request_payload(
     payload
 }
 
-fn select_permission_by_kind(
+pub(super) fn select_permission_by_kind(
     request: &RequestPermissionRequest,
     preferred: PermissionOptionKind,
     approve: bool,

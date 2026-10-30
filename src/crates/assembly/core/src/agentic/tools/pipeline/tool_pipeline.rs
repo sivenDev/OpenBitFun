@@ -926,6 +926,11 @@ impl ToolPipeline {
         }
     }
 
+    /// The permission mailbox shared with every interactive surface.
+    pub(crate) fn permission_request_manager(&self) -> Option<Arc<PermissionRequestManager>> {
+        self.permission_request_manager.clone()
+    }
+
     pub fn with_permission_request_manager(
         mut self,
         permission_request_manager: Arc<PermissionRequestManager>,

@@ -6,15 +6,16 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use openbitfun_core::runtime_ports::{
     ExternalAgentAvailability, ExternalAgentContext, ExternalAgentDescriptor,
-    ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentListing, ExternalAgentTurnEvent,
-    ExternalAgentTurnOutcome, ExternalAgentTurnRequest, ExternalAgentUnavailableReason, PortError,
-    PortErrorKind, PortResult,
+    ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentListing,
+    ExternalAgentPermissionDecision, ExternalAgentTurnEvent, ExternalAgentTurnOutcome,
+    ExternalAgentTurnRequest, ExternalAgentUnavailableReason, PortError, PortErrorKind, PortResult,
 };
 use openbitfun_core::util::errors::OpenBitFunError;
 use tokio::sync::mpsc;
 
 use super::config::{AcpClientInfo, AcpClientRequirementProbe};
 use super::manager::AcpClientService;
+use super::permission_broker::{BrokeredPermission, PermissionBroker};
 use super::stream::AcpClientStreamEvent;
 
 pub struct AcpExternalAgentExecutor {
@@ -51,6 +52,33 @@ fn normalized_connection_id(remote_connection_id: Option<&str>) -> Option<&str> 
     remote_connection_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+/// Routes the session's permission prompts to the running turn until dropped.
+struct BrokerRegistration<'a> {
+    service: &'a AcpClientService,
+    openbitfun_session_id: String,
+}
+
+impl<'a> BrokerRegistration<'a> {
+    fn new(
+        service: &'a AcpClientService,
+        openbitfun_session_id: &str,
+        broker: PermissionBroker,
+    ) -> Self {
+        service.register_permission_broker(openbitfun_session_id, broker);
+        Self {
+            service,
+            openbitfun_session_id: openbitfun_session_id.to_string(),
+        }
+    }
+}
+
+impl Drop for BrokerRegistration<'_> {
+    fn drop(&mut self) {
+        self.service
+            .clear_permission_broker(&self.openbitfun_session_id);
+    }
 }
 
 /// Decides availability from configuration facts alone.
@@ -279,10 +307,16 @@ impl ExternalAgentExecutor for AcpExternalAgentExecutor {
             timeout_seconds,
         } = request;
         let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (permission_sender, mut permission_receiver) = mpsc::unbounded_channel();
+        let broker = BrokerRegistration::new(
+            &self.service,
+            &context.openbitfun_session_id,
+            permission_sender,
+        );
 
         // The ACP stream callback is synchronous; the sink is async. The
         // callback only enqueues, and the drain loop below awaits the sink.
-        let run = self.service.prompt_agent_stream(
+        let prompt = self.service.prompt_agent_stream(
             &client_id,
             prompt,
             context.workspace_path,
@@ -296,6 +330,29 @@ impl ExternalAgentExecutor for AcpExternalAgentExecutor {
                 Ok(())
             },
         );
+        let run = async {
+            let result = prompt.await;
+            // Ends the permission loop once no prompt can arrive.
+            drop(broker);
+            result
+        };
+        let permissions = async {
+            while let Some(BrokeredPermission { request, reply }) = permission_receiver.recv().await
+            {
+                let decision = match sink.request_permission(request).await {
+                    Ok(decision) => Some(decision),
+                    Err(error) if error.kind == PortErrorKind::NotAvailable => None,
+                    Err(error) => {
+                        log::warn!(
+                            "External agent permission prompt failed: error={}",
+                            error.message
+                        );
+                        Some(ExternalAgentPermissionDecision::Cancelled)
+                    }
+                };
+                let _ = reply.send(decision);
+            }
+        };
         let drain = async {
             let mut accumulator = TurnAccumulator::default();
             let mut outcome = None;
@@ -311,7 +368,7 @@ impl ExternalAgentExecutor for AcpExternalAgentExecutor {
             Ok::<_, PortError>((outcome, accumulator.final_text))
         };
 
-        let (run_result, drain_result) = tokio::join!(run, drain);
+        let (run_result, drain_result, ()) = tokio::join!(run, drain, permissions);
         run_result.map_err(port_error)?;
         let (outcome, final_text) = drain_result?;
         // A turn that ended without an explicit stop event still completed.

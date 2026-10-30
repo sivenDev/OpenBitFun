@@ -10,9 +10,13 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use log::warn;
+use openbitfun_agent_runtime::permission::{PermissionRequestManager, PermissionWaitOutcome};
 use openbitfun_runtime_ports::{
-    ExternalAgentContext, ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentTurnEvent,
-    ExternalAgentTurnOutcome, ExternalAgentTurnRequest, PortError, PortErrorKind, PortResult,
+    ExternalAgentContext, ExternalAgentEventSink, ExternalAgentExecutor,
+    ExternalAgentPermissionDecision, ExternalAgentPermissionKind, ExternalAgentPermissionRequest,
+    ExternalAgentTurnEvent, ExternalAgentTurnOutcome, ExternalAgentTurnRequest,
+    PermissionDelegationContext, PermissionReply, PermissionRequest, PermissionRequestSource,
+    PermissionRequestSourceKind, PortError, PortErrorKind, PortResult,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -202,9 +206,81 @@ impl ChildSessionStream {
     }
 }
 
+/// Where a delegated turn files the external agent's permission prompts: the
+/// same mailbox native tools use, attributed to the child session and its
+/// parent Task call, so desktop, mobile, IM, and peer controllers can answer.
+pub(crate) struct ExternalAgentPermissionRoute {
+    pub(crate) manager: Arc<PermissionRequestManager>,
+    pub(crate) project_id: String,
+    pub(crate) project_path: String,
+    pub(crate) delegation: Option<PermissionDelegationContext>,
+}
+
+impl ExternalAgentPermissionRoute {
+    pub(crate) fn for_workspace(
+        manager: Option<Arc<PermissionRequestManager>>,
+        workspace: Option<&WorkspaceBinding>,
+        delegation: Option<PermissionDelegationContext>,
+    ) -> Option<Self> {
+        let manager = manager?;
+        let workspace = workspace?;
+        let project_id =
+            crate::agentic::tools::pipeline::permission_project_id_for_workspace_identity(
+                &workspace.session_identity,
+                workspace.is_remote(),
+            )
+            .map_err(|error| {
+                warn!(
+                    "External agent permission scope unavailable: error={}",
+                    error
+                );
+            })
+            .ok()?;
+        Some(Self {
+            manager,
+            project_id,
+            project_path: workspace
+                .session_identity
+                .logical_workspace_path()
+                .to_string(),
+            delegation,
+        })
+    }
+}
+
+/// Maps a prompt onto the permission actions surfaces already present.
+fn permission_action(kind: ExternalAgentPermissionKind) -> &'static str {
+    match kind {
+        ExternalAgentPermissionKind::Read => "read",
+        ExternalAgentPermissionKind::Edit => "edit",
+        ExternalAgentPermissionKind::Execute => "bash",
+        ExternalAgentPermissionKind::Fetch => "webfetch",
+        ExternalAgentPermissionKind::Other => "custom_tool",
+    }
+}
+
+fn permission_decision(outcome: PermissionWaitOutcome) -> ExternalAgentPermissionDecision {
+    match outcome {
+        PermissionWaitOutcome::Replied(PermissionReply::Once) => {
+            ExternalAgentPermissionDecision::AllowOnce
+        }
+        PermissionWaitOutcome::Replied(PermissionReply::Always) => {
+            ExternalAgentPermissionDecision::AllowAlways
+        }
+        // The external agent owns its tool input; an edited approval cannot
+        // be applied, so it is not treated as approval.
+        PermissionWaitOutcome::Replied(
+            PermissionReply::OnceWithInput { .. } | PermissionReply::Reject { .. },
+        ) => ExternalAgentPermissionDecision::Reject,
+        PermissionWaitOutcome::Cancelled { .. } => ExternalAgentPermissionDecision::Cancelled,
+    }
+}
+
 struct EventQueueSink {
     event_queue: Arc<EventQueue>,
     stream: tokio::sync::Mutex<ChildSessionStream>,
+    permissions: Option<ExternalAgentPermissionRoute>,
+    cancel_token: CancellationToken,
 }
 
 impl EventQueueSink {
@@ -234,6 +310,91 @@ impl ExternalAgentEventSink for EventQueueSink {
         self.enqueue_all(events).await;
         Ok(())
     }
+
+    async fn request_permission(
+        &self,
+        request: ExternalAgentPermissionRequest,
+    ) -> PortResult<ExternalAgentPermissionDecision> {
+        let Some(route) = self.permissions.as_ref() else {
+            return Err(PortError::new(
+                PortErrorKind::NotAvailable,
+                "no permission mailbox is available for this external agent turn",
+            ));
+        };
+        let (opened, round_id, session_id, turn_id, agent_type) = {
+            let mut stream = self.stream.lock().await;
+            let (opened, round_id) = stream.ensure_round();
+            (
+                opened,
+                round_id,
+                stream.session_id.clone(),
+                stream.turn_id.clone(),
+                stream.agent_type.clone(),
+            )
+        };
+        self.enqueue_all(opened.into_iter().collect()).await;
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let mut resources = request.resources;
+        if resources.is_empty() {
+            resources.push(request.title.clone());
+        }
+        let mut display_metadata = serde_json::Map::new();
+        display_metadata.insert(
+            "riskDescription".into(),
+            serde_json::Value::String(request.title),
+        );
+        display_metadata.insert(
+            "externalAgent".into(),
+            serde_json::Value::String(agent_type.clone()),
+        );
+        let mut pending = route
+            .manager
+            .register_batch_for_turn(
+                vec![PermissionRequest {
+                    request_id: request_id.clone(),
+                    round_id,
+                    order: 0,
+                    tool_call_id: request.tool_call_id,
+                    project_path: Some(route.project_path.clone()),
+                    project_id: route.project_id.clone(),
+                    session_id,
+                    agent_id: agent_type.clone(),
+                    action: permission_action(request.kind).to_string(),
+                    resources,
+                    save_resources: Vec::new(),
+                    source: PermissionRequestSource {
+                        kind: PermissionRequestSourceKind::Extension,
+                        identity: agent_type,
+                    },
+                    delegation: route.delegation.clone(),
+                    display_metadata,
+                }],
+                turn_id,
+            )
+            .await
+            .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
+        let pending = pending
+            .pop()
+            .expect("a single-request batch must return one receiver");
+        let outcome = tokio::select! {
+            outcome = pending.wait() => outcome,
+            _ = self.cancel_token.cancelled() => {
+                if let Err(error) = route
+                    .manager
+                    .cancel_request(&request_id, "External agent turn was cancelled")
+                    .await
+                {
+                    warn!(
+                        "Failed to cancel external agent permission request: request_id={}, error={}",
+                        request_id, error
+                    );
+                }
+                return Ok(ExternalAgentPermissionDecision::Cancelled);
+            }
+        };
+        Ok(permission_decision(outcome))
+    }
 }
 
 pub(crate) struct ExternalAgentTurn {
@@ -242,6 +403,7 @@ pub(crate) struct ExternalAgentTurn {
     pub(crate) agent_type: String,
     pub(crate) dialog_turn_id: String,
     pub(crate) request: ExternalAgentTurnRequest,
+    pub(crate) permissions: Option<ExternalAgentPermissionRoute>,
     pub(crate) cancel_token: CancellationToken,
 }
 
@@ -260,6 +422,7 @@ pub(crate) async fn run_external_agent_turn(
         agent_type,
         dialog_turn_id,
         request,
+        permissions,
         cancel_token,
     } = turn;
     let started_at = Instant::now();
@@ -289,6 +452,8 @@ pub(crate) async fn run_external_agent_turn(
             &agent_type,
             &client_id,
         )),
+        permissions,
+        cancel_token: cancel_token.clone(),
     };
 
     let outcome = {

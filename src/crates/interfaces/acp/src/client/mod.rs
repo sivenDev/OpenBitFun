@@ -4,6 +4,7 @@ mod dsh_profile;
 mod event_projection;
 mod executor;
 mod manager;
+mod permission_broker;
 mod prompt;
 mod remote_capability_store;
 mod remote_session;

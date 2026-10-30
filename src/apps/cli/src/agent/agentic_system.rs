@@ -3,9 +3,64 @@ use anyhow::{Context, Result};
 use openbitfun_core::product_assembly::DeliveryProfile;
 use openbitfun_core::product_runtime::CoreRuntimeServicesProvider;
 use openbitfun_core::runtime_ownership::CoreRuntimeOwnership;
-use std::sync::Arc;
+use openbitfun_core::runtime_ports::{
+    ExternalAgentAvailability, ExternalAgentContext, ExternalAgentEventSink, ExternalAgentExecutor,
+    ExternalAgentTurnOutcome, ExternalAgentTurnRequest, ExternalAgentUnavailableReason, PortError,
+    PortErrorKind, PortResult,
+};
+use std::sync::{Arc, OnceLock};
 
 pub(crate) use openbitfun_core::agentic::system::AgenticSystem;
+
+/// Set once for processes that must not run external agents, such as a
+/// Detached Dispatch worker: the job runs headless with no guaranteed
+/// controller, so an external agent's own permission prompts could not be
+/// answered.
+static EXTERNAL_AGENTS_UNSUPPORTED: OnceLock<&'static str> = OnceLock::new();
+
+pub(crate) const DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED: &str =
+    "External agents are not available in Detached Dispatch jobs; delegate to an OpenBitFun agent or run the task from an interactive session";
+
+/// Makes every external agent in this process report `reason` instead of
+/// running. Call before `init_agentic_system`.
+pub(crate) fn disable_external_agents_for_process(reason: &'static str) {
+    let _ = EXTERNAL_AGENTS_UNSUPPORTED.set(reason);
+}
+
+/// Answers every external agent request with an explicit unsupported state.
+struct UnsupportedExternalAgentExecutor {
+    reason: &'static str,
+}
+
+#[async_trait::async_trait]
+impl ExternalAgentExecutor for UnsupportedExternalAgentExecutor {
+    async fn availability(
+        &self,
+        _client_id: &str,
+        _context: &ExternalAgentContext,
+    ) -> ExternalAgentAvailability {
+        ExternalAgentAvailability::Unavailable {
+            reason: ExternalAgentUnavailableReason::UnsupportedContext,
+            detail: self.reason.to_string(),
+        }
+    }
+
+    async fn run_turn(
+        &self,
+        _request: ExternalAgentTurnRequest,
+        _sink: &dyn ExternalAgentEventSink,
+    ) -> PortResult<ExternalAgentTurnOutcome> {
+        Err(PortError::new(PortErrorKind::NotAvailable, self.reason))
+    }
+
+    async fn cancel(&self, _client_id: &str, _openbitfun_session_id: &str) -> PortResult<bool> {
+        Ok(false)
+    }
+
+    async fn close(&self, _client_id: &str, _openbitfun_session_id: &str) -> PortResult<()> {
+        Ok(())
+    }
+}
 
 pub(crate) fn select_agentic_system_profile(profile: DeliveryProfile) -> Result<()> {
     openbitfun_core::agentic::system::select_agentic_system_profile(profile)
@@ -29,6 +84,12 @@ pub(crate) async fn init_agentic_system(
     system
         .coordinator
         .set_remote_exec_port(CoreRuntimeServicesProvider::remote_exec_port());
+    if let Some(reason) = EXTERNAL_AGENTS_UNSUPPORTED.get().copied() {
+        system
+            .coordinator
+            .set_external_agent_executor(Arc::new(UnsupportedExternalAgentExecutor { reason }));
+        return Ok(system);
+    }
     match crate::acp_cli::new_client_service().await {
         Ok(service) => system.coordinator.set_external_agent_executor(Arc::new(
             openbitfun_acp::client::AcpExternalAgentExecutor::new(service),
@@ -39,4 +100,62 @@ pub(crate) async fn init_agentic_system(
         ),
     }
     Ok(system)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoopSink;
+
+    #[async_trait::async_trait]
+    impl ExternalAgentEventSink for NoopSink {
+        async fn emit(
+            &self,
+            _event: openbitfun_core::runtime_ports::ExternalAgentTurnEvent,
+        ) -> PortResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_processes_refuse_external_agents_with_a_reason() {
+        let executor = UnsupportedExternalAgentExecutor {
+            reason: DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED,
+        };
+        let context = ExternalAgentContext {
+            openbitfun_session_id: "job-session".to_string(),
+            workspace_path: Some("/tmp/job".to_string()),
+            remote_connection_id: None,
+            session_storage_path: None,
+        };
+        assert_eq!(
+            executor.availability("claude-code", &context).await,
+            ExternalAgentAvailability::Unavailable {
+                reason: ExternalAgentUnavailableReason::UnsupportedContext,
+                detail: DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED.to_string(),
+            }
+        );
+        assert!(executor
+            .list_agents(
+                openbitfun_core::runtime_ports::ExternalAgentListing::Probed,
+                None
+            )
+            .await
+            .is_empty());
+        let error = executor
+            .run_turn(
+                ExternalAgentTurnRequest {
+                    client_id: "claude-code".to_string(),
+                    context,
+                    prompt: "task".to_string(),
+                    timeout_seconds: None,
+                },
+                &NoopSink,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, PortErrorKind::NotAvailable);
+        assert!(error.message.contains("Detached Dispatch"));
+    }
 }

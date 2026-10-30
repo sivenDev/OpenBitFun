@@ -3,9 +3,10 @@
 use async_trait::async_trait;
 use openbitfun_runtime_ports::{
     ExternalAgentAvailability, ExternalAgentContext, ExternalAgentDescriptor,
-    ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentListing, ExternalAgentTurnEvent,
-    ExternalAgentTurnOutcome, ExternalAgentTurnRequest, ExternalAgentUnavailableReason, PortError,
-    PortErrorKind, PortResult,
+    ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentListing,
+    ExternalAgentPermissionDecision, ExternalAgentPermissionKind, ExternalAgentPermissionRequest,
+    ExternalAgentTurnEvent, ExternalAgentTurnOutcome, ExternalAgentTurnRequest,
+    ExternalAgentUnavailableReason, PortError, PortErrorKind, PortResult,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -336,5 +337,36 @@ fn agent_descriptor_round_trips_and_tolerates_missing_optional_fields() {
                 "detail": "claude-code-acp not found"
             }
         })
+    );
+}
+
+#[tokio::test]
+async fn sinks_without_a_permission_route_report_not_available() {
+    let sink = RecordingSink::default();
+    let error = sink
+        .request_permission(ExternalAgentPermissionRequest {
+            tool_call_id: Some("call-1".to_string()),
+            title: "Run npm test".to_string(),
+            kind: ExternalAgentPermissionKind::Execute,
+            resources: vec!["npm test".to_string()],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, PortErrorKind::NotAvailable);
+}
+
+#[test]
+fn permission_dtos_tolerate_new_kinds_and_missing_fields() {
+    let request: ExternalAgentPermissionRequest = serde_json::from_value(json!({
+        "title": "Switch mode",
+        "kind": "switch_mode"
+    }))
+    .expect("tolerant decode");
+    assert_eq!(request.kind, ExternalAgentPermissionKind::Other);
+    assert!(request.resources.is_empty());
+    assert_eq!(request.tool_call_id, None);
+    assert_eq!(
+        serde_json::to_value(ExternalAgentPermissionDecision::AllowAlways).unwrap(),
+        json!("allow_always")
     );
 }

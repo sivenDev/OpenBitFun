@@ -7,6 +7,15 @@ import { useI18n } from '../i18n';
 interface PermissionRequest {
   requestId: string; sessionId: string; toolCallId?: string; action: string;
   resources: string[]; source?: {identity?:string}; displayMetadata?: Record<string,unknown>;
+  delegation?: {parentSessionId?: string; subagentType?: string};
+}
+/** Subagents, including external agents, ask on behalf of the session that delegated to them. */
+function requestTargetsSession(request:PermissionRequest,sessionId:string):boolean {
+  return request.sessionId===sessionId||request.delegation?.parentSessionId===sessionId;
+}
+/** External agents own their tool input, so an edited approval cannot be applied. */
+function requestAllowsInputEdit(request:PermissionRequest):boolean {
+  return typeof request.displayMetadata?.externalAgent!=='string';
 }
 interface PendingQuestion {toolId:string;sessionId:string;questions:Record<string,unknown>}
 interface InteractionMailbox {sessionId:string;permissions:{revision:number;requests:PermissionRequest[]};userQuestions:{revision:number;questions:PendingQuestion[]}}
@@ -32,7 +41,7 @@ export function PermissionMailbox({manager,sessionId,invalidation}:{manager:Remo
         dirty.current=false;
         const next=await manager.invokeHost<InteractionMailbox>('get_session_interaction_mailbox',{sessionId});
         if(next.sessionId!==sessionId)throw new Error('Interaction mailbox session mismatch');
-        if(ticket===epoch.current){setRequests(next.permissions.requests.filter(request=>request.sessionId===sessionId));setQuestions(next.userQuestions.questions.filter(question=>question.sessionId===sessionId));setFailed(null);}
+        if(ticket===epoch.current){setRequests(next.permissions.requests.filter(request=>requestTargetsSession(request,sessionId)));setQuestions(next.userQuestions.questions.filter(question=>question.sessionId===sessionId));setFailed(null);}
       }
     }catch(error){if(ticket===epoch.current)setFailed({operation:'load',message:error instanceof Error?error.message:String(error)});}
     finally{running.current=false;}
@@ -62,7 +71,7 @@ export function PermissionMailbox({manager,sessionId,invalidation}:{manager:Remo
       <h3>{request.source?.identity||request.action}</h3>
       <p>{request.action}</p><pre>{request.resources.join('\n')}</pre>
       {editId===request.requestId&&<MobileTextarea aria-label={t('chat.toolRequest')} value={input} onChange={event=>setInput(event.target.value)} disabled={!!busy}/>}
-      <MobileButton disabled={!!busy} onClick={()=>{setEditId(request.requestId);setInput('{}');}}>{t('chat.editApproval')}</MobileButton>
+      {requestAllowsInputEdit(request)&&<MobileButton disabled={!!busy} onClick={()=>{setEditId(request.requestId);setInput('{}');}}>{t('chat.editApproval')}</MobileButton>}
       <MobileButton disabled={!!busy} onClick={()=>void reply(request.requestId,'once')}>{t('chat.approve')}</MobileButton>
       <MobileButton disabled={!!busy} onClick={()=>void reply(request.requestId,'reject')}>{t('chat.reject')}</MobileButton>
     </div>)}

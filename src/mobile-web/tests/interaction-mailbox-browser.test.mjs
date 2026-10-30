@@ -31,3 +31,35 @@ test('mailbox restores questions and permissions without tool attachment and rep
   assert.ok(calls.filter(c=>c.command==='get_session_interaction_mailbox').length>=2);
  }finally{await browser.close();await source.close()}
 });
+
+test('mailbox shows delegated subagent prompts on the parent session and replies with their request id', {timeout:40000},async()=>{
+ const source=await startSourceServer();const browser=await launchBrowser();
+ try{
+  const page=await browser.newPage();await page.goto(source.origin);
+  await page.evaluate(async()=>{
+   const R=await import('/node_modules/.vite/deps/react.js');const React=R.default??R;
+   const D=await import('/node_modules/.vite/deps/react-dom_client.js');const {createRoot}=D.default??D;
+   const {PermissionMailbox}=await import('/src/components/PermissionMailbox.tsx');
+   const calls=[];window.mailboxCalls=calls;
+   const delegated={requestId:'acp-request',sessionId:'child-session',action:'bash',resources:['npm test'],source:{identity:'acp:claude-code'},displayMetadata:{externalAgent:'acp:claude-code',riskDescription:'Run npm test'},delegation:{parentSessionId:'parent-session',subagentType:'acp:claude-code'}};
+   const unrelated={requestId:'other-request',sessionId:'other-child',action:'edit',resources:['/x'],delegation:{parentSessionId:'other-parent'}};
+   const manager={invokeHost:async(command,request)=>{
+    calls.push({command,request});
+    if(command==='respond_permission')return null;
+    return {sessionId:'parent-session',permissions:{revision:1,requests:[delegated,unrelated]},userQuestions:{revision:1,questions:[]}};
+   },startQuestionInteraction:async()=>{},answerQuestion:async()=>{}};
+   document.body.innerHTML='<div id="mailbox-test"></div>';
+   createRoot(document.querySelector('#mailbox-test')).render(React.createElement(PermissionMailbox,{manager,sessionId:'parent-session',invalidation:0}));
+  });
+  await page.waitForFunction(()=>document.body.innerText.includes('npm test'));
+  const text=await page.evaluate(()=>document.body.innerText);
+  assert.ok(text.includes('acp:claude-code'));
+  assert.ok(!text.includes('/x'));
+  const buttons=await page.evaluate(()=>Array.from(document.querySelectorAll('button')).map(e=>e.textContent));
+  assert.ok(!buttons.includes('chat.editApproval'));
+  await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(e=>e.textContent==='chat.approve').click());
+  await page.waitForFunction(()=>window.mailboxCalls.some(c=>c.command==='respond_permission'));
+  const calls=await page.evaluate(()=>window.mailboxCalls);
+  assert.equal(calls.find(c=>c.command==='respond_permission').request.requestId,'acp-request');
+ }finally{await browser.close();await source.close()}
+});

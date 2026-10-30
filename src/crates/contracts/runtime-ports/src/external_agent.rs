@@ -128,9 +128,60 @@ pub enum ExternalAgentTurnOutcome {
     Cancelled { partial_text: String },
 }
 
+/// A permission prompt raised by the external agent's own tools.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalAgentPermissionRequest {
+    /// The external agent's tool call, when it names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// What the agent wants to do, as the agent describes it.
+    pub title: String,
+    pub kind: ExternalAgentPermissionKind,
+    /// Paths or commands the request touches; may be empty.
+    #[serde(default)]
+    pub resources: Vec<String>,
+}
+
+/// Coarse kind of a permission prompt, for presentation and policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalAgentPermissionKind {
+    Read,
+    Edit,
+    Execute,
+    Fetch,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalAgentPermissionDecision {
+    AllowOnce,
+    AllowAlways,
+    Reject,
+    /// No answer will come, for example because the turn was cancelled.
+    Cancelled,
+}
+
 #[async_trait]
 pub trait ExternalAgentEventSink: Send + Sync {
     async fn emit(&self, event: ExternalAgentTurnEvent) -> PortResult<()>;
+
+    /// Asks whoever drives the OpenBitFun session to answer a permission
+    /// prompt. The answer may come from any surface (desktop, mobile, IM bot,
+    /// or a peer controller), so it can take arbitrarily long. A sink that
+    /// cannot route prompts returns `NotAvailable`.
+    async fn request_permission(
+        &self,
+        _request: ExternalAgentPermissionRequest,
+    ) -> PortResult<ExternalAgentPermissionDecision> {
+        Err(crate::PortError::new(
+            crate::PortErrorKind::NotAvailable,
+            "this event sink cannot route permission prompts",
+        ))
+    }
 }
 
 #[async_trait]

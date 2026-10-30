@@ -3740,6 +3740,18 @@ impl RemoteSessionRuntimeHost for CoreRemoteSessionRuntimeHost {
 }
 
 #[cfg(feature = "remote-connect")]
+fn permission_targets_session(
+    request: &openbitfun_runtime_ports::PermissionRequest,
+    session_id: &str,
+) -> bool {
+    request.session_id == session_id
+        || request
+            .delegation
+            .as_ref()
+            .is_some_and(|delegation| delegation.parent_session_id == session_id)
+}
+
+#[cfg(feature = "remote-connect")]
 #[async_trait::async_trait]
 impl RemotePollRuntimeHost for CoreRemotePollRuntimeHost<'_> {
     fn ensure_tracker(&self, session_id: &str) -> Arc<RemoteSessionStateTracker> {
@@ -3750,10 +3762,12 @@ impl RemotePollRuntimeHost for CoreRemotePollRuntimeHost<'_> {
         let Ok(manager) = crate::product_runtime::core_permission_request_manager() else {
             return;
         };
+        // Delegated subagents (native or external) ask on behalf of the
+        // parent session, so a controller attached to the parent sees them.
         for request in manager
             .pending_requests()
             .into_iter()
-            .filter(|request| request.session_id == session_id)
+            .filter(|request| permission_targets_session(request, session_id))
         {
             let tool_id = request
                 .tool_call_id
@@ -3954,6 +3968,54 @@ impl RemoteCancelRuntimeHost for CoreRemoteCancelRuntimeHost {
             .await
             .map(|_| ())
             .map_err(CoreServiceAgentRuntime::runtime_error_message)
+    }
+}
+
+#[cfg(all(test, feature = "remote-connect"))]
+mod delegated_permission_tests {
+    use super::permission_targets_session;
+
+    fn request(
+        session_id: &str,
+        parent: Option<&str>,
+    ) -> openbitfun_runtime_ports::PermissionRequest {
+        serde_json::from_value(serde_json::json!({
+            "requestId": "request-1",
+            "roundId": "round-1",
+            "order": 0,
+            "projectId": "project-1",
+            "sessionId": session_id,
+            "agentId": "acp:claude-code",
+            "action": "bash",
+            "resources": ["npm test"],
+            "source": { "kind": "extension", "identity": "acp:claude-code" },
+            "delegation": parent.map(|parent| serde_json::json!({
+                "parentSessionId": parent,
+                "parentToolCallId": "task-call",
+                "subagentType": "acp:claude-code"
+            })),
+        }))
+        .expect("permission request")
+    }
+
+    #[test]
+    fn remote_controllers_of_the_parent_see_delegated_prompts() {
+        assert!(permission_targets_session(
+            &request("parent", None),
+            "parent"
+        ));
+        assert!(permission_targets_session(
+            &request("child", Some("parent")),
+            "parent"
+        ));
+        assert!(permission_targets_session(
+            &request("child", Some("parent")),
+            "child"
+        ));
+        assert!(!permission_targets_session(
+            &request("child", Some("other")),
+            "parent"
+        ));
     }
 }
 
