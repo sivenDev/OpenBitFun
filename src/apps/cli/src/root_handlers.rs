@@ -71,6 +71,7 @@ pub(crate) async fn handle_dispatch_action(action: DispatchAction) -> Result<()>
         DispatchAction::Append => "append",
         DispatchAction::Continue => "continue",
         DispatchAction::Query => "query",
+        DispatchAction::Catalog => "catalog",
         DispatchAction::WorkspaceProvision => "workspace-provision",
         DispatchAction::WorkspaceBundleBegin => "workspace-bundle-begin",
         DispatchAction::WorkspaceBundleChunk => "workspace-bundle-chunk",

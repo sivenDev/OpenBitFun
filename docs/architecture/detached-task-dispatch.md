@@ -455,3 +455,23 @@ the protocol version. Older targets can still execute jobs and sync results.
 Detached projections do
 not expose controller-local snapshot rollback or message editing until a target-side history
 mutation capability exists.
+
+### Agent delegation catalog
+
+A device can open selected local agent modes to other devices of the same account.
+The open list is device-local (`<product_home>/delegation/open-agents.json`), empty by
+default, and managed with `openbitfun delegation list|open|close` or the desktop
+Permissions settings; it never travels with exported configuration. Each entry names
+the agent mode, the allowed task kinds (`message`, `coding`), an optional message
+workspace, and the granted device ids (`*` for every device of the account).
+Unreadable entries stay on disk, are reported, and count as closed.
+
+`dispatch_target_catalog` (CLI verb `catalog`) returns the entries granted to the
+requesting device: id, display name, description, and task kinds. Target paths and the
+grants of other devices are not returned. The requester is the reserved
+`__sourceDeviceId` argument, which only the receiving host sets from the
+relay-authenticated sender (`bind_dispatch_source_device` in `dispatch_contract.rs`);
+a value in the incoming payload is discarded, and other target verbs never receive it.
+Without a bound requester the verb fails. The optional `agent_delegation_v1`
+capability gates delegated use; it is not a submission requirement and does not change
+the protocol version.

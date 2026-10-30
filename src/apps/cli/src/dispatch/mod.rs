@@ -73,6 +73,9 @@ async fn run_dispatch_verb_canonical(
         "submit" => {
             serde_json::to_value(submit(parse(input)?).await?).context("encode submit response")
         }
+        "catalog" => {
+            serde_json::to_value(catalog(parse(input)?).await?).context("encode catalog response")
+        }
         "status" => serde_json::to_value(status(parse(input)?)?).context("encode status response"),
         "cancel" => serde_json::to_value(cancel(parse(input)?)?).context("encode cancel response"),
         "list" => {
@@ -134,6 +137,54 @@ pub(crate) fn run_workspace_bundle_commit(job_id: String) -> Result<()> {
 
 pub(crate) fn run_workspace_sync(job_id: String) -> Result<()> {
     workspace::run_sync(job_id)
+}
+
+/// Agents this device opens to the requesting device. The requester is the
+/// host-bound source device of a device RPC; there is no requester-less answer.
+async fn catalog(
+    request: openbitfun_services_core::dispatch_contract::DispatchCatalogRequest,
+) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
+    let path_manager = openbitfun_core::infrastructure::PathManager::new()
+        .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
+    catalog_from(
+        &openbitfun_core::service::delegation::OpenAgentStore::for_product_home(&path_manager),
+        request,
+    )
+    .await
+}
+
+async fn catalog_from(
+    store: &openbitfun_core::service::delegation::OpenAgentStore,
+    request: openbitfun_services_core::dispatch_contract::DispatchCatalogRequest,
+) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
+    use openbitfun_services_core::dispatch_contract::{
+        DispatchCatalogAgent, DispatchCatalogResponse,
+    };
+    let Some(device_id) = request
+        .source_device_id
+        .filter(|device_id| !device_id.trim().is_empty())
+    else {
+        bail!("dispatch catalog is answered only for a requesting device");
+    };
+    let agents = store
+        .granted_to_device(&device_id)
+        .await
+        .context("read agents opened to other devices")?;
+    Ok(DispatchCatalogResponse {
+        agents: agents
+            .into_iter()
+            .map(|agent| DispatchCatalogAgent {
+                id: agent.id,
+                display_name: agent.display_name,
+                description: agent.description,
+                task_kinds: agent
+                    .task_kinds
+                    .into_iter()
+                    .filter_map(|kind| kind.wire_name().map(str::to_string))
+                    .collect(),
+            })
+            .collect(),
+    })
 }
 
 async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
@@ -1075,6 +1126,68 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::dispatch::protocol::{DispatchApprovalPolicy, DispatchSubmitRequest};
+
+    #[tokio::test]
+    async fn catalog_lists_only_agents_granted_to_the_bound_requester() {
+        use openbitfun_core::service::delegation::{
+            DelegationTaskKind, OpenAgent, OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
+        };
+        use openbitfun_services_core::dispatch_contract::{
+            bind_dispatch_source_device, DispatchCatalogRequest,
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = OpenAgentStore::new(dir.path().join("open-agents.json"));
+        let request_from = |device: &str| -> DispatchCatalogRequest {
+            serde_json::from_value(bind_dispatch_source_device(
+                "dispatch_target_catalog",
+                serde_json::json!({ "__sourceDeviceId": "laptop" }),
+                device,
+            ))
+            .expect("catalog request")
+        };
+
+        // Nothing is open by default.
+        let empty = catalog_from(&store, request_from("laptop")).await.unwrap();
+        assert!(empty.agents.is_empty());
+
+        let open = |id: &str, devices: &[&str]| OpenAgent {
+            id: id.to_string(),
+            agent_type: "Standard".to_string(),
+            display_name: id.to_string(),
+            description: None,
+            task_kinds: vec![DelegationTaskKind::Message],
+            message_workspace: Some("/srv/private".to_string()),
+            same_account_devices: devices.iter().map(|device| device.to_string()).collect(),
+        };
+        store.open(open("for-laptop", &["laptop"])).await.unwrap();
+        store
+            .open(open("for-all", &[ALL_SAME_ACCOUNT_DEVICES]))
+            .await
+            .unwrap();
+
+        let laptop = catalog_from(&store, request_from("laptop")).await.unwrap();
+        let ids: Vec<_> = laptop
+            .agents
+            .iter()
+            .map(|agent| agent.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["for-laptop", "for-all"]);
+        assert_eq!(laptop.agents[0].task_kinds, vec!["message"]);
+        // Target paths never leave the target.
+        assert!(!serde_json::to_string(&laptop)
+            .unwrap()
+            .contains("/srv/private"));
+
+        // A forged source device in the payload is replaced by the bound sender.
+        let phone = catalog_from(&store, request_from("phone")).await.unwrap();
+        let ids: Vec<_> = phone.agents.iter().map(|agent| agent.id.as_str()).collect();
+        assert_eq!(ids, vec!["for-all"]);
+
+        // Without a bound requester there is no answer.
+        assert!(catalog_from(&store, DispatchCatalogRequest::default())
+            .await
+            .is_err());
+    }
 
     fn probe_failure(diagnostic: &str) -> Result<GitProbeOutput, GitProbeOutput> {
         Err(GitProbeOutput {

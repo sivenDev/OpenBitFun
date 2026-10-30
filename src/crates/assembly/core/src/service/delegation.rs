@@ -35,6 +35,17 @@ pub enum DelegationTaskKind {
     Unknown,
 }
 
+impl DelegationTaskKind {
+    /// The wire name, or `None` for a kind this build does not grant.
+    pub fn wire_name(self) -> Option<&'static str> {
+        match self {
+            Self::Message => Some("message"),
+            Self::Coding => Some("coding"),
+            Self::Unknown => None,
+        }
+    }
+}
+
 /// One agent this device opens to other devices.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

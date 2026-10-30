@@ -246,6 +246,7 @@ pub(super) const OPERATIONS: &[OperationDefinition] = &[
     host_invoke_only("dispatch_target_answer",                       Agnostic,    HostControlPlane, HANDLED),
     host_invoke_only("dispatch_target_append",                       Agnostic,    HostControlPlane, HANDLED),
     host_invoke_only("dispatch_target_cancel",                       Agnostic,    HostControlPlane, HANDLED),
+    host_invoke_only("dispatch_target_catalog",                      Agnostic,    HostControlPlane, HANDLED),
     host_invoke_only("dispatch_target_continue",                     Agnostic,    HostControlPlane, HANDLED),
     host_invoke_only("dispatch_target_list",                         Agnostic,    HostControlPlane, HANDLED),
     host_invoke_only("dispatch_target_probe",                        Agnostic,    HostControlPlane, HANDLED),

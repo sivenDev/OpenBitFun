@@ -777,6 +777,8 @@ pub(crate) enum DispatchAction {
     Continue,
     /// Read persisted session facts (usage report) without starting a turn
     Query,
+    /// List the agents this machine opens to the requesting device
+    Catalog,
     #[command(name = "__workspace_provision", hide = true)]
     WorkspaceProvision,
     #[command(name = "__workspace_bundle_begin", hide = true)]

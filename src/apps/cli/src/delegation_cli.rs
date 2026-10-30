@@ -146,11 +146,7 @@ fn print_records(records: &[OpenAgentRecord]) {
                 let kinds: Vec<&str> = agent
                     .task_kinds
                     .iter()
-                    .filter_map(|kind| match kind {
-                        DelegationTaskKind::Message => Some("message"),
-                        DelegationTaskKind::Coding => Some("coding"),
-                        DelegationTaskKind::Unknown => None,
-                    })
+                    .filter_map(|kind| kind.wire_name())
                     .collect();
                 println!(
                     "- {}: {} (agent: {}, tasks: {}, devices: {})",

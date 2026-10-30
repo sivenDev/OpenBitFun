@@ -608,7 +608,7 @@ mod tests {
                 .iter()
                 .filter(|id| id.starts_with("dispatch_target_"))
                 .count(),
-            15
+            16
         );
         for id in control_plane {
             let op = operation(id).unwrap();

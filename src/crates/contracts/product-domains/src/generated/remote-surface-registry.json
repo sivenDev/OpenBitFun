@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "digest": "fnv1a64:2801d43430a12ae4",
+  "digest": "fnv1a64:ac943173f2949961",
   "retiredCommandPrefixes": [
     {
       "prefix": "lsp_",
@@ -2024,6 +2024,17 @@
     },
     {
       "id": "dispatch_target_cancel",
+      "surface": "host_invoke_only",
+      "remoteWorkspace": "WorkspaceAgnostic",
+      "peer": {
+        "kind": "host_control_plane"
+      },
+      "cliPeer": {
+        "kind": "handled"
+      }
+    },
+    {
+      "id": "dispatch_target_catalog",
       "surface": "host_invoke_only",
       "remoteWorkspace": "WorkspaceAgnostic",
       "peer": {

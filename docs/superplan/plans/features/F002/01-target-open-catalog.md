@@ -116,6 +116,9 @@ parent: "F002"
 - Modify: `src/apps/desktop/src/api/remote_connect_api.rs`
 - Modify: `src/apps/cli/src/peer_host/dispatch.rs`
 - Modify: `src/web-ui/src/features/dispatch/dispatch.contract.test.ts`
+- Modify: `src/crates/contracts/product-domains/src/remote_surface/table.rs`、`remote_surface/mod.rs`
+- Modify: `src/apps/cli/src/account.rs`、`src/apps/cli/src/main.rs`、`src/apps/cli/src/root_handlers.rs`
+- Modify: `docs/architecture/detached-task-dispatch.md`
 - Test: `src/apps/cli/src/dispatch/mod.rs`
 
 **Change Map:**
@@ -129,7 +132,22 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
 - `cargo +1.95.0 check -p openbitfun-desktop`
 
-- [ ] 目录按调用设备过滤，伪造来源无效，旧目标不声明该能力
+- [x] 目录按调用设备过滤，伪造来源无效，旧目标不声明该能力
+
+**Deviations:**
+- `agent_delegation_v1` 常量在本任务定义，但 `probe` 在 Task 3 委派提交可用后才声明，避免目标端在接受委派提交之前就宣称支持。
+- 保留参数的剥离与注入是 `dispatch_contract::bind_dispatch_source_device`，桌面与 CLI Peer Host 共用。所有 `dispatch_target_*` 都剥离该参数；只有 `DISPATCH_SOURCE_BOUND_COMMANDS` 中的命令会被注入（本任务只有 `dispatch_target_catalog`）。
+- 没有绑定请求方时（例如 SSH 下直接运行 `openbitfun dispatch catalog`），`catalog` 明确失败，不返回无条件的列表。
+
+**Evidence (2026-10-29):**
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`：98 passed（含 `catalog_lists_only_agents_granted_to_the_bound_requester`：默认空列表、按设备过滤、伪造来源被替换、目标路径不外泄、无请求方报错）。
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun peer_host::`：105 passed。
+- `cargo +1.95.0 test --locked -p openbitfun-services-core --lib dispatch_contract`：7 passed（来源设备只由宿主绑定；委派能力不是必需能力）。
+- `cargo +1.95.0 test -p openbitfun-product-domains --no-default-features remote_surface`：20 passed；`cargo +1.95.0 test --locked -p openbitfun-desktop --lib dispatch_host`：3 passed；`--lib remote_workspace_policy`：9 passed。
+- `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`：11 passed。
+- `pnpm run capabilities:generate && pnpm run capabilities:check`、`pnpm run check:core-boundaries`：通过。
+- 手动：隔离的 `OPENBITFUN_HOME` 中，`openbitfun dispatch catalog` 对 `laptop` 返回已开放项、对 `phone` 返回空、无请求方与未知字段都明确失败。
+- 远程场景：未在两台真实设备之间经 relay 实测；跨设备路径只有宿主绑定与目标过滤的单元测试，真实实测留到 F002-02 Task 4。
 
 ## Task 3: 委派提交校验与纯消息任务执行
 

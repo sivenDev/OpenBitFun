@@ -3290,7 +3290,9 @@ async fn execute_local_remote_command(
             // Route their distinct target command family directly to the
             // durable dispatch runner before the generic webview bridge.
             if crate::api::dispatch_host::is_target_command(command) {
-                let result = crate::api::dispatch_host::dispatch(command, args.clone()).await;
+                let result =
+                    crate::api::dispatch_host::dispatch(command, args.clone(), source_device_id)
+                        .await;
                 let (ok, value, error) = match result {
                     Ok(value) => (true, Some(value), None),
                     Err(error) => (false, None, Some(format!("{error:#}"))),

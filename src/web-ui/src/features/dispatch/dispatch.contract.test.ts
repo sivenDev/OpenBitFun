@@ -56,7 +56,7 @@ describe('dispatch controller-only routing contract', () => {
 
   it('routes the target verb family to the host control plane, never the controller', () => {
     const targets = registry.operations.filter(operation => operation.id.startsWith('dispatch_target_'));
-    expect(targets).toHaveLength(15);
+    expect(targets).toHaveLength(16);
     for (const operation of targets) {
       expect(operation.peer.kind, operation.id).toBe('host_control_plane');
       expect(operation.surface, operation.id).toBe('host_invoke_only');
@@ -124,6 +124,14 @@ describe('dispatch wire contract single source', () => {
     expect(detached).not.toBeNull();
     rustRequired.add(detached![1]);
     expect(new Set(BASE_DISPATCH_CAPABILITIES)).toEqual(rustRequired);
+  });
+
+  it('keeps agent delegation optional and its requester bound by the host', () => {
+    expect(contractSource).toContain('pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";');
+    expect(BASE_DISPATCH_CAPABILITIES).not.toContain('agent_delegation_v1');
+    // Hosts overwrite this reserved argument with the relay-authenticated sender.
+    expect(contractSource).toContain('pub const DISPATCH_SOURCE_DEVICE_ARG: &str = "__sourceDeviceId";');
+    expect(contractSource).toContain('pub const DISPATCH_SOURCE_BOUND_COMMANDS: &[&str] = &["dispatch_target_catalog"');
   });
 
   it('keeps the versioned feature capabilities required on both sides', () => {

@@ -121,6 +121,74 @@ pub struct DispatchFileChunk {
     pub revision: String,
 }
 
+/// Optional: the target keeps a list of agents opened to its other devices,
+/// answers `catalog`, and accepts delegated submissions. Older targets reject
+/// the delegation fields, so a requester must see this before using them.
+pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";
+
+/// Reserved argument carrying the device that sent a device RPC. Only the
+/// receiving host sets it, from the relay-authenticated sender; any value in
+/// the incoming payload is discarded so a requester cannot claim another device.
+pub const DISPATCH_SOURCE_DEVICE_ARG: &str = "__sourceDeviceId";
+
+/// Target commands whose request carries [`DISPATCH_SOURCE_DEVICE_ARG`].
+pub const DISPATCH_SOURCE_BOUND_COMMANDS: &[&str] = &["dispatch_target_catalog"];
+
+/// Binds a target command's arguments to the authenticated sender: removes any
+/// caller-supplied source device, then sets it for commands that use it.
+pub fn bind_dispatch_source_device(
+    command: &str,
+    args: serde_json::Value,
+    source_device_id: &str,
+) -> serde_json::Value {
+    let mut args = match args {
+        serde_json::Value::Object(map) => map,
+        serde_json::Value::Null => serde_json::Map::new(),
+        // Not a request object: leave it for the target to reject.
+        other => return other,
+    };
+    args.remove(DISPATCH_SOURCE_DEVICE_ARG);
+    if DISPATCH_SOURCE_BOUND_COMMANDS.contains(&command) {
+        args.insert(
+            DISPATCH_SOURCE_DEVICE_ARG.to_string(),
+            serde_json::Value::String(source_device_id.to_string()),
+        );
+    }
+    serde_json::Value::Object(args)
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DispatchCatalogRequest {
+    #[serde(
+        rename = "__sourceDeviceId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_device_id: Option<String>,
+}
+
+/// Agents the target opens to the requesting device. Target paths and the
+/// grants of other devices are never included.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchCatalogResponse {
+    #[serde(default)]
+    pub agents: Vec<DispatchCatalogAgent>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchCatalogAgent {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// `message` and/or `coding`; unknown kinds from newer targets are kept.
+    #[serde(default)]
+    pub task_kinds: Vec<String>,
+}
+
 /// Whether a target advertising `capabilities` accepts this audit action.
 pub fn dispatch_target_accepts_setup_audit_action(action: &str, capabilities: &[&str]) -> bool {
     DISPATCH_BASE_SETUP_AUDIT_ACTIONS.contains(&action)
@@ -230,6 +298,50 @@ pub fn validate_dispatch_attachments(attachments: &[DispatchAttachment]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_device_is_bound_by_the_host_never_by_the_caller() {
+        let forged = serde_json::json!({ "__sourceDeviceId": "someone-else" });
+        assert_eq!(
+            bind_dispatch_source_device("dispatch_target_catalog", forged.clone(), "laptop"),
+            serde_json::json!({ "__sourceDeviceId": "laptop" })
+        );
+        assert_eq!(
+            bind_dispatch_source_device(
+                "dispatch_target_catalog",
+                serde_json::Value::Null,
+                "laptop"
+            ),
+            serde_json::json!({ "__sourceDeviceId": "laptop" })
+        );
+        // Other verbs never receive the reserved argument, even when forged.
+        assert_eq!(
+            bind_dispatch_source_device(
+                "dispatch_target_status",
+                serde_json::json!({ "jobId": "j", "__sourceDeviceId": "someone-else" }),
+                "laptop"
+            ),
+            serde_json::json!({ "jobId": "j" })
+        );
+        // The catalog request refuses unknown fields but accepts the bound one.
+        let request: DispatchCatalogRequest = serde_json::from_value(bind_dispatch_source_device(
+            "dispatch_target_catalog",
+            forged,
+            "laptop",
+        ))
+        .unwrap();
+        assert_eq!(request.source_device_id.as_deref(), Some("laptop"));
+        assert!(serde_json::from_value::<DispatchCatalogRequest>(
+            serde_json::json!({ "deviceId": "x" })
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn delegation_is_optional_for_controllers() {
+        assert!(!dispatch_required_target_capabilities()
+            .any(|capability| capability == DISPATCH_AGENT_DELEGATION_CAPABILITY));
+    }
 
     #[test]
     fn subscription_runtime_capabilities_are_optional_and_do_not_imply_management() {

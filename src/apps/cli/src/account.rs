@@ -496,7 +496,12 @@ impl CliAccountRoutingHost {
                         Some(response) => response,
                         None => match &command {
                             RemoteCommand::HostInvoke { command, args } => {
-                                crate::peer_host::handle_host_invoke(command, args.clone()).await
+                                crate::peer_host::handle_host_invoke(
+                                    command,
+                                    args.clone(),
+                                    &source_device_id,
+                                )
+                                .await
                             }
                             RemoteCommand::DeviceEvent { event, payload } => {
                                 // A host is also a controller of its peers: stream

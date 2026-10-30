@@ -14,9 +14,21 @@ use tokio::io::AsyncWriteExt;
 const TARGET_COMMAND_TIMEOUT: Duration = Duration::from_secs(110);
 const MAX_TARGET_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
-pub(crate) async fn dispatch(command: &str, args: Value) -> anyhow::Result<Value> {
+/// Runs a target command for `source_device_id`, the relay-authenticated
+/// sender. The sender is bound here so the target never trusts a self-reported
+/// device.
+pub(crate) async fn dispatch(
+    command: &str,
+    args: Value,
+    source_device_id: &str,
+) -> anyhow::Result<Value> {
     let verb = target_cli_verb(command)
         .ok_or_else(|| anyhow!("Unknown detached dispatch target command '{command}'"))?;
+    let args = openbitfun_services_core::dispatch_contract::bind_dispatch_source_device(
+        command,
+        args,
+        source_device_id,
+    );
     let executable = discover_cli().ok_or_else(|| {
         anyhow!(
             "OpenBitFun CLI dispatch runner is not installed on this device; install `openbitfun` in ~/.local/bin or PATH"
@@ -35,6 +47,7 @@ fn target_cli_verb(command: &str) -> Option<&'static str> {
         "dispatch_target_submit" => Some("submit"),
         "dispatch_target_status" => Some("status"),
         "dispatch_target_cancel" => Some("cancel"),
+        "dispatch_target_catalog" => Some("catalog"),
         "dispatch_target_list" => Some("list"),
         "dispatch_target_answer" => Some("answer"),
         "dispatch_target_append" => Some("append"),
