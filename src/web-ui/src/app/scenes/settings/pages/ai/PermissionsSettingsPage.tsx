@@ -6,6 +6,7 @@ import {
   ConfigPageSection,
   ConfigRetryState
 } from '@/infrastructure/config/components/common';
+import { AgentDelegationConfig } from '@/infrastructure/config/components/AgentDelegationConfig';
 import { GlobalPermissionRulesDialog } from '@/infrastructure/config/components/GlobalPermissionRulesDialog';
 import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import {
@@ -233,6 +234,8 @@ const PermissionsSettingsPage: React.FC = () => {
             </div>
           </ConfigPageRow>
         </ConfigPageSection>
+
+        <AgentDelegationConfig />
 
         <GlobalPermissionRulesDialog
           isOpen={isGlobalPermissionRulesDialogOpen}

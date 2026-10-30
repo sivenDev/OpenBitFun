@@ -73,14 +73,14 @@ parent: "F002"
 **Outcome:** 开放清单可以选择任意已启用的外部智能体，开放前按智能体给出额度与条款提示，目录显示其可用状态。
 
 **Files:**
-- Modify: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+- Modify: `src/crates/assembly/core/src/service/delegation.rs`
 - Modify: `src/web-ui/src/infrastructure/config/components/AgentDelegationConfig.tsx`
 - Modify: `src/apps/cli/src/delegation_cli.rs`
 - Modify: `src/web-ui/src/locales/*/` 相关文案
-- Test: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+- Test: `src/crates/assembly/core/src/service/delegation.rs`
 
 **Verification:**
-- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::dispatch::delegation`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::delegation`
 - `pnpm --dir src/web-ui run test:run <changed test files>`
 - `pnpm run i18n:audit`
 

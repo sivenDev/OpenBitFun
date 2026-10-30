@@ -17,6 +17,7 @@ mod agent;
 mod chat_state;
 mod config;
 mod daemon;
+mod delegation_cli;
 mod diagnostics;
 mod dispatch;
 mod hook_import;
@@ -384,6 +385,12 @@ enum Commands {
     Dispatch {
         #[command(subcommand)]
         action: DispatchAction,
+    },
+
+    /// Manage the agents this device opens to other devices
+    Delegation {
+        #[command(subcommand)]
+        action: delegation_cli::DelegationAction,
     },
 
     /// Start the OpenBitFun app server over stdio
@@ -1583,6 +1590,10 @@ async fn run_cli() -> Result<()> {
             root_handlers::handle_dispatch_action(action).await?;
         }
 
+        Some(Commands::Delegation { action }) => {
+            delegation_cli::run(action).await?;
+        }
+
         Some(Commands::Server) => {
             server_host::serve().await?;
         }
@@ -2264,6 +2275,47 @@ mod dispatch_command_tests {
         let unrelated =
             Cli::try_parse_from(["openbitfun", "config", "show"]).expect("parse config");
         assert!(!is_dispatch_command(&unrelated.command));
+
+        // Opening an agent always names who may delegate; there is no implicit grant.
+        let open_args = [
+            "openbitfun",
+            "delegation",
+            "open",
+            "helper",
+            "--agent",
+            "Standard",
+        ];
+        assert!(
+            Cli::try_parse_from([&open_args[..], &["--task-kind", "message"]].concat()).is_err()
+        );
+        assert!(Cli::try_parse_from(
+            [
+                &open_args[..],
+                &[
+                    "--task-kind",
+                    "message",
+                    "--device",
+                    "laptop",
+                    "--all-devices"
+                ]
+            ]
+            .concat()
+        )
+        .is_err());
+        let open = Cli::try_parse_from(
+            [&open_args[..], &["--task-kind", "coding", "--all-devices"]].concat(),
+        )
+        .expect("parse delegation open");
+        assert!(matches!(
+            open.command,
+            Some(Commands::Delegation {
+                action: crate::delegation_cli::DelegationAction::Open {
+                    all_devices: true,
+                    ..
+                }
+            })
+        ));
+        assert!(!is_dispatch_command(&open.command));
 
         let help = Cli::command().render_long_help().to_string();
         assert!(help.contains("dispatch"));

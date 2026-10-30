@@ -13,6 +13,7 @@ pub mod config; // Config management
 pub(crate) mod coordination_persistence;
 #[cfg(all(feature = "agent-runtime", feature = "scheduled-jobs"))]
 pub mod cron; // Scheduled jobs
+pub mod delegation; // Agents this device opens to other devices
 #[cfg(feature = "dispatch-store")]
 pub mod dispatch; // Outbound dispatch observer index and target contracts
 #[cfg(feature = "filesystem")]

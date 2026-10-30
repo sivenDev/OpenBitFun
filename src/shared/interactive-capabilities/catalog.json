@@ -4717,6 +4717,22 @@
           ]
         },
         {
+          "id": "open-agents",
+          "titleZh": "选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权",
+          "titleEn": "Choose which local agents to open to other devices of this account, granted per device and task kind",
+          "control": {
+            "kind": "open",
+            "reasonCode": "unstructuredInteraction",
+            "reasonZh": "“选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权”是由设备主人亲自做出的授权决定，需要核对设备与工作区；智能体会打开精确入口，并把授权选择保留在用户可见界面。",
+            "reasonEn": "“Choose which local agents to open to other devices of this account, granted per device and task kind” is an access grant the device owner makes in person after checking devices and workspaces; the Agent opens the exact entry and keeps the grant choice visible to the user."
+          },
+          "evidence": [
+            "command:delegation_list_open_agents",
+            "command:delegation_open_agent",
+            "command:delegation_close_agent"
+          ]
+        },
+        {
           "id": "provision",
           "titleZh": "为目标主机配置运行环境并安装或更新 OpenBitFun CLI",
           "titleEn": "Provision the target runtime and install or update the OpenBitFun CLI",
@@ -9958,6 +9974,9 @@
     },
     "session_storage_directory": {
       "capabilityId": "feature.ai-assistant"
+    },
+    "delegation": {
+      "capabilityId": "feature.detached-dispatch"
     },
     "dispatch": {
       "capabilityId": "feature.detached-dispatch"

@@ -4,7 +4,7 @@
   "title": "OpenBitFun Playbook",
   "origin": "https://playbook.openbitfun.com",
   "source": "src/shared/interactive-capabilities/catalog.json",
-  "digest": "9ec82305067852766c79ed3d802c3a16f1c4dd992f7d3195f91a2989da32f544",
+  "digest": "26faf62f78dee6552e42da2027f7f59c703e47f6a04261c4e40f3b835bbfb126",
   "ownerDigest": "f27c231da2e536e4f2123910f34f862b55d21feb0528bc915d4d13edbd528af9",
   "searchAcceptance": [
     {
@@ -175,11 +175,11 @@
     "features": 23,
     "settings": 21,
     "userFacing": 44,
-    "documentedItems": 336,
+    "documentedItems": 337,
     "controlCoverage": {
       "direct": 56,
       "delegated": 67,
-      "interactive": 213,
+      "interactive": 214,
       "unsupported": 0
     }
   },
@@ -9454,6 +9454,7 @@
       "capabilityId": "feature.detached-dispatch",
       "itemIds": [
         "targets",
+        "open-agents",
         "provision",
         "model-sync",
         "submit",
@@ -9509,6 +9510,55 @@
       "capabilityId": "feature.detached-dispatch",
       "itemIds": [
         "targets"
+      ],
+      "kind": "open",
+      "risk": "ui",
+      "executionHost": "presentationSurface",
+      "availability": {
+        "desktop": {
+          "available": true
+        },
+        "cli": {
+          "available": false,
+          "reason": "This delivery profile has no live presentation surface"
+        },
+        "peer": {
+          "available": true,
+          "requiredCapabilities": [
+            "product_control_v1",
+            "product_control_presentation_v1"
+          ]
+        },
+        "remoteControl": {
+          "available": true
+        },
+        "detachedDispatch": {
+          "available": false,
+          "reason": "This delivery profile has no live presentation surface"
+        }
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "openReason": "unstructuredInteraction",
+      "presentationTarget": {
+        "kind": "event",
+        "eventName": "openbitfun:open-remote-connect",
+        "detail": {
+          "group": "account"
+        }
+      }
+    },
+    {
+      "id": "feature.detached-dispatch:open:open-agents",
+      "capabilityId": "feature.detached-dispatch",
+      "itemIds": [
+        "open-agents"
       ],
       "kind": "open",
       "risk": "ui",
@@ -25238,6 +25288,17 @@
           }
         },
         {
+          "id": "open-agents",
+          "titleZh": "选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权",
+          "titleEn": "Choose which local agents to open to other devices of this account, granted per device and task kind",
+          "control": {
+            "kind": "open",
+            "reasonCode": "unstructuredInteraction",
+            "reasonZh": "“选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权”是由设备主人亲自做出的授权决定，需要核对设备与工作区；智能体会打开精确入口，并把授权选择保留在用户可见界面。",
+            "reasonEn": "“Choose which local agents to open to other devices of this account, granted per device and task kind” is an access grant the device owner makes in person after checking devices and workspaces; the Agent opens the exact entry and keeps the grant choice visible to the user."
+          }
+        },
+        {
           "id": "provision",
           "titleZh": "为目标主机配置运行环境并安装或更新 OpenBitFun CLI",
           "titleEn": "Provision the target runtime and install or update the OpenBitFun CLI",
@@ -25365,6 +25426,8 @@
         "Reload events and execution history after reconnecting",
         "列出可派发目标并探测版本、连接和运行能力",
         "List dispatch targets and probe their version, connectivity, and runtime capabilities",
+        "选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权",
+        "Choose which local agents to open to other devices of this account, granted per device and task kind",
         "为目标主机配置运行环境并安装或更新 OpenBitFun CLI",
         "Provision the target runtime and install or update the OpenBitFun CLI",
         "在提交任务前同步目标所需的模型配置",

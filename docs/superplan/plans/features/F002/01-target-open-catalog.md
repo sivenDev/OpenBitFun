@@ -16,7 +16,7 @@ parent: "F002"
 **Goal:** 目标设备能声明「对哪些设备开放哪些智能体」，并安全地接收、执行委派任务，为发起方（F002-02）提供可依赖的目标端契约。
 
 **Scope:**
-- **开放清单**：持久化在目标端配置中，默认为空。每个开放项包括：稳定 id、智能体类型（本计划仅限原生智能体，`acp:` 条目在 F002-03 开放）、展示名、说明、允许的任务类型（纯消息、编码）、纯消息任务的工作区绑定（可选），以及同账号授权（全部设备或指定设备 id）。
+- **开放清单**：持久化在目标端本机（`<product_home>/delegation/open-agents.json`），默认为空。每个开放项包括：稳定 id、智能体类型（本计划仅限原生智能体，`acp:` 条目在 F002-03 开放）、展示名、说明、允许的任务类型（纯消息、编码）、纯消息任务的工作区绑定（可选），以及同账号授权（全部设备或指定设备 id）。
 - **管理入口**：桌面设置页新增「对外开放的智能体」；CLI 新增 `openbitfun delegation list|open|close`，供无界面主机（CLI Peer Host、账号守护进程）使用。
 - **能力声明**：新增 `agent_delegation_v1`，只在本机支持开放清单与委派提交时声明。
 - **目录查询**：新增目标端动词 `catalog`（设备 RPC 名为 `dispatch_target_catalog`），只返回对调用设备授权的开放项。调用设备取自设备 RPC 的来源设备，由宿主注入，不采信请求载荷中的自报值。
@@ -35,7 +35,7 @@ parent: "F002"
 - 目标端 CLI 仍是委派任务、会话、事件日志与权限邮箱的唯一所有者；桌面与 CLI Peer Host 只负责把 `dispatch_target_catalog` 和带委派的 `submit` 路由到 CLI。
 - 宿主在路由前写入保留参数（暂定 `__sourceDeviceId`），并丢弃请求中同名的输入。目标端只信任这个保留值。
 - 能力名只在 `dispatch_contract.rs` 定义，Web UI 合约测试同步固定。
-- 开放清单是新增的配置字段，带默认值，读取宽容；无法解析的开放项保留在配置中并视为未开放，同时显示原因。
+- 开放清单是目标端本机文件（不进入可导出的配置文档），读取宽容；无法解析的开放项保留在文件中并视为未开放，同时显示原因。
 - 委派任务的审批策略固定为 `remote`；同账号时由账号主人从任一驱动界面回答。
 - 管理开放清单的新增桌面命令在产品操作注册表中各占一行，不增加 `Unaudited`。
 
@@ -59,30 +59,50 @@ parent: "F002"
 **Outcome:** 主人可以在桌面设置页或 CLI 中查看、开放、关闭智能体，配置读写对旧数据宽容。
 
 **Files:**
-- Modify: `src/crates/assembly/core/src/service/config/types.rs`
-- Create: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+- Create: `src/crates/assembly/core/src/service/delegation.rs`
+- Modify: `src/crates/assembly/core/src/service/mod.rs`
 - Modify: `src/apps/cli/src/main.rs`
 - Create: `src/apps/cli/src/delegation_cli.rs`
 - Create: `src/apps/desktop/src/api/delegation_api.rs`
+- Modify: `src/apps/desktop/src/api/mod.rs`, `src/apps/desktop/src/lib.rs`
 - Modify: `src/crates/contracts/product-domains/src/remote_surface/table.rs`
+- Modify: `src/shared/interactive-capabilities/catalog.json`（及其生成物）
+- Create: `src/web-ui/src/infrastructure/api/service-api/DelegationAPI.ts`
 - Create: `src/web-ui/src/infrastructure/config/components/AgentDelegationConfig.tsx`
-- Modify: `src/web-ui/src/locales/*/settings*.json`
-- Test: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+- Modify: `src/web-ui/src/app/scenes/settings/pages/ai/PermissionsSettingsPage.tsx`
+- Modify: `src/web-ui/src/locales/*/settings/runtime.json`
+- Test: `src/crates/assembly/core/src/service/delegation.rs`、`src/web-ui/src/infrastructure/config/components/AgentDelegationConfig.test.tsx`
 
 **Change Map:**
-- `delegation.rs`: 开放项类型、读取与校验、按来源设备过滤的授权判断
-- `types.rs`: 新增带默认值的开放清单字段
-- `delegation_cli.rs` / `delegation_api.rs`: 管理入口，两者调用同一核心实现
+- `delegation.rs`: 开放项类型、本机存储、读取与校验、按来源设备过滤的授权判断
+- `delegation_cli.rs` / `delegation_api.rs`: 管理入口，两者调用同一核心实现（`OpenAgentStore::open_local_agent`）
 - `table.rs`: 新增命令的远程面立场
+- `AgentDelegationConfig.tsx`: 权限设置页中的「对外开放的智能体」分区
 
 **Verification:**
-- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::dispatch::delegation`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::delegation`
 - `cargo +1.95.0 test -p openbitfun-product-domains --no-default-features remote_surface`
 - `pnpm run capabilities:generate && pnpm run capabilities:check`
 - `pnpm run i18n:audit`
 - `pnpm run type-check:web`
 
-- [ ] 开放清单可通过桌面与 CLI 管理，旧配置与无法解析的开放项按约定处理
+- [x] 开放清单可通过桌面与 CLI 管理，旧配置与无法解析的开放项按约定处理
+
+**Deviations:**
+- 存储位置：计划写的是「持久化在目标端配置中」（`config/types.rs`）。实际改为本机文件 `<product_home>/delegation/open-agents.json`，因为配置文档可以导出/导入，会把授权带到另一台设备。
+- 模块路径：`service/dispatch/` 受 `dispatch-store` 特性约束，而 core-boundaries 禁止 CLI 闭包启用该特性，所以模块放在 `service/delegation.rs`（不受特性约束；校验本机智能体的 `open_local_agent` 需要 `agent-runtime`）。
+- 设置入口：没有新增独立设置页，而是作为分区放在「权限」页，因为开放属于授权决定；能力目录中归入 `feature.detached-dispatch`。
+- 远程立场：三个桌面命令均为 `Agnostic` / `ControllerLocal`。Peer 模式下界面显示「请在该设备上管理」，不代管对端清单；非桌面宿主显示不支持。
+
+**Evidence (2026-10-29):**
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::delegation`：6 passed（默认关闭、按设备与任务类型授权、重开替换与关闭、非法项拒绝、无法解析项保留并可关闭、损坏文件不被覆盖、旧智能体 id 规范化）。
+- `cargo +1.95.0 check --locked -p openbitfun-core --no-default-features`、`cargo +1.95.0 check --locked -p openbitfun-desktop`：通过。
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch_commands_parse_and_internal_worker_is_hidden`：通过（未指定设备或同时指定设备与全部设备时解析失败）。
+- `cargo +1.95.0 test -p openbitfun-product-domains --no-default-features remote_surface`：20 passed；`cargo +1.95.0 test --locked -p openbitfun-desktop --lib remote_workspace_policy`：9 passed。
+- `pnpm run capabilities:generate && pnpm run capabilities:check`、`pnpm run check:core-boundaries`、`pnpm run i18n:audit`（0 warning）、`pnpm run check:web`：通过。
+- `pnpm --dir src/web-ui run test:run src/infrastructure/config/components/AgentDelegationConfig.test.tsx`：4 passed；设置场景聚焦测试 44 files / 279 tests passed。
+- 手动：在隔离的 `OPENBITFUN_HOME`（`/tmp`，700，已删除）中执行 `openbitfun delegation list|open|close`：空列表、未知智能体拒绝、旧 id `agentic` 规范化为 `Standard`、重复任务类型去重、无法解析项显示为已关闭且可按 id 关闭。
+- 远程场景：仅本机验证；Peer 模式与非桌面宿主的不可用状态只由 DOM 测试覆盖。
 
 ## Task 2: 能力声明与目录查询
 

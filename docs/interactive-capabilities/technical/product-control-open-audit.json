@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "9ec82305067852766c79ed3d802c3a16f1c4dd992f7d3195f91a2989da32f544",
-  "count": 213,
+  "catalogDigest": "26faf62f78dee6552e42da2027f7f59c703e47f6a04261c4e40f3b835bbfb126",
+  "count": 214,
   "reasonCounts": {
     "externalAuth": 4,
     "secretEntry": 5,
-    "unstructuredInteraction": 179,
+    "unstructuredInteraction": 180,
     "visualSelection": 25
   },
   "entries": [
@@ -2104,6 +2104,27 @@
       "evidence": [
         "command:dispatch_list_targets",
         "command:dispatch_probe_target"
+      ]
+    },
+    {
+      "capabilityId": "feature.detached-dispatch",
+      "itemId": "open-agents",
+      "titleZh": "选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权",
+      "titleEn": "Choose which local agents to open to other devices of this account, granted per device and task kind",
+      "reasonCode": "unstructuredInteraction",
+      "reasonZh": "“选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权”是由设备主人亲自做出的授权决定，需要核对设备与工作区；智能体会打开精确入口，并把授权选择保留在用户可见界面。",
+      "reasonEn": "“Choose which local agents to open to other devices of this account, granted per device and task kind” is an access grant the device owner makes in person after checking devices and workspaces; the Agent opens the exact entry and keeps the grant choice visible to the user.",
+      "presentationTarget": {
+        "kind": "event",
+        "eventName": "openbitfun:open-remote-connect",
+        "detail": {
+          "group": "account"
+        }
+      },
+      "evidence": [
+        "command:delegation_list_open_agents",
+        "command:delegation_open_agent",
+        "command:delegation_close_agent"
       ]
     },
     {

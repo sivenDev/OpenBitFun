@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "9ec82305067852766c79ed3d802c3a16f1c4dd992f7d3195f91a2989da32f544",
-  "commandCount": 706,
+  "catalogDigest": "26faf62f78dee6552e42da2027f7f59c703e47f6a04261c4e40f3b835bbfb126",
+  "commandCount": 709,
   "coverage": {
-    "commandCount": 706,
-    "documentedCommandCount": 646,
+    "commandCount": 709,
+    "documentedCommandCount": 649,
     "implementationCommandCount": 60,
     "implementationDigest": "5047b674e890f899e65baf9235e9df4bd912fa28f44eb10a656e079a1b89974d"
   },
@@ -1896,6 +1896,54 @@
       "sourceFile": "src/apps/desktop/src/api/commands.rs",
       "signature": "fn decompress_path( state: State<'_, AppState>, request: DecompressPathRequest, ) -> Result<String, String>",
       "remoteWorkspacePolicy": "RemoteRouted"
+    },
+    {
+      "id": "delegation_close_agent",
+      "moduleId": "delegation",
+      "capabilityId": "feature.detached-dispatch",
+      "capabilityIds": [
+        "feature.detached-dispatch"
+      ],
+      "documentedItemIds": [
+        "feature.detached-dispatch:open-agents"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::delegation_api::delegation_close_agent",
+      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
+      "signature": "fn delegation_close_agent(request: DelegationCloseAgentRequest) -> Result<bool, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "delegation_list_open_agents",
+      "moduleId": "delegation",
+      "capabilityId": "feature.detached-dispatch",
+      "capabilityIds": [
+        "feature.detached-dispatch"
+      ],
+      "documentedItemIds": [
+        "feature.detached-dispatch:open-agents"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::delegation_api::delegation_list_open_agents",
+      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
+      "signature": "fn delegation_list_open_agents() -> Result<Vec<OpenAgentRecord>, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "delegation_open_agent",
+      "moduleId": "delegation",
+      "capabilityId": "feature.detached-dispatch",
+      "capabilityIds": [
+        "feature.detached-dispatch"
+      ],
+      "documentedItemIds": [
+        "feature.detached-dispatch:open-agents"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::delegation_api::delegation_open_agent",
+      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
+      "signature": "fn delegation_open_agent( request: DelegationOpenAgentRequest, ) -> Result<OpenAgent, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
       "id": "delete_agent_companion_pet_package",

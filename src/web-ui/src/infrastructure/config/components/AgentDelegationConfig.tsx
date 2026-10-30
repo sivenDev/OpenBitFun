@@ -1,0 +1,327 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Checkbox, Input, Select, Switch } from '@openbitfun/ui';
+import { agentAPI, type ModeInfo } from '@/infrastructure/api/service-api/AgentAPI';
+import {
+  ALL_SAME_ACCOUNT_DEVICES,
+  delegationAPI,
+  openAgentRecordId,
+  type DelegationTaskKind,
+  type OpenAgentRecord,
+} from '@/infrastructure/api/service-api/DelegationAPI';
+import {
+  remoteConnectAPI,
+  type AccountDeviceInfo,
+} from '@/infrastructure/api/service-api/RemoteConnectAPI';
+import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
+import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
+import { isTauriRuntime } from '@/infrastructure/runtime';
+import { notificationService } from '@/shared/notification-system';
+import { createLogger } from '@/shared/utils/logger';
+import {
+  ConfigLoadingState,
+  ConfigPageRow,
+  ConfigPageSection,
+  ConfigRetryState,
+} from './common';
+
+const log = createLogger('AgentDelegationConfig');
+
+const OPEN_AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+interface OpenAgentDraft {
+  id: string;
+  agentType: string;
+  displayName: string;
+  description: string;
+  taskKinds: DelegationTaskKind[];
+  allDevices: boolean;
+  devices: string[];
+  messageWorkspace: string;
+}
+
+interface LoadedState {
+  records: OpenAgentRecord[];
+  modes: ModeInfo[];
+  devices: AccountDeviceInfo[];
+}
+
+function suggestedId(agentType: string): string {
+  return agentType.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
+function newDraft(modes: ModeInfo[]): OpenAgentDraft {
+  const agentType = modes[0]?.id ?? '';
+  return {
+    id: suggestedId(agentType),
+    agentType,
+    displayName: modes[0]?.name ?? '',
+    description: '',
+    taskKinds: ['message'],
+    allDevices: false,
+    devices: [],
+    messageWorkspace: '',
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Agents this device opens to other devices of the same account. The list is
+ * device-local, so it is managed only on the device that owns it: hosts without
+ * the desktop commands and connected peer devices show an explicit state.
+ */
+export const AgentDelegationConfig: React.FC = () => {
+  const { t } = useI18n('settings/runtime');
+  const peerMode = usePeerDeviceModeOptional()?.peerMode;
+  const supported = isTauriRuntime() && peerMode?.active !== true;
+  const [state, setState] = useState<LoadedState | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [draft, setDraft] = useState<OpenAgentDraft | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const activeRef = useRef(true);
+
+  const load = useCallback(async () => {
+    setLoadError(false);
+    try {
+      const [records, modes, devices, currentDevice] = await Promise.all([
+        delegationAPI.listOpenAgents(),
+        agentAPI.getAvailableModes(),
+        // Devices are optional: without an account the owner can still allow all devices.
+        remoteConnectAPI.accountListDevices().catch(() => [] as AccountDeviceInfo[]),
+        remoteConnectAPI.getDeviceInfo().catch(() => null),
+      ]);
+      if (!activeRef.current) return;
+      setState({
+        records,
+        modes,
+        devices: devices.filter(device => device.device_id !== currentDevice?.device_id),
+      });
+    } catch (error) {
+      log.error('Failed to load open agents', { error });
+      if (activeRef.current) setLoadError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    activeRef.current = true;
+    if (supported) void load();
+    return () => { activeRef.current = false; };
+  }, [load, supported]);
+
+  const describeRecord = (record: OpenAgentRecord): string => {
+    const agent = record.agent;
+    if (!agent) return t('agentDelegation.unreadable', { problem: record.problem ?? '' });
+    const mode = state?.modes.find(item => item.id === agent.agentType);
+    const tasks = agent.taskKinds
+      .map(kind => kind === 'message'
+        ? t('agentDelegation.taskKindMessage')
+        : kind === 'coding' ? t('agentDelegation.taskKindCoding') : null)
+      .filter((label): label is string => label !== null)
+      .join(', ');
+    const devices = agent.sameAccountDevices.includes(ALL_SAME_ACCOUNT_DEVICES)
+      ? t('agentDelegation.allDevices')
+      : agent.sameAccountDevices
+        .map(id => state?.devices.find(device => device.device_id === id)?.device_name ?? id)
+        .join(', ');
+    return t('agentDelegation.summary', { agent: mode?.name ?? agent.agentType, tasks, devices });
+  };
+
+  const closeRecord = async (id: string) => {
+    setBusy(true);
+    try {
+      await delegationAPI.closeAgent(id);
+      await load();
+    } catch (error) {
+      log.error('Failed to close open agent', { error });
+      notificationService.error(t('agentDelegation.closeFailed'));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!draft) return;
+    const id = draft.id.trim();
+    if (!OPEN_AGENT_ID_PATTERN.test(id)) {
+      setDraftError(t('agentDelegation.idDescription'));
+      return;
+    }
+    setDraftError(null);
+    setBusy(true);
+    try {
+      await delegationAPI.openAgent({
+        id,
+        agentType: draft.agentType,
+        displayName: draft.displayName.trim(),
+        description: draft.description.trim() || null,
+        taskKinds: draft.taskKinds,
+        messageWorkspace: draft.messageWorkspace.trim() || null,
+        sameAccountDevices: draft.allDevices ? [ALL_SAME_ACCOUNT_DEVICES] : draft.devices,
+      });
+      if (!activeRef.current) return;
+      notificationService.success(t('agentDelegation.saved'), { duration: 2000 });
+      setDraft(null);
+      await load();
+    } catch (error) {
+      log.error('Failed to open agent', { error });
+      if (activeRef.current) setDraftError(`${t('agentDelegation.saveFailed')}: ${errorMessage(error)}`);
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const toggleTaskKind = (kind: DelegationTaskKind, checked: boolean) => {
+    setDraft(current => current && ({
+      ...current,
+      taskKinds: checked
+        ? [...current.taskKinds.filter(item => item !== kind), kind]
+        : current.taskKinds.filter(item => item !== kind),
+    }));
+  };
+
+  const toggleDevice = (deviceId: string, checked: boolean) => {
+    setDraft(current => current && ({
+      ...current,
+      devices: checked
+        ? [...current.devices.filter(item => item !== deviceId), deviceId]
+        : current.devices.filter(item => item !== deviceId),
+    }));
+  };
+
+  const renderBody = () => {
+    if (!supported) {
+      return (
+        <ConfigPageRow label={t('agentDelegation.sectionTitle')} description={peerMode?.active
+          ? t('agentDelegation.peerUnsupported')
+          : t('agentDelegation.unsupported')}>
+          <span />
+        </ConfigPageRow>
+      );
+    }
+    if (loadError) {
+      return <ConfigRetryState message={t('loading.failed')} retryLabel={t('loading.retry')} onRetry={() => void load()} />;
+    }
+    if (!state) return <ConfigLoadingState label={t('loading.text')} />;
+    const canSave = draft !== null
+      && draft.agentType !== ''
+      && draft.taskKinds.length > 0
+      && (draft.allDevices || draft.devices.length > 0);
+    return <>
+      {state.records.length === 0 && !draft && (
+        <ConfigPageRow label={t('agentDelegation.empty')} align="center"><span /></ConfigPageRow>
+      )}
+      {state.records.map((record, index) => {
+        const id = openAgentRecordId(record);
+        return (
+          <ConfigPageRow
+            key={id ?? `unreadable-${index}`}
+            label={record.agent?.displayName ?? id ?? t('agentDelegation.unreadable', { problem: '' })}
+            description={describeRecord(record)}
+            align="center"
+          >
+            {id && (
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void closeRecord(id)}>
+                {t('agentDelegation.close')}
+              </Button>
+            )}
+          </ConfigPageRow>
+        );
+      })}
+      {draft ? <>
+        <ConfigPageRow label={t('agentDelegation.mode')} align="center">
+          <Select
+            size="sm"
+            value={draft.agentType}
+            disabled={busy}
+            options={state.modes.map(mode => ({ value: mode.id, label: mode.name }))}
+            onValueChange={value => {
+              const agentType = String(Array.isArray(value) ? value[0] : value);
+              const mode = state.modes.find(item => item.id === agentType);
+              setDraft(current => current && ({
+                ...current,
+                agentType,
+                id: suggestedId(agentType),
+                displayName: mode?.name ?? current.displayName,
+              }));
+            }}
+          />
+        </ConfigPageRow>
+        <ConfigPageRow label={t('agentDelegation.id')} description={t('agentDelegation.idDescription')} align="center">
+          <Input size="sm" value={draft.id} disabled={busy}
+            onChange={event => setDraft({ ...draft, id: event.target.value })} />
+        </ConfigPageRow>
+        <ConfigPageRow label={t('agentDelegation.name')} align="center">
+          <Input size="sm" value={draft.displayName} disabled={busy}
+            onChange={event => setDraft({ ...draft, displayName: event.target.value })} />
+        </ConfigPageRow>
+        <ConfigPageRow label={t('agentDelegation.description')} align="center">
+          <Input size="sm" value={draft.description} disabled={busy}
+            onChange={event => setDraft({ ...draft, description: event.target.value })} />
+        </ConfigPageRow>
+        <ConfigPageRow label={t('agentDelegation.taskKinds')} description={t('agentDelegation.taskKindsDescription')}>
+          <div>
+            <Checkbox checked={draft.taskKinds.includes('message')} disabled={busy}
+              label={t('agentDelegation.taskKindMessage')}
+              onChange={event => toggleTaskKind('message', event.target.checked)} />
+            <Checkbox checked={draft.taskKinds.includes('coding')} disabled={busy}
+              label={t('agentDelegation.taskKindCoding')}
+              onChange={event => toggleTaskKind('coding', event.target.checked)} />
+          </div>
+        </ConfigPageRow>
+        <ConfigPageRow label={t('agentDelegation.allDevices')} align="center">
+          <Switch checked={draft.allDevices} disabled={busy}
+            onChange={event => setDraft({ ...draft, allDevices: event.target.checked })} />
+        </ConfigPageRow>
+        {!draft.allDevices && (
+          <ConfigPageRow label={t('agentDelegation.devices')}
+            description={state.devices.length === 0 ? t('agentDelegation.noDevices') : undefined}>
+            <div>
+              {state.devices.map(device => (
+                <Checkbox key={device.device_id} checked={draft.devices.includes(device.device_id)} disabled={busy}
+                  label={device.device_name || device.device_id}
+                  onChange={event => toggleDevice(device.device_id, event.target.checked)} />
+              ))}
+            </div>
+          </ConfigPageRow>
+        )}
+        <ConfigPageRow label={t('agentDelegation.workspace')} description={t('agentDelegation.workspaceDescription')} align="center">
+          <Input size="sm" value={draft.messageWorkspace} disabled={busy}
+            onChange={event => setDraft({ ...draft, messageWorkspace: event.target.value })} />
+        </ConfigPageRow>
+        {draftError && <div role="alert">{draftError}</div>}
+        <ConfigPageRow label="" align="center">
+          <div>
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              onClick={() => { setDraft(null); setDraftError(null); }}>
+              {t('agentDelegation.cancel')}
+            </Button>
+            <Button type="button" size="sm" variant="primary" disabled={busy || !canSave} onClick={() => void saveDraft()}>
+              {t('agentDelegation.save')}
+            </Button>
+          </div>
+        </ConfigPageRow>
+      </> : (
+        <ConfigPageRow label="" align="center">
+          <Button type="button" size="sm" variant="outline" disabled={busy || state.modes.length === 0}
+            onClick={() => setDraft(newDraft(state.modes))}>
+            {t('agentDelegation.open')}
+          </Button>
+        </ConfigPageRow>
+      )}
+    </>;
+  };
+
+  return (
+    <ConfigPageSection
+      title={t('agentDelegation.sectionTitle')}
+      description={t('agentDelegation.sectionDescription')}
+    >
+      {renderBody()}
+    </ConfigPageSection>
+  );
+};
+
+export default AgentDelegationConfig;

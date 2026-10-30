@@ -62,15 +62,15 @@ parent: "F002"
 **Outcome:** 开放项可以逐项授权给连接，目标端按连接身份过滤目录并校验提交，声明 `cross_account_delegation_v1`。
 
 **Files:**
-- Modify: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+- Modify: `src/crates/assembly/core/src/service/delegation.rs`
 - Modify: `src/apps/cli/src/dispatch/mod.rs`
 - Modify: `src/crates/services/services-core/src/dispatch_contract.rs`
 - Modify: `src/web-ui/src/features/dispatch/dispatch.contract.test.ts`
 - Modify: `src/web-ui/src/infrastructure/config/components/AgentDelegationConfig.tsx`
-- Test: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+- Test: `src/crates/assembly/core/src/service/delegation.rs`
 
 **Verification:**
-- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::dispatch::delegation`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::delegation`
 - `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`
 - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
 

@@ -2065,6 +2065,9 @@ pub async fn run() {
             api::ssh_api::ssh_list_port_forwards,
             api::ssh_api::ssh_list_remote_listening_ports,
             // Detached task dispatch (controller-side SSH transport)
+            api::delegation_api::delegation_list_open_agents,
+            api::delegation_api::delegation_open_agent,
+            api::delegation_api::delegation_close_agent,
             api::dispatch_api::dispatch_list_targets,
             api::dispatch_api::dispatch_probe_target,
             api::dispatch_api::dispatch_install_cli_start,
