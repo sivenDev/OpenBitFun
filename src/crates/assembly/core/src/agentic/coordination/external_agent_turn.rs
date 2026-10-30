@@ -225,6 +225,16 @@ pub(crate) struct ExternalAgentPermissionRoute {
     pub(crate) policy: Option<ExternalAgentPermissionPolicy>,
 }
 
+/// A prompt described for policy evaluation.
+struct ExternalAgentIntents {
+    /// Intents with concrete resources, evaluated exactly like native ones.
+    concrete: Vec<PermissionIntent>,
+    /// Set when the prompt names no concrete resource (no path, command, or
+    /// URL). Allow rules and grants never apply to it, so it is always asked,
+    /// and refused when deny rules for the action exist or nobody is asked.
+    unresolved_action: Option<&'static str>,
+}
+
 /// The policy a native round of the child session would apply, so an
 /// external agent's prompts meet the same deny, allow, grant, and
 /// auto-approval rules as native tools.
@@ -312,35 +322,72 @@ impl ExternalAgentPermissionPolicy {
     }
 
     /// Describes a prompt with the intents the matching native tool would
-    /// raise, including `external_directory` for paths outside the workspace.
+    /// raise. Paths always go through the native file intent builder, so a
+    /// path outside the workspace also raises `external_directory`.
+    ///
+    /// The title is agent-controlled display text and is never matched
+    /// against policy; a prompt without a concrete resource is unresolved.
     fn intents(
         &self,
         request: &ExternalAgentPermissionRequest,
-    ) -> OpenBitFunResult<Vec<PermissionIntent>> {
-        let title = || vec![request.title.clone()];
-        Ok(match request.kind {
-            ExternalAgentPermissionKind::Read | ExternalAgentPermissionKind::Edit
-                if !request.resources.is_empty() =>
-            {
-                crate::agentic::tools::file_permissions::file_permission_intents(
-                    permission_action(request.kind),
-                    request.resources.iter().map(String::as_str),
-                    &self.tool_context,
-                )?
-            }
+    ) -> OpenBitFunResult<ExternalAgentIntents> {
+        let action = permission_action(request.kind);
+        let mut concrete = Vec::new();
+        let mut unresolved_action = None;
+        let paths = || request.resources.iter().map(String::as_str);
+        match request.kind {
             ExternalAgentPermissionKind::Read | ExternalAgentPermissionKind::Edit => {
-                vec![PermissionIntent::new("custom_tool", title())]
+                if request.resources.is_empty() {
+                    unresolved_action = Some(action);
+                } else {
+                    concrete = crate::agentic::tools::file_permissions::file_permission_intents(
+                        action,
+                        paths(),
+                        &self.tool_context,
+                    )?;
+                }
             }
-            ExternalAgentPermissionKind::Execute => vec![PermissionIntent::new(
-                "bash",
-                request
-                    .command
-                    .clone()
-                    .map(|command| vec![command])
-                    .unwrap_or_else(title),
-            )],
-            kind => vec![PermissionIntent::new(permission_action(kind), title())],
+            kind => {
+                let resource = match kind {
+                    ExternalAgentPermissionKind::Execute => request.command.clone(),
+                    ExternalAgentPermissionKind::Fetch => request.url.clone(),
+                    _ => None,
+                };
+                match resource {
+                    Some(resource) => concrete.push(PermissionIntent::new(action, vec![resource])),
+                    None => unresolved_action = Some(action),
+                }
+                if !request.resources.is_empty() {
+                    concrete.extend(
+                        crate::agentic::tools::file_permissions::file_permission_intents(
+                            "read",
+                            paths(),
+                            &self.tool_context,
+                        )?
+                        .into_iter()
+                        .filter(|intent| intent.action == "external_directory"),
+                    );
+                }
+            }
+        }
+        Ok(ExternalAgentIntents {
+            concrete,
+            unresolved_action,
         })
+    }
+
+    /// Whether a prompt whose resource is unknown must be refused: any deny
+    /// rule for its action, or any constraint layer, could cover it.
+    fn refuses_unresolved(&self, action: &str) -> bool {
+        !self.policy.constraint_layers().is_empty()
+            || self.policy.rules().iter().any(|rule| {
+                rule.effect == openbitfun_runtime_ports::PermissionEffect::Deny
+                    && openbitfun_runtime_ports::wildcard_matches(
+                        action,
+                        &rule.action,
+                        openbitfun_runtime_ports::PermissionResourceCaseSensitivity::Sensitive,
+                    )
+            })
     }
 
     fn case_sensitivity(&self) -> openbitfun_runtime_ports::PermissionResourceCaseSensitivity {
@@ -485,18 +532,27 @@ impl ExternalAgentEventSink for EventQueueSink {
                 return Ok(ExternalAgentPermissionDecision::Reject);
             }
         };
+        if let Some(action) = intents.unresolved_action {
+            if policy.refuses_unresolved(action) || policy.auto_approve_ask {
+                log::debug!(
+                    "External agent permission rejected: no concrete resource to check, agent_type={}, action={}",
+                    agent_type, action
+                );
+                return Ok(ExternalAgentPermissionDecision::Reject);
+            }
+        }
         let grants = route
             .manager
             .list_project_grants(&route.project_id)
             .await
             .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
-        let asks = match plan_permission_intents(
-            intents,
+        let mut asks = match plan_permission_intents(
+            intents.concrete,
             &policy.policy,
             &grants,
             policy.case_sensitivity(),
         ) {
-            PermissionIntentPlan::Allowed => return Ok(ExternalAgentPermissionDecision::AllowOnce),
+            PermissionIntentPlan::Allowed => Vec::new(),
             PermissionIntentPlan::Denied(intent) => {
                 log::debug!(
                     "External agent permission denied by policy: agent_type={}, action={}",
@@ -507,6 +563,16 @@ impl ExternalAgentEventSink for EventQueueSink {
             }
             PermissionIntentPlan::RequiresApproval(asks) => asks,
         };
+        if let Some(action) = intents.unresolved_action {
+            // Display only: no save resources, so an "always" reply never
+            // turns agent-controlled text into a grant.
+            let mut intent = PermissionIntent::new(action, vec![request.title.clone()]);
+            intent.save_resources.clear();
+            asks.push(intent);
+        }
+        if asks.is_empty() {
+            return Ok(ExternalAgentPermissionDecision::AllowOnce);
+        }
 
         let requests: Vec<PermissionRequest> = asks
             .into_iter()

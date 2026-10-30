@@ -37,13 +37,20 @@ pub(crate) fn external_permission_request(
         .flatten()
         .map(|location| location.path.to_string_lossy().into_owned())
         .collect();
-    let command = fields
-        .raw_input
-        .as_ref()
-        .and_then(|input| input.get("command"))
-        .and_then(serde_json::Value::as_str)
-        .filter(|command| !command.trim().is_empty())
-        .map(str::to_string);
+    // Only plain strings are taken: joining an argv array would produce a
+    // command the shell might parse differently from what policy matched.
+    let raw_string = |key: &str| {
+        fields
+            .raw_input
+            .as_ref()
+            .and_then(|input| input.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let command = raw_string("command");
+    let url = raw_string("url");
     let tool_call_id = request.tool_call.tool_call_id.to_string();
     ExternalAgentPermissionRequest {
         title: fields
@@ -55,6 +62,7 @@ pub(crate) fn external_permission_request(
         kind,
         resources,
         command,
+        url,
     }
 }
 
@@ -140,6 +148,23 @@ mod tests {
             ToolCallUpdateFields::new().kind(ToolKind::SwitchMode),
         ));
         assert_eq!(other.kind, ExternalAgentPermissionKind::Other);
+
+        let fetch = external_permission_request(&request(
+            ToolCallUpdateFields::new()
+                .kind(ToolKind::Fetch)
+                .raw_input(serde_json::json!({ "url": " https://example.com/a " })),
+        ));
+        assert_eq!(fetch.url.as_deref(), Some("https://example.com/a"));
+
+        let argv = external_permission_request(&request(
+            ToolCallUpdateFields::new()
+                .kind(ToolKind::Execute)
+                .raw_input(serde_json::json!({ "command": ["rm", "-rf", "/"] })),
+        ));
+        assert_eq!(
+            argv.command, None,
+            "argv arrays are never joined into a command"
+        );
     }
 
     #[test]

@@ -350,6 +350,7 @@ async fn sinks_without_a_permission_route_report_not_available() {
             kind: ExternalAgentPermissionKind::Execute,
             resources: Vec::new(),
             command: Some("npm test".to_string()),
+            url: None,
         })
         .await
         .unwrap_err();

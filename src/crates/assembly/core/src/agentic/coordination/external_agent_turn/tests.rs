@@ -595,7 +595,18 @@ fn remote_sessions_without_a_resolved_connection_never_run_locally() {
 }
 
 /// Asks one permission prompt and reports the decision as its answer.
-struct PromptingExecutor;
+struct PromptingExecutor(ExternalAgentPermissionRequest);
+
+fn npm_test_prompt() -> ExternalAgentPermissionRequest {
+    ExternalAgentPermissionRequest {
+        tool_call_id: Some("acp-tool-1".to_string()),
+        title: "Run npm test".to_string(),
+        kind: ExternalAgentPermissionKind::Execute,
+        resources: Vec::new(),
+        command: Some("npm test".to_string()),
+        url: None,
+    }
+}
 
 #[async_trait]
 impl ExternalAgentExecutor for PromptingExecutor {
@@ -612,15 +623,7 @@ impl ExternalAgentExecutor for PromptingExecutor {
         _request: ExternalAgentTurnRequest,
         sink: &dyn ExternalAgentEventSink,
     ) -> PortResult<ExternalAgentTurnOutcome> {
-        let decision = sink
-            .request_permission(ExternalAgentPermissionRequest {
-                tool_call_id: Some("acp-tool-1".to_string()),
-                title: "Run npm test".to_string(),
-                kind: ExternalAgentPermissionKind::Execute,
-                resources: Vec::new(),
-                command: Some("npm test".to_string()),
-            })
-            .await?;
+        let decision = sink.request_permission(self.0.clone()).await?;
         Ok(ExternalAgentTurnOutcome::Completed {
             final_text: format!("{decision:?}"),
         })
@@ -665,7 +668,7 @@ fn prompting_turn(
         Arc::new(EventQueue::new(EventQueueConfig::default())),
         cancel_token,
     );
-    turn.executor = Some(Arc::new(PromptingExecutor));
+    turn.executor = Some(Arc::new(PromptingExecutor(npm_test_prompt())));
     turn.permissions = Some(ExternalAgentPermissionRoute {
         manager,
         project_id: "project-1".to_string(),
@@ -861,4 +864,67 @@ async fn prompts_are_rejected_when_the_policy_cannot_be_resolved() {
     let result = run_external_agent_turn(turn).await.expect("turn completes");
     assert_eq!(final_text(&result), "Reject");
     assert!(manager.pending_requests().is_empty());
+}
+
+/// An Execute prompt without a parsed command: only its title is known.
+fn untitled_command_turn(
+    manager: Arc<PermissionRequestManager>,
+    policy: ExternalAgentPermissionPolicy,
+) -> ExternalAgentTurn {
+    let mut turn = with_policy(
+        prompting_turn(manager, CancellationToken::new()),
+        Some(policy),
+    );
+    turn.executor = Some(Arc::new(PromptingExecutor(
+        ExternalAgentPermissionRequest {
+            command: None,
+            title: "npm test".to_string(),
+            ..npm_test_prompt()
+        },
+    )));
+    turn
+}
+
+#[tokio::test]
+async fn agent_titles_never_satisfy_allow_rules_or_become_grants() {
+    use openbitfun_runtime_ports::PermissionEffect;
+
+    let manager = test_permission_manager();
+    let running = tokio::spawn(run_external_agent_turn(untitled_command_turn(
+        manager.clone(),
+        test_policy(vec![bash_rule("npm test", PermissionEffect::Allow)], false),
+    )));
+    let request = first_pending(&manager).await;
+    assert_eq!(request.action, "bash");
+    assert!(
+        request.save_resources.is_empty(),
+        "an always reply must not store agent-controlled text as a grant"
+    );
+    manager
+        .reply(
+            &request.request_id,
+            PermissionReply::Reject { feedback: None },
+            openbitfun_runtime_ports::PermissionReplySource::User,
+        )
+        .await
+        .expect("reply");
+    let result = running.await.unwrap().expect("turn completes");
+    assert_eq!(final_text(&result), "Reject");
+}
+
+#[tokio::test]
+async fn unresolved_prompts_are_refused_under_deny_rules_and_auto_approve() {
+    use openbitfun_runtime_ports::PermissionEffect;
+
+    for policy in [
+        test_policy(vec![bash_rule("rm *", PermissionEffect::Deny)], false),
+        test_policy(Vec::new(), true),
+    ] {
+        let manager = test_permission_manager();
+        let result = run_external_agent_turn(untitled_command_turn(manager.clone(), policy))
+            .await
+            .expect("turn completes");
+        assert_eq!(final_text(&result), "Reject");
+        assert!(manager.pending_requests().is_empty());
+    }
 }

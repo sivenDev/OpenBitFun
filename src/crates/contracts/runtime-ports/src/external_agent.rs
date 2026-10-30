@@ -135,7 +135,8 @@ pub struct ExternalAgentPermissionRequest {
     /// The external agent's tool call, when it names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-    /// What the agent wants to do, as the agent describes it.
+    /// What the agent wants to do, as the agent describes it. Display only:
+    /// it is agent-controlled text, never a policy resource.
     pub title: String,
     pub kind: ExternalAgentPermissionKind,
     /// Paths the request touches; may be empty.
@@ -144,6 +145,9 @@ pub struct ExternalAgentPermissionRequest {
     /// Shell command the request would run, for execute prompts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// URL the request would fetch, for fetch prompts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// Coarse kind of a permission prompt, for presentation and policy.
