@@ -1,4 +1,6 @@
+mod audit;
 mod connection;
+mod connection_guard;
 mod delegation;
 mod permissions;
 pub(crate) mod protocol;
@@ -66,18 +68,25 @@ pub(crate) async fn run_dispatch_verb(
 
 async fn run_dispatch_verb_canonical(
     verb: &str,
-    mut input: serde_json::Value,
+    input: serde_json::Value,
 ) -> Result<serde_json::Value> {
-    if let Some(connection_id) = connection::source_connection(&input) {
-        input = connection::admit_call(
-            &DispatchStore::open_default()?,
-            &delegation::open_agent_store()?,
-            verb,
-            input,
-            &connection_id,
-        )
-        .await?;
-    }
+    let Some(connection_id) = connection::source_connection(&input) else {
+        return run_admitted_verb(verb, input).await;
+    };
+    let original = input.clone();
+    let admitted = connection::admit_call(
+        &DispatchStore::open_default()?,
+        &delegation::open_agent_store()?,
+        verb,
+        input,
+        &connection_id,
+    )
+    .await?;
+    let response = run_admitted_verb(verb, admitted).await?;
+    Ok(connection::present_response(verb, &original, response))
+}
+
+async fn run_admitted_verb(verb: &str, input: serde_json::Value) -> Result<serde_json::Value> {
     match verb {
         "probe" => {
             serde_json::to_value(probe(parse(input)?).await?).context("encode probe response")
@@ -388,9 +397,23 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
         .unwrap_or_else(|| truncate_chars(request.prompt.trim(), 120));
     request.title = Some(title.clone());
 
+    // Counted after a retried submission was answered above, so a retry is
+    // never refused as a second task.
+    connection_guard::ensure_within_limits(&store, &delegation::open_agent_store()?, &request)
+        .await?;
     let outcome = store.create_job_with_intent(intent, request.clone(), title)?;
     let state = match outcome {
-        CreateJobOutcome::Created(state) | CreateJobOutcome::Existing(state) => {
+        CreateJobOutcome::Created(state) => {
+            audit::record(
+                &request,
+                openbitfun_core::service::delegation_audit::DelegationAuditEvent::Submitted,
+                None,
+                None,
+            );
+            ensure_worker_spawned(&store, &request.job_id, state.state)?;
+            state
+        }
+        CreateJobOutcome::Existing(state) => {
             ensure_worker_spawned(&store, &request.job_id, state.state)?;
             state
         }

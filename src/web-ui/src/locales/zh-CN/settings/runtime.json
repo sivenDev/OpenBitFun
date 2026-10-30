@@ -151,7 +151,35 @@
     "grant": "授权",
     "granted": "已授权给对方账号",
     "grantFailed": "授权失败",
-    "withdrawFailed": "收回授权失败"
+    "withdrawFailed": "收回授权失败",
+    "limits": {
+      "title": "对此账号的限制",
+      "description": "可选。留空表示不限制。超过时长限制的轮次会被停止。",
+      "invalid": "同时任务数须为 1-100，每轮分钟数须为 1-1440。",
+      "jobsLabel": "同时任务数",
+      "minutesLabel": "每轮分钟数",
+      "jobs": "最多同时 {{count}} 个任务",
+      "anyJobs": "任务数不限",
+      "minutes": "每轮 {{count}} 分钟",
+      "anyMinutes": "不限时长",
+      "edit": "限制",
+      "save": "保存限制",
+      "saveFailed": "保存限制失败"
+    }
+  },
+  "delegationAudit": {
+    "sectionTitle": "来自其他账号的任务",
+    "sectionDescription": "其他账号的设备委托给本机的任务，最新的在前。记录只保存在本机。",
+    "empty": "还没有其他账号向本机委托任务。",
+    "loading": "正在加载记录…",
+    "loadFailed": "加载委托任务记录失败",
+    "unsupported": "委托任务记录保存在执行任务的设备上，请在那台设备上查看。",
+    "unreadable": "无法读取的记录，已原样保留",
+    "submitted": "已接收",
+    "failed": "失败或已停止",
+    "otherEvent": "其他事件",
+    "entry": "{{time}} · 来自 {{name}}（{{user}}）设备 {{device}} 的{{kind}}任务，由 {{agent}} 执行",
+    "refresh": "刷新"
   },
   "connections": {
     "sectionTitle": "与其他账号的连接",

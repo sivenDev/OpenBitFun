@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn(),
   grant: vi.fn(),
   revoke: vi.fn(),
+  limits: vi.fn(),
   overview: vi.fn(),
   modes: vi.fn(),
   clients: vi.fn(),
@@ -35,7 +36,7 @@ vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal)
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
   delegationAPI: {
     listOpenAgents: mocks.list, openAgent: mocks.open, closeAgent: mocks.close,
-    grantConnection: mocks.grant, revokeConnection: mocks.revoke,
+    grantConnection: mocks.grant, revokeConnection: mocks.revoke, setConnectionLimits: mocks.limits,
   },
 }));
 vi.mock('@/infrastructure/api/service-api/ConnectionsAPI', () => ({ connectionsAPI: { overview: mocks.overview } }));
@@ -91,6 +92,13 @@ describe('AgentDelegationConfig', () => {
   const render = async () => { await act(async () => root.render(<AgentDelegationConfig />)); };
   const button = (label: string) => Array.from(container.querySelectorAll('button')).find(node => node.textContent === label);
   const click = async (label: string) => { await act(async () => button(label)!.click()); };
+  const typeInto = async (label: string, value: string) => {
+    const input = container.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
   const check = async (label: string) => {
     const input = Array.from(container.querySelectorAll('label')).find(node => node.textContent === label)!.querySelector('input')!;
     await act(async () => input.click());
@@ -254,6 +262,49 @@ describe('AgentDelegationConfig', () => {
     await check('agentDelegation.grantUsageConfirm');
     await click('agentDelegation.grant');
     expect(mocks.grant).toHaveBeenCalledWith('helper', 'conn-2', true);
+  });
+
+  it('sets limits when granting, refuses out-of-range ones, and edits them later', async () => {
+    mocks.overview.mockResolvedValue({ connections: [connection('conn-1')] });
+    mocks.list
+      .mockResolvedValueOnce([openAgentRecord('Standard')])
+      .mockResolvedValue([{
+        agent: {
+          ...openAgentRecord('Standard').agent,
+          connections: [{ connectionId: 'conn-1', maxConcurrentJobs: 2 }],
+        },
+      }]);
+    mocks.grant.mockResolvedValue({});
+    mocks.limits.mockResolvedValue({});
+    await render();
+    await click('agentDelegation.grantConnection');
+    // Without limits, only the grant is stored.
+    await typeInto('agentDelegation.limits.jobsLabel', '0');
+    expect(container.textContent).toContain('agentDelegation.limits.invalid');
+    expect(button('agentDelegation.grant')!.disabled).toBe(true);
+    await typeInto('agentDelegation.limits.jobsLabel', '2');
+    await click('agentDelegation.grant');
+    expect(mocks.grant).toHaveBeenCalledWith('helper', 'conn-1', false);
+    expect(mocks.limits).toHaveBeenCalledWith('helper', 'conn-1', { maxConcurrentJobs: 2, maxJobMinutes: undefined });
+    expect(container.textContent).toContain('agentDelegation.limits.jobs:2');
+    expect(container.textContent).toContain('agentDelegation.limits.anyMinutes');
+
+    await click('agentDelegation.limits.edit');
+    await typeInto('agentDelegation.limits.jobsLabel', '');
+    await typeInto('agentDelegation.limits.minutesLabel', '30');
+    await click('agentDelegation.limits.save');
+    expect(mocks.limits).toHaveBeenLastCalledWith('helper', 'conn-1', { maxConcurrentJobs: undefined, maxJobMinutes: 30 });
+  });
+
+  it('grants without limits by storing only the grant', async () => {
+    mocks.overview.mockResolvedValue({ connections: [connection('conn-1')] });
+    mocks.list.mockResolvedValue([openAgentRecord('Standard')]);
+    mocks.grant.mockResolvedValue({});
+    await render();
+    await click('agentDelegation.grantConnection');
+    await click('agentDelegation.grant');
+    expect(mocks.grant).toHaveBeenCalledWith('helper', 'conn-1', false);
+    expect(mocks.limits).not.toHaveBeenCalled();
   });
 
   it('explains that there is no account to grant to', async () => {

@@ -14,6 +14,7 @@ pub(crate) mod coordination_persistence;
 #[cfg(all(feature = "agent-runtime", feature = "scheduled-jobs"))]
 pub mod cron; // Scheduled jobs
 pub mod delegation; // Agents this device opens to other devices
+pub mod delegation_audit; // Tasks other accounts delegated to this device
 #[cfg(feature = "dispatch-store")]
 pub mod dispatch; // Outbound dispatch observer index and target contracts
 #[cfg(feature = "filesystem")]

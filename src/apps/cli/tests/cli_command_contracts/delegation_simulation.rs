@@ -540,10 +540,11 @@ fn connections_cli(device: &SimulatedDevice, args: &[&str]) -> (bool, String) {
 
 /// Submits a delegated message task over the connection, as the requester's
 /// delegation directory does, and observes it until it succeeds.
-async fn delegate_message_over_connection(
-    rpc: Arc<openbitfun_core::service::remote_connect::connection_rpc::ConnectionRpc>,
+/// Submits a message task over the connection; returns the job and session ids.
+async fn submit_message_over_connection(
+    rpc: &openbitfun_core::service::remote_connect::connection_rpc::ConnectionRpc,
     connection_id: &str,
-) {
+) -> anyhow::Result<(String, String)> {
     let job_id = format!("delegation-{}", uuid::Uuid::new_v4());
     let session_id = uuid::Uuid::new_v4().to_string();
     let ack = rpc
@@ -567,11 +568,45 @@ async fn delegate_message_over_connection(
                 },
             }),
         )
-        .await
-        .expect("submit over the connection");
+        .await?;
     assert_eq!(ack["accepted"], true, "{ack}");
     assert_eq!(ack["jobId"], job_id.as_str(), "{ack}");
     assert_eq!(ack["sessionId"], session_id.as_str(), "{ack}");
+    Ok((job_id, session_id))
+}
+
+/// Polls a job over the connection until it ends; returns its last page.
+async fn wait_over_connection(
+    rpc: &openbitfun_core::service::remote_connect::connection_rpc::ConnectionRpc,
+    connection_id: &str,
+    job_id: &str,
+    until_running: bool,
+) -> Value {
+    let deadline = Instant::now() + JOB_TIMEOUT;
+    loop {
+        let page = rpc
+            .invoke_connection(
+                connection_id,
+                "dispatch_target_status",
+                json!({ "jobId": job_id }),
+            )
+            .await
+            .expect("observe over the connection");
+        if terminal(&page) || (until_running && page["state"] == "running") {
+            return page;
+        }
+        assert!(Instant::now() < deadline, "the cross-account job did not progress: {page}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+async fn delegate_message_over_connection(
+    rpc: Arc<openbitfun_core::service::remote_connect::connection_rpc::ConnectionRpc>,
+    connection_id: &str,
+) -> String {
+    let (job_id, _) = submit_message_over_connection(&rpc, connection_id)
+        .await
+        .expect("submit over the connection");
 
     let deadline = Instant::now() + JOB_TIMEOUT;
     let mut cursor = 0;
@@ -593,7 +628,7 @@ async fn delegate_message_over_connection(
         }
         assert!(
             Instant::now() < deadline,
-            "the cross-account job did not finish"
+            "the cross-account job did not finish: {page}"
         );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
@@ -605,11 +640,14 @@ async fn delegate_message_over_connection(
         .await
         .expect("list over the connection");
     let jobs = listed.as_array().cloned().unwrap_or_default();
-    assert_eq!(jobs.len(), 1, "{listed}");
-    assert_eq!(jobs[0]["jobId"], job_id.as_str(), "{listed}");
+    let job = jobs
+        .iter()
+        .find(|job| job["jobId"] == job_id.as_str())
+        .unwrap_or_else(|| panic!("{listed}"));
     // Neither the target's paths nor its model reach the other account.
-    assert_eq!(jobs[0]["workspacePath"], "", "{listed}");
-    assert!(jobs[0].get("model").is_none(), "{listed}");
+    assert_eq!(job["workspacePath"], "", "{listed}");
+    assert!(job.get("model").is_none(), "{listed}");
+    job_id
 }
 
 /// The agents a connection's catalog call returns.
@@ -664,8 +702,13 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     let requester = relay
         .seed_device(ACCOUNT_A, "sim-a", A1, "A1 Desktop", "desktop")
         .await;
-    let mut target =
-        SimulatedDevice::configure(B1, "B1 Desktop", MockOpenAiServer::immediate(), false);
+    // B1's model holds its first answer, so the first task stays running.
+    let mut target = SimulatedDevice::configure(
+        B1,
+        "B1 Desktop",
+        MockOpenAiServer::gated_then_immediate(),
+        false,
+    );
     let target_session = relay
         .seed_device(ACCOUNT_B, "sim-b", B1, "B1 Desktop", "cli")
         .await;
@@ -821,9 +864,76 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     let (ok, listed) = delegation_cli(&target, &["list"]);
     assert!(ok && listed.contains(&connection_id), "{listed}");
 
-    // A1's delegation directory lists it as an agent of B's account and runs
-    // a message task over the connection, like a same-account delegation.
-    delegate_message_over_connection(rpc.clone(), &connection_id).await;
+    // B1's owner allows one task at a time; a second is refused while the
+    // first runs, and withdrawing the grant stops the running one.
+    let (ok, output) = delegation_cli(
+        &target,
+        &["grant-connection", OPEN_AGENT_ID, &connection_id, "--max-jobs", "1"],
+    );
+    assert!(ok && output.contains("at most 1 task(s) at once"), "{output}");
+    let (held, _) = submit_message_over_connection(&rpc, &connection_id)
+        .await
+        .expect("first task");
+    let page = wait_over_connection(&rpc, &connection_id, &held, true).await;
+    assert_eq!(page["state"], "running", "{page}");
+    let error = submit_message_over_connection(&rpc, &connection_id)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("at most 1 task"), "{error}");
+    let (ok, output) = delegation_cli(
+        &target,
+        &["revoke-connection", OPEN_AGENT_ID, &connection_id],
+    );
+    assert!(ok, "{output}");
+    let stopped = wait_over_connection(&rpc, &connection_id, &held, false).await;
+    assert_eq!(stopped["state"], "failed", "{stopped}");
+    assert!(
+        stopped["lastError"]
+            .as_str()
+            .is_some_and(|error| error.contains("withdrew this connection's access")),
+        "{stopped}"
+    );
+
+    // Granted again, A1's delegation directory lists it as an agent of B's
+    // account and runs a message task over the connection, like a
+    // same-account delegation.
+    let (ok, output) = delegation_cli(
+        &target,
+        &["grant-connection", OPEN_AGENT_ID, &connection_id],
+    );
+    assert!(ok, "{output}");
+    let delivered = delegate_message_over_connection(rpc.clone(), &connection_id).await;
+
+    // B1's owner sees both tasks, who sent them, and how they ended.
+    let (ok, audit) = delegation_cli(&target, &["audit", "--json"]);
+    assert!(ok, "{audit}");
+    let audit: Value = serde_json::from_str(audit.trim()).expect("audit json");
+    let events: Vec<(String, String, String)> = audit
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            let entry = &record["entry"];
+            assert_eq!(entry["peerUserId"], ACCOUNT_A, "{record}");
+            assert_eq!(entry["peerDeviceName"], "A1 Desktop", "{record}");
+            assert_eq!(entry["openAgentId"], OPEN_AGENT_ID, "{record}");
+            (
+                entry["jobId"].as_str().unwrap().to_owned(),
+                entry["event"].as_str().unwrap().to_owned(),
+                entry["state"].as_str().unwrap_or("").to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        events,
+        vec![
+            (held.clone(), "submitted".into(), "".into()),
+            (held, "finished".into(), "failed".into()),
+            (delivered.clone(), "submitted".into(), "".into()),
+            (delivered, "finished".into(), "succeeded".into()),
+        ],
+        "{audit}"
+    );
 
     // Approvals never come from the connection, and B1's other jobs and
     // paths stay out of reach.

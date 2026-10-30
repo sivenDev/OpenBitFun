@@ -20,6 +20,7 @@ use crate::{shutdown_mcp_servers, BootstrapProfile};
 use super::permissions::{self, REJECT_AND_REPORT_REASON};
 use super::protocol::{DispatchApprovalPolicy, DispatchEvent, DispatchJobState, DispatchTurnKind};
 use super::store::{DispatchStore, WorkspaceLock};
+use super::{audit, connection_guard};
 
 const TURN_SETTLEMENT_TIMEOUT_MS: u64 = 5_000;
 
@@ -54,6 +55,16 @@ pub(crate) async fn run(job_id: String) -> Result<()> {
             None,
             Some(format!("{error:#}")),
         );
+    }
+    if let (Some(job), Ok(state)) = (job.as_ref(), store.load_state(&job_id)) {
+        if state.state.is_terminal() {
+            audit::record(
+                &job.request,
+                openbitfun_core::service::delegation_audit::DelegationAuditEvent::Finished,
+                Some(state.state),
+                state.last_error.as_deref(),
+            );
+        }
     }
     store.clear_pending_permissions(&job_id);
     store.clear_preparing(&job_id);
@@ -312,6 +323,11 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     let mut handled_permissions = HashSet::new();
     let mut mailbox_tick = tokio::time::interval(Duration::from_millis(200));
     mailbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // A job of another account stops when its owner withdraws the grant or
+    // the connection, or when the turn outlives the owner's limit.
+    let guard = connection_guard_for(&job).await;
+    let mut guard_tick = tokio::time::interval(connection_guard::GUARD_INTERVAL);
+    guard_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let (terminal_state, terminal_error) = loop {
         if let Some(request) = initial_permissions.pop_front() {
@@ -436,6 +452,16 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
                     break (DispatchJobState::Failed, Some(reason));
                 }
             }
+            _ = guard_tick.tick(), if guard.is_some() => {
+                let stop = match guard.as_ref() {
+                    Some(guard) => guard.stop_reason(std::time::Instant::now()).await,
+                    None => None,
+                };
+                if let Some(reason) = stop {
+                    cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_connection_guard").await;
+                    break (DispatchJobState::Failed, Some(reason));
+                }
+            }
             _ = mailbox_tick.tick() => {
                 if let Some(outcome) = process_mailboxes(
                     store,
@@ -470,6 +496,31 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     store.mark_state(job_id, terminal_state, Some(&turn_id), terminal_error)?;
     store.clear_pending_permissions(job_id);
     Ok(())
+}
+
+async fn connection_guard_for(
+    job: &super::store::DispatchJobRecord,
+) -> Option<connection_guard::ConnectionGuard> {
+    job.request.source_connection_id.as_ref()?;
+    let stores = super::delegation::open_agent_store().and_then(|grants| {
+        openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()
+            .map(|connections| (grants, connections))
+    });
+    let guarded = match stores {
+        Ok((grants, connections)) => {
+            connection_guard::ConnectionGuard::for_job(job, grants, connections).await
+        }
+        Err(error) => Err(error),
+    };
+    match guarded {
+        Ok(guard) => guard,
+        Err(error) => {
+            // Admission already checked the grant; the guard is a second
+            // line, so it degrades to that check rather than failing the job.
+            tracing::warn!("Connection guard unavailable for a cross-account job: {error:#}");
+            None
+        }
+    }
 }
 
 async fn handle_permission(

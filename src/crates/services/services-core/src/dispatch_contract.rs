@@ -162,6 +162,11 @@ pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
     "dispatch_target_workspace_sync_chunk",
 ];
 
+/// Prefix of the opaque handle a target gives a connection for a coding
+/// workspace it provisioned (`connection-workspace:<jobId>`). The connection
+/// names the workspace by this handle and never learns the target's paths.
+pub const DISPATCH_CONNECTION_WORKSPACE_PREFIX: &str = "connection-workspace:";
+
 /// Why a call over a connection is refused before the target runs it.
 pub const DISPATCH_CONNECTION_ANSWER_REFUSED: &str =
     "approvals of cross-account jobs come only from the owner of the target device";
@@ -195,8 +200,15 @@ pub fn bind_dispatch_source_connection(
     if command == "dispatch_target_submit" && !args.contains_key(DISPATCH_DELEGATION_FIELD) {
         return Err("a connection submits only jobs delegated to an open agent".to_string());
     }
-    if command == "dispatch_target_probe" && args.contains_key("workspacePath") {
-        return Err("a connection cannot inspect paths on this device".to_string());
+    if command == "dispatch_target_probe" {
+        let path = args
+            .get("workspacePath")
+            .and_then(serde_json::Value::as_str);
+        if path.is_some_and(|path| !path.starts_with(DISPATCH_CONNECTION_WORKSPACE_PREFIX))
+            || (args.contains_key("workspacePath") && path.is_none())
+        {
+            return Err("a connection cannot inspect paths on this device".to_string());
+        }
     }
     args.insert(
         DISPATCH_SOURCE_CONNECTION_ARG.to_string(),
@@ -508,12 +520,21 @@ mod tests {
         )
         .unwrap_err()
         .contains("delegated"));
+        for path in [serde_json::json!("/etc"), serde_json::json!(42)] {
+            assert!(bind_dispatch_source_connection(
+                "dispatch_target_probe",
+                serde_json::json!({ "workspacePath": path }),
+                "conn-1"
+            )
+            .is_err());
+        }
+        // The opaque handle of a workspace it provisioned passes to the target.
         assert!(bind_dispatch_source_connection(
             "dispatch_target_probe",
-            serde_json::json!({ "workspacePath": "/etc" }),
+            serde_json::json!({ "workspacePath": "connection-workspace:delegation-1" }),
             "conn-1"
         )
-        .is_err());
+        .is_ok());
         assert!(bind_dispatch_source_connection(
             "dispatch_target_list",
             serde_json::Value::Null,

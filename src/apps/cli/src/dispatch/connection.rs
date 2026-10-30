@@ -8,10 +8,14 @@
 //! connection; the host refuses `answer` before it reaches the runner.
 //!
 //! Coding workspaces are provisioned before their job exists, so the
-//! connection that provisions one is recorded in its job directory. Its
-//! repository cache is kept apart from every other requester's, and it is
-//! seeded only from the bundle the requester uploads: the target never
-//! fetches a URL another account names with its owner's Git credentials.
+//! connection that provisions one is recorded in its job directory, and only
+//! a connection granted coding tasks may provision. Its repository cache is
+//! kept apart from every other requester's, and it is seeded only from the
+//! bundle the requester uploads: the target never fetches a URL another
+//! account names with its owner's Git credentials. The connection names the
+//! workspace by an opaque handle; [`present_response`] keeps this device's
+//! paths, and the details of what its owner is asked to approve, out of every
+//! answer.
 
 use std::io::Write;
 use std::path::Path;
@@ -20,7 +24,9 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_CONNECTION_ARG;
+use openbitfun_services_core::dispatch_contract::{
+    DISPATCH_CONNECTION_WORKSPACE_PREFIX, DISPATCH_SOURCE_CONNECTION_ARG,
+};
 
 use openbitfun_core::service::delegation::{DelegationTaskKind, OpenAgentStore};
 
@@ -69,7 +75,27 @@ pub(super) async fn admit_call(
     match verb {
         // Catalog and submit check the connection's grants themselves; list
         // shows only the connection's jobs.
-        "probe" | "catalog" | "submit" | "list" => {}
+        "catalog" | "list" => {}
+        "probe" => {
+            if let Some(handle) = input.get("workspacePath").and_then(Value::as_str) {
+                let path = resolve_workspace_handle(store, handle, connection_id)?;
+                input["workspacePath"] = Value::String(path);
+            }
+        }
+        "submit" => {
+            let handle = input
+                .get("workspacePath")
+                .and_then(Value::as_str)
+                .filter(|path| path.starts_with(DISPATCH_CONNECTION_WORKSPACE_PREFIX))
+                .map(str::to_string);
+            if let Some(handle) = handle {
+                if handle_job_id(&handle) != Some(job_id(&input)) {
+                    bail!("coding tasks run only in the worktree provisioned for this job");
+                }
+                let path = resolve_workspace_handle(store, &handle, connection_id)?;
+                input["workspacePath"] = Value::String(path);
+            }
+        }
         "status" | "cancel" | "append" | "continue" | "query" => {
             let job_id = job_id(&input);
             let job = store
@@ -103,6 +129,7 @@ pub(super) async fn admit_call(
             }
         }
         "workspace-provision" => {
+            ensure_coding_grant(grants, connection_id).await?;
             claim_workspace(store, job_id(&input), connection_id)?;
             let fields = input
                 .as_object_mut()
@@ -122,10 +149,104 @@ pub(super) async fn admit_call(
             if workspace_owner(store, job_id)?.as_deref() != Some(connection_id) {
                 return Err(missing(job_id));
             }
+            ensure_coding_grant(grants, connection_id).await?;
         }
         other => bail!("dispatch verb '{other}' is not accepted over a cross-account connection"),
     }
     Ok(input)
+}
+
+/// What a connection receives back: this device's paths become the
+/// workspace handle, and approval prompts keep only what says the job waits.
+pub(super) fn present_response(verb: &str, request: &Value, mut response: Value) -> Value {
+    match verb {
+        "workspace-provision" => {
+            if response.get("workspacePath").is_some_and(Value::is_string) {
+                response["workspacePath"] = Value::String(workspace_handle(job_id(request)));
+            }
+        }
+        "probe" => {
+            if let Some(workspace) = response.get_mut("workspace").and_then(Value::as_object_mut) {
+                let handle = request
+                    .get("workspacePath")
+                    .cloned()
+                    .unwrap_or(Value::String(String::new()));
+                workspace.insert("path".into(), handle);
+            }
+        }
+        "status" => {
+            if let Some(pending) = response
+                .get_mut("pendingPermissions")
+                .and_then(Value::as_array_mut)
+            {
+                for request in pending.iter_mut() {
+                    *request = redacted_permission(request);
+                }
+            }
+        }
+        _ => {}
+    }
+    response
+}
+
+/// A pending prompt as another account sees it: that the job waits and on
+/// what kind of action, never the paths, commands, or files involved.
+fn redacted_permission(request: &Value) -> Value {
+    let field = |name: &str| request.get(name).cloned().unwrap_or(Value::Null);
+    serde_json::json!({
+        "requestId": field("requestId"),
+        "roundId": field("roundId"),
+        "order": field("order"),
+        "projectId": "",
+        "sessionId": field("sessionId"),
+        "agentId": field("agentId"),
+        "action": field("action"),
+        "resources": [],
+        "saveResources": [],
+        "source": field("source"),
+    })
+}
+
+fn workspace_handle(job_id: &str) -> String {
+    format!("{DISPATCH_CONNECTION_WORKSPACE_PREFIX}{job_id}")
+}
+
+fn handle_job_id(handle: &str) -> Option<&str> {
+    handle
+        .strip_prefix(DISPATCH_CONNECTION_WORKSPACE_PREFIX)
+        .filter(|job_id| !job_id.is_empty())
+}
+
+/// The provisioned worktree a connection's handle names, if that connection
+/// provisioned it.
+fn resolve_workspace_handle(
+    store: &DispatchStore,
+    handle: &str,
+    connection_id: &str,
+) -> Result<String> {
+    let refused = || anyhow::anyhow!("a connection cannot inspect paths on this device");
+    let job_id = handle_job_id(handle).ok_or_else(refused)?;
+    if workspace_owner(store, job_id)?.as_deref() != Some(connection_id) {
+        return Err(missing(job_id));
+    }
+    super::workspace::provisioned_workspace_path(store, job_id)?
+        .map(|path| path.to_string_lossy().into_owned())
+        .ok_or_else(|| anyhow::anyhow!("the workspace for '{job_id}' is not provisioned yet"))
+}
+
+/// Coding workspaces are only for connections granted coding tasks.
+async fn ensure_coding_grant(grants: &OpenAgentStore, connection_id: &str) -> Result<()> {
+    let granted = grants
+        .granted_to_connection(connection_id)
+        .await
+        .context("read agents opened to other devices")?
+        .iter()
+        .any(|agent| agent.allows_task_kind(DelegationTaskKind::Coding));
+    if granted {
+        Ok(())
+    } else {
+        bail!("no agent on this device takes coding tasks from this connection")
+    }
 }
 
 async fn ensure_still_granted(
@@ -273,8 +394,8 @@ mod tests {
         grants: OpenAgentStore,
     }
 
-    /// Jobs of two connections and a local one; `helper` is granted to both
-    /// connections for message tasks.
+    /// Jobs of two connections and a local one; `helper` takes message and
+    /// coding tasks from both connections, `notes` only messages from conn-3.
     async fn store_with_jobs() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let store = DispatchStore::open(dir.path().join("dispatch")).unwrap();
@@ -285,7 +406,7 @@ mod tests {
                 agent_type: "agentic".into(),
                 display_name: "Helper".into(),
                 description: None,
-                task_kinds: vec![DelegationTaskKind::Message],
+                task_kinds: vec![DelegationTaskKind::Message, DelegationTaskKind::Coding],
                 message_workspace: None,
                 same_account_devices: Vec::new(),
                 connections: Vec::new(),
@@ -298,6 +419,23 @@ mod tests {
                 .await
                 .unwrap();
         }
+        grants
+            .open(openbitfun_core::service::delegation::OpenAgent {
+                id: "notes".into(),
+                agent_type: "agentic".into(),
+                display_name: "Notes".into(),
+                description: None,
+                task_kinds: vec![DelegationTaskKind::Message],
+                message_workspace: None,
+                same_account_devices: Vec::new(),
+                connections: Vec::new(),
+            })
+            .await
+            .unwrap();
+        grants
+            .grant_connection("notes", "conn-3", false)
+            .await
+            .unwrap();
         for (job_id, connection) in [
             ("delegation-mine", Some("conn-1")),
             ("delegation-theirs", Some("conn-2")),
@@ -525,6 +663,120 @@ mod tests {
             ensure_provisioned_workspace(store, "delegation-local-coding", "conn-1", "/tmp")
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn workspaces_are_named_by_handle_and_only_for_coding_grants() {
+        let fixture = store_with_jobs().await;
+        let store = &fixture.store;
+        // A connection granted only message tasks cannot provision.
+        let error = provision(&fixture, "delegation-x", "conn-3")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("coding tasks"), "{error}");
+
+        provision(&fixture, "delegation-new", "conn-1")
+            .await
+            .unwrap();
+        let worktree = fixture
+            ._dir
+            .path()
+            .join("worktrees")
+            .join("repo")
+            .join("job");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(
+            store
+                .workspace_upload_dir("delegation-new")
+                .unwrap()
+                .join("provision.json"),
+            serde_json::to_vec(&json!({
+                "protocolVersion": 1, "jobId": "delegation-new", "repoKey": "abcdef0123456789",
+                "baseCommit": "0123456789abcdef0123456789abcdef01234567", "branch": "b",
+                "createdAt": "now", "workspacePath": worktree,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let path = worktree.to_string_lossy().into_owned();
+
+        // The provision answer names the handle, not the path.
+        let request = json!({ "jobId": "delegation-new" });
+        let shown = present_response(
+            "workspace-provision",
+            &request,
+            json!({ "provisioned": true, "workspacePath": path }),
+        );
+        assert_eq!(
+            shown["workspacePath"],
+            "connection-workspace:delegation-new"
+        );
+
+        // The handle resolves on this device for probe and submit.
+        let probe = json!({ "workspacePath": "connection-workspace:delegation-new" });
+        let admitted = admit_call(store, &fixture.grants, "probe", probe.clone(), "conn-1")
+            .await
+            .unwrap();
+        assert_eq!(admitted["workspacePath"], path.as_str());
+        let answer = present_response(
+            "probe",
+            &probe,
+            json!({ "workspace": { "path": path, "isGitRepository": true } }),
+        );
+        assert_eq!(
+            answer["workspace"]["path"],
+            "connection-workspace:delegation-new"
+        );
+        assert_eq!(answer["workspace"]["isGitRepository"], true);
+        assert!(
+            admit_call(store, &fixture.grants, "probe", probe.clone(), "conn-2")
+                .await
+                .is_err()
+        );
+
+        let submit = json!({
+            "jobId": "delegation-new",
+            "workspacePath": "connection-workspace:delegation-new",
+        });
+        let admitted = admit_call(store, &fixture.grants, "submit", submit, "conn-1")
+            .await
+            .unwrap();
+        assert_eq!(admitted["workspacePath"], path.as_str());
+        ensure_provisioned_workspace(store, "delegation-new", "conn-1", &path).unwrap();
+        // A handle of another job is refused.
+        let other = json!({
+            "jobId": "delegation-other",
+            "workspacePath": "connection-workspace:delegation-new",
+        });
+        assert!(
+            admit_call(store, &fixture.grants, "submit", other, "conn-1")
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn pending_approvals_reach_a_connection_without_their_details() {
+        let status = json!({
+            "state": "running",
+            "pendingPermissions": [{
+                "requestId": "r1", "roundId": "round", "order": 0,
+                "toolCallId": "tool", "projectPath": "/Users/owner/project",
+                "projectId": "project", "sessionId": "s", "agentId": "agentic",
+                "action": "bash", "resources": ["cat ~/.ssh/id_rsa"],
+                "saveResources": ["cat *"], "source": { "kind": "tool_call", "identity": "bash" },
+                "displayMetadata": { "command": "cat ~/.ssh/id_rsa" },
+            }],
+        });
+        let shown = present_response("status", &json!({}), status);
+        let text = shown.to_string();
+        assert!(!text.contains("id_rsa"), "{text}");
+        assert!(!text.contains("/Users/owner"), "{text}");
+        let request: openbitfun_product_domains::tool_permissions::PermissionRequest =
+            serde_json::from_value(shown["pendingPermissions"][0].clone()).unwrap();
+        assert_eq!(request.request_id, "r1");
+        assert_eq!(request.action, "bash");
     }
 
     #[tokio::test]

@@ -151,7 +151,35 @@
     "grant": "Grant",
     "granted": "Agent granted to the other account",
     "grantFailed": "Failed to grant the agent",
-    "withdrawFailed": "Failed to withdraw the agent"
+    "withdrawFailed": "Failed to withdraw the agent",
+    "limits": {
+      "title": "Limits for this account",
+      "description": "Optional. Leave a field empty for no limit. A turn over its time limit is stopped.",
+      "invalid": "Tasks at once must be 1-100 and minutes per turn 1-1440.",
+      "jobsLabel": "Tasks at once",
+      "minutesLabel": "Minutes per turn",
+      "jobs": "At most {{count}} task(s) at once",
+      "anyJobs": "Any number of tasks",
+      "minutes": "{{count}} minute(s) per turn",
+      "anyMinutes": "No time limit",
+      "edit": "Limits",
+      "save": "Save limits",
+      "saveFailed": "Failed to save the limits"
+    }
+  },
+  "delegationAudit": {
+    "sectionTitle": "Tasks from other accounts",
+    "sectionDescription": "Tasks that devices of other accounts delegated to this device, newest first. The record stays on this device.",
+    "empty": "No tasks were delegated to this device by other accounts.",
+    "loading": "Loading the record…",
+    "loadFailed": "Failed to load the record of delegated tasks",
+    "unsupported": "The record of delegated tasks is kept on the device that ran them; open it there.",
+    "unreadable": "Unreadable entry, kept unchanged",
+    "submitted": "Received",
+    "failed": "Failed or stopped",
+    "otherEvent": "Other event",
+    "entry": "{{time}} · {{kind}} task for {{agent}} from {{name}} ({{user}}), device {{device}}",
+    "refresh": "Refresh"
   },
   "connections": {
     "sectionTitle": "Connections with other accounts",

@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Subcommand, ValueEnum};
 use openbitfun_core::service::delegation::{
-    DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord, OpenAgentStore,
-    ALL_SAME_ACCOUNT_DEVICES,
+    ConnectionLimits, DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord,
+    OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
 };
+use openbitfun_core::service::delegation_audit::{DelegationAuditEvent, DelegationAuditLog};
 
 use crate::plugin_diagnostics::escape_terminal_text;
 
@@ -65,6 +66,26 @@ pub(crate) enum DelegationAction {
         /// connection: its jobs run on this device's own login or credentials
         #[arg(long)]
         accept_usage: bool,
+        /// Most tasks this connection may run at once with the agent
+        /// (1-100). Setting either limit replaces both; granting again
+        /// without limits keeps the current ones.
+        #[arg(long)]
+        max_jobs: Option<u32>,
+        /// Minutes one turn may run before it is stopped (1-1440)
+        #[arg(long)]
+        max_minutes: Option<u32>,
+        /// Remove both limits
+        #[arg(long, conflicts_with_all = ["max_jobs", "max_minutes"])]
+        no_limits: bool,
+    },
+    /// Show the tasks other accounts delegated to this device
+    Audit {
+        /// Print the entries as JSON, including unreadable lines
+        #[arg(long)]
+        json: bool,
+        /// Show only the most recent entries
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
     },
     /// Withdraw an opened agent from a connection
     RevokeConnection {
@@ -166,6 +187,9 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
             id,
             connection_id,
             accept_usage,
+            max_jobs,
+            max_minutes,
+            no_limits,
         } => {
             let connection = openbitfun_core::service::remote_connect::connection_rpc::grantable_connection(
                 &openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()?,
@@ -191,9 +215,18 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                     bail!("run again with --accept-usage to grant this external agent");
                 }
             }
-            store
+            let mut agent = store
                 .grant_connection(&id, &connection_id, accept_usage)
                 .await?;
+            if no_limits || max_jobs.is_some() || max_minutes.is_some() {
+                let limits = ConnectionLimits {
+                    max_concurrent_jobs: max_jobs,
+                    max_job_minutes: max_minutes,
+                };
+                agent = store
+                    .set_connection_limits(&id, &connection_id, limits)
+                    .await?;
+            }
             println!(
                 "Granted {} to {} ({}), device {}",
                 escape_terminal_text(&id),
@@ -201,6 +234,9 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 escape_terminal_text(&connection.peer_user_id),
                 escape_terminal_text(&connection.peer_device_name)
             );
+            if let Some(grant) = agent.connection_grant(&connection_id) {
+                println!("  limits: {}", describe_limits(grant.limits));
+            }
         }
         DelegationAction::RevokeConnection { id, connection_id } => {
             if store.revoke_connection(&id, &connection_id).await? {
@@ -217,6 +253,48 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 );
             }
         }
+        DelegationAction::Audit { json, limit } => {
+            let records = DelegationAuditLog::for_product_home(&path_manager).read()?;
+            let shown = &records[records.len().saturating_sub(limit)..];
+            if json {
+                println!("{}", serde_json::to_string_pretty(shown)?);
+                return Ok(());
+            }
+            if shown.is_empty() {
+                println!("No tasks were delegated to this device by other accounts.");
+            }
+            for record in shown {
+                let Some(entry) = &record.entry else {
+                    println!(
+                        "- unreadable entry, kept: {}",
+                        escape_terminal_text(record.problem.as_deref().unwrap_or("unknown"))
+                    );
+                    continue;
+                };
+                let event = match entry.event {
+                    DelegationAuditEvent::Submitted => "submitted".to_string(),
+                    DelegationAuditEvent::Finished => {
+                        format!("finished {}", entry.state.as_deref().unwrap_or("?"))
+                    }
+                    DelegationAuditEvent::Unknown => "other event".to_string(),
+                };
+                println!(
+                    "- {} {} {} task {} for {} ({}), device {}, via {} with {}",
+                    escape_terminal_text(&entry.at),
+                    event,
+                    escape_terminal_text(&entry.task_kind),
+                    escape_terminal_text(&entry.job_id),
+                    escape_terminal_text(&entry.peer_display_name),
+                    escape_terminal_text(&entry.peer_user_id),
+                    escape_terminal_text(&entry.peer_device_name),
+                    escape_terminal_text(&entry.connection_id),
+                    escape_terminal_text(&entry.open_agent_id),
+                );
+                if let Some(detail) = &entry.detail {
+                    println!("  {}", escape_terminal_text(detail));
+                }
+            }
+        }
         DelegationAction::Close { id } => {
             if store.close(&id).await? {
                 println!("Closed {}", escape_terminal_text(&id));
@@ -226,6 +304,20 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn describe_limits(limits: ConnectionLimits) -> String {
+    let jobs = limits
+        .max_concurrent_jobs
+        .map_or("any number of tasks".to_string(), |jobs| {
+            format!("at most {jobs} task(s) at once")
+        });
+    let minutes = limits
+        .max_job_minutes
+        .map_or("no time limit".to_string(), |minutes| {
+            format!("{minutes} minute(s) per turn")
+        });
+    format!("{jobs}, {minutes}")
 }
 
 fn usage_notice_text(notice: ExternalAgentUsageNotice) -> &'static str {
@@ -268,8 +360,9 @@ fn print_records(records: &[OpenAgentRecord]) {
                 }
                 for grant in &agent.connections {
                     println!(
-                        "  granted to connection: {}",
-                        escape_terminal_text(&grant.connection_id)
+                        "  granted to connection: {} ({})",
+                        escape_terminal_text(&grant.connection_id),
+                        describe_limits(grant.limits)
                     );
                 }
             }

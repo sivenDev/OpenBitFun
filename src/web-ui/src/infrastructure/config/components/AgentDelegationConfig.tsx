@@ -6,7 +6,11 @@ import {
   ALL_SAME_ACCOUNT_DEVICES,
   delegationAPI,
   externalAgentClientId,
+  MAX_CONNECTION_CONCURRENT_JOBS,
+  MAX_CONNECTION_JOB_MINUTES,
   openAgentRecordId,
+  type ConnectionGrant,
+  type ConnectionLimits,
   type DelegationTaskKind,
   type OpenAgentRecord,
 } from '@/infrastructure/api/service-api/DelegationAPI';
@@ -62,12 +66,46 @@ interface LoadedState {
   connections: ConnectionSummary[];
 }
 
+/** Limits as typed; empty means no limit. */
+interface LimitsDraft {
+  maxJobs: string;
+  maxMinutes: string;
+}
+
 /** Granting one open agent to a connection. */
-interface GrantDraft {
+interface GrantDraft extends LimitsDraft {
   agentId: string;
   connectionId: string;
   /** The owner confirmed the external agent's usage notice for this grant. */
   usageConfirmed: boolean;
+}
+
+/** Changing the limits of an existing grant. */
+interface EditLimitsDraft extends LimitsDraft {
+  agentId: string;
+  connectionId: string;
+}
+
+const NO_LIMITS: LimitsDraft = { maxJobs: '', maxMinutes: '' };
+
+function parseLimit(value: string, max: number): number | undefined | null {
+  const trimmed = value.trim();
+  if (trimmed === '') return undefined;
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  return parsed >= 1 && parsed <= max ? parsed : null;
+}
+
+/** The limits a draft names, or null when one is out of range. */
+function draftLimits(draft: LimitsDraft): ConnectionLimits | null {
+  const maxConcurrentJobs = parseLimit(draft.maxJobs, MAX_CONNECTION_CONCURRENT_JOBS);
+  const maxJobMinutes = parseLimit(draft.maxMinutes, MAX_CONNECTION_JOB_MINUTES);
+  if (maxConcurrentJobs === null || maxJobMinutes === null) return null;
+  return { maxConcurrentJobs, maxJobMinutes };
+}
+
+function hasLimits(limits: ConnectionLimits): boolean {
+  return limits.maxConcurrentJobs !== undefined || limits.maxJobMinutes !== undefined;
 }
 
 function suggestedId(agentType: string): string {
@@ -116,6 +154,7 @@ export const AgentDelegationConfig: React.FC = () => {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [grantDraft, setGrantDraft] = useState<GrantDraft | null>(null);
+  const [limitsDraft, setLimitsDraft] = useState<EditLimitsDraft | null>(null);
   const activeRef = useRef(true);
 
   const load = useCallback(async () => {
@@ -182,11 +221,26 @@ export const AgentDelegationConfig: React.FC = () => {
       : t('agentDelegation.connectionMissing', { id: connectionId });
   };
 
+  const describeLimits = (grant: ConnectionGrant): string => {
+    const jobs = grant.maxConcurrentJobs !== undefined
+      ? t('agentDelegation.limits.jobs', { count: String(grant.maxConcurrentJobs) })
+      : t('agentDelegation.limits.anyJobs');
+    const minutes = grant.maxJobMinutes !== undefined
+      ? t('agentDelegation.limits.minutes', { count: String(grant.maxJobMinutes) })
+      : t('agentDelegation.limits.anyMinutes');
+    return `${jobs} · ${minutes}`;
+  };
+
   const grant = async () => {
     if (!grantDraft) return;
+    const limits = draftLimits(grantDraft);
+    if (!limits) return;
     setBusy(true);
     try {
       await delegationAPI.grantConnection(grantDraft.agentId, grantDraft.connectionId, grantDraft.usageConfirmed);
+      if (hasLimits(limits)) {
+        await delegationAPI.setConnectionLimits(grantDraft.agentId, grantDraft.connectionId, limits);
+      }
       if (!activeRef.current) return;
       notificationService.success(t('agentDelegation.granted'), { duration: 2000 });
       setGrantDraft(null);
@@ -197,6 +251,45 @@ export const AgentDelegationConfig: React.FC = () => {
     } finally {
       if (activeRef.current) setBusy(false);
     }
+  };
+
+  const saveLimits = async () => {
+    if (!limitsDraft) return;
+    const limits = draftLimits(limitsDraft);
+    if (!limits) return;
+    setBusy(true);
+    try {
+      await delegationAPI.setConnectionLimits(limitsDraft.agentId, limitsDraft.connectionId, limits);
+      if (!activeRef.current) return;
+      setLimitsDraft(null);
+      await load();
+    } catch (error) {
+      log.error('Failed to set connection limits', { error });
+      notificationService.error(`${t('agentDelegation.limits.saveFailed')}: ${errorMessage(error)}`);
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  /** Inputs for the two optional limits of one grant. */
+  const renderLimitInputs = (value: LimitsDraft, onChange: (next: LimitsDraft) => void) => {
+    const invalid = draftLimits(value) === null;
+    return (
+      <ConfigPageRow label={t('agentDelegation.limits.title')}
+        description={invalid ? t('agentDelegation.limits.invalid') : t('agentDelegation.limits.description')}
+        align="center">
+        <div>
+          <Input size="sm" inputMode="numeric" disabled={busy} value={value.maxJobs}
+            aria-label={t('agentDelegation.limits.jobsLabel')}
+            placeholder={t('agentDelegation.limits.jobsLabel')}
+            onChange={event => onChange({ ...value, maxJobs: event.target.value })} />
+          <Input size="sm" inputMode="numeric" disabled={busy} value={value.maxMinutes}
+            aria-label={t('agentDelegation.limits.minutesLabel')}
+            placeholder={t('agentDelegation.limits.minutesLabel')}
+            onChange={event => onChange({ ...value, maxMinutes: event.target.value })} />
+        </div>
+      </ConfigPageRow>
+    );
   };
 
   const withdraw = async (agentId: string, connectionId: string) => {
@@ -220,7 +313,8 @@ export const AgentDelegationConfig: React.FC = () => {
     if (!state || grantDraft?.agentId !== agentId) return null;
     const candidates = grantCandidates(granted);
     const external = externalAgentClientId(agentType) !== null;
-    const canGrant = grantDraft.connectionId !== '' && (!external || grantDraft.usageConfirmed);
+    const canGrant = grantDraft.connectionId !== '' && (!external || grantDraft.usageConfirmed)
+      && draftLimits(grantDraft) !== null;
     return <>
       <ConfigPageRow label={t('agentDelegation.grantTitle')}
         description={candidates.length === 0 ? t('agentDelegation.noConnections') : t('agentDelegation.grantDescription')}
@@ -252,6 +346,8 @@ export const AgentDelegationConfig: React.FC = () => {
             onChange={event => setGrantDraft({ ...grantDraft, usageConfirmed: event.target.checked })} />
         </ConfigPageRow>
       )}
+      {candidates.length > 0 && renderLimitInputs(grantDraft,
+        next => setGrantDraft(current => current && ({ ...current, ...next })))}
       <ConfigPageRow label="" align="center">
         <div>
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setGrantDraft(null)}>
@@ -355,7 +451,8 @@ export const AgentDelegationConfig: React.FC = () => {
       {state.records.map((record, index) => {
         const id = openAgentRecordId(record);
         const agent = record.agent;
-        const granted = agent?.connections?.map(item => item.connectionId) ?? [];
+        const grants = agent?.connections ?? [];
+        const granted = grants.map(item => item.connectionId);
         return (
           <React.Fragment key={id ?? `unreadable-${index}`}>
             <ConfigPageRow
@@ -370,6 +467,7 @@ export const AgentDelegationConfig: React.FC = () => {
                       agentId: agent.id,
                       connectionId: grantCandidates(granted)[0]?.connectionId ?? '',
                       usageConfirmed: false,
+                      ...NO_LIMITS,
                     })}>
                     {t('agentDelegation.grantConnection')}
                   </Button>
@@ -381,15 +479,51 @@ export const AgentDelegationConfig: React.FC = () => {
                 )}
               </div>
             </ConfigPageRow>
-            {agent && granted.map(connectionId => (
-              <ConfigPageRow key={connectionId} label={t('agentDelegation.otherAccounts')}
-                description={t('agentDelegation.grantedTo', { peer: describeConnection(connectionId) })} align="center">
-                <Button type="button" size="sm" variant="outline" disabled={busy}
-                  onClick={() => void withdraw(agent.id, connectionId)}>
-                  {t('agentDelegation.withdraw')}
-                </Button>
-              </ConfigPageRow>
-            ))}
+            {agent && grants.map(item => {
+              const editing = limitsDraft?.agentId === agent.id && limitsDraft.connectionId === item.connectionId;
+              return (
+                <React.Fragment key={item.connectionId}>
+                  <ConfigPageRow label={t('agentDelegation.otherAccounts')}
+                    description={`${t('agentDelegation.grantedTo', { peer: describeConnection(item.connectionId) })} · ${describeLimits(item)}`}
+                    align="center">
+                    <div>
+                      {!editing && (
+                        <Button type="button" size="sm" variant="outline" disabled={busy}
+                          onClick={() => setLimitsDraft({
+                            agentId: agent.id,
+                            connectionId: item.connectionId,
+                            maxJobs: item.maxConcurrentJobs?.toString() ?? '',
+                            maxMinutes: item.maxJobMinutes?.toString() ?? '',
+                          })}>
+                          {t('agentDelegation.limits.edit')}
+                        </Button>
+                      )}
+                      <Button type="button" size="sm" variant="outline" disabled={busy}
+                        onClick={() => void withdraw(agent.id, item.connectionId)}>
+                        {t('agentDelegation.withdraw')}
+                      </Button>
+                    </div>
+                  </ConfigPageRow>
+                  {editing && limitsDraft && <>
+                    {renderLimitInputs(limitsDraft,
+                      next => setLimitsDraft(current => current && ({ ...current, ...next })))}
+                    <ConfigPageRow label="" align="center">
+                      <div>
+                        <Button type="button" size="sm" variant="outline" disabled={busy}
+                          onClick={() => setLimitsDraft(null)}>
+                          {t('agentDelegation.cancel')}
+                        </Button>
+                        <Button type="button" size="sm" variant="primary"
+                          disabled={busy || draftLimits(limitsDraft) === null}
+                          onClick={() => void saveLimits()}>
+                          {t('agentDelegation.limits.save')}
+                        </Button>
+                      </div>
+                    </ConfigPageRow>
+                  </>}
+                </React.Fragment>
+              );
+            })}
             {agent && renderGrantPanel(agent.id, agent.agentType, granted)}
           </React.Fragment>
         );

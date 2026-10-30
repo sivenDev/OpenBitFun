@@ -562,12 +562,19 @@ async fn provision_device_workspace(
     job_id: &str,
     baseline: &PreparedBaseline,
 ) -> anyhow::Result<String> {
+    // A device of another account gets the code only as a bundle: the
+    // repository URL, which may carry credentials, never leaves this device.
+    let remote_url = if openbitfun_runtime_ports::remote_target_connection(device_id).is_some() {
+        None
+    } else {
+        baseline.delivery.remote_url.clone()
+    };
     let request = json!({
         "protocolVersion": DISPATCH_PROTOCOL_VERSION,
         "jobId": job_id,
         "repoKey": baseline.repo_key,
         "projectLabel": baseline.project_label,
-        "remoteUrl": baseline.delivery.remote_url,
+        "remoteUrl": remote_url,
         "baseCommit": baseline.delivery.base_commit,
         "branch": baseline.delivery.branch,
     });

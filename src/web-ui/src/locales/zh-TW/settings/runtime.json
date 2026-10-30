@@ -151,7 +151,35 @@
     "grant": "授權",
     "granted": "已授權給對方帳號",
     "grantFailed": "授權失敗",
-    "withdrawFailed": "收回授權失敗"
+    "withdrawFailed": "收回授權失敗",
+    "limits": {
+      "title": "對此帳號的限制",
+      "description": "選填。留空表示不限制。超過時長限制的輪次會被停止。",
+      "invalid": "同時任務數須為 1-100，每輪分鐘數須為 1-1440。",
+      "jobsLabel": "同時任務數",
+      "minutesLabel": "每輪分鐘數",
+      "jobs": "最多同時 {{count}} 個任務",
+      "anyJobs": "任務數不限",
+      "minutes": "每輪 {{count}} 分鐘",
+      "anyMinutes": "不限時長",
+      "edit": "限制",
+      "save": "儲存限制",
+      "saveFailed": "儲存限制失敗"
+    }
+  },
+  "delegationAudit": {
+    "sectionTitle": "來自其他帳號的任務",
+    "sectionDescription": "其他帳號的裝置委託給本機的任務，最新的在前。紀錄只保存在本機。",
+    "empty": "還沒有其他帳號向本機委託任務。",
+    "loading": "正在載入紀錄…",
+    "loadFailed": "載入委託任務紀錄失敗",
+    "unsupported": "委託任務紀錄保存在執行任務的裝置上，請在那台裝置上查看。",
+    "unreadable": "無法讀取的紀錄，已原樣保留",
+    "submitted": "已接收",
+    "failed": "失敗或已停止",
+    "otherEvent": "其他事件",
+    "entry": "{{time}} · 來自 {{name}}（{{user}}）裝置 {{device}} 的{{kind}}任務，由 {{agent}} 執行",
+    "refresh": "重新整理"
   },
   "connections": {
     "sectionTitle": "與其他帳號的連線",

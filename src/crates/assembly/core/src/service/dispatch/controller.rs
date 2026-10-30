@@ -1882,12 +1882,18 @@ pub(super) fn validate_submission_preflight(
             .unwrap_or("No ready default model is configured on the dispatch target");
         anyhow::bail!("{diagnostic}");
     } else {
-        protocol
-            .get("defaultModel")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Dispatch target did not report a ready default model")
-            })?
+        match protocol.get("defaultModel").and_then(Value::as_str) {
+            Some(model) => model,
+            // A target of another account keeps its model names to itself;
+            // it reported a ready model, and nothing here depends on its name.
+            None if requested_reasoning_preset
+                .map(str::trim)
+                .is_none_or(|preset| preset.is_empty() || preset == "auto") =>
+            {
+                return Ok(())
+            }
+            None => anyhow::bail!("Dispatch target did not report a ready default model"),
+        }
     };
 
     if let Some(preset) = requested_reasoning_preset
@@ -2360,6 +2366,17 @@ mod tests {
             "availableModels": []
         });
         assert!(validate_submission_preflight(&missing_model, None, None).is_err());
+
+        // A target of another account reports a ready model without its name.
+        let unnamed = json!({
+            "workspace": { "exists": true, "isDirectory": true, "isGitRepository": true },
+            "modelConfigured": true,
+            "availableModels": [],
+        });
+        validate_submission_preflight(&unnamed, None, None).expect("target's own model");
+        validate_submission_preflight(&unnamed, None, Some("auto")).expect("auto preset");
+        assert!(validate_submission_preflight(&unnamed, None, Some("high")).is_err());
+        assert!(validate_submission_preflight(&unnamed, Some("target-model"), None).is_err());
     }
 
     /// The target's Git refuses the workspace on ownership grounds. It is still

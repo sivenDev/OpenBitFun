@@ -5,8 +5,10 @@
 
 use openbitfun_core::infrastructure::PathManager;
 use openbitfun_core::service::delegation::{
-    DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord, OpenAgentStore,
+    ConnectionLimits, DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord,
+    OpenAgentStore,
 };
+use openbitfun_core::service::delegation_audit::{DelegationAuditLog, DelegationAuditRecord};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +52,24 @@ pub struct DelegationConnectionGrantRequest {
 pub struct DelegationConnectionRevokeRequest {
     pub id: String,
     pub connection_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationConnectionLimitsRequest {
+    pub id: String,
+    pub connection_id: String,
+    /// Unset fields remove that limit.
+    #[serde(default, flatten)]
+    pub limits: ConnectionLimits,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationAuditListRequest {
+    /// Most recent entries to return; all when unset.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 fn open_agent_store() -> Result<OpenAgentStore, String> {
@@ -142,4 +162,34 @@ pub async fn delegation_revoke_connection(
         .revoke_connection(&request.id, &request.connection_id)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Sets the limits of an opened agent's grant to a connection.
+#[tauri::command]
+pub async fn delegation_set_connection_limits(
+    request: DelegationConnectionLimitsRequest,
+) -> Result<OpenAgent, String> {
+    open_agent_store()?
+        .set_connection_limits(&request.id, &request.connection_id, request.limits)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The tasks other accounts delegated to this device, oldest first;
+/// unreadable lines are kept and flagged.
+#[tauri::command]
+pub async fn delegation_audit_list(
+    request: DelegationAuditListRequest,
+) -> Result<Vec<DelegationAuditRecord>, String> {
+    let path_manager =
+        PathManager::new().map_err(|error| format!("resolve storage root: {error}"))?;
+    let log = DelegationAuditLog::for_product_home(&path_manager);
+    let mut records = tokio::task::spawn_blocking(move || log.read())
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("read the delegation audit log: {error}"))?;
+    if let Some(limit) = request.limit {
+        records.drain(..records.len().saturating_sub(limit));
+    }
+    Ok(records)
 }

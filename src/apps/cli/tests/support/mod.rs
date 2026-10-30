@@ -339,6 +339,9 @@ pub(crate) struct MockOpenAiServer {
 enum MockModelResponse {
     Immediate,
     Gated,
+    /// Holds the first answer until released or disconnected, then answers
+    /// every later request at once.
+    GatedThenImmediate,
     ProductControlLoop,
     ToolSequence(Vec<(String, serde_json::Value)>),
     Http403 { reason: String },
@@ -354,6 +357,10 @@ impl MockOpenAiServer {
 
     pub(crate) fn immediate() -> Self {
         Self::spawn(MockModelResponse::Immediate)
+    }
+
+    pub(crate) fn gated_then_immediate() -> Self {
+        Self::spawn(MockModelResponse::GatedThenImmediate)
     }
 
     pub(crate) fn product_control_loop() -> Self {
@@ -479,6 +486,7 @@ impl MockOpenAiServer {
                             ) && attempt < 3)
                             || (matches!(response, MockModelResponse::ProductControlLoop)
                                 && attempt < 5)
+                            || matches!(response, MockModelResponse::GatedThenImmediate)
                             || matches!(&response, MockModelResponse::ToolSequence(calls) if attempt <= calls.len());
                         if accepts_more_requests {
                             continue;
@@ -637,7 +645,8 @@ fn serve_model_response(
         return;
     }
 
-    let gated = matches!(response, MockModelResponse::Gated);
+    let gated = matches!(response, MockModelResponse::Gated)
+        || (matches!(response, MockModelResponse::GatedThenImmediate) && attempt == 0);
     if gated && !wait_for_release_or_disconnect(stream, release_stream, stream_disconnected) {
         return;
     }

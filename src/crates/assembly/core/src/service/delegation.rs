@@ -86,6 +86,45 @@ pub struct OpenAgent {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionGrant {
     pub connection_id: String,
+    /// Limits the owner set for this connection; unset means none.
+    #[serde(default, flatten)]
+    pub limits: ConnectionLimits,
+}
+
+/// Most this device does for one connection with one open agent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionLimits {
+    /// Tasks that may run at once; more are refused at submission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_jobs: Option<u32>,
+    /// Minutes one turn of a task may run before it is stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_job_minutes: Option<u32>,
+}
+
+/// Bounds the owner can set, so a typo cannot disable a limit.
+pub const MAX_CONNECTION_CONCURRENT_JOBS: u32 = 100;
+pub const MAX_CONNECTION_JOB_MINUTES: u32 = 24 * 60;
+
+impl ConnectionLimits {
+    fn validate(&self) -> Result<(), String> {
+        if let Some(jobs) = self.max_concurrent_jobs {
+            if !(1..=MAX_CONNECTION_CONCURRENT_JOBS).contains(&jobs) {
+                return Err(format!(
+                    "concurrent tasks must be 1-{MAX_CONNECTION_CONCURRENT_JOBS}"
+                ));
+            }
+        }
+        if let Some(minutes) = self.max_job_minutes {
+            if !(1..=MAX_CONNECTION_JOB_MINUTES).contains(&minutes) {
+                return Err(format!(
+                    "task minutes must be 1-{MAX_CONNECTION_JOB_MINUTES}"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl OpenAgent {
@@ -102,11 +141,17 @@ impl OpenAgent {
     }
 
     pub fn is_granted_to_connection(&self, connection_id: &str) -> bool {
-        !connection_id.trim().is_empty()
-            && self
-                .connections
-                .iter()
-                .any(|grant| grant.connection_id == connection_id)
+        self.connection_grant(connection_id).is_some()
+    }
+
+    /// The grant to `connection_id`, with its limits.
+    pub fn connection_grant(&self, connection_id: &str) -> Option<&ConnectionGrant> {
+        if connection_id.trim().is_empty() {
+            return None;
+        }
+        self.connections
+            .iter()
+            .find(|grant| grant.connection_id == connection_id)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -162,6 +207,7 @@ impl OpenAgent {
             if grant.connection_id.trim().is_empty() {
                 return Err("granted connection ids must not be empty".to_string());
             }
+            grant.limits.validate()?;
             if self.connections[..index]
                 .iter()
                 .any(|earlier| earlier.connection_id == grant.connection_id)
@@ -452,7 +498,33 @@ impl OpenAgentStore {
         if !agent.is_granted_to_connection(connection_id) {
             agent.connections.push(ConnectionGrant {
                 connection_id: connection_id.to_string(),
+                limits: ConnectionLimits::default(),
             });
+            self.write_entry(agent.clone()).await?;
+        }
+        Ok(agent)
+    }
+
+    /// Sets the limits of an existing grant; unset fields remove a limit.
+    pub async fn set_connection_limits(
+        &self,
+        open_agent_id: &str,
+        connection_id: &str,
+        limits: ConnectionLimits,
+    ) -> Result<OpenAgent, OpenAgentStoreError> {
+        limits.validate().map_err(OpenAgentStoreError::Invalid)?;
+        let mut agent = self.readable(open_agent_id).await?;
+        let grant = agent
+            .connections
+            .iter_mut()
+            .find(|grant| grant.connection_id == connection_id)
+            .ok_or_else(|| {
+                OpenAgentStoreError::Invalid(format!(
+                    "open agent '{open_agent_id}' is not granted to connection '{connection_id}'"
+                ))
+            })?;
+        if grant.limits != limits {
+            grant.limits = limits;
             self.write_entry(agent.clone()).await?;
         }
         Ok(agent)
@@ -823,6 +895,56 @@ mod tests {
             .grant_connection("reviewer", " ", false)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn connection_limits_are_set_per_grant_and_kept_on_regrant() {
+        let (store, _dir) = store();
+        store.open(agent("helper", &[])).await.unwrap();
+        let limits = ConnectionLimits {
+            max_concurrent_jobs: Some(2),
+            max_job_minutes: Some(30),
+        };
+        // Limits apply only to an existing grant.
+        assert!(store
+            .set_connection_limits("helper", "conn-1", limits)
+            .await
+            .is_err());
+        store
+            .grant_connection("helper", "conn-1", false)
+            .await
+            .unwrap();
+        store
+            .set_connection_limits("helper", "conn-1", limits)
+            .await
+            .unwrap();
+        // Granting again keeps them.
+        let agent = store
+            .grant_connection("helper", "conn-1", false)
+            .await
+            .unwrap();
+        assert_eq!(agent.connection_grant("conn-1").unwrap().limits, limits);
+        for invalid in [
+            ConnectionLimits {
+                max_concurrent_jobs: Some(0),
+                max_job_minutes: None,
+            },
+            ConnectionLimits {
+                max_concurrent_jobs: None,
+                max_job_minutes: Some(MAX_CONNECTION_JOB_MINUTES + 1),
+            },
+        ] {
+            assert!(store
+                .set_connection_limits("helper", "conn-1", invalid)
+                .await
+                .is_err());
+        }
+        // Stored flat beside the connection id; a grant without them reads.
+        let raw = std::fs::read_to_string(store.path()).unwrap();
+        assert!(raw.contains("\"maxConcurrentJobs\":2"), "{raw}");
+        let legacy: ConnectionGrant =
+            serde_json::from_value(serde_json::json!({ "connectionId": "conn-2" })).unwrap();
+        assert_eq!(legacy.limits, ConnectionLimits::default());
     }
 
     #[tokio::test]

@@ -19,9 +19,45 @@ export interface OpenAgent {
   connections?: ConnectionGrant[];
 }
 
+/** Most this device runs for one connection with one open agent; absent fields mean no limit. */
+export interface ConnectionLimits {
+  /** Tasks that may run at once (1-100). */
+  maxConcurrentJobs?: number;
+  /** Minutes one turn may run before it is stopped (1-1440). */
+  maxJobMinutes?: number;
+}
+
+export const MAX_CONNECTION_CONCURRENT_JOBS = 100;
+export const MAX_CONNECTION_JOB_MINUTES = 24 * 60;
+
 /** One cross-account connection an open agent is granted to. */
-export interface ConnectionGrant {
+export interface ConnectionGrant extends ConnectionLimits {
   connectionId: string;
+}
+
+/** A cross-account task event in this device's audit log. */
+export interface DelegationAuditEntry {
+  at: string;
+  /** `submitted`, `finished`, or `unknown` for an event from a newer build. */
+  event: 'submitted' | 'finished' | 'unknown' | (string & {});
+  jobId: string;
+  connectionId: string;
+  peerUserId: string;
+  peerDisplayName: string;
+  peerDeviceId: string;
+  peerDeviceName: string;
+  openAgentId: string;
+  taskKind: DelegationTaskKind;
+  /** The job state a finished entry ended in. */
+  state?: string;
+  detail?: string;
+}
+
+/** One line of the audit log; `entry` is absent when the line cannot be read. */
+export interface DelegationAuditRecord {
+  entry?: DelegationAuditEntry;
+  problem?: string;
+  raw?: string;
 }
 
 /** One stored entry; `agent` is absent when this build cannot read it. */
@@ -80,6 +116,26 @@ class DelegationAPI {
       return await api.invoke<OpenAgent>('delegation_grant_connection', { request });
     } catch (error) {
       throw createTauriCommandError('delegation_grant_connection', error, request);
+    }
+  }
+
+  /** Sets the limits of a grant; absent fields remove that limit. */
+  async setConnectionLimits(id: string, connectionId: string, limits: ConnectionLimits): Promise<OpenAgent> {
+    const request = { id, connectionId, ...limits };
+    try {
+      return await api.invoke<OpenAgent>('delegation_set_connection_limits', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_set_connection_limits', error, request);
+    }
+  }
+
+  /** Tasks other accounts delegated to this device, oldest first. */
+  async listAudit(limit?: number): Promise<DelegationAuditRecord[]> {
+    const request = { limit: limit ?? null };
+    try {
+      return await api.invoke<DelegationAuditRecord[]>('delegation_audit_list', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_audit_list', error, request);
     }
   }
 

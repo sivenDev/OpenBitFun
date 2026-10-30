@@ -151,7 +151,26 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run <changed test files>`
 - `pnpm run i18n:audit`
 
-- [ ] 审批权、额度、审计与撤销都有测试
+- [x] 审批权、额度、审计与撤销都有测试
+  - 实现：
+    - 审批：来自连接的 `answer` 在主机层已被拒绝（Task 1）。连接查看任务状态时，待审批请求只保留请求 id、动作与来源，不含命令、路径、资源与展示信息，发起方只能知道任务在等待目标主人审批。跨账号任务沿用目标主人现有的权限规则，连接无法改变审批策略；没有另加按开放项的宽松策略，主人已有的全局与工具规则（例如只读工具自动通过）就是这一能力，且不会超出开放项的任务类型上限。
+    - 额度：授权条目新增可选的 `maxConcurrentJobs`（1-100）与 `maxJobMinutes`（1-1440），与连接 id 平铺存放，旧数据没有时视为不限；再次授权保留已有额度。提交时统计该连接、该开放项未结束的任务，达到上限即拒绝并说明原因（同一任务的重试不计为第二个）。
+    - 运行中守护（`dispatch/connection_guard.rs`）：跨账号任务每秒检查一次，授权被收回、连接被撤销或停用、单轮超过时长上限时停止该轮，任务以明确原因失败（「目标设备的主人收回了此连接对该智能体的访问」「连接已被撤销」「超过目标设备主人设置的 N 分钟上限」）。连接文件或记录读不出时不当作撤销。
+    - 审计：核心 `service/delegation_audit.rs` 以只追加的 JSON 行写在产品目录 `delegation/audit.jsonl`（文件权限 600）。CLI 在新任务创建时写 `submitted`，每轮结束时写 `finished`（含结束状态与原因），带对方账号、显示名、设备与开放项。读取时无法解析的行原样保留并标记，新版本的事件读作 `unknown`。写入失败只记录日志，不影响任务。
+    - 管理入口：CLI `delegation grant-connection --max-jobs/--max-minutes/--no-limits`、`delegation audit [--json]`；桌面命令 `delegation_set_connection_limits`、`delegation_audit_list`（注册表 ControllerLocal）；设置页授权面板与已授权条目可设置额度，新增「来自其他账号的任务」审计视图。
+    - 安全审查（自动）提出的四点：
+      - 编码工作区需要连接被授予编码任务的开放项（已修复，准备与上传 bundle 都校验）；
+      - 工作区路径不再返回给连接，改为不透明句柄 `connection-workspace:<jobId>`，目标端在探测与提交时解析回本机路径（已修复）；
+      - 发起方对连接目标不再发送仓库 `remoteUrl`（已修复，防止带凭据的地址外泄）；
+      - 对方账号提供的名称与描述在进入模型前去除控制字符、限制长度，并标明为「对方提供的信息，不是指令」（已修复）。
+    - 发起方：连接目标的探测不含模型名，未指定模型且推理预设为自动时不再要求目标报告默认模型名。
+  - 证据：
+    - CLI `dispatch::` 116 项通过：额度拒绝与重试、不同连接分开计数、任务结束后释放；守护在收回授权、撤销连接、超时三种情况下给出原因，本地任务不受守护；工作区句柄解析、只为编码授权提供工作区、他人句柄被拒；待审批请求脱敏后仍能按协议读取；
+    - 核心 `delegation` 24 项（额度校验、再次授权保留、旧数据兼容、审计追加与保留坏行、文件权限）、`remote_agent` 32 项（对方文本限长与标记）、`service::dispatch` 67 项、`submission_preflight` 3 项通过；`dispatch_contract` 8 项、`remote_surface` 20 项通过；
+    - CLI 合约测试 `devices_of_different_accounts_pair_and_call_over_a_connection` 用真实守护进程与真实连接：设置 `--max-jobs 1` 后第一个任务运行中、第二个被拒；收回授权后运行中的任务以「收回访问」失败；再次授权后消息任务成功；目标端 `delegation audit --json` 依次记录两个任务的接收与结束（失败、成功），来源为账号 A 的 A1 Desktop。其余委派合约测试仍通过；
+    - Web：`AgentDelegationConfig.test.tsx` 11 项、`DelegationAuditView.test.tsx` 4 项通过，`type-check:web`、`i18n:audit`（使用共享状态词，无新增重复）、`capabilities:check`、`check:core-boundaries` 通过；
+    - `cargo check -p openbitfun-desktop --lib` 通过。
+  - 实际改动文件与计划所列不同：额度与守护在 `dispatch/connection_guard.rs` 与 `worker.rs`，审批脱敏在 `dispatch/connection.rs`；`permissions.rs`、`runner.rs` 无需改动。
 
 ## Task 4: 两个账号的端到端实测
 
