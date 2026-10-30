@@ -1,5 +1,7 @@
 //! CLI command and product-assembly contract tests.
 
+#[path = "cli_command_contracts/delegation_simulation.rs"]
+mod delegation_simulation;
 #[path = "cli_command_contracts/exec_cli_contracts.rs"]
 mod exec_cli_contracts;
 #[path = "cli_command_contracts/mcp_add_cli.rs"]

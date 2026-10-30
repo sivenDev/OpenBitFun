@@ -172,6 +172,19 @@ subscribes to turn lifecycle events, and starts scheduling after host setup.
 Shared TUI must not claim the host-wide scheduling lease: its workspace scope and
 last-controller idle shutdown cannot own all persisted jobs.
 
+For delegated jobs between same-account devices (catalog, message, cancel,
+approval) and cross-account refusal, against an in-process Relay and real
+`daemon run` targets with isolated storage:
+
+```bash
+cargo test --locked -p openbitfun-cli --test cli_command_contracts delegation_simulation::
+node scripts/dev/sim-devices.mjs --check   # the desktop requester against the same simulation
+node scripts/dev/sim-devices.mjs           # a desktop signed in as A1, for manual use
+```
+
+The simulation does not install services or touch the real profile, and it
+does not prove GitHub sign-in, real networks, mixed versions, or mobile and IM.
+
 For ACP stdio session restore, duplicate-load rejection, history replay and close:
 
 ```bash

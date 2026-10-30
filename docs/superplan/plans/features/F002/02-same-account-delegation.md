@@ -219,6 +219,7 @@ parent: "F002"
 - 偏差：「等待目标设备审批」不另设状态，目标端的审批以本机审批请求出现在子会话与父会话的审批栏中，由本机回答后送达目标端。
 - Evidence：`pnpm --dir src/web-ui run test:run src/flow_chat/tool-cards/TaskToolDisplay.test.tsx src/flow_chat/components/ChatInputApprovalBand.test.tsx src/flow_chat/utils/remoteAgent.test.ts src/app/scenes/agents/AgentsScene.test.tsx src/app/scenes/agents/agentVisibility.test.ts`：79 passed；`pnpm run type-check:web`、`pnpm run i18n:audit`、`pnpm run check:web`：通过；`--lib remote_agent_turn`：9 passed（含 `remoteDeviceName`）。
 - 远程场景：两台同账号设备的实测尚未进行；Task 5 的本机模拟先覆盖目录、委派、取消与审批。
+- 模拟实测（2026-10-30，见 Task 5）：在真实桌面实例 A1（真实模型）中通过界面完成纯消息委派、审批（审批栏显示「此操作在 A4 Workstation 上执行」，允许后命令在 A4 执行）与取消（停止父回合后 A3 作业进入 `cancelled`）；智能体列表只列出同账号三台设备。实测发现两处界面问题并已修复：委派完成后 AgentSpawn 卡片一直显示「运行中」（见 Task 5 偏差）；审批栏标题显示原始 `remote:<设备>/<id>`，现显示「helper（远程智能体）」。
 
 ## Task 5: 本机双账号多客户端模拟
 
@@ -235,11 +236,31 @@ parent: "F002"
 - **模拟不能证明**：真实 GitHub 登录、真实网络、新旧版本混用、手机端与 IM。
 
 **Verification:**
-- 自动化模拟测试（命令在实现时补充到本节）
+- `cargo +1.95.0 test --locked -p openbitfun-cli --test cli_command_contracts delegation_simulation::`
+- `RUSTUP_TOOLCHAIN=1.95.0 node scripts/dev/sim-devices.mjs --check`
 - 手动：运行开发脚本，在桌面实例中完成一次纯消息委派
 - `pnpm run check:repo-hygiene`
 
-- [ ] 自动化模拟覆盖目录、委派、取消与审批，开发脚本可一条命令启动
+- [x] 自动化模拟覆盖目录、委派、取消与审批，开发脚本可一条命令启动
+
+**Deviations:**
+- 自动化模拟放在已有的 `cli_command_contracts` 测试目标中（`delegation_simulation`），不新增 `[[test]]`。它直接走委派作业的线上协议；被模拟的设备为 A2（立即回答）、A3（挂起直到取消）、A4（执行需审批的命令）与另一账号的 B1。
+- 桌面端的请求方检查是一个被忽略的桌面库测试（`remote_agent_delegation::simulation_tests`），由 `scripts/dev/sim-devices.mjs --check` 读取模拟清单后运行；它复用桌面的 HostInvoke 封装（`dispatch_api.rs` 中提取的 `invoke_device_dispatch`），只替换登录会话。
+- 不需要新增桌面端 relay 覆盖：恢复的会话使用其持久化的 relay 地址，桌面已有的 E2E 隔离（`OPENBITFUN_USER_ROOT`/`OPENBITFUN_HOME` 与存储保护）隔离配置、会话、设备身份与 WebView，并跳过单实例。因此没有发布构建中的覆盖代码。
+- `--copy-models` 只从开发者自己的配置复制 `ai` 一节（含 API 密钥）到权限为 700 的临时目录，退出时删除；机器人、relay 与工作区设置不会进入模拟。
+- 产品修复一：`daemon run` 这类长寿命父进程不回收分离的 Dispatch 工作进程，僵尸进程组仍响应 `kill(0)`，导致取消委派作业报错。`runner.rs` 现在用回收线程等待子进程。去掉修复时模拟测试的取消步骤失败。
+- 产品修复二：外部（`acp:`）与远程（`remote:`）子智能体回合不经过执行引擎，子会话从未收到 `DialogTurnCompleted`，界面卡片一直显示「运行中」。协调器现在在这类回合成功时补发该事件（失败与取消原本就由协调器发出）。该问题同样影响 F001 的外部智能体。
+- 审批栏标题对远程智能体显示「<开放项>（远程智能体）」。
+- 模拟中的设备使用模拟模型，回答是测试标记文本（如 `ACTIVE_TURN_STREAM_MARKER`），启动脚本会说明。
+
+**Evidence (2026-10-30):**
+- `cargo +1.95.0 test --locked -p openbitfun-cli --test cli_command_contracts delegation_simulation::`：1 passed（目录、另一账号不可达、纯消息、取消、审批后命令在目标执行），约 7–10 秒，连续三次稳定；结束后无残留守护进程与临时目录。`--test cli_command_contracts`：42 passed；`--bin openbitfun dispatch`：111 passed。
+- `RUSTUP_TOOLCHAIN=1.95.0 node scripts/dev/sim-devices.mjs --check`：桌面请求方检查 1 passed（远程条目只含同账号三台设备、另一账号返回 NotFound、纯消息成功、取消后为 cancelled、审批回答后成功）。
+- `node scripts/dev/sim-devices.mjs --copy-models`（经嵌入式 WebDriver 驱动界面）：A1 的 `list_subagents` 返回三个 `remote:` 条目及设备名与可用性；真实模型调用 `AgentSpawn(remote:…a02/helper)`，`AgentWait` 取回 A2 的回答；A4 的审批在 A1 审批栏出现并在允许后于 A4 执行；停止父回合 5 毫秒内 A3 作业记录 `cancelRequestedAt` 并进入 `cancelled`。Ctrl+C 后所有进程退出，临时目录（含复制的密钥）被删除。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib external_agent_turn`：24 passed（新增子回合完成事件测试；去掉修复时失败）。`--lib -- remote_agent coordination_store tools::implementations::task background_outcomes agentic::coordination`：369 passed，1 failed（`remote_session_metadata_never_falls_back_to_a_local_workspace_binding`，在干净 HEAD 上同样失败，见 Task 2）。
+- `pnpm --dir src/web-ui run test:run src/flow_chat/components/ChatInputApprovalBand.test.tsx`：14 passed；`pnpm run type-check:web`、`pnpm run i18n:audit`：通过；`pnpm run lint:web`：0 errors。
+- `pnpm run check:core-boundaries`、`pnpm run check:repo-hygiene`：通过。
+- 模拟不能证明：真实 GitHub 登录、真实网络、新旧版本混用、手机端与 IM。
 
 ## References
 - `docs/superplan/rfcs/F002.md`

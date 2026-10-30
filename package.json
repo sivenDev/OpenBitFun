@@ -126,6 +126,7 @@
     "data-tools:build": "node scripts/data-tools-tauri-build.mjs",
     "desktop:build": "node scripts/desktop-tauri-build.mjs",
     "desktop:build:fast": "node scripts/desktop-tauri-build.mjs --debug --no-bundle",
+    "desktop:sim-devices": "node scripts/dev/sim-devices.mjs",
     "desktop:build:release-fast": "node scripts/desktop-tauri-build.mjs --no-bundle -- --profile release-fast --features devtools",
     "desktop:build:exe": "node scripts/desktop-tauri-build.mjs --no-bundle",
     "desktop:build:nsis": "node scripts/desktop-tauri-build.mjs --bundles nsis",

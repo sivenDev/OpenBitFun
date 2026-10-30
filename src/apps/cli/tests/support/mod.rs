@@ -122,6 +122,12 @@ impl CliTestEnvironment {
         &self.workspace
     }
 
+    /// Product home of this environment (`OPENBITFUN_E2E_HOME`), where the
+    /// account session and device identity live.
+    pub(crate) fn home_root(&self) -> &Path {
+        &self.home_root
+    }
+
     pub(crate) fn session_metadata_path(&self, session_id: &str) -> PathBuf {
         fn find(dir: &Path, session_id: &str) -> Option<PathBuf> {
             for entry in std::fs::read_dir(dir).ok()? {

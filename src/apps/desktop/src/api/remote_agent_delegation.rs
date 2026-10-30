@@ -52,3 +52,6 @@ pub(crate) fn remote_agent_port() -> Arc<dyn openbitfun_runtime_ports::RemoteAge
         }
     })
 }
+
+#[cfg(test)]
+mod simulation_tests;

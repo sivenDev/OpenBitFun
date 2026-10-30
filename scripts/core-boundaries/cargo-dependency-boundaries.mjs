@@ -524,6 +524,9 @@ const THIRD_PARTY_CAPABILITY_PROFILES = new Map([
     label: 'Axum',
     packages: new Map([
       ['openbitfun-ai-adapters', dependencyProfile(['json'], { kind: 'dev' })],
+      // The delegation simulation serves an in-process Relay to real CLI
+      // target daemons; the CLI product itself never runs an Axum server.
+      ['openbitfun-cli', dependencyProfile(['json'], { kind: 'dev' })],
       ['openbitfun-core', dependencyProfile(['json'], { optional: true })],
       ['openbitfun-desktop', dependencyProfile(['json'])],
       ['openbitfun-miniapp-market-server', dependencyProfile(['json'])],

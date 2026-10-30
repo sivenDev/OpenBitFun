@@ -64,10 +64,22 @@ fn spawn_detached_action(action: &str, job_id: &str, description: &str) -> Resul
     }
     configure_detached_process(&mut command);
 
-    let child = command
+    let mut child = command
         .spawn()
         .with_context(|| format!("start detached {description}"))?;
     let pid = child.id();
+    // A long-lived parent such as `daemon run` must reap the leader itself:
+    // an unreaped zombie keeps its process group answering to kill(0), so a
+    // later cancel would see the group alive after the leader has exited. A
+    // short-lived parent exits first and the leader is reparented instead.
+    if let Err(error) = std::thread::Builder::new()
+        .name("dispatch-detached-reaper".to_string())
+        .spawn(move || {
+            let _ = child.wait();
+        })
+    {
+        tracing::warn!("Failed to start reaper for detached {description} {pid}: {error}");
+    }
     // The action acquires its durable job or upload lock in the child. The
     // parent PID is informational until that target-owned claim succeeds.
     Ok(pid)
