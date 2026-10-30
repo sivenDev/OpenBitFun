@@ -2,17 +2,33 @@
 //!
 //! The receiving host binds every such call to the connection it
 //! authenticated (`__sourceConnectionId`). Before a verb runs, this module
-//! limits what the connection may do: it acts only on jobs it submitted, it
-//! cannot read files, and it cannot change the approval policy or the model a
-//! job runs with. Approvals never come from a connection; the host refuses
-//! `answer` before it reaches the runner.
+//! limits what the connection may do: it acts only on jobs and coding
+//! workspaces it started, it cannot read files, and it cannot change the
+//! approval policy or the model a job runs with. Approvals never come from a
+//! connection; the host refuses `answer` before it reaches the runner.
+//!
+//! Coding workspaces are provisioned before their job exists, so the
+//! connection that provisions one is recorded in its job directory. Its
+//! repository cache is kept apart from every other requester's, and it is
+//! seeded only from the bundle the requester uploads: the target never
+//! fetches a URL another account names with its owner's Git credentials.
 
-use anyhow::{bail, Result};
+use std::io::Write;
+use std::path::Path;
+
+use anyhow::{bail, Context, Result};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_CONNECTION_ARG;
 
-use super::store::{DispatchJobRecord, DispatchStore};
+use openbitfun_core::service::delegation::{DelegationTaskKind, OpenAgentStore};
+
+use super::protocol::DispatchDelegationTaskKind;
+use super::store::{create_private_dir, DispatchJobRecord, DispatchStore};
+
+/// Names the connection that provisioned a coding workspace.
+const WORKSPACE_OWNER_FILE: &str = "source-connection";
 
 /// The connection a call is bound to, if any.
 pub(super) fn source_connection(input: &Value) -> Option<String> {
@@ -29,29 +45,41 @@ pub(super) fn owns(job: &DispatchJobRecord, connection_id: &str) -> bool {
     job.request.source_connection_id.as_deref() == Some(connection_id)
 }
 
-/// Refuses a call the connection may not make. Verbs not listed here never
-/// run for a connection.
-pub(super) fn admit_call(
+fn job_id(input: &Value) -> &str {
+    input
+        .get("jobId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+/// Another requester's job looks the same as a missing one.
+fn missing(job_id: &str) -> anyhow::Error {
+    anyhow::anyhow!("dispatch job '{job_id}' does not exist")
+}
+
+/// Refuses a call the connection may not make, and returns the input the
+/// verb runs with. Verbs not listed here never run for a connection.
+pub(super) async fn admit_call(
     store: &DispatchStore,
+    grants: &OpenAgentStore,
     verb: &str,
-    input: &Value,
+    mut input: Value,
     connection_id: &str,
-) -> Result<()> {
+) -> Result<Value> {
     match verb {
         // Catalog and submit check the connection's grants themselves; list
         // shows only the connection's jobs.
-        "probe" | "catalog" | "submit" | "list" => Ok(()),
+        "probe" | "catalog" | "submit" | "list" => {}
         "status" | "cancel" | "append" | "continue" | "query" => {
-            let job_id = input
-                .get("jobId")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            // Another requester's job looks the same as a missing one.
-            let owned = store
+            let job_id = job_id(&input);
+            let job = store
                 .load_job(job_id)
-                .is_ok_and(|job| owns(&job, connection_id));
-            if !owned {
-                bail!("dispatch job '{job_id}' does not exist");
+                .ok()
+                .filter(|job| owns(job, connection_id))
+                .ok_or_else(|| missing(job_id))?;
+            // New work on a job needs the grant it was admitted under.
+            if matches!(verb, "append" | "continue") {
+                ensure_still_granted(grants, &job, connection_id).await?;
             }
             match verb {
                 "query" => {
@@ -73,10 +101,137 @@ pub(super) fn admit_call(
                 }
                 _ => {}
             }
-            Ok(())
+        }
+        "workspace-provision" => {
+            claim_workspace(store, job_id(&input), connection_id)?;
+            let fields = input
+                .as_object_mut()
+                .context("dispatch workspace provision request is not an object")?;
+            if let Some(repo_key) = fields.get("repoKey").and_then(Value::as_str) {
+                let isolated = isolated_repo_key(connection_id, repo_key);
+                fields.insert("repoKey".into(), Value::String(isolated));
+            }
+            fields.insert("remoteUrl".into(), Value::Null);
+        }
+        "workspace-bundle-begin"
+        | "workspace-bundle-chunk"
+        | "workspace-bundle-commit"
+        | "workspace-sync"
+        | "workspace-sync-chunk" => {
+            let job_id = job_id(&input);
+            if workspace_owner(store, job_id)?.as_deref() != Some(connection_id) {
+                return Err(missing(job_id));
+            }
         }
         other => bail!("dispatch verb '{other}' is not accepted over a cross-account connection"),
     }
+    Ok(input)
+}
+
+async fn ensure_still_granted(
+    grants: &OpenAgentStore,
+    job: &DispatchJobRecord,
+    connection_id: &str,
+) -> Result<()> {
+    let delegation = job
+        .request
+        .delegation
+        .as_ref()
+        .context("a cross-account job has no delegation")?;
+    let kind = match delegation.task_kind {
+        DispatchDelegationTaskKind::Message => DelegationTaskKind::Message,
+        DispatchDelegationTaskKind::Coding => DelegationTaskKind::Coding,
+    };
+    grants
+        .authorize_connection(connection_id, &delegation.open_agent_id, kind)
+        .await
+        .context("read agents opened to other devices")?
+        .map(|_| ())
+        .map_err(anyhow::Error::new)
+}
+
+/// A coding job submitted over a connection runs only in the workspace that
+/// connection provisioned for the same job.
+pub(super) fn ensure_provisioned_workspace(
+    store: &DispatchStore,
+    job_id: &str,
+    connection_id: &str,
+    workspace_path: &str,
+) -> Result<()> {
+    let refused =
+        || anyhow::anyhow!("coding tasks run only in the worktree provisioned for this job");
+    if workspace_owner(store, job_id)?.as_deref() != Some(connection_id) {
+        return Err(refused());
+    }
+    let provisioned = super::workspace::provisioned_workspace_path(store, job_id)?
+        .and_then(|path| path.canonicalize().ok())
+        .ok_or_else(refused)?;
+    let requested = Path::new(workspace_path.trim())
+        .canonicalize()
+        .map_err(|_| refused())?;
+    if requested != provisioned {
+        return Err(refused());
+    }
+    Ok(())
+}
+
+fn workspace_owner(store: &DispatchStore, job_id: &str) -> Result<Option<String>> {
+    let path = store
+        .workspace_upload_dir(job_id)?
+        .join(WORKSPACE_OWNER_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(owner) => Ok(Some(owner.trim().to_string())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// Records `connection_id` as the owner of a new job's workspace, or checks
+/// that it already is. A workspace someone else started is refused.
+fn claim_workspace(store: &DispatchStore, job_id: &str, connection_id: &str) -> Result<()> {
+    if job_id.is_empty() {
+        return Err(missing(job_id));
+    }
+    if store
+        .load_job(job_id)
+        .is_ok_and(|job| !owns(&job, connection_id))
+    {
+        return Err(missing(job_id));
+    }
+    let job_dir = store.workspace_upload_dir(job_id)?;
+    let owner_path = job_dir.join(WORKSPACE_OWNER_FILE);
+    if job_dir.exists() && !owner_path.exists() {
+        return Err(missing(job_id));
+    }
+    create_private_dir(&job_dir)?;
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&owner_path)
+    {
+        Ok(mut file) => {
+            file.write_all(connection_id.as_bytes())
+                .with_context(|| format!("write {}", owner_path.display()))?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if workspace_owner(store, job_id)?.as_deref() == Some(connection_id) {
+                Ok(())
+            } else {
+                Err(missing(job_id))
+            }
+        }
+        Err(error) => Err(error).with_context(|| format!("create {}", owner_path.display())),
+    }
+}
+
+/// The repository cache key for a connection: a digest of the requester's
+/// key and the connection, so no two requesters share a clone.
+fn isolated_repo_key(connection_id: &str, repo_key: &str) -> String {
+    Sha256::digest(format!("connection\n{connection_id}\n{repo_key}").as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -112,9 +267,37 @@ mod tests {
         }
     }
 
-    fn store_with_jobs() -> (tempfile::TempDir, DispatchStore) {
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        store: DispatchStore,
+        grants: OpenAgentStore,
+    }
+
+    /// Jobs of two connections and a local one; `helper` is granted to both
+    /// connections for message tasks.
+    async fn store_with_jobs() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let store = DispatchStore::open(dir.path().join("dispatch")).unwrap();
+        let grants = OpenAgentStore::new(dir.path().join("open-agents.json"));
+        grants
+            .open(openbitfun_core::service::delegation::OpenAgent {
+                id: "helper".into(),
+                agent_type: "agentic".into(),
+                display_name: "Helper".into(),
+                description: None,
+                task_kinds: vec![DelegationTaskKind::Message],
+                message_workspace: None,
+                same_account_devices: Vec::new(),
+                connections: Vec::new(),
+            })
+            .await
+            .unwrap();
+        for connection_id in ["conn-1", "conn-2"] {
+            grants
+                .grant_connection("helper", connection_id, false)
+                .await
+                .unwrap();
+        }
         for (job_id, connection) in [
             ("delegation-mine", Some("conn-1")),
             ("delegation-theirs", Some("conn-2")),
@@ -125,33 +308,75 @@ mod tests {
                 .create_job_with_intent(request.clone(), request, "title".to_string())
                 .unwrap();
         }
-        (dir, store)
+        Fixture {
+            _dir: dir,
+            store,
+            grants,
+        }
     }
 
-    #[test]
-    fn a_connection_acts_only_on_its_own_jobs() {
-        let (_dir, store) = store_with_jobs();
+    #[tokio::test]
+    async fn a_connection_acts_only_on_its_own_jobs() {
+        let fixture = store_with_jobs().await;
+        let store = &fixture.store;
         for verb in ["status", "cancel", "append", "continue"] {
             admit_call(
-                &store,
+                store,
+                &fixture.grants,
                 verb,
-                &json!({ "jobId": "delegation-mine" }),
+                json!({ "jobId": "delegation-mine" }),
                 "conn-1",
             )
+            .await
             .unwrap();
             for other in ["delegation-theirs", "delegation-local", "missing"] {
-                let error = admit_call(&store, verb, &json!({ "jobId": other }), "conn-1")
-                    .unwrap_err()
-                    .to_string();
+                let error = admit_call(
+                    store,
+                    &fixture.grants,
+                    verb,
+                    json!({ "jobId": other }),
+                    "conn-1",
+                )
+                .await
+                .unwrap_err()
+                .to_string();
                 assert_eq!(error, format!("dispatch job '{other}' does not exist"));
             }
         }
-        admit_call(&store, "status", &json!({}), "conn-1").unwrap_err();
+        admit_call(store, &fixture.grants, "status", json!({}), "conn-1")
+            .await
+            .unwrap_err();
     }
 
-    #[test]
-    fn a_connection_cannot_read_files_or_change_approval_and_model() {
-        let (_dir, store) = store_with_jobs();
+    #[tokio::test]
+    async fn new_work_on_a_job_needs_the_grant_it_was_admitted_under() {
+        let fixture = store_with_jobs().await;
+        let store = &fixture.store;
+        let mine = json!({ "jobId": "delegation-mine" });
+        fixture
+            .grants
+            .revoke_connection("helper", "conn-1")
+            .await
+            .unwrap();
+        for verb in ["append", "continue"] {
+            assert!(
+                admit_call(store, &fixture.grants, verb, mine.clone(), "conn-1")
+                    .await
+                    .is_err()
+            );
+        }
+        // The requester can still read and stop what is already running.
+        for verb in ["status", "cancel"] {
+            admit_call(store, &fixture.grants, verb, mine.clone(), "conn-1")
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_connection_cannot_read_files_or_change_approval_and_model() {
+        let fixture = store_with_jobs().await;
+        let store = &fixture.store;
         let mine = |extra: Value| {
             let mut input = json!({ "jobId": "delegation-mine" });
             input
@@ -161,44 +386,165 @@ mod tests {
             input
         };
         admit_call(
-            &store,
+            store,
+            &fixture.grants,
             "query",
-            &mine(json!({ "kind": "usageReport" })),
+            mine(json!({ "kind": "usageReport" })),
             "conn-1",
         )
+        .await
         .unwrap();
         for kind in ["readFile", "readFileChunk"] {
-            assert!(admit_call(&store, "query", &mine(json!({ "kind": kind })), "conn-1").is_err());
+            assert!(admit_call(
+                store,
+                &fixture.grants,
+                "query",
+                mine(json!({ "kind": kind })),
+                "conn-1"
+            )
+            .await
+            .is_err());
         }
         admit_call(
-            &store,
+            store,
+            &fixture.grants,
             "continue",
-            &mine(json!({ "approvalPolicy": "remote", "model": null })),
+            mine(json!({ "approvalPolicy": "remote", "model": null })),
             "conn-1",
         )
+        .await
         .unwrap();
         for extra in [
             json!({ "approvalPolicy": "auto" }),
             json!({ "model": "big-model" }),
             json!({ "reasoningPreset": "high" }),
         ] {
-            assert!(admit_call(&store, "continue", &mine(extra), "conn-1").is_err());
+            assert!(
+                admit_call(store, &fixture.grants, "continue", mine(extra), "conn-1")
+                    .await
+                    .is_err()
+            );
         }
     }
 
-    #[test]
-    fn verbs_outside_the_connection_set_are_refused() {
-        let (_dir, store) = store_with_jobs();
-        for verb in ["probe", "catalog", "submit", "list"] {
-            admit_call(&store, verb, &json!({}), "conn-1").unwrap();
-        }
-        for verb in ["answer", "workspace-provision", "workspace-sync", "unknown"] {
-            assert!(admit_call(
-                &store,
+    async fn provision(fixture: &Fixture, job_id: &str, connection_id: &str) -> Result<Value> {
+        let request = json!({
+            "jobId": job_id,
+            "repoKey": "abcdef0123456789",
+            "remoteUrl": "git@example.com:owner/private.git",
+        });
+        admit_call(
+            &fixture.store,
+            &fixture.grants,
+            "workspace-provision",
+            request,
+            connection_id,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_connection_uses_only_coding_workspaces_it_provisioned() {
+        let fixture = store_with_jobs().await;
+        let store = &fixture.store;
+        let admitted = provision(&fixture, "delegation-new", "conn-1")
+            .await
+            .unwrap();
+        // The target never fetches a URL another account names.
+        assert_eq!(admitted["remoteUrl"], Value::Null);
+        // Each connection gets its own repository cache.
+        let key = admitted["repoKey"].as_str().unwrap().to_string();
+        assert_eq!(key.len(), 64);
+        assert_ne!(key, "abcdef0123456789");
+        assert_eq!(
+            provision(&fixture, "delegation-new", "conn-1")
+                .await
+                .unwrap()["repoKey"],
+            key
+        );
+        assert_ne!(
+            provision(&fixture, "delegation-other", "conn-2")
+                .await
+                .unwrap()["repoKey"],
+            key
+        );
+
+        // Retries by the owner pass; anyone else sees no such job.
+        for verb in [
+            "workspace-bundle-begin",
+            "workspace-bundle-chunk",
+            "workspace-bundle-commit",
+            "workspace-sync",
+            "workspace-sync-chunk",
+        ] {
+            admit_call(
+                store,
+                &fixture.grants,
                 verb,
-                &json!({ "jobId": "delegation-mine" }),
+                json!({ "jobId": "delegation-new" }),
+                "conn-1",
+            )
+            .await
+            .unwrap();
+            let error = admit_call(
+                store,
+                &fixture.grants,
+                verb,
+                json!({ "jobId": "delegation-new" }),
+                "conn-2",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+            assert_eq!(error, "dispatch job 'delegation-new' does not exist");
+        }
+        assert!(provision(&fixture, "delegation-new", "conn-2")
+            .await
+            .is_err());
+        // Jobs and workspaces another requester started cannot be claimed.
+        assert!(provision(&fixture, "delegation-theirs", "conn-1")
+            .await
+            .is_err());
+        std::fs::create_dir_all(
+            fixture
+                .store
+                .workspace_upload_dir("delegation-local-coding")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(provision(&fixture, "delegation-local-coding", "conn-1")
+            .await
+            .is_err());
+
+        // A coding submit must name the worktree provisioned for its own job.
+        let error = ensure_provisioned_workspace(store, "delegation-new", "conn-1", "/tmp")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("provisioned for this job"), "{error}");
+        assert!(
+            ensure_provisioned_workspace(store, "delegation-local-coding", "conn-1", "/tmp")
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn verbs_outside_the_connection_set_are_refused() {
+        let fixture = store_with_jobs().await;
+        let store = &fixture.store;
+        for verb in ["probe", "catalog", "submit", "list"] {
+            admit_call(store, &fixture.grants, verb, json!({}), "conn-1")
+                .await
+                .unwrap();
+        }
+        for verb in ["answer", "workspace-sync", "unknown"] {
+            assert!(admit_call(
+                store,
+                &fixture.grants,
+                verb,
+                json!({ "jobId": "delegation-mine" }),
                 "conn-1"
             )
+            .await
             .is_err());
         }
         assert_eq!(

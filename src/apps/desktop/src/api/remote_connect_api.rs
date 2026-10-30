@@ -604,6 +604,36 @@ async fn device_relay_client_with_routing_lease(
         .then_some(client)
 }
 
+/// This device's own routing socket and identity, which calls over a
+/// cross-account connection must use: the Relay routes them only from the
+/// device socket.
+pub(crate) async fn current_connection_context() -> Result<
+    (
+        Arc<openbitfun_core::service::remote_connect::RelayClient>,
+        openbitfun_core::service::remote_connect::connection_rpc::ConnectionContext,
+    ),
+    String,
+> {
+    let owner = current_device_routing_owner_snapshot()
+        .ok_or_else(|| "this device is not connected to its account relay".to_string())?;
+    let relay = device_relay_client_with_routing_lease(&owner)
+        .await
+        .ok_or_else(|| "this device is not connected to its account relay".to_string())?;
+    let (session, relay_url) =
+        read_account_context_for_generation(owner.account_generation).await?;
+    let local_device_id =
+        openbitfun_core::service::remote_connect::connection_rpc::authenticated_device_id(&session)
+            .map_err(|error| error.to_string())?;
+    Ok((
+        relay,
+        openbitfun_core::service::remote_connect::connection_rpc::ConnectionContext {
+            session,
+            relay_url,
+            local_device_id,
+        },
+    ))
+}
+
 async fn send_device_message_with_routing_lease(
     owner: &DeviceRoutingOwner,
     target_device_id: &str,
@@ -1005,7 +1035,6 @@ async fn account_context_matches(generation: u64, token: &str) -> bool {
     token_matches && account_context_is_current(generation)
 }
 
-#[cfg(test)]
 fn with_device_routing_state<T>(update: impl FnOnce(&mut DeviceRoutingState) -> T) -> T {
     with_route_state(RelayRoute::Official, update)
 }
@@ -1200,7 +1229,6 @@ fn device_routing_owner_for_account_on_route(
     })
 }
 
-#[cfg(test)]
 fn current_device_routing_owner_snapshot() -> Option<DeviceRoutingOwner> {
     with_device_routing_state(|state| state.owner.clone()).filter(|owner| {
         account_context_is_current(owner.account_generation)

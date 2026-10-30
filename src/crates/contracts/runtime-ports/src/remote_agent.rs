@@ -1,7 +1,10 @@
 //! Host boundary for delegating subagent turns to agents that another device
-//! of the same account opened for delegation.
+//! of the same account, or a paired device of another account, opened for
+//! delegation.
 //!
-//! The kernel addresses such an agent as `remote:<deviceId>/<openAgentId>` and
+//! The kernel addresses such an agent as `remote:<deviceId>/<openAgentId>`;
+//! an agent granted over a cross-account connection uses the target id
+//! `conn:<connectionId>` in place of the device id. The kernel
 //! drives it as a detached dispatch job on that device: submit once, observe
 //! the job's event log by cursor, answer its permission prompts, cancel it, or
 //! continue it with a follow-up turn. Device discovery, transport, and the
@@ -13,11 +16,28 @@ use openbitfun_product_domains::tool_permissions::{PermissionReply, PermissionRe
 use serde::{Deserialize, Serialize};
 
 pub const REMOTE_AGENT_TYPE_PREFIX: &str = "remote:";
+/// Prefix of the target id of a device reached over a cross-account
+/// connection. Account device ids never contain `:`.
+pub const REMOTE_CONNECTION_TARGET_PREFIX: &str = "conn:";
+
+/// The target id of the device reached over `connection_id`.
+pub fn remote_connection_target(connection_id: &str) -> String {
+    format!("{REMOTE_CONNECTION_TARGET_PREFIX}{connection_id}")
+}
+
+/// The connection a target id names, if it names one.
+pub fn remote_target_connection(target_id: &str) -> Option<&str> {
+    target_id
+        .strip_prefix(REMOTE_CONNECTION_TARGET_PREFIX)
+        .filter(|connection_id| !connection_id.is_empty())
+}
 
 /// One open agent on one device.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAgentAddress {
+    /// An account device id, or `conn:<connectionId>` for a device of
+    /// another account.
     pub device_id: String,
     pub open_agent_id: String,
 }
@@ -102,7 +122,16 @@ pub enum RemoteAgentListing {
     Refreshed,
 }
 
-/// One agent another device of this account opened to this device.
+/// The other account a connection agent belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAgentAccount {
+    pub user_id: String,
+    pub display_name: String,
+}
+
+/// One agent another device of this account, or a paired device of another
+/// account, opened to this device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAgentDescriptor {
@@ -116,6 +145,9 @@ pub struct RemoteAgentDescriptor {
     #[serde(default)]
     pub task_kinds: Vec<RemoteAgentTaskKind>,
     pub availability: RemoteAgentAvailability,
+    /// Set for an agent of another account, reached over a connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<RemoteAgentAccount>,
 }
 
 /// The requesting session, recorded by the target for display and audit.

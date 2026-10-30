@@ -140,7 +140,7 @@
     "otherAccounts": "其他帳號",
     "grantConnection": "授權給其他帳號",
     "grantTitle": "授權給",
-    "grantDescription": "已配對的其他帳號裝置可以把任務委派給這個智慧體。它在本裝置上的操作只由你審批。",
+    "grantDescription": "已配對的其他帳號裝置可以把任務委派給這個智慧體。它的訊息任務在本裝置上的專屬目錄中執行，操作只由你審批。",
     "noConnections": "沒有與其他帳號的有效連線。請先在「與其他帳號的連線」中配對裝置。",
     "connectionLabel": "{{name}}（{{user}}），{{device}}",
     "connectionMissing": "連線 {{id}}，本裝置上已找不到",

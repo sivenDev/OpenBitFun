@@ -2591,6 +2591,7 @@ fn remote_descriptor(
         description: None,
         task_kinds: vec![openbitfun_runtime_ports::RemoteAgentTaskKind::Message],
         availability,
+        account: None,
     }
 }
 

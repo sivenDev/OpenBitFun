@@ -126,7 +126,14 @@ pub(super) async fn admit(
             if !request.workspace_path.trim().is_empty() {
                 bail!("message tasks run in a directory chosen by this device; omit workspacePath");
             }
-            let workspace = match &agent.message_workspace {
+            // Another account's tasks never share a directory, or its
+            // sessions, with anyone else: a bound directory serves only this
+            // account's devices.
+            let bound = match &requester {
+                Requester::Device(_) => agent.message_workspace.as_ref(),
+                Requester::Connection(_) => None,
+            };
+            let workspace = match bound {
                 Some(bound) => PathBuf::from(bound),
                 None => {
                     let dir = roots
@@ -355,6 +362,29 @@ mod tests {
         assert!(admit_error(&fixture, over("conn-2"))
             .await
             .contains("not granted to this connection"));
+
+        // Another account never shares the owner's bound directory, or the
+        // sessions in it.
+        fixture
+            .store
+            .grant_connection("notes", "conn-1", false)
+            .await
+            .unwrap();
+        let mut notes = over("conn-1");
+        notes.delegation.as_mut().unwrap().open_agent_id = "notes".to_string();
+        admit(&mut notes, &fixture.store, &fixture.roots)
+            .await
+            .unwrap();
+        let own = fixture
+            .roots
+            .message_workspaces
+            .join("notes")
+            .join("connection-conn-1");
+        assert_eq!(notes.workspace_path, own.to_string_lossy());
+        assert_ne!(
+            notes.workspace_path,
+            fixture.bound_workspace.to_string_lossy()
+        );
 
         // A request naming both a device and a connection is refused.
         let mut both = over("conn-1");

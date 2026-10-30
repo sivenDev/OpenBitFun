@@ -492,6 +492,7 @@ mod tests {
                 description: None,
                 task_kinds: vec![openbitfun_runtime_ports::RemoteAgentTaskKind::Message],
                 availability: openbitfun_runtime_ports::RemoteAgentAvailability::Available,
+                account: None,
             }]
         }
 

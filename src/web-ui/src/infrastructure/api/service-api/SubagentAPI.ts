@@ -57,6 +57,8 @@ export interface RemoteAgentInfo {
   agentType: string;
   taskKinds: RemoteAgentTaskKind[];
   availability: RemoteAgentAvailability;
+  /** The other account, for an agent reached over a cross-account connection. */
+  account?: { userId: string; displayName: string };
 }
 
 export interface SubagentInfo {

@@ -322,7 +322,12 @@ async fn target_prompts_are_asked_here_and_answered_on_the_device() {
             cancel: cancel.clone(),
         }),
         forwarded: HashMap::new(),
+        owner_wait: None,
     };
+    // A job of this account waits on nobody else.
+    assert!(forwarder
+        .owner_wait_note(&[target_prompt("target-1")])
+        .is_none());
 
     forwarder
         .sync(&[target_prompt("target-1")], "child-round".to_string())
@@ -365,6 +370,48 @@ async fn target_prompts_are_asked_here_and_answered_on_the_device() {
     assert_eq!(manager.pending_requests().len(), 1);
     forwarder.sync(&[], String::new()).await;
     assert!(manager.pending_requests().is_empty());
+    cancel.cancel();
+}
+
+#[tokio::test]
+async fn prompts_of_another_accounts_job_wait_for_its_owner_and_are_never_filed_here() {
+    let manager = test_permission_manager();
+    let device = ScriptedDevice::with_pages(Vec::new());
+    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
+    let cancel = CancellationToken::new();
+    let mut job = link().job;
+    job.device_id = openbitfun_runtime_ports::remote_connection_target("c1");
+    let mut forwarder = PromptForwarder::new(
+        None,
+        PromptScope {
+            session_id: "child",
+            turn_id: "child-turn",
+            agent_type: "remote:conn:c1/helper",
+            cancel: &cancel,
+        },
+        &job,
+        &port,
+        "B1 Desktop".to_string(),
+    );
+
+    let note = forwarder.owner_wait_note(&[target_prompt("target-1")]);
+    assert!(
+        matches!(&note, Some(ExternalAgentTurnEvent::Thought { text }) if *text == owner_approval_note("B1 Desktop")),
+        "{note:?}"
+    );
+    // The same prompt is noted once; a new one is noted again.
+    assert!(forwarder
+        .owner_wait_note(&[target_prompt("target-1")])
+        .is_none());
+    assert!(forwarder
+        .owner_wait_note(&[target_prompt("target-1"), target_prompt("target-2")])
+        .is_some());
+
+    forwarder
+        .sync(&[target_prompt("target-1")], "child-round".to_string())
+        .await;
+    assert!(manager.pending_requests().is_empty());
+    assert!(device.answers.lock().unwrap().is_empty());
     cancel.cancel();
 }
 

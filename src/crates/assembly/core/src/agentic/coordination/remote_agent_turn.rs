@@ -431,6 +431,14 @@ impl JobPageSink for ResumedTaskSink {
             }
             round_id
         };
+        if let Some(note) = self.prompts.owner_wait_note(&snapshot.pending_permissions) {
+            for event in self.stream.project(note) {
+                let _ = self
+                    .event_queue
+                    .enqueue(event, Some(EventPriority::Normal))
+                    .await;
+            }
+        }
         self.prompts
             .sync(&snapshot.pending_permissions, round_id)
             .await;
@@ -559,6 +567,10 @@ impl JobPageSink for LiveSink {
             self.enqueue(opened).await;
             round_id
         };
+        if let Some(note) = self.prompts.owner_wait_note(&snapshot.pending_permissions) {
+            let projected = self.stream.project(note);
+            self.enqueue(projected).await;
+        }
         self.prompts
             .sync(&snapshot.pending_permissions, round_id)
             .await;
@@ -643,11 +655,26 @@ impl FinalText {
 }
 
 /// Files the job's pending prompts in this host's permission mailbox and
-/// sends each answer to the device.
+/// sends each answer to the device. A job of another account is answered
+/// only by that account's owner on their device, so its prompts are never
+/// filed here; the child session says it is waiting instead.
 struct PromptForwarder {
     route: Option<ForwardRoute>,
     /// Target request id to local request id.
     forwarded: HashMap<String, String>,
+    /// Names the target owner while a job of another account waits.
+    owner_wait: Option<OwnerWait>,
+}
+
+struct OwnerWait {
+    device_name: String,
+    /// Target request ids the child session already said it waits for.
+    noted: std::collections::HashSet<String>,
+}
+
+/// Shown in a cross-account child session while the target owner decides.
+pub(crate) fn owner_approval_note(device_name: &str) -> String {
+    format!("Waiting for the owner of {device_name} to approve an action on their device.")
 }
 
 /// The child turn whose prompts a [`PromptForwarder`] files.
@@ -683,6 +710,16 @@ impl PromptForwarder {
         port: &Arc<dyn RemoteAgentDelegationPort>,
         device_name: String,
     ) -> Self {
+        if openbitfun_runtime_ports::remote_target_connection(&job.device_id).is_some() {
+            return Self {
+                route: None,
+                forwarded: HashMap::new(),
+                owner_wait: Some(OwnerWait {
+                    device_name,
+                    noted: Default::default(),
+                }),
+            };
+        }
         if route.is_none() {
             warn!(
                 "Remote agent prompts cannot be answered from this host: no permission mailbox, agent_type={}",
@@ -705,7 +742,21 @@ impl PromptForwarder {
                 cancel: scope.cancel.clone(),
             }),
             forwarded: HashMap::new(),
+            owner_wait: None,
         }
+    }
+
+    /// For a job of another account: a note when the target asks its owner
+    /// something new. Nothing is filed for this host to answer.
+    fn owner_wait_note(&mut self, pending: &[PermissionRequest]) -> Option<ExternalAgentTurnEvent> {
+        let wait = self.owner_wait.as_mut()?;
+        let mut new_request = false;
+        for request in pending {
+            new_request |= wait.noted.insert(request.request_id.clone());
+        }
+        new_request.then(|| ExternalAgentTurnEvent::Thought {
+            text: owner_approval_note(&wait.device_name),
+        })
     }
 
     async fn sync(&mut self, pending: &[PermissionRequest], round_id: String) {

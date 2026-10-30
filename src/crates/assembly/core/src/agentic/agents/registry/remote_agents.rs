@@ -1,5 +1,5 @@
-//! Registry projection of agents that other devices of this account opened to
-//! this device for delegation.
+//! Registry projection of agents that other devices of this account, or paired
+//! devices of other accounts, opened to this device for delegation.
 //!
 //! These entries are not registry definitions: the target device owns their
 //! agent, model, tools, and permission approval, so they are listed read-only
@@ -40,7 +40,10 @@ pub(crate) fn remote_agent_info(descriptor: RemoteAgentDescriptor) -> AgentInfo 
         model: None,
         model_is_explicit: Some(false),
         visibility: Some(SubagentVisibilityPolicy::public().summary()),
-        external_provider_label: Some(descriptor.device_name.clone()),
+        external_provider_label: Some(match &descriptor.account {
+            Some(account) => format!("{} · {}", account.display_name, descriptor.device_name),
+            None => descriptor.device_name.clone(),
+        }),
         supports_follow_up: true,
         execution_kind: Some(REMOTE_EXECUTION_KIND.to_string()),
         external_availability: None,
@@ -51,6 +54,7 @@ pub(crate) fn remote_agent_info(descriptor: RemoteAgentDescriptor) -> AgentInfo 
             agent_type: descriptor.agent_type,
             task_kinds: descriptor.task_kinds,
             availability: descriptor.availability,
+            account: descriptor.account,
         }),
     }
 }
@@ -64,16 +68,26 @@ fn remote_agent_description(descriptor: &RemoteAgentDescriptor) -> String {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| {
-            format!(
+        .unwrap_or_else(|| match &descriptor.account {
+            Some(account) => format!(
+                "Agent {} that {} opened to this device from another account.",
+                descriptor.display_name, account.display_name
+            ),
+            None => format!(
                 "Agent {} that another device of this account opened for delegation.",
                 descriptor.display_name
-            )
+            ),
         });
-    description.push_str(&format!(
-        "\nRuns on device {} with its own tools, model, and files; it cannot see this workspace.",
-        descriptor.device_name
-    ));
+    match &descriptor.account {
+        Some(account) => description.push_str(&format!(
+            "\nRuns on device {} of another account ({}, {}) with its own tools, model, and files; it cannot see this workspace, and its owner approves its actions.",
+            descriptor.device_name, account.display_name, account.user_id
+        )),
+        None => description.push_str(&format!(
+            "\nRuns on device {} with its own tools, model, and files; it cannot see this workspace.",
+            descriptor.device_name
+        )),
+    }
     let kinds: Vec<&str> = descriptor
         .task_kinds
         .iter()
@@ -135,6 +149,7 @@ mod tests {
                     detail: "Laptop is offline".to_string(),
                 }
             },
+            account: None,
         }
     }
 
@@ -150,6 +165,30 @@ mod tests {
         let remote = info.remote_agent.expect("remote facts");
         assert_eq!(remote.open_agent_id, "helper");
         assert_eq!(remote.agent_type, "Standard");
+    }
+
+    #[test]
+    fn connection_entries_name_the_other_account() {
+        let mut other = descriptor("helper", true);
+        other.address.device_id = openbitfun_runtime_ports::remote_connection_target("c1");
+        other.account = Some(openbitfun_runtime_ports::RemoteAgentAccount {
+            user_id: "2002".to_string(),
+            display_name: "Bea".to_string(),
+        });
+        let info = remote_agent_info(other);
+        assert_eq!(info.id, "remote:conn:c1/helper");
+        assert_eq!(
+            info.external_provider_label.as_deref(),
+            Some("Bea · Laptop")
+        );
+        assert!(info.description.contains("another account (Bea, 2002)"));
+        assert!(info.description.contains("its owner approves"));
+        let remote = info.remote_agent.expect("remote facts");
+        assert_eq!(remote.account.as_ref().unwrap().display_name, "Bea");
+        // The same agent of a same-account device is a different entry.
+        let own = remote_agent_info(descriptor("helper", true));
+        assert_ne!(own.id, remote.device_id);
+        assert!(own.remote_agent.unwrap().account.is_none());
     }
 
     #[test]

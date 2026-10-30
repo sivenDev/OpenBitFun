@@ -538,6 +538,80 @@ fn connections_cli(device: &SimulatedDevice, args: &[&str]) -> (bool, String) {
     )
 }
 
+/// Submits a delegated message task over the connection, as the requester's
+/// delegation directory does, and observes it until it succeeds.
+async fn delegate_message_over_connection(
+    rpc: Arc<openbitfun_core::service::remote_connect::connection_rpc::ConnectionRpc>,
+    connection_id: &str,
+) {
+    let job_id = format!("delegation-{}", uuid::Uuid::new_v4());
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let ack = rpc
+        .invoke_connection(
+            connection_id,
+            "dispatch_target_submit",
+            json!({
+                "protocolVersion": DISPATCH_PROTOCOL_VERSION,
+                "jobId": job_id,
+                "sessionId": session_id,
+                "workspacePath": "",
+                "agentType": "Standard",
+                "prompt": "Say hello across accounts",
+                "approvalPolicy": "remote",
+                // The target, not the other account, chooses the model.
+                "model": "requester-chosen-model",
+                "delegation": {
+                    "openAgentId": OPEN_AGENT_ID,
+                    "taskKind": "message",
+                    "source": { "sessionId": "requester-session", "agentType": "Standard" },
+                },
+            }),
+        )
+        .await
+        .expect("submit over the connection");
+    assert_eq!(ack["accepted"], true, "{ack}");
+    assert_eq!(ack["jobId"], job_id.as_str(), "{ack}");
+    assert_eq!(ack["sessionId"], session_id.as_str(), "{ack}");
+
+    let deadline = Instant::now() + JOB_TIMEOUT;
+    let mut cursor = 0;
+    let mut events = Vec::new();
+    loop {
+        let page = rpc
+            .invoke_connection(
+                connection_id,
+                "dispatch_target_status",
+                json!({ "jobId": job_id, "cursor": cursor }),
+            )
+            .await
+            .expect("observe over the connection");
+        cursor = page["cursor"].as_u64().unwrap_or(cursor);
+        events.extend(page["events"].as_array().cloned().unwrap_or_default());
+        if terminal(&page) {
+            assert_eq!(page["state"], "succeeded", "{page}; events: {events:?}");
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the cross-account job did not finish"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    assert!(mentions(&events, STREAM_START_MARKER), "{events:?}");
+
+    // The connection lists only its own job.
+    let listed = rpc
+        .invoke_connection(connection_id, "dispatch_target_list", json!({}))
+        .await
+        .expect("list over the connection");
+    let jobs = listed.as_array().cloned().unwrap_or_default();
+    assert_eq!(jobs.len(), 1, "{listed}");
+    assert_eq!(jobs[0]["jobId"], job_id.as_str(), "{listed}");
+    // Neither the target's paths nor its model reach the other account.
+    assert_eq!(jobs[0]["workspacePath"], "", "{listed}");
+    assert!(jobs[0].get("model").is_none(), "{listed}");
+}
+
 /// The agents a connection's catalog call returns.
 async fn catalog(
     rpc: &openbitfun_core::service::remote_connect::connection_rpc::ConnectionRpc,
@@ -693,7 +767,7 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         .relay_capabilities(&relay.url)
         .await
         .expect("relay capabilities");
-    let rpc = ConnectionRpc::new(
+    let rpc = Arc::new(ConnectionRpc::new(
         socket.clone(),
         ConnectionContext {
             session: requester.clone(),
@@ -702,7 +776,7 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         },
         store.clone(),
         capabilities,
-    );
+    ));
     assert_eq!(catalog(&rpc, &connection_id).await, json!([]));
     // An agent open to every device of B's own account is still not granted.
     target.open_agent(&["*"], &["message"]);
@@ -747,6 +821,10 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     let (ok, listed) = delegation_cli(&target, &["list"]);
     assert!(ok && listed.contains(&connection_id), "{listed}");
 
+    // A1's delegation directory lists it as an agent of B's account and runs
+    // a message task over the connection, like a same-account delegation.
+    delegate_message_over_connection(rpc.clone(), &connection_id).await;
+
     // Approvals never come from the connection, and B1's other jobs and
     // paths stay out of reach.
     let error = rpc
@@ -768,19 +846,25 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         .unwrap_err();
     assert!(error.to_string().contains("does not exist"), "{error}");
     let error = rpc
+        .invoke_connection(&connection_id, "dispatch_target_read_file", json!({}))
+        .await
+        .unwrap_err();
+    // File reads never travel over a connection at all.
+    assert_eq!(
+        refusal_reason(&error),
+        Some("command_not_routable"),
+        "{error}"
+    );
+    // A coding workspace another requester started is not reachable.
+    let error = rpc
         .invoke_connection(
             &connection_id,
-            "dispatch_target_workspace_provision",
-            json!({}),
+            "dispatch_target_workspace_sync",
+            json!({ "jobId": "delegation-someone-else", "operationId": "op" }),
         )
         .await
         .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("not accepted over a cross-account connection"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("does not exist"), "{error}");
 
     // Withdrawing the grant empties the catalog again.
     let (ok, output) = delegation_cli(

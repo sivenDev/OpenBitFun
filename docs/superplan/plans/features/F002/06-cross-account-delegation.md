@@ -104,7 +104,34 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib remote_agent`
 - `cargo +1.95.0 check -p openbitfun-desktop`
 
-- [ ] 连接目标的列表、委派与结果回收有测试，同账号路径回归通过
+- [x] 连接目标的列表、委派与结果回收有测试，同账号路径回归通过
+  - 实现：
+    - 寻址：连接目标的 id 为 `conn:<connectionId>`，智能体类型为 `remote:conn:<connectionId>/<openAgentId>`，与同账号条目互不冲突；账号设备 id 不含 `:`。端口描述新增可选的 `account`（对方账号的用户 id 与显示名），旧数据没有该字段时照常读取。
+    - 发起方目录 `RemoteAgentDirectory::with_connections`：列出本设备可用的连接（已确认、未撤销、对方密钥已核验），只在目标声明 `cross_account_delegation_v1` 时查询其目录；账号设备列表读取失败时连接条目照常列出。一个路由 RPC 把 `conn:` 目标的所有调用（提交、观察、取消、续问、编码基线上传与结果同步）经连接发送，其他调用仍走账号设备 RPC，后台运行、观察、取消与重启补收沿用同一套代码。
+    - 桌面端用本设备自己的路由连接（Relay 只转发来自设备连接的跨账号调用）调用 `ConnectionRpc`；可用连接取自本地连接记录。
+    - 发起会话：跨账号任务的审批请求不会进入本机审批信箱，子会话改为提示「正在等待对方设备的主人审批」。注册表条目与智能体详情标明对方账号与设备，模型看到的描述说明该智能体属于其他账号、由对方审批。
+    - 目标端（为编码任务开放工作区动词）：
+      - 工作区按任务记录提供它的连接，其他连接或本账号已开始的工作区一律按不存在处理；
+      - 连接的仓库缓存按连接隔离（`repoKey` 按连接重新派生），且不接受 `remoteUrl`，代码只来自发起方上传的 bundle，目标端不会用主人的 Git 凭据拉取对方指定的地址；
+      - 编码任务只能在为同一任务、同一连接准备的 worktree 中运行。
+    - 目标端其他收紧：
+      - 跨账号的消息任务总在该连接专属的目录中运行，即使开放项绑定了消息目录，避免与主人自己的会话共享目录或会话；
+      - 对已有任务的 `append` / `continue` 会重新校验授权，收回授权后不能再追加工作，但仍可查看与取消；
+      - 任务列表对连接隐去本机路径与模型。
+    - 安全审查（自动）提出的三点：worktree 跨任务访问（已修复）；共享消息目录中的会话（已修复）；撤销后仍可追加（已修复；撤销时取消进行中的任务属于 Task 3）。
+  - 证据：
+    - 端口合约测试 8 项通过（含连接寻址与旧描述兼容）；
+    - 核心 `remote_agent` 31 项通过（`--features agent-runtime,git,dispatch-store,ssh-remote`）：
+      - 连接条目带账号、经连接提交与取消、不发往账号设备；
+      - 目标缺少能力时不列出；
+      - 账号设备不可读时连接条目仍在；
+      - 跨账号任务的审批不进本机信箱、只提示等待；
+      - 注册表条目标明对方账号；
+    - CLI `dispatch::` 112 项通过：工作区归属、仓库隔离、拒绝 `remoteUrl`、编码 worktree 校验、撤销后不能追加、连接专属消息目录、列表脱敏；
+    - CLI 合约测试 `devices_of_different_accounts_pair_and_call_over_a_connection` 用真实守护进程，经真实连接提交消息任务并观察到成功：发起方指定的模型被忽略，列表只含自己的任务且不含路径和模型，读文件不可路由，他人的工作区按不存在处理。同账号委派合约测试仍通过；
+    - Web：`AgentsScene.test.tsx`（账号标识）、`AgentDelegationConfig.test.tsx`、`dispatch.contract.test.ts` 共 42 项通过，`type-check:web` 与 `i18n:audit` 通过；
+    - `cargo check -p openbitfun-desktop --lib` 通过。
+  - 留给 Task 4 实测：桌面端作为发起方经连接委派（含编码任务的基线上传与结果同步）需要两个账号的完整模拟，在端到端实测中验证。
 
 ## Task 3: 目标端审批、额度、审计与撤销
 

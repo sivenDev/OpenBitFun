@@ -51,7 +51,10 @@ pub use openbitfun_services_core::dispatch_contract::{
     DISPATCH_ACCOUNT_DAEMON_PROVISIONING_SCHEMA_VERSION,
 };
 #[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
-pub use remote_agents::{AccountDevice, AccountDeviceDirectory, RemoteAgentDirectory};
+pub use remote_agents::{
+    AccountDevice, AccountDeviceDirectory, ConnectionDispatchRpc, ConnectionPeer,
+    RemoteAgentDirectory,
+};
 pub use target::{DispatchTarget, DispatchTargetRequest, DispatchWorkspaceDelivery};
 
 const PROMPT_PREVIEW_CHARS: usize = 160;

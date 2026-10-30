@@ -140,7 +140,7 @@
     "otherAccounts": "其他账号",
     "grantConnection": "授权给其他账号",
     "grantTitle": "授权给",
-    "grantDescription": "已配对的其他账号设备可以把任务委派给这个智能体。它在本设备上的操作只由你审批。",
+    "grantDescription": "已配对的其他账号设备可以把任务委派给这个智能体。它的消息任务在本设备上的专属目录中运行，操作只由你审批。",
     "noConnections": "没有与其他账号的有效连接。请先在「与其他账号的连接」中配对设备。",
     "connectionLabel": "{{name}}（{{user}}），{{device}}",
     "connectionMissing": "连接 {{id}}，本设备上已找不到",

@@ -1187,6 +1187,16 @@ const AgentsHomeView: React.FC = () => {
                             {t('agentsOverview.remote.device', { device: selectedRemoteAgent.deviceName })}
                           </StatusPill>
                         </Tooltip>
+                        {selectedRemoteAgent.account && (
+                          <Tooltip content={t('agentsOverview.remote.accountTooltip')}>
+                            <StatusPill tone="neutral" data-testid="agent-detail-remote-account">
+                              {t('agentsOverview.remote.account', {
+                                name: selectedRemoteAgent.account.displayName,
+                                user: selectedRemoteAgent.account.userId,
+                              })}
+                            </StatusPill>
+                          </Tooltip>
+                        )}
                         <Tooltip
                           content={selectedRemoteAgent.availability.state === 'unavailable'
                             ? selectedRemoteAgent.availability.detail

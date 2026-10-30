@@ -1,17 +1,25 @@
 //! Desktop host for delegating subagent turns to agents other devices of the
-//! signed-in account opened to this one.
+//! signed-in account opened to this one, and to agents paired devices of
+//! other accounts granted to it.
 //!
 //! The kernel owns delegation semantics in `service::dispatch`; this adapter
-//! only supplies the account's device list and the encrypted relay RPC.
+//! only supplies the account's device list, the stored connections, and the
+//! encrypted relay RPC of each.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use openbitfun_core::infrastructure::try_get_path_manager_arc;
 use openbitfun_core::service::dispatch::{
-    AccountDevice, AccountDeviceDirectory, DeviceDispatchRpc, OutboundDispatchStore,
-    RemoteAgentDirectory,
+    AccountDevice, AccountDeviceDirectory, ConnectionDispatchRpc, ConnectionPeer,
+    DeviceDispatchRpc, OutboundDispatchStore, RemoteAgentDirectory,
 };
+use openbitfun_core::service::remote_connect::connection_rpc::{
+    usable_connection_peers, ConnectionRpc,
+};
+use openbitfun_core::service::remote_connect::connections::ConnectionStore;
+use openbitfun_core::service::remote_connect::AccountClient;
+use serde_json::Value;
 
 struct SignedInAccountDevices;
 
@@ -37,11 +45,68 @@ impl AccountDeviceDirectory for SignedInAccountDevices {
     }
 }
 
+/// The stored connections of the signed-in device, called over its own
+/// routing socket.
+#[derive(Default)]
+struct SignedInConnections {
+    /// The Relay's capabilities, kept per Relay URL so observing a job does
+    /// not ask for them on every page.
+    capabilities: tokio::sync::Mutex<Option<(String, Vec<String>)>>,
+}
+
+impl SignedInConnections {
+    async fn relay_capabilities(&self, relay_url: &str) -> Vec<String> {
+        let mut cached = self.capabilities.lock().await;
+        if let Some((url, capabilities)) = cached.as_ref() {
+            if url == relay_url && !capabilities.is_empty() {
+                return capabilities.clone();
+            }
+        }
+        let capabilities = AccountClient::new()
+            .relay_capabilities(relay_url)
+            .await
+            .unwrap_or_default();
+        *cached = Some((relay_url.to_string(), capabilities.clone()));
+        capabilities
+    }
+}
+
+#[async_trait]
+impl ConnectionDispatchRpc for SignedInConnections {
+    async fn usable_connections(&self) -> anyhow::Result<Vec<ConnectionPeer>> {
+        let (_, context) = super::remote_connect_api::current_connection_context()
+            .await
+            .map_err(anyhow::Error::msg)?;
+        usable_connection_peers(&ConnectionStore::open_default()?, &context)
+    }
+
+    async fn invoke_connection(
+        &self,
+        connection_id: &str,
+        command: &str,
+        args: Value,
+    ) -> anyhow::Result<Value> {
+        let (relay, context) = super::remote_connect_api::current_connection_context()
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let capabilities = self.relay_capabilities(&context.relay_url).await;
+        ConnectionRpc::new(
+            relay,
+            context,
+            ConnectionStore::open_default()?,
+            capabilities,
+        )
+        .invoke_connection(connection_id, command, args)
+        .await
+    }
+}
+
 /// The port the coordinator uses for `remote:` agents on this host. Coding
 /// tasks keep their baseline in the same outbound store as manual dispatch.
 pub(crate) fn remote_agent_port() -> Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort> {
     let rpc: Arc<dyn DeviceDispatchRpc> = Arc::new(super::dispatch_api::AccountDeviceDispatchRpc);
-    let directory = RemoteAgentDirectory::new(rpc, Arc::new(SignedInAccountDevices));
+    let directory = RemoteAgentDirectory::new(rpc, Arc::new(SignedInAccountDevices))
+        .with_connections(Arc::new(SignedInConnections::default()));
     Arc::new(match try_get_path_manager_arc() {
         Ok(path_manager) => {
             directory.with_outbound_store(OutboundDispatchStore::new(path_manager.as_ref()))

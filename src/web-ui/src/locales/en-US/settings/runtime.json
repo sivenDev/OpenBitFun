@@ -140,7 +140,7 @@
     "otherAccounts": "Other accounts",
     "grantConnection": "Grant to another account",
     "grantTitle": "Grant to",
-    "grantDescription": "A paired device of another account can delegate tasks to this agent. Only you approve its actions on this device.",
+    "grantDescription": "A paired device of another account can delegate tasks to this agent. Its message tasks run in a directory of their own on this device, and only you approve their actions.",
     "noConnections": "No active connection with another account. Pair a device under Connections with other accounts first.",
     "connectionLabel": "{{name}} ({{user}}), {{device}}",
     "connectionMissing": "Connection {{id}}, not found on this device",

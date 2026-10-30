@@ -4,8 +4,8 @@
 //! the target: it encrypts each request with the connection key and sends it
 //! through the Relay's cross-account route. The target side checks a call
 //! against its own pinned record (connection, source account and device,
-//! routed command) before a handler sees it. Until a device grants items to a
-//! connection (F002-06), its handler refuses every call.
+//! routed command) before a handler sees it. The dispatch handler then answers
+//! only for what the device's owner granted to that connection.
 
 use std::sync::Arc;
 
@@ -193,6 +193,52 @@ impl crate::service::dispatch::DeviceDispatchRpc for ConnectionRpc {
     /// `device_id` is the connection id for this transport.
     async fn invoke(&self, device_id: &str, command: &str, args: Value) -> Result<Value> {
         self.invoke_connection(device_id, command, args).await
+    }
+}
+
+/// Connections this device, signed in as `context`, can call now, as the
+/// requester's delegation directory lists them.
+#[cfg(all(feature = "dispatch-store", feature = "ssh-remote"))]
+pub fn usable_connection_peers(
+    store: &ConnectionStore,
+    context: &ConnectionContext,
+) -> Result<Vec<crate::service::dispatch::ConnectionPeer>> {
+    let stored = store.load()?;
+    Ok(stored
+        .records
+        .iter()
+        .filter_map(|record| {
+            store
+                .usable(
+                    &record.connection_id,
+                    &context.relay_url,
+                    &context.local_device_id,
+                )
+                .ok()
+        })
+        .map(|record| crate::service::dispatch::ConnectionPeer {
+            connection_id: record.connection_id,
+            peer_user_id: record.peer_user_id,
+            peer_display_name: record.peer_display_name,
+            peer_device_name: record.peer_device_name,
+        })
+        .collect())
+}
+
+#[cfg(all(feature = "dispatch-store", feature = "ssh-remote"))]
+#[async_trait]
+impl crate::service::dispatch::ConnectionDispatchRpc for ConnectionRpc {
+    async fn usable_connections(&self) -> Result<Vec<crate::service::dispatch::ConnectionPeer>> {
+        usable_connection_peers(&self.store, &self.context)
+    }
+
+    async fn invoke_connection(
+        &self,
+        connection_id: &str,
+        command: &str,
+        args: Value,
+    ) -> Result<Value> {
+        ConnectionRpc::invoke_connection(self, connection_id, command, args).await
     }
 }
 

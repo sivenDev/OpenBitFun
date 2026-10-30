@@ -66,15 +66,17 @@ pub(crate) async fn run_dispatch_verb(
 
 async fn run_dispatch_verb_canonical(
     verb: &str,
-    input: serde_json::Value,
+    mut input: serde_json::Value,
 ) -> Result<serde_json::Value> {
     if let Some(connection_id) = connection::source_connection(&input) {
-        connection::admit_call(
+        input = connection::admit_call(
             &DispatchStore::open_default()?,
+            &delegation::open_agent_store()?,
             verb,
-            &input,
+            input,
             &connection_id,
-        )?;
+        )
+        .await?;
     }
     match verb {
         "probe" => {
@@ -344,6 +346,18 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
         &delegation::DelegationRoots::for_store(&store)?,
     )
     .await?;
+    if let (Some(connection_id), Some(delegation)) =
+        (&request.source_connection_id, &request.delegation)
+    {
+        if delegation.task_kind == protocol::DispatchDelegationTaskKind::Coding {
+            connection::ensure_provisioned_workspace(
+                &store,
+                &request.job_id,
+                connection_id,
+                &request.workspace_path,
+            )?;
+        }
+    }
     let mut intent = request.clone();
     // Setup audit is observational metadata. A retry after an ambiguous SSH
     // response will not repeat an installation, so including it in the intent
@@ -776,6 +790,13 @@ fn visible_jobs(
             store
                 .load_job(&job.job_id)
                 .is_ok_and(|record| connection::owns(&record, connection_id))
+        })
+        // Another account learns neither this device's paths nor its models.
+        .map(|job| DispatchJobListEntry {
+            workspace_path: String::new(),
+            model: None,
+            reasoning_preset: None,
+            ..job
         })
         .collect()
 }
@@ -1477,6 +1498,13 @@ mod tests {
         let mut all = ids(None);
         all.sort();
         assert_eq!(all, vec!["job-a", "job-b"]);
+
+        // The connection sees its job without this device's path or model.
+        let shown = visible_jobs(&store, store.list_jobs().expect("list"), Some("conn-1"));
+        assert_eq!(shown[0].workspace_path, "");
+        assert_eq!(shown[0].model, None);
+        let local = visible_jobs(&store, store.list_jobs().expect("list"), None);
+        assert!(local.iter().all(|job| !job.workspace_path.is_empty()));
     }
 
     fn probe_failure(diagnostic: &str) -> Result<GitProbeOutput, GitProbeOutput> {

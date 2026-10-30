@@ -1,11 +1,18 @@
 //! Requester side of agent delegation: the agents other devices of this
-//! account opened to this device, reached through account-device dispatch.
+//! account opened to this device, reached through account-device dispatch,
+//! and the agents paired devices of other accounts granted to this device,
+//! reached over their cross-account connection.
 //!
-//! Hosts supply the device RPC and the account's device list; this module
-//! decides which devices can take delegated work and what they offer. A device
-//! is queried only when it is online and advertises agent delegation plus the
-//! dispatch surface this build requires, so an older device is reported as
-//! incompatible instead of failing later.
+//! Hosts supply the device RPC and the account's device list, and optionally
+//! the connection RPC and the usable connections; this module decides which
+//! targets can take delegated work and what they offer. A target is queried
+//! only when it is online and advertises agent delegation plus the dispatch
+//! surface this build requires, so an older device is reported as
+//! incompatible instead of failing later. A connection target must also
+//! advertise cross-account delegation.
+//!
+//! A connection target's id is `conn:<connectionId>`; every call to it,
+//! including coding baselines and result sync, travels over the connection.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,13 +20,13 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use openbitfun_runtime_ports::{
-    PortError, PortErrorKind, PortResult, RemoteAgentAddress, RemoteAgentAvailability,
-    RemoteAgentCodingResult, RemoteAgentDescriptor, RemoteAgentListing, RemoteAgentTaskKind,
-    RemoteAgentUnavailableReason,
+    remote_connection_target, remote_target_connection, PortError, PortErrorKind, PortResult,
+    RemoteAgentAccount, RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentCodingResult,
+    RemoteAgentDescriptor, RemoteAgentListing, RemoteAgentTaskKind, RemoteAgentUnavailableReason,
 };
 use openbitfun_services_core::dispatch_contract::{
     DispatchCatalogAgent, DispatchCatalogResponse, DISPATCH_AGENT_DELEGATION_CAPABILITY,
-    DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY,
+    DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY, DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY,
 };
 use openbitfun_services_integrations::remote_ssh::dispatch_ssh;
 use serde_json::{json, Value};
@@ -53,6 +60,60 @@ pub trait AccountDeviceDirectory: Send + Sync {
     async fn other_devices(&self) -> anyhow::Result<Vec<AccountDevice>>;
 }
 
+/// A usable cross-account connection: the peer device and its account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionPeer {
+    pub connection_id: String,
+    pub peer_user_id: String,
+    pub peer_display_name: String,
+    pub peer_device_name: String,
+}
+
+/// The host's cross-account connections and their encrypted RPC.
+#[async_trait]
+pub trait ConnectionDispatchRpc: Send + Sync {
+    /// Connections that can carry calls now: confirmed, not revoked, and
+    /// with a verified peer key.
+    async fn usable_connections(&self) -> anyhow::Result<Vec<ConnectionPeer>>;
+
+    /// Calls a target command on the peer device of `connection_id`.
+    async fn invoke_connection(
+        &self,
+        connection_id: &str,
+        command: &str,
+        args: Value,
+    ) -> anyhow::Result<Value>;
+}
+
+/// Sends calls for `conn:` targets over their connection and every other call
+/// to the account device RPC, so submit, observe, coding baselines, and result
+/// sync share one path for both kinds of target.
+struct RoutedDispatchRpc {
+    devices: Arc<dyn DeviceDispatchRpc>,
+    connections: Arc<dyn ConnectionDispatchRpc>,
+}
+
+#[async_trait]
+impl DeviceDispatchRpc for RoutedDispatchRpc {
+    async fn invoke(&self, device_id: &str, command: &str, args: Value) -> anyhow::Result<Value> {
+        match remote_target_connection(device_id) {
+            Some(connection_id) => {
+                self.connections
+                    .invoke_connection(connection_id, command, args)
+                    .await
+            }
+            None => self.devices.invoke(device_id, command, args).await,
+        }
+    }
+}
+
+/// One target a listing queries: an account device or a connection peer.
+#[derive(Debug, Clone)]
+struct ListedTarget {
+    device: AccountDevice,
+    account: Option<RemoteAgentAccount>,
+}
+
 #[derive(Clone)]
 struct DeviceCatalog {
     fetched_at: Instant,
@@ -61,12 +122,14 @@ struct DeviceCatalog {
     /// with a reason while it is offline or unreachable.
     agents: Vec<DispatchCatalogAgent>,
     problem: Option<(RemoteAgentUnavailableReason, String)>,
+    account: Option<RemoteAgentAccount>,
 }
 
 /// Lists and caches the agents other devices opened to this device.
 pub struct RemoteAgentDirectory {
     rpc: Arc<dyn DeviceDispatchRpc>,
     devices: Arc<dyn AccountDeviceDirectory>,
+    connections: Option<Arc<dyn ConnectionDispatchRpc>>,
     cache: tokio::sync::Mutex<HashMap<String, DeviceCatalog>>,
     /// Owns the baseline of delegated coding jobs; without it this host
     /// delegates message tasks only.
@@ -78,9 +141,61 @@ impl RemoteAgentDirectory {
         Self {
             rpc,
             devices,
+            connections: None,
             cache: tokio::sync::Mutex::new(HashMap::new()),
             outbound: None,
         }
+    }
+
+    /// Adds the agents paired devices of other accounts granted to this
+    /// device. Calls to them travel over their connection.
+    pub fn with_connections(mut self, connections: Arc<dyn ConnectionDispatchRpc>) -> Self {
+        self.rpc = Arc::new(RoutedDispatchRpc {
+            devices: self.rpc.clone(),
+            connections: connections.clone(),
+        });
+        self.connections = Some(connections);
+        self
+    }
+
+    /// Account devices, then usable connection peers. Either source failing
+    /// leaves the other listed.
+    async fn targets(&self) -> Vec<ListedTarget> {
+        let mut targets: Vec<ListedTarget> = match self.devices.other_devices().await {
+            Ok(devices) => devices
+                .into_iter()
+                .filter(|device| remote_target_connection(&device.device_id).is_none())
+                .map(|device| ListedTarget {
+                    device,
+                    account: None,
+                })
+                .collect(),
+            Err(error) => {
+                log::debug!("Remote agents not listed: account devices unavailable: {error}");
+                Vec::new()
+            }
+        };
+        if let Some(connections) = &self.connections {
+            match connections.usable_connections().await {
+                Ok(peers) => targets.extend(peers.into_iter().map(|peer| ListedTarget {
+                    device: AccountDevice {
+                        device_id: remote_connection_target(&peer.connection_id),
+                        device_name: peer.peer_device_name,
+                        // Presence across accounts is not shared; an
+                        // unreachable peer is reported when it does not answer.
+                        online: true,
+                    },
+                    account: Some(RemoteAgentAccount {
+                        user_id: peer.peer_user_id,
+                        display_name: peer.peer_display_name,
+                    }),
+                })),
+                Err(error) => {
+                    log::debug!("Connection agents not listed: connections unavailable: {error}");
+                }
+            }
+        }
+        targets
     }
 
     /// Enables coding tasks. Their Git baseline and result sync reuse device
@@ -91,17 +206,12 @@ impl RemoteAgentDirectory {
     }
 
     pub async fn list(&self, listing: RemoteAgentListing) -> Vec<RemoteAgentDescriptor> {
-        let devices = match self.devices.other_devices().await {
-            Ok(devices) => devices,
-            Err(error) => {
-                log::debug!("Remote agents not listed: account devices unavailable: {error}");
-                return Vec::new();
-            }
-        };
+        let targets = self.targets().await;
         let previous = self.cache.lock().await.clone();
-        let catalogs = futures::future::join_all(devices.into_iter().map(|device| {
-            let previous = previous.get(&device.device_id).cloned();
+        let catalogs = futures::future::join_all(targets.into_iter().map(|target| {
+            let previous = previous.get(&target.device.device_id).cloned();
             async move {
+                let ListedTarget { device, account } = target;
                 let catalog = match previous {
                     Some(cached)
                         if listing == RemoteAgentListing::Cached
@@ -111,7 +221,7 @@ impl RemoteAgentDirectory {
                     {
                         cached
                     }
-                    previous => self.query_device(&device, previous).await,
+                    previous => self.query_device(&device, account, previous).await,
                 };
                 (device.device_id, catalog)
             }
@@ -138,6 +248,7 @@ impl RemoteAgentDirectory {
     async fn query_device(
         &self,
         device: &AccountDevice,
+        account: Option<RemoteAgentAccount>,
         previous: Option<DeviceCatalog>,
     ) -> DeviceCatalog {
         let known_agents = previous.map(|catalog| catalog.agents).unwrap_or_default();
@@ -146,6 +257,7 @@ impl RemoteAgentDirectory {
             device_name: device.device_name.clone(),
             agents: known_agents.clone(),
             problem: Some((reason, detail)),
+            account: account.clone(),
         };
         if !device.online {
             return unavailable(
@@ -160,6 +272,7 @@ impl RemoteAgentDirectory {
                 device_name: device.device_name.clone(),
                 agents,
                 problem: None,
+                account: account.clone(),
             },
             Ok(Err(CatalogError::Incompatible(detail))) => {
                 unavailable(RemoteAgentUnavailableReason::Incompatible, detail)
@@ -184,6 +297,14 @@ impl RemoteAgentDirectory {
             .await
             .map_err(|error| CatalogError::Unreachable(format!("{error:#}")))?;
         ensure_delegation_target(&protocol, &device.device_name)?;
+        if remote_target_connection(&device.device_id).is_some()
+            && !has_capability(&protocol, DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY)
+        {
+            return Err(CatalogError::Incompatible(format!(
+                "{} runs an OpenBitFun version without cross-account delegation",
+                device.device_name
+            )));
+        }
         let runs_external_agents =
             has_capability(&protocol, DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY);
         let catalog = self
@@ -593,6 +714,7 @@ fn descriptors_for(device_id: &str, catalog: &DeviceCatalog) -> Vec<RemoteAgentD
                 },
                 description: agent.description.clone(),
                 task_kinds,
+                account: catalog.account.clone(),
                 availability: match (&availability, &agent.unavailable) {
                     (RemoteAgentAvailability::Available, Some(detail)) => {
                         RemoteAgentAvailability::Unavailable {
@@ -886,6 +1008,142 @@ mod tests {
             },
             source_workspace_path: Some("/local/workspace".to_string()),
         }
+    }
+
+    /// Connection peers answered by their own target table, keyed by
+    /// connection id.
+    struct Connections {
+        peers: Vec<ConnectionPeer>,
+        targets: Targets,
+    }
+
+    #[async_trait]
+    impl ConnectionDispatchRpc for Connections {
+        async fn usable_connections(&self) -> anyhow::Result<Vec<ConnectionPeer>> {
+            Ok(self.peers.clone())
+        }
+
+        async fn invoke_connection(
+            &self,
+            connection_id: &str,
+            command: &str,
+            args: Value,
+        ) -> anyhow::Result<Value> {
+            self.targets.invoke(connection_id, command, args).await
+        }
+    }
+
+    fn peer(connection_id: &str) -> ConnectionPeer {
+        ConnectionPeer {
+            connection_id: connection_id.to_string(),
+            peer_user_id: "2002".to_string(),
+            peer_display_name: "Bea".to_string(),
+            peer_device_name: "B1 Desktop".to_string(),
+        }
+    }
+
+    struct Unsigned;
+
+    #[async_trait]
+    impl AccountDeviceDirectory for Unsigned {
+        async fn other_devices(&self) -> anyhow::Result<Vec<AccountDevice>> {
+            anyhow::bail!("the account relay cannot be reached")
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_agents_are_listed_with_their_account_and_reached_over_the_connection() {
+        let delegation = &[DISPATCH_AGENT_DELEGATION_CAPABILITY];
+        let cross_account = &[
+            DISPATCH_AGENT_DELEGATION_CAPABILITY,
+            DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY,
+        ];
+        let devices = Targets::new(
+            HashMap::from([("laptop", probe(delegation))]),
+            HashMap::from([("laptop", catalog("helper", &["message"]))]),
+        );
+        let connections = Arc::new(Connections {
+            peers: vec![peer("c-new"), peer("c-old")],
+            targets: Targets::new(
+                HashMap::from([
+                    ("c-new", probe(cross_account)),
+                    ("c-old", probe(delegation)),
+                ]),
+                HashMap::from([
+                    ("c-new", catalog("helper", &["message", "coding"])),
+                    ("c-old", catalog("never-asked", &["message"])),
+                ]),
+            ),
+        });
+        let (directory, _, devices) = directory(devices, vec![device("laptop", true)]);
+        let directory = directory.with_connections(connections.clone());
+
+        let listed = directory.list(RemoteAgentListing::Refreshed).await;
+        let types: Vec<String> = listed
+            .iter()
+            .map(|agent| agent.address.agent_type())
+            .collect();
+        // The same open agent id on another account is a separate entry; a
+        // target without cross-account delegation lists nothing.
+        assert_eq!(types, ["remote:laptop/helper", "remote:conn:c-new/helper"]);
+        assert_eq!(listed[0].account, None);
+        let other = &listed[1];
+        assert_eq!(other.device_name, "B1 Desktop");
+        assert_eq!(
+            other.account,
+            Some(RemoteAgentAccount {
+                user_id: "2002".to_string(),
+                display_name: "Bea".to_string(),
+            })
+        );
+        assert_eq!(connections.targets.catalog_calls.load(Ordering::SeqCst), 1);
+
+        // Submitting, observing, and cancelling travel over the connection.
+        let mut request = submit_request("helper", RemoteAgentTaskKind::Message);
+        request.address.device_id = remote_connection_target("c-new");
+        let port: &dyn openbitfun_runtime_ports::RemoteAgentDelegationPort = &directory;
+        let job = port
+            .submit(request)
+            .await
+            .expect("submit over the connection");
+        assert_eq!(job.device_id, "conn:c-new");
+        assert!(port.cancel(&job).await.unwrap());
+        let calls = connections.targets.job_calls.lock().unwrap().clone();
+        assert_eq!(
+            calls
+                .iter()
+                .map(|(command, _)| command.as_str())
+                .collect::<Vec<_>>(),
+            ["dispatch_target_submit", "dispatch_target_cancel"]
+        );
+        assert_eq!(calls[0].1["delegation"]["openAgentId"], "helper");
+        assert_eq!(calls[0].1["approvalPolicy"], "remote");
+        assert!(devices.job_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn connection_agents_stay_listed_when_account_devices_cannot_be_read() {
+        let connections = Arc::new(Connections {
+            peers: vec![peer("c-new")],
+            targets: Targets::new(
+                HashMap::from([(
+                    "c-new",
+                    probe(&[
+                        DISPATCH_AGENT_DELEGATION_CAPABILITY,
+                        DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY,
+                    ]),
+                )]),
+                HashMap::from([("c-new", catalog("helper", &["message"]))]),
+            ),
+        });
+        let directory = RemoteAgentDirectory::new(
+            Arc::new(Targets::new(HashMap::new(), HashMap::new())),
+            Arc::new(Unsigned),
+        )
+        .with_connections(connections);
+        let listed = directory.list(RemoteAgentListing::Refreshed).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].address.agent_type(), "remote:conn:c-new/helper");
     }
 
     #[tokio::test]

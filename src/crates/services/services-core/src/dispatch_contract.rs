@@ -142,8 +142,8 @@ pub const DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY: &str = "cross_account_de
 pub const DISPATCH_SOURCE_CONNECTION_ARG: &str = "__sourceConnectionId";
 
 /// Target commands a cross-account connection may send. Each is bound to the
-/// connection, and job commands act only on that connection's jobs. `answer`
-/// is absent: only the target's owner approves its jobs.
+/// connection; job and workspace commands act only on what that connection
+/// started. `answer` is absent: only the target's owner approves its jobs.
 pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
     "dispatch_target_probe",
     "dispatch_target_catalog",
@@ -154,6 +154,12 @@ pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
     "dispatch_target_list",
     "dispatch_target_continue",
     "dispatch_target_append",
+    "dispatch_target_workspace_provision",
+    "dispatch_target_workspace_bundle_begin",
+    "dispatch_target_workspace_bundle_chunk",
+    "dispatch_target_workspace_bundle_commit",
+    "dispatch_target_workspace_sync",
+    "dispatch_target_workspace_sync_chunk",
 ];
 
 /// Why a call over a connection is refused before the target runs it.
@@ -489,11 +495,7 @@ mod tests {
             .unwrap_err(),
             DISPATCH_CONNECTION_ANSWER_REFUSED
         );
-        for refused in [
-            "dispatch_target_workspace_provision",
-            "dispatch_target_read_file",
-            "peer_mode_ping",
-        ] {
+        for refused in ["dispatch_target_read_file", "peer_mode_ping"] {
             assert!(
                 bind_dispatch_source_connection(refused, serde_json::Value::Null, "conn-1")
                     .is_err()

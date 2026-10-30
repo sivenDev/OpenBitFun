@@ -3,10 +3,11 @@
 use async_trait::async_trait;
 use openbitfun_product_domains::tool_permissions::PermissionReply;
 use openbitfun_runtime_ports::{
-    PortError, PortErrorKind, PortResult, RemoteAgentAddress, RemoteAgentAvailability,
-    RemoteAgentCodingResult, RemoteAgentDelegationPort, RemoteAgentDescriptor, RemoteAgentJob,
-    RemoteAgentJobSnapshot, RemoteAgentJobState, RemoteAgentListing, RemoteAgentSource,
-    RemoteAgentSubmitRequest, RemoteAgentTaskKind, RemoteAgentUnavailableReason,
+    remote_connection_target, remote_target_connection, PortError, PortErrorKind, PortResult,
+    RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentCodingResult,
+    RemoteAgentDelegationPort, RemoteAgentDescriptor, RemoteAgentJob, RemoteAgentJobSnapshot,
+    RemoteAgentJobState, RemoteAgentListing, RemoteAgentSource, RemoteAgentSubmitRequest,
+    RemoteAgentTaskKind, RemoteAgentUnavailableReason,
 };
 use serde_json::json;
 use std::sync::Mutex;
@@ -56,6 +57,7 @@ fn availability_and_descriptors_use_stable_wire_names() {
             reason: RemoteAgentUnavailableReason::Offline,
             detail: "Laptop is offline".to_string(),
         },
+        account: None,
     };
     let value = serde_json::to_value(&descriptor).unwrap();
     assert_eq!(value["address"]["openAgentId"], "helper");
@@ -67,6 +69,36 @@ fn availability_and_descriptors_use_stable_wire_names() {
         serde_json::from_value::<RemoteAgentDescriptor>(value).unwrap(),
         descriptor
     );
+}
+
+#[test]
+fn connection_agents_name_their_account_and_older_descriptors_have_none() {
+    let address = RemoteAgentAddress {
+        device_id: remote_connection_target("c0ffee"),
+        open_agent_id: "helper".to_string(),
+    };
+    assert_eq!(address.agent_type(), "remote:conn:c0ffee/helper");
+    assert_eq!(
+        RemoteAgentAddress::parse("remote:conn:c0ffee/helper").as_ref(),
+        Some(&address)
+    );
+    assert_eq!(remote_target_connection(&address.device_id), Some("c0ffee"));
+    assert_eq!(remote_target_connection("laptop"), None);
+    assert_eq!(remote_target_connection("conn:"), None);
+
+    // A descriptor written before accounts were added still reads.
+    let legacy: RemoteAgentDescriptor = serde_json::from_value(json!({
+        "address": { "deviceId": "laptop", "openAgentId": "helper" },
+        "deviceName": "Laptop",
+        "agentType": "Standard",
+        "displayName": "Helper",
+        "taskKinds": ["message"],
+        "availability": { "state": "available" },
+    }))
+    .unwrap();
+    assert_eq!(legacy.account, None);
+    let value = serde_json::to_value(&legacy).unwrap();
+    assert!(value.get("account").is_none());
 }
 
 #[test]
