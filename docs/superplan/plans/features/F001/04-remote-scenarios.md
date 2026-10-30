@@ -150,7 +150,7 @@ parent: "F001"
 **Verification:**
 - 手动：在 SSH 远程工作区、手机端远程控制、Peer 模式下各执行一次后台委派与取消，记录结果；在 Dispatch 任务中验证明确失败的提示
 
-- [ ] 四种场景的实测结果已记录（Dispatch 与本机基线已实测；SSH、手机端、Peer 待实测）
+- [ ] 四种场景的实测结果已记录（Dispatch、本机基线与 SSH 已实测；手机端、Peer 待实测）
 
 **实测记录（2026-10-29，本机 macOS，`target/debug/openbitfun`，真实 Claude Code `claude-agent-acp@0.99.0`）：**
 - 本机基线：`exec` 中 `AgentSpawn(acp:claude-code)` 在后台启动子会话，Claude Code 用自己的 `Read` 工具读出测试文件内容，结果经 `AgentWait` 回到父会话。
@@ -165,7 +165,19 @@ parent: "F001"
   - 操作：桌面以密码 SSH 连接，在「远程主机」上创建工程 `shimo-ws`；之后在该工程的会话中要求 `AgentSpawn(acp:claude-code)`。
   - 本机已安装 Claude Code（`ACP requirement probe … runnable=true`），但在远程工作区里检查的是远程主机（`Remote ACP requirement probe … tool_installed=false`）。
   - 结果：`AgentSpawn` 立即失败，原文为「external agent acp:claude-code is unavailable (NotInstalled): claude is not available on remote PATH」。没有改用本机，桌面进程下没有启动任何 `claude` 子进程。
-  - 未做：远程主机上的成功委派与取消。这需要在远程主机安装并登录 Claude Code，由用户完成。
+  - 成功委派与取消（2026-10-30，改用远程主机上由用户配置好的 Codex，`acp:codex`）：
+    - 环境：
+      - 远程主机 Codex CLI 0.146.0，模型与凭据由用户在远程主机自行配置。
+      - 远程主机连不上 registry.npmjs.org，适配器 `@agentclientprotocol/codex-acp` 2.5.0 改从 npmmirror 预先下载（远程 `~/.npmrc`）。
+      - 隔离桌面（真实模型）以密码 SSH 连接，打开远程工程 `~/obf-test/codex-ws`，在设置 → ACP 的「本机」页添加 Codex（策略「询问」）。
+    - 委派：
+      - 父会话 `AgentSpawn(acp:codex)` 后 `AgentWait`。适配器与 `codex app-server` 只在远程主机上启动，本机没有任何 codex 进程。
+      - Codex 修改了远程的 `calc.py`（新增 `multiply`），并在远程运行验证命令得到 `42`；父会话取回结果并汇报。
+      - 本次 Codex 没有发出 `session/request_permission`，所以没有出现审批栏。是否询问由 Codex 自身的审批设置决定。
+    - 取消：
+      - Codex 在远程运行 `sleep 120` 时点击停止，20 毫秒内向远程 Codex 发出 `session/cancel`，Codex 结束该回合，父子回合都标记为取消。
+      - 偏差（Codex 自身行为）：Codex 没有终止它已经启动的 `sleep 120`，该命令在远程运行到自然结束。OpenBitFun 的职责是把取消送达远程智能体，已经做到。
+    - 进程：每次委派在远程保留一个适配器进程，直到对应会话释放，与本机外部智能体一致。关闭桌面、SSH 断开后，远程不再残留 codex 进程。
   - 前置条件：未在本机配置中启用 claude-code 时，先报「NotEnabled」，不会检查远程主机。
 - 未实测：手机端远程控制与 Peer 模式。CLI 只在交互式 TUI 中提供 Peer 主机，模拟 relay 不提供手机网页；这两项目前只有单元测试证据。
 
