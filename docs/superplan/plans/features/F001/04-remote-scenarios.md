@@ -2,7 +2,7 @@
 id: "F001-04"
 title: "外部智能体委派的远程场景"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "外部智能体委派在 SSH 远程工作区、手机端与 IM 远程控制、Peer Device Mode 下可用，Detached Dispatch 中明确报不支持。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-29"
@@ -150,7 +150,7 @@ parent: "F001"
 **Verification:**
 - 手动：在 SSH 远程工作区、手机端远程控制、Peer 模式下各执行一次后台委派与取消，记录结果；在 Dispatch 任务中验证明确失败的提示
 
-- [ ] 四种场景的实测结果已记录（Dispatch、本机基线与 SSH 已实测；手机端、Peer 待实测）
+- [x] 四种场景的实测结果已记录（Dispatch、本机基线与 SSH 已实测；手机端、Peer 经用户决定不做实测，见下方说明）
 
 **实测记录（2026-10-29，本机 macOS，`target/debug/openbitfun`，真实 Claude Code `claude-agent-acp@0.99.0`）：**
 - 本机基线：`exec` 中 `AgentSpawn(acp:claude-code)` 在后台启动子会话，Claude Code 用自己的 `Read` 工具读出测试文件内容，结果经 `AgentWait` 回到父会话。
@@ -180,6 +180,7 @@ parent: "F001"
     - 进程：每次委派在远程保留一个适配器进程，直到对应会话释放，与本机外部智能体一致。关闭桌面、SSH 断开后，远程不再残留 codex 进程。
   - 前置条件：未在本机配置中启用 claude-code 时，先报「NotEnabled」，不会检查远程主机。
 - 未实测：手机端远程控制与 Peer 模式。CLI 只在交互式 TUI 中提供 Peer 主机，模拟 relay 不提供手机网页；这两项目前只有单元测试证据。
+- 收尾决定（2026-10-30）：用户决定不补测手机端与 Peer 模式，等实际使用中发现问题再反馈。本计划据此标为完成，这两种场景的证据仍只有 Task 2 的单元测试与浏览器测试，不能视为实测通过。
 
 ## References
 - `docs/superplan/rfcs/F001.md`
