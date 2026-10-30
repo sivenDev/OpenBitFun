@@ -47,8 +47,10 @@ async fn limits_for(
         .unwrap_or_default())
 }
 
-/// Refuses a new cross-account task when the connection already runs as
-/// many tasks with this agent as its owner allows.
+/// Refuses a new cross-account task, or a new turn of one, when the
+/// connection already runs as many tasks with this agent as its owner
+/// allows. Hold [`DispatchStore::lock_connection_admission`] from this check
+/// until the job or turn is queued.
 pub(super) async fn ensure_within_limits(
     store: &DispatchStore,
     grants: &OpenAgentStore,
@@ -271,6 +273,19 @@ mod tests {
         ensure_within_limits(&store, &grants, &request("delegation-3", "conn-2"))
             .await
             .unwrap();
+        // A new turn of a finished task over the same connection is counted
+        // like a new task while another one runs.
+        let mut finished = request("delegation-old", "conn-1");
+        finished.prompt = "earlier".to_string();
+        let error = ensure_within_limits(&store, &grants, &finished)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("at most 1 task"), "{error}");
+        // Admissions of one connection are serialized by a lock that is
+        // released with its guard.
+        drop(store.lock_connection_admission("conn-1").unwrap());
+        drop(store.lock_connection_admission("conn-1").unwrap());
         // A finished task frees its place.
         store
             .mark_state(

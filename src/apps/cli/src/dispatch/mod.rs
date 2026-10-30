@@ -398,7 +398,13 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
     request.title = Some(title.clone());
 
     // Counted after a retried submission was answered above, so a retry is
-    // never refused as a second task.
+    // never refused as a second task; the lock makes the count and the new
+    // job one step for concurrent submissions over the same connection.
+    let _admission = request
+        .source_connection_id
+        .as_deref()
+        .map(|connection_id| store.lock_connection_admission(connection_id))
+        .transpose()?;
     connection_guard::ensure_within_limits(&store, &delegation::open_agent_store()?, &request)
         .await?;
     let outcome = store.create_job_with_intent(intent, request.clone(), title)?;
@@ -477,9 +483,23 @@ async fn continue_job(request: DispatchContinueRequest) -> Result<DispatchContin
     let job = store.load_job(&request.job_id)?;
     // A worker may still be settling the previous turn's terminal state.
     reconcile_worker_liveness(&store, &request.job_id)?;
+    let _admission = job
+        .request
+        .source_connection_id
+        .as_deref()
+        .map(|connection_id| store.lock_connection_admission(connection_id))
+        .transpose()?;
     let state = if let Some(state) = store.load_existing_follow_up_for_intent(&request)? {
         state
     } else {
+        // A new turn of a cross-account task counts against the same limit
+        // as a new task; the job itself is finished, so it is not counted.
+        connection_guard::ensure_within_limits(
+            &store,
+            &delegation::open_agent_store()?,
+            &job.request,
+        )
+        .await?;
         // Validate before acceptance, just as submit does. The worker still
         // revalidates in case target configuration changes before it starts.
         let selected_model =

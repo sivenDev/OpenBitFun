@@ -1727,6 +1727,21 @@ pub(crate) struct WorkspaceLock {
     _file: File,
 }
 
+impl DispatchStore {
+    /// Serializes admissions of one connection, so its task count and the
+    /// job that count admits are one step.
+    pub(crate) fn lock_connection_admission(&self, connection_id: &str) -> Result<WorkspaceLock> {
+        use sha2::{Digest, Sha256};
+        let digest = hex::encode(Sha256::digest(connection_id.as_bytes()));
+        WorkspaceLock::acquire(
+            &self
+                .root
+                .join("locks")
+                .join(format!("connection-{}.lock", &digest[..32])),
+        )
+    }
+}
+
 impl WorkspaceLock {
     pub(crate) fn acquire(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
