@@ -277,7 +277,7 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
                     reply_route: None,
                     prepended_reminders: Vec::new(),
                     attachments: turn_attachments,
-                    metadata: permissions::metadata(effective_policy),
+                    metadata: turn_metadata(effective_policy, &job.request),
                 })
                 .await
                 .map_err(|error| anyhow!(error.into_message()))
@@ -734,6 +734,30 @@ fn terminal_outcome(
         _ => None,
     }
 }
+
+/// Turn context for a dispatch job. A delegated job also carries who asked for
+/// it, so the turn can tell it was delegated and must not delegate onward.
+fn turn_metadata(
+    policy: super::protocol::DispatchApprovalPolicy,
+    request: &super::protocol::DispatchSubmitRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut metadata = permissions::metadata(policy);
+    if let Some(delegation) = &request.delegation {
+        metadata.insert(
+            DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
+            serde_json::json!({
+                "sourceDeviceId": request.source_device_id,
+                "openAgentId": delegation.open_agent_id,
+                "taskKind": delegation.task_kind,
+                "source": delegation.source,
+            }),
+        );
+    }
+    metadata
+}
+
+/// Turn context key naming the device that delegated a dispatch job.
+pub(crate) const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
 
 #[cfg(test)]
 mod tests {

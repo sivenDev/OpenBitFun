@@ -132,7 +132,13 @@ pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";
 pub const DISPATCH_SOURCE_DEVICE_ARG: &str = "__sourceDeviceId";
 
 /// Target commands whose request carries [`DISPATCH_SOURCE_DEVICE_ARG`].
-pub const DISPATCH_SOURCE_BOUND_COMMANDS: &[&str] = &["dispatch_target_catalog"];
+/// `dispatch_target_submit` carries it only for a delegated job, so an older
+/// local runner, which refuses unknown fields, keeps accepting ordinary jobs.
+pub const DISPATCH_SOURCE_BOUND_COMMANDS: &[&str] =
+    &["dispatch_target_catalog", "dispatch_target_submit"];
+
+/// Field marking a submission as delegated to an open agent.
+pub const DISPATCH_DELEGATION_FIELD: &str = "delegation";
 
 /// Binds a target command's arguments to the authenticated sender: removes any
 /// caller-supplied source device, then sets it for commands that use it.
@@ -148,7 +154,11 @@ pub fn bind_dispatch_source_device(
         other => return other,
     };
     args.remove(DISPATCH_SOURCE_DEVICE_ARG);
-    if DISPATCH_SOURCE_BOUND_COMMANDS.contains(&command) {
+    let bound = match command {
+        "dispatch_target_submit" => args.contains_key(DISPATCH_DELEGATION_FIELD),
+        _ => DISPATCH_SOURCE_BOUND_COMMANDS.contains(&command),
+    };
+    if bound {
         args.insert(
             DISPATCH_SOURCE_DEVICE_ARG.to_string(),
             serde_json::Value::String(source_device_id.to_string()),
@@ -322,6 +332,23 @@ mod tests {
                 "laptop"
             ),
             serde_json::json!({ "jobId": "j" })
+        );
+        // Submissions are bound only when delegated.
+        assert_eq!(
+            bind_dispatch_source_device(
+                "dispatch_target_submit",
+                serde_json::json!({ "jobId": "j", "__sourceDeviceId": "someone-else" }),
+                "laptop"
+            ),
+            serde_json::json!({ "jobId": "j" })
+        );
+        assert_eq!(
+            bind_dispatch_source_device(
+                "dispatch_target_submit",
+                serde_json::json!({ "delegation": {}, "__sourceDeviceId": "someone-else" }),
+                "laptop"
+            ),
+            serde_json::json!({ "delegation": {}, "__sourceDeviceId": "laptop" })
         );
         // The catalog request refuses unknown fields but accepts the bound one.
         let request: DispatchCatalogRequest = serde_json::from_value(bind_dispatch_source_device(

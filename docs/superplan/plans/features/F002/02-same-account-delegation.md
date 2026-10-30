@@ -54,6 +54,8 @@ parent: "F002"
   - Peer 模式下，出站记录与观察器属于实际执行内核的对端主机。
   - 手机端与 IM 通过现有后台任务状态与权限邮箱看到委派和审批。
   - Dispatch 工作进程中远程智能体不可用，并明确报错。
+  - 委派任务的回合上下文带 `dispatchDelegation`（F002-01 写入）；带该标记的会话不提供 `remote:` 条目，强行指定时明确拒绝（禁止多跳）。
+  - 目标端的任务列表响应不含委派来源（旧控制端以 `deny_unknown_fields` 解析列表）；需要展示「来自某设备的请求」时，经能力协商后再读取。
 
 **Baseline:**
 - 设备 Dispatch 控制器在 `src/crates/assembly/core/src/service/dispatch/device_controller.rs`，经 `DeviceDispatchRpc` 调用目标端；只有桌面实现了该 RPC（`src/apps/desktop/src/api/dispatch_api.rs`）。

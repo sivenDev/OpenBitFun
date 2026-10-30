@@ -6,7 +6,7 @@
 
 | Type | Plans | Approved | In Progress | Complete |
 | --- | --- | --- | --- | --- |
-| `feature` | 10 | 5 | 2 | 3 |
+| `feature` | 10 | 5 | 1 | 4 |
 
 ## Plan Groups
 
@@ -15,7 +15,7 @@
 | ID | Plan | Status | Created |
 | --- | --- | --- | --- |
 | `F001-01` | [宿主中立的外部智能体执行器（ACP）](features/F001/01-external-agent-executor.md) | `complete` | 2026-10-29 |
-| `F002-01` | [目标端开放智能体清单与纯消息任务](features/F002/01-target-open-catalog.md) | `in_progress` | 2026-10-30 |
+| `F002-01` | [目标端开放智能体清单与纯消息任务](features/F002/01-target-open-catalog.md) | `complete` | 2026-10-30 |
 | `F001-02` | [通过 Task 后台委派外部智能体](features/F001/02-task-delegation.md) | `complete` | 2026-10-29 |
 | `F002-02` | [同账号委派给远程原生智能体](features/F002/02-same-account-delegation.md) | `approved` | 2026-10-30 |
 | `F001-03` | [智能体列表展示外部智能体与可用状态](features/F001/03-agent-list.md) | `complete` | 2026-10-29 |

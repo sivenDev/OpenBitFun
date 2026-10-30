@@ -106,6 +106,51 @@ pub(crate) struct DispatchSubmitRequest {
     /// from submit idempotency.
     #[serde(default)]
     pub(crate) setup_audit: Vec<DispatchSetupAuditEvent>,
+    /// Present when another device of the account delegates this job to an
+    /// agent this device opened. Omitted from ordinary jobs so their records
+    /// stay readable by older targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) delegation: Option<DispatchDelegation>,
+    /// The delegating device, bound by the receiving host from the
+    /// relay-authenticated sender; never accepted from the requester.
+    #[serde(
+        rename = "__sourceDeviceId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_device_id: Option<String>,
+}
+
+/// A job delegated to one of this device's open agents.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DispatchDelegation {
+    pub(crate) open_agent_id: String,
+    pub(crate) task_kind: DispatchDelegationTaskKind,
+    /// Requester-reported context, shown to the owner and never used for
+    /// authorization.
+    #[serde(default)]
+    pub(crate) source: DispatchDelegationSource,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum DispatchDelegationTaskKind {
+    /// No code is transferred; the job runs in a target-owned directory.
+    Message,
+    /// The job runs in a target-provisioned Git worktree.
+    Coding,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DispatchDelegationSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) agent_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) display_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

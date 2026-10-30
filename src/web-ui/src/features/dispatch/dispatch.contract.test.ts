@@ -131,7 +131,10 @@ describe('dispatch wire contract single source', () => {
     expect(BASE_DISPATCH_CAPABILITIES).not.toContain('agent_delegation_v1');
     // Hosts overwrite this reserved argument with the relay-authenticated sender.
     expect(contractSource).toContain('pub const DISPATCH_SOURCE_DEVICE_ARG: &str = "__sourceDeviceId";');
-    expect(contractSource).toContain('pub const DISPATCH_SOURCE_BOUND_COMMANDS: &[&str] = &["dispatch_target_catalog"');
+    const bound = /DISPATCH_SOURCE_BOUND_COMMANDS: &\[&str\] =\s*&\[([^\]]*)\]/u.exec(contractSource);
+    expect(bound).not.toBeNull();
+    expect(Array.from(bound![1].matchAll(/"([^"]+)"/g), match => match[1]))
+      .toEqual(['dispatch_target_catalog', 'dispatch_target_submit']);
   });
 
   it('keeps the versioned feature capabilities required on both sides', () => {

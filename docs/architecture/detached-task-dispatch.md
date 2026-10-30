@@ -475,3 +475,17 @@ a value in the incoming payload is discarded, and other target verbs never recei
 Without a bound requester the verb fails. The optional `agent_delegation_v1`
 capability gates delegated use; it is not a submission requirement and does not change
 the protocol version.
+
+Delegated submission adds an optional `delegation` field to `submit`:
+`{ openAgentId, taskKind: "message" | "coding", source? }`, where `source` (session id,
+agent type, display name) is requester-reported display context only. Hosts bind
+`__sourceDeviceId` into a submission only when it carries `delegation`, so an older
+local runner that refuses unknown fields keeps accepting ordinary jobs. The target
+admits a delegated job before creating anything: the open agent must exist, be granted
+to the bound device, and allow the task kind; the request's agent must equal the open
+agent's; and the approval policy must be `remote`. Message tasks must leave
+`workspacePath` empty and run in the open agent's bound directory or in a private
+`<product_home>/delegation/workspaces/<openAgentId>/<device>` directory. Coding tasks
+must name a worktree under the target's own dispatch worktree root. The source is kept
+in the job record and in the `dispatchDelegation` turn context; it is deliberately not
+added to `list` entries, which older controllers parse strictly.

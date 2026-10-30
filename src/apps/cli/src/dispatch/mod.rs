@@ -1,3 +1,4 @@
+mod delegation;
 mod permissions;
 pub(crate) mod protocol;
 mod query_file;
@@ -223,6 +224,11 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
     capabilities.push(
         openbitfun_services_core::dispatch_contract::DISPATCH_FILE_CHUNKS_CAPABILITY.to_string(),
     );
+    // The open-agent list, `catalog`, and delegated submission ship together.
+    capabilities.push(
+        openbitfun_services_core::dispatch_contract::DISPATCH_AGENT_DELEGATION_CAPABILITY
+            .to_string(),
+    );
     if runner::is_supported() {
         capabilities.push(
             openbitfun_services_core::dispatch_contract::DISPATCH_DETACHED_WORKER_CAPABILITY
@@ -257,12 +263,20 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
     }
     openbitfun_agent_runtime::session_control::validate_session_id(&request.session_id)
         .map_err(anyhow::Error::msg)?;
+    let store = DispatchStore::open_default()?;
+    // A delegated job is admitted against the open agent before anything is
+    // created, so a closed or narrowed grant refuses even a retried submit.
+    delegation::admit(
+        &mut request,
+        &delegation::open_agent_store()?,
+        &delegation::DelegationRoots::for_store(&store)?,
+    )
+    .await?;
     let mut intent = request.clone();
     // Setup audit is observational metadata. A retry after an ambiguous SSH
     // response will not repeat an installation, so including it in the intent
     // fingerprint would incorrectly turn that safe retry into a conflict.
     intent.setup_audit.clear();
-    let store = DispatchStore::open_default()?;
     if let Some((record, state)) = store.load_existing_job_for_intent(&intent)? {
         ensure_worker_spawned(&store, &record.request.job_id, state.state)?;
         return Ok(DispatchSubmitResponse {
@@ -1250,6 +1264,8 @@ mod tests {
             title: Some("Task".to_string()),
             attachments: Vec::new(),
             setup_audit: Vec::new(),
+            delegation: None,
+            source_device_id: None,
         }
     }
 

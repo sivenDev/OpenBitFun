@@ -2,7 +2,7 @@
 id: "F002-01"
 title: "目标端开放智能体清单与纯消息任务"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "目标设备主人可以把指定原生智能体开放给同账号的其他设备；目标端声明 agent_delegation_v1，提供按调用设备过滤的目录查询，并能执行不经 Git 的纯消息委派任务。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"
@@ -171,7 +171,28 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`
 - 手动：在本机用 `openbitfun dispatch submit` 提交带委派的纯消息任务，确认工作区位置、回答可读、未授权时明确失败
 
-- [ ] 委派提交的校验、纯消息工作区与禁止多跳都有测试覆盖，并在本机实测
+- [x] 委派提交的校验、纯消息工作区与禁止多跳都有测试覆盖，并在本机实测
+
+**Deviations:**
+- 校验与工作区解析放在新文件 `src/apps/cli/src/dispatch/delegation.rs`，没有改 `workspace.rs`（后者只负责 Git 交付）。
+- 未绑定工作区的纯消息任务目录为 `<product_home>/delegation/workspaces/<openAgentId>/<来源设备>`（权限 700），而不是计划中的 `delegation-workspaces/`。设备 id 含非安全字符时改用 SHA-256 十六进制，不会越出目录。
+- 纯消息任务要求 `workspacePath` 为空，否则拒绝（不静默忽略）。编码任务只接受本机 Dispatch worktree 根目录下的路径，即由本机 `__workspace_provision` 建立的 worktree。
+- 宿主只在 `submit` 带 `delegation` 时注入 `__sourceDeviceId`：桌面调用的是本机另行安装的 CLI，旧 CLI 以 `deny_unknown_fields` 解析提交，若普通提交也注入会让所有派发失败。
+- 来源元数据写入任务记录（`request.delegation` 与 `__sourceDeviceId`），并以回合上下文 `dispatchDelegation` 写入会话回合记录。没有加入 `list` 响应，因为旧控制端的 `DispatchTargetJobEntry` 用 `deny_unknown_fields` 解析列表；展示留给 F002-02（已在其计划中注明）。
+- 禁止多跳：目前远程委派尚不存在，Dispatch 工作进程也不注册远程委派端口；F002-02 必须让带 `dispatchDelegation` 的会话不提供 `remote:` 条目（已在其计划中注明）。
+- 旧版 CLI 读到委派任务记录时无法解析（`deny_unknown_fields`），只会在列表中跳过这些任务，普通任务不受影响。
+- 后续动词（`status`、`cancel`、`answer`、`append`、`continue`、`query`）不核对来源；同账号下可接受，跨账号的校验已写入 F002-06 计划。
+
+**Evidence (2026-10-29):**
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`：103 passed，其中 `dispatch::delegation::tests` 5 项：纯消息任务使用本机选定目录、拒绝请求方路径；编码任务只用已建立的 worktree；未授权、开放项不存在、任务类型不允许、智能体类型不一致、非 `remote` 审批、无来源设备都明确失败且不创建目录；普通任务不能自称来源设备；设备目录名不会越界。
+- `cargo +1.95.0 test --locked -p openbitfun-services-core --lib dispatch_contract`：7 passed（`submit` 只在带 `delegation` 时绑定来源）；`peer_host::` 105 passed；`dispatch.contract.test.ts` 11 passed；`cargo +1.95.0 check --locked -p openbitfun-desktop` 通过。
+- 手动（隔离的 `/tmp` 目录，700，复制 `config/app.json`，结束后删除；未改动真实配置）：
+  - 旧二进制收到委派字段时拒绝提交（`unknown field __sourceDeviceId`），与预期的跨版本行为一致。
+  - 新二进制：来源设备未授权、请求方提供目标路径都明确失败，且未创建任务。
+  - 授权的纯消息任务 `succeeded`，回答 `DELEGATION_OK`；工作区为 `delegation/workspaces/helper/laptop`（700）；任务记录带来源与委派信息。
+  - 关闭开放项后重试同一提交被拒绝；`probe` 声明 `agent_delegation_v1`。
+  - 绑定工作区的开放项：任务读取工作区中的 `fact.txt` 并回答 `PELICAN`；会话回合记录中带 `dispatchDelegation`。
+- 远程场景：只在本机经 `openbitfun dispatch` 标准输入实测；经 relay 的设备 RPC、Peer、手机端未实测。
 
 ## References
 - `docs/superplan/rfcs/F002.md`

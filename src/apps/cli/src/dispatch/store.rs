@@ -2258,6 +2258,8 @@ mod tests {
             title: None,
             attachments: Vec::new(),
             setup_audit: Vec::new(),
+            delegation: None,
+            source_device_id: None,
         }
     }
 
