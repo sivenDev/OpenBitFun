@@ -80,10 +80,13 @@ impl Default for AgentExecutionTool {
     }
 }
 
-/// The executor and parent permission ceiling that decide which external
-/// agents a parent may be offered.
+/// The host delegation ports and parent permission ceiling that decide which
+/// external (`acp:`) and remote (`remote:`) agents a parent may be offered.
 pub(crate) struct ExternalAgentCatalog {
-    pub(crate) executor: std::sync::Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
+    pub(crate) executor:
+        Option<std::sync::Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>>,
+    pub(crate) remote_agents:
+        Option<std::sync::Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>>,
     pub(crate) parent_ceiling: openbitfun_runtime_ports::PermissionRuntimeCeiling,
 }
 
@@ -148,7 +151,7 @@ impl AgentExecutionTool {
         }
     }
 
-    /// Lists configured external agents only when admission would accept the
+    /// Lists external and remote agents only when admission would accept the
     /// parent, so the catalog never offers a delegation that is refused.
     async fn append_external_agents(
         context: &ToolUseContext,
@@ -158,16 +161,21 @@ impl AgentExecutionTool {
         Self::append_external_agents_from(catalog.as_ref(), context, agents).await
     }
 
-    /// Resolves the host executor and the parent's permission ceiling that
-    /// gate external agent listings for `context`.
+    /// Resolves the host delegation ports and the parent's permission ceiling
+    /// that gate external and remote agent listings for `context`.
     pub(crate) async fn external_agent_catalog(
         context: &ToolUseContext,
     ) -> Option<ExternalAgentCatalog> {
-        let executor = get_global_coordinator()
-            .and_then(|coordinator| coordinator.external_agent_executor())?;
+        let coordinator = get_global_coordinator()?;
+        let executor = coordinator.external_agent_executor();
+        let remote_agents = coordinator.remote_agent_port();
+        if executor.is_none() && remote_agents.is_none() {
+            return None;
+        }
         match Self::derive_parent_permission_runtime_ceiling(context).await {
             Ok(parent_ceiling) => Some(ExternalAgentCatalog {
                 executor,
+                remote_agents,
                 parent_ceiling,
             }),
             Err(error) => {
@@ -199,17 +207,34 @@ impl AgentExecutionTool {
             );
             return agents;
         }
-        let descriptors = catalog
-            .executor
-            .list_agents(
-                openbitfun_runtime_ports::ExternalAgentListing::Configured,
-                context
-                    .workspace
-                    .as_ref()
-                    .and_then(|workspace| workspace.connection_id()),
-            )
-            .await;
-        crate::agentic::agents::AgentRegistry::merge_acp_agents(agents, descriptors, false)
+        let mut agents = agents;
+        if let Some(executor) = catalog.executor.as_ref() {
+            let descriptors = executor
+                .list_agents(
+                    openbitfun_runtime_ports::ExternalAgentListing::Configured,
+                    context
+                        .workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.connection_id()),
+                )
+                .await;
+            agents =
+                crate::agentic::agents::AgentRegistry::merge_acp_agents(agents, descriptors, false);
+        }
+        if let Some(port) = catalog.remote_agents.as_ref() {
+            if let Some(reason) = Self::remote_agent_parent_refusal(context) {
+                debug!(
+                    "Remote agents omitted from catalog: agent_type={:?}, reason={}",
+                    context.agent_type, reason
+                );
+            } else {
+                let descriptors = port
+                    .list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
+                    .await;
+                agents = crate::agentic::agents::merge_remote_agents(agents, descriptors, false);
+            }
+        }
+        agents
     }
 
     async fn get_agents_types(&self, context: Option<&ToolUseContext>) -> Vec<String> {

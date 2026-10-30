@@ -450,7 +450,8 @@ mod tests {
     async fn subagent_projection_lists_admissible_external_agents() {
         let restrictions = ToolRuntimeRestrictions::default();
         let catalog = crate::agentic::tools::implementations::task::ExternalAgentCatalog {
-            executor: std::sync::Arc::new(ListedExternalAgent),
+            executor: Some(std::sync::Arc::new(ListedExternalAgent)),
+            remote_agents: None,
             parent_ceiling: Default::default(),
         };
         let executor = &catalog;
@@ -470,5 +471,103 @@ mod tests {
         let review = description_context("DeepReview", &restrictions);
         let agents = load_subagent_entries(None, &review, &restrictions, Some(executor)).await;
         assert!(!agents.iter().any(|agent| agent.id.starts_with("acp:")));
+    }
+
+    struct ListedRemoteAgent;
+
+    #[async_trait::async_trait]
+    impl openbitfun_runtime_ports::RemoteAgentDelegationPort for ListedRemoteAgent {
+        async fn list_agents(
+            &self,
+            _listing: openbitfun_runtime_ports::RemoteAgentListing,
+        ) -> Vec<openbitfun_runtime_ports::RemoteAgentDescriptor> {
+            vec![openbitfun_runtime_ports::RemoteAgentDescriptor {
+                address: openbitfun_runtime_ports::RemoteAgentAddress {
+                    device_id: "laptop".to_string(),
+                    open_agent_id: "helper".to_string(),
+                },
+                device_name: "Laptop".to_string(),
+                agent_type: "Standard".to_string(),
+                display_name: "Helper".to_string(),
+                description: None,
+                task_kinds: vec![openbitfun_runtime_ports::RemoteAgentTaskKind::Message],
+                availability: openbitfun_runtime_ports::RemoteAgentAvailability::Available,
+            }]
+        }
+
+        async fn submit(
+            &self,
+            _request: openbitfun_runtime_ports::RemoteAgentSubmitRequest,
+        ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::RemoteAgentJob>
+        {
+            unreachable!("listing never submits")
+        }
+
+        async fn observe(
+            &self,
+            _job: &openbitfun_runtime_ports::RemoteAgentJob,
+            _cursor: u64,
+        ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::RemoteAgentJobSnapshot>
+        {
+            unreachable!("listing never observes")
+        }
+
+        async fn cancel(
+            &self,
+            _job: &openbitfun_runtime_ports::RemoteAgentJob,
+        ) -> openbitfun_runtime_ports::PortResult<bool> {
+            Ok(false)
+        }
+
+        async fn answer(
+            &self,
+            _job: &openbitfun_runtime_ports::RemoteAgentJob,
+            _request_id: &str,
+            _reply: openbitfun_runtime_ports::PermissionReply,
+        ) -> openbitfun_runtime_ports::PortResult<()> {
+            Ok(())
+        }
+
+        async fn continue_job(
+            &self,
+            _job: &openbitfun_runtime_ports::RemoteAgentJob,
+            _turn_id: &str,
+            _prompt: String,
+        ) -> openbitfun_runtime_ports::PortResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn subagent_projection_lists_admissible_remote_agents() {
+        let restrictions = ToolRuntimeRestrictions::default();
+        let catalog = crate::agentic::tools::implementations::task::ExternalAgentCatalog {
+            executor: None,
+            remote_agents: Some(std::sync::Arc::new(ListedRemoteAgent)),
+            parent_ceiling: Default::default(),
+        };
+        let is_remote = |agent: &super::AgentSnapshotEntry| agent.id.starts_with("remote:");
+
+        let standard = description_context("Standard", &restrictions);
+        let agents = load_subagent_entries(None, &standard, &restrictions, Some(&catalog)).await;
+        assert!(
+            agents
+                .iter()
+                .any(|agent| agent.id == "remote:laptop/helper"),
+            "the turn listing must offer the remote agents AgentSpawn admits"
+        );
+
+        let review = description_context("DeepReview", &restrictions);
+        let agents = load_subagent_entries(None, &review, &restrictions, Some(&catalog)).await;
+        assert!(!agents.iter().any(is_remote));
+
+        // A turn another device delegated here never delegates onward.
+        let mut delegated = description_context("Standard", &restrictions);
+        delegated.custom_data.insert(
+            crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
+            serde_json::Value::Bool(true),
+        );
+        let agents = load_subagent_entries(None, &delegated, &restrictions, Some(&catalog)).await;
+        assert!(!agents.iter().any(is_remote));
     }
 }

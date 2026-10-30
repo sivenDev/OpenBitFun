@@ -6,6 +6,7 @@ mod custom;
 mod custom_watch;
 mod external;
 mod query;
+mod remote_agents;
 mod resolution;
 mod support;
 #[cfg(test)]
@@ -31,6 +32,7 @@ pub use external::{
     ExternalSubagentInvocationBinding, ExternalSubagentModelBinding, ExternalSubagentRegistration,
     ExternalSubagentRoute,
 };
+pub(crate) use remote_agents::merge_remote_agents;
 
 /// Full file-backed custom agent definition for editing.
 #[derive(Debug, Clone, Serialize, Deserialize)]

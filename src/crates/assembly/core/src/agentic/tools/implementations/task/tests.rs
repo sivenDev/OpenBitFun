@@ -2521,3 +2521,206 @@ fn external_agent_catalog_and_admission_share_the_parent_refusal() {
     assert!(refusal("DeepReview", &open, false).is_some_and(|reason| reason.contains("review")));
     assert!(refusal("Minimal", &open, false).is_some_and(|reason| reason.contains("mode")));
 }
+
+/// Host that lists a fixed set of remote agents and runs none of them.
+struct ListedRemoteAgents(Vec<openbitfun_runtime_ports::RemoteAgentDescriptor>);
+
+#[async_trait::async_trait]
+impl openbitfun_runtime_ports::RemoteAgentDelegationPort for ListedRemoteAgents {
+    async fn list_agents(
+        &self,
+        _listing: openbitfun_runtime_ports::RemoteAgentListing,
+    ) -> Vec<openbitfun_runtime_ports::RemoteAgentDescriptor> {
+        self.0.clone()
+    }
+
+    async fn submit(
+        &self,
+        _request: openbitfun_runtime_ports::RemoteAgentSubmitRequest,
+    ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::RemoteAgentJob> {
+        unreachable!("admission never submits")
+    }
+
+    async fn observe(
+        &self,
+        _job: &openbitfun_runtime_ports::RemoteAgentJob,
+        _cursor: u64,
+    ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::RemoteAgentJobSnapshot>
+    {
+        unreachable!("admission never observes")
+    }
+
+    async fn cancel(
+        &self,
+        _job: &openbitfun_runtime_ports::RemoteAgentJob,
+    ) -> openbitfun_runtime_ports::PortResult<bool> {
+        Ok(false)
+    }
+
+    async fn answer(
+        &self,
+        _job: &openbitfun_runtime_ports::RemoteAgentJob,
+        _request_id: &str,
+        _reply: openbitfun_runtime_ports::PermissionReply,
+    ) -> openbitfun_runtime_ports::PortResult<()> {
+        Ok(())
+    }
+
+    async fn continue_job(
+        &self,
+        _job: &openbitfun_runtime_ports::RemoteAgentJob,
+        _turn_id: &str,
+        _prompt: String,
+    ) -> openbitfun_runtime_ports::PortResult<()> {
+        Ok(())
+    }
+}
+
+fn remote_descriptor(
+    open_agent_id: &str,
+    availability: openbitfun_runtime_ports::RemoteAgentAvailability,
+) -> openbitfun_runtime_ports::RemoteAgentDescriptor {
+    openbitfun_runtime_ports::RemoteAgentDescriptor {
+        address: openbitfun_runtime_ports::RemoteAgentAddress {
+            device_id: "laptop".to_string(),
+            open_agent_id: open_agent_id.to_string(),
+        },
+        device_name: "Laptop".to_string(),
+        agent_type: "Standard".to_string(),
+        display_name: "Helper".to_string(),
+        description: None,
+        task_kinds: vec![openbitfun_runtime_ports::RemoteAgentTaskKind::Message],
+        availability,
+    }
+}
+
+struct RemoteAdmission<'a> {
+    context: ToolUseContext,
+    open_agent_id: &'a str,
+    run_in_background: bool,
+    model_override_requested: bool,
+    parent_ceiling: openbitfun_runtime_ports::PermissionRuntimeCeiling,
+}
+
+impl RemoteAdmission<'_> {
+    fn new() -> Self {
+        Self {
+            context: test_tool_context("Standard"),
+            open_agent_id: "helper",
+            run_in_background: true,
+            model_override_requested: false,
+            parent_ceiling: Default::default(),
+        }
+    }
+
+    async fn run(
+        self,
+        coordinator: &crate::agentic::coordination::ConversationCoordinator,
+    ) -> Result<(), String> {
+        AgentExecutionTool::ensure_remote_agent_available(
+            coordinator,
+            &self.context,
+            &openbitfun_runtime_ports::RemoteAgentAddress {
+                device_id: "laptop".to_string(),
+                open_agent_id: self.open_agent_id.to_string(),
+            },
+            self.run_in_background,
+            super::execution::ExternalAgentAdmissionFacts {
+                parent_is_swarm: false,
+                model_override_requested: self.model_override_requested,
+                parent_ceiling: &self.parent_ceiling,
+            },
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    }
+}
+
+#[tokio::test]
+async fn remote_agent_admission_requires_an_open_available_agent() {
+    use openbitfun_runtime_ports::{RemoteAgentAvailability, RemoteAgentUnavailableReason};
+
+    let (unregistered, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
+    let error = RemoteAdmission::new().run(&unregistered).await.unwrap_err();
+    assert!(error.contains("this host cannot delegate to other devices"));
+
+    let (coordinator, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
+    coordinator.set_remote_agent_port(Arc::new(ListedRemoteAgents(vec![
+        remote_descriptor("helper", RemoteAgentAvailability::Available),
+        remote_descriptor(
+            "writer",
+            RemoteAgentAvailability::Unavailable {
+                reason: RemoteAgentUnavailableReason::Offline,
+                detail: "Laptop is offline".to_string(),
+            },
+        ),
+    ])));
+    RemoteAdmission::new()
+        .run(&coordinator)
+        .await
+        .expect("an open, available remote agent is admitted");
+
+    let mut closed = RemoteAdmission::new();
+    closed.open_agent_id = "closed";
+    let error = closed.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("remote:laptop/closed is not open to this device"));
+
+    let mut offline = RemoteAdmission::new();
+    offline.open_agent_id = "writer";
+    let error = offline.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("is unavailable (Offline): Laptop is offline"));
+}
+
+#[tokio::test]
+async fn remote_agent_admission_keeps_parent_limits_and_never_chains() {
+    use openbitfun_runtime_ports::{
+        PermissionEffect, PermissionRule, PermissionRuntimeCeiling, RemoteAgentAvailability,
+    };
+
+    let (coordinator, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
+    coordinator.set_remote_agent_port(Arc::new(ListedRemoteAgents(vec![remote_descriptor(
+        "helper",
+        RemoteAgentAvailability::Available,
+    )])));
+
+    let mut foreground = RemoteAdmission::new();
+    foreground.run_in_background = false;
+    let error = foreground.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("runs only in the background"));
+
+    let mut model = RemoteAdmission::new();
+    model.model_override_requested = true;
+    let error = model.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("external_subagent_model_override_unsupported"));
+
+    let mut restricted = RemoteAdmission::new();
+    restricted.parent_ceiling = PermissionRuntimeCeiling::try_new(vec![PermissionRule {
+        action: "edit".to_string(),
+        resource: "*".to_string(),
+        effect: PermissionEffect::Deny,
+    }])
+    .expect("deny-only ceiling");
+    let error = restricted.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("permission restrictions"));
+
+    let mut review = RemoteAdmission::new();
+    review.context = test_tool_context("DeepReview");
+    let error = review.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("not available to review agents"));
+
+    let mut delegated = RemoteAdmission::new();
+    delegated.context.custom_data.insert(
+        crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
+        serde_json::Value::Bool(true),
+    );
+    let error = delegated.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("delegation does not chain across devices"));
+}
+
+#[test]
+fn task_description_documents_remote_agent_types() {
+    let description = AgentExecutionTool::new().render_description();
+    assert!(description.contains("`remote:<device_id>/<open_agent_id>`"));
+    assert!(description.contains("run_in_background=true"));
+}

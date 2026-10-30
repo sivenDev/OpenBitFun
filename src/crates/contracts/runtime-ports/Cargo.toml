@@ -41,6 +41,11 @@ path = "tests/external_agent_port_contracts.rs"
 required-features = ["external-agent-port"]
 
 [[test]]
+name = "remote_agent_port_contracts"
+path = "tests/remote_agent_port_contracts.rs"
+required-features = ["remote-agent-port"]
+
+[[test]]
 name = "session_store_contracts"
 path = "tests/session_store_contracts.rs"
 required-features = ["workspace-ports"]
@@ -65,6 +70,7 @@ hook-function-runtime = []
 script-tool-runtime = []
 ptc-runtime = []
 external-agent-port = ["dep:openbitfun-events"]
+remote-agent-port = ["dep:openbitfun-product-domains"]
 web-search-port = []
 workspace-ports = ["dep:anyhow", "dep:tokio-util", "dep:tokio", "tokio/io-util"]
 terminal-port = ["dep:tokio"]

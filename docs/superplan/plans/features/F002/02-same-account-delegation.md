@@ -2,7 +2,7 @@
 id: "F002-02"
 title: "同账号委派给远程原生智能体"
 type: "feature"
-status: "approved"
+status: "in_progress"
 summary: "发起方的智能体列表显示同账号设备开放的远程智能体；助理用 AgentSpawn 后台委派纯消息或编码任务，后端观察器按游标收回结果交给 AgentWait，重启后可补收。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"
@@ -99,7 +99,24 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::agents::registry`
 - `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib skill_agent`
 
-- [ ] 远程条目在列表与目录中按可用性和准入规则出现
+- [x] 远程条目在列表与目录中按可用性和准入规则出现
+
+**Deviations:**
+- 目录查询与缓存放在 core `service/dispatch/remote_agents.rs`（`RemoteAgentDirectory`，需要 `agent-runtime` 与 `ssh-remote`），而不是桌面端；桌面 `remote_agent_delegation.rs` 只提供账号设备列表与 relay RPC。原因：这段逻辑与平台无关，按仓库规则下沉。
+- 目标端目录条目新增 `agentType`：F002-01 的准入要求请求中的智能体与开放项一致，发起方需要知道它。F002-01 尚未发布，没有旧数据。
+- `remote-agent-port` 直接依赖 `product-domains`（待审批请求与回答类型），并在 core-boundaries 规则中登记为 `agent-runtime` 的转发项与桌面的直接消费项。
+- 禁止多跳：目标端写入的 `dispatchDelegation` 原本只进入回合元数据，不进入工具上下文。现在协调器把它映射为上下文变量，工具上下文与子智能体都会继承；键名常量移到 core `service::delegation`，CLI 复用。
+- 管理列表与每回合目录都使用 30 秒缓存，单台设备查询上限 8 秒；离线或不可达时保留上次的条目并标明原因。
+- 提交、观察、取消、审批与继续在 Task 2 之前明确返回「本版本暂不支持」，不在本机执行替代。
+
+**Evidence (2026-10-30):**
+- `cargo +1.95.0 test --locked -p openbitfun-runtime-ports --features remote-agent-port --test remote_agent_port_contracts`：5 passed（寻址往返与非法地址、线上名称、目标状态载荷与未知状态、游标观察、离线与取消）。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::agents::registry`：61 passed（含 `remote_agents` 投影、管理列表保留不可用条目、不遮盖已有 id）。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib skill_agent`：10 passed（远程条目按准入出现；DeepReview 与被委派回合中不出现）。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib tools::implementations::task`：94 passed（准入：未注册端口、未开放、离线、前台运行、指定模型、权限受限、DeepReview、被委派回合；子智能体继承禁止多跳标记）。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git,dispatch-store,ssh-remote --lib service::dispatch::remote_agents`：3 passed（只查询声明 `agent_delegation_v1` 的设备、缓存复用与离线原因、不可达设备）。
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`：103 passed；`cargo +1.95.0 check -p openbitfun-desktop`：通过；`pnpm run check:core-boundaries` 与 `node --test scripts/check-core-boundaries.test.mjs`（156）：通过。
+- 远程场景：只有单元测试，尚未在真实设备或本机模拟中查询目录（见 Task 5）。
 
 ## Task 2: 提交、观察、取消、审批与重启补收
 
@@ -161,6 +178,27 @@ parent: "F002"
 - 手动：两台同账号设备分别实测纯消息、编码、取消、审批、发起方重启补收、目标离线；结果记录在本计划中
 
 - [ ] 界面测试通过，两台设备的实测结果已记录
+
+## Task 5: 本机双账号多客户端模拟
+
+**Outcome:** 不依赖真实设备，在一台电脑上模拟两个账号、多个客户端，自动化覆盖委派流程，并提供一条启动命令供人工体验。经用户批准加入本计划（2026-10-30）。
+
+**Scope:**
+- **自动化模拟**：
+  - 不改动产品代码。测试在 127.0.0.1 上进程内启动 relay-service，使用临时数据库，直接写入用户、设备与令牌。
+  - 被模拟的设备是真实的 `openbitfun` CLI 进程，各自使用隔离的 `OPENBITFUN_HOME`、`OPENBITFUN_USER_ROOT` 与 `OPENBITFUN_DEVICE_IDENTITY_PATH`。
+  - 不使用 `daemon __dispatch_provision`（会安装 launchd 服务）；直接写入会话，不安装任何服务，结束后删除临时目录。
+- **开发脚本**：
+  - 新增 `scripts/dev/sim-devices.mjs`：启动本地 relay 与 CLI 设备（如 A2、B1），再启动一个使用隔离存储、指向本地 relay 的桌面实例（A1）。
+  - 桌面端的 relay 覆盖只在调试或开发构建中生效，发布构建中不存在。
+- **模拟不能证明**：真实 GitHub 登录、真实网络、新旧版本混用、手机端与 IM。
+
+**Verification:**
+- 自动化模拟测试（命令在实现时补充到本节）
+- 手动：运行开发脚本，在桌面实例中完成一次纯消息委派
+- `pnpm run check:repo-hygiene`
+
+- [ ] 自动化模拟覆盖目录、委派、取消与审批，开发脚本可一条命令启动
 
 ## References
 - `docs/superplan/rfcs/F002.md`

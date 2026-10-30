@@ -221,6 +221,7 @@ agent-runtime = [
     "openbitfun-runtime-ports/agent-api",
     "openbitfun-runtime-ports/external-agent-port",
     "openbitfun-runtime-ports/git-port",
+    "openbitfun-runtime-ports/remote-agent-port",
     "openbitfun-runtime-ports/remote-exec-port",
     "openbitfun-runtime-ports/remote-workspace-ports",
     "openbitfun-runtime-ports/runtime-event-port",

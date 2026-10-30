@@ -21,6 +21,9 @@ const OPEN_AGENTS_SCHEMA_VERSION: u32 = 1;
 /// Grants every device of this account.
 pub const ALL_SAME_ACCOUNT_DEVICES: &str = "*";
 const MAX_OPEN_AGENT_ID_LEN: usize = 64;
+/// Turn context key a target sets on a delegated job's turns, naming the
+/// device that asked. A turn that carries it must not delegate onward.
+pub const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
 
 /// What a delegated job may do on this device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

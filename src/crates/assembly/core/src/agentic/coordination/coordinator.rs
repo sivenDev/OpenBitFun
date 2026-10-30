@@ -1345,6 +1345,7 @@ pub struct ConversationCoordinator {
     terminal_port: OnceLock<Arc<dyn TerminalPort>>,
     remote_exec_port: OnceLock<Arc<dyn RemoteExecPort>>,
     external_agent_executor: OnceLock<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>>,
+    remote_agent_port: OnceLock<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>>,
     hook_registry: openbitfun_agent_runtime::native_hooks::RuntimeHookRegistry,
 }
 
@@ -1671,6 +1672,21 @@ impl ConversationCoordinator {
             Some(value) if value.is_object() => value,
             Some(value) => serde_json::json!({ "raw_metadata": value }),
             None => serde_json::json!({}),
+        }
+    }
+
+    /// Marks a turn that another device delegated here (the target sets the
+    /// metadata), so its catalog and admission refuse delegating onward.
+    fn copy_dispatch_delegation_context(
+        context: &mut HashMap<String, String>,
+        metadata: Option<&serde_json::Value>,
+    ) {
+        let key = crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
+        if metadata
+            .and_then(|metadata| metadata.get(key))
+            .is_some_and(serde_json::Value::is_object)
+        {
+            context.insert(key.to_string(), "true".to_string());
         }
     }
 
@@ -2268,6 +2284,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             terminal_port: OnceLock::new(),
             remote_exec_port: OnceLock::new(),
             external_agent_executor: OnceLock::new(),
+            remote_agent_port: OnceLock::new(),
             hook_registry: crate::native_hooks::new_runtime_hook_registry(),
         }
     }
@@ -2608,6 +2625,23 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         &self,
     ) -> Option<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>> {
         self.external_agent_executor.get().map(Arc::clone)
+    }
+
+    /// Registers the host's delegation to agents other devices of this
+    /// account opened. A host that registers none offers no `remote:` agents.
+    pub fn set_remote_agent_port(
+        &self,
+        port: Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>,
+    ) {
+        if self.remote_agent_port.set(port).is_err() {
+            log::warn!("Remote agent port is already configured; ignoring duplicate injection");
+        }
+    }
+
+    pub fn remote_agent_port(
+        &self,
+    ) -> Option<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>> {
+        self.remote_agent_port.get().map(Arc::clone)
     }
 
     /// Availability of an external agent in `context`, reporting a missing
@@ -7443,6 +7477,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             );
         }
         Self::copy_output_schema_context(&mut context_vars, user_message_metadata.as_ref());
+        Self::copy_dispatch_delegation_context(&mut context_vars, user_message_metadata.as_ref());
         if let Some(delivery) =
             openbitfun_core_types::background_delivery::BackgroundDelivery::from_metadata(
                 user_message_metadata.as_ref(),
@@ -8012,6 +8047,10 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             );
         }
         Self::copy_output_schema_context(&mut context_vars, plan.user_message_metadata.as_ref());
+        Self::copy_dispatch_delegation_context(
+            &mut context_vars,
+            plan.user_message_metadata.as_ref(),
+        );
 
         let execution_context = ExecutionContext {
             session_id: plan.session_id.clone(),

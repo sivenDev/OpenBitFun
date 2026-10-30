@@ -115,6 +115,22 @@ pub struct AgentInfo {
     /// Host-level availability of an external agent; absent for native agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_availability: Option<openbitfun_runtime_ports::ExternalAgentAvailability>,
+    /// The device and open agent behind a `remote:` agent; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_agent: Option<RemoteAgentInfo>,
+}
+
+/// Where a `remote:` agent runs and whether it can take work now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAgentInfo {
+    pub device_id: String,
+    pub device_name: String,
+    pub open_agent_id: String,
+    /// The target-side agent the open agent runs.
+    pub agent_type: String,
+    pub task_kinds: Vec<openbitfun_runtime_ports::RemoteAgentTaskKind>,
+    pub availability: openbitfun_runtime_ports::RemoteAgentAvailability,
 }
 
 fn default_true() -> bool {
@@ -231,6 +247,7 @@ impl AgentInfo {
             supports_follow_up: true,
             execution_kind: None,
             external_availability: None,
+            remote_agent: None,
         }
     }
 }

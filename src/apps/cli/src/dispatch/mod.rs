@@ -176,6 +176,7 @@ async fn catalog_from(
             .into_iter()
             .map(|agent| DispatchCatalogAgent {
                 id: agent.id,
+                agent_type: agent.agent_type,
                 display_name: agent.display_name,
                 description: agent.description,
                 task_kinds: agent
@@ -1187,6 +1188,7 @@ mod tests {
             .collect();
         assert_eq!(ids, vec!["for-laptop", "for-all"]);
         assert_eq!(laptop.agents[0].task_kinds, vec!["message"]);
+        assert_eq!(laptop.agents[0].agent_type, "Standard");
         // Target paths never leave the target.
         assert!(!serde_json::to_string(&laptop)
             .unwrap()

@@ -27,6 +27,8 @@ mod plugin;
 mod product_search;
 #[cfg(feature = "ptc-runtime")]
 mod ptc_tool;
+#[cfg(feature = "remote-agent-port")]
+mod remote_agent;
 #[cfg(feature = "script-tool-runtime")]
 mod script_tool;
 #[cfg(feature = "web-search-port")]
@@ -85,6 +87,8 @@ pub use ptc_tool::{
     PtcExecutionRequest, PtcExecutionResponse, PtcNestedToolCall, PtcRuntime,
     PtcRuntimeAvailability, PtcToolBinding, PtcToolCallHandler, PtcToolSpecRequest,
 };
+#[cfg(feature = "remote-agent-port")]
+pub use remote_agent::*;
 #[cfg(feature = "script-tool-runtime")]
 pub use script_tool::{
     ScriptToolDescriptor, ScriptToolExpectedExport, ScriptToolInvokeRequest,

@@ -93,6 +93,7 @@ The two modes are mutually exclusive: do not provide `subagent_type` when `fork_
   - The <available_agents> section lists the allowed agent types and their capabilities. Pass the exact `type` value from that catalog as `subagent_type`.
   - In this mode, the subagent does not share your context. Include all necessary background information in the prompt.
   - Catalog types of the form `acp:<client_id>` (for example `acp:claude-code`) are external agents. They work with their own tools, model, and context, so do not pass `model_id`; `send_input` continues the same external session.
+  - Catalog types of the form `remote:<device_id>/<open_agent_id>` are agents another device of this account opened to this one. They run on that device with its own tools, model, and files and cannot see this workspace, so put everything they need in the prompt and do not pass `model_id`. They run only in the background: set `run_in_background=true` and collect the result with AgentWait.
 2. By forking the current context
   - Set `fork_context=true`, and provide `agent_id` and `prompt`. Do not provide `subagent_type`.
   - In this mode, the subagent inherits the full conversation history up to this point — all prior user messages, assistant responses, and tool results. You do not need to repeat information already covered in the conversation.

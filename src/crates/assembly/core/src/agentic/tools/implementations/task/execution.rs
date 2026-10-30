@@ -84,6 +84,8 @@ fn forward_subagent_invocation_context(
     for key in [
         USER_INPUT_AVAILABLE_CONTEXT_KEY,
         AUTO_APPROVE_ASK_CONTEXT_KEY,
+        // A child of a delegated turn must not delegate across devices either.
+        crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY,
     ] {
         let Some(value) = context.custom_data.get(key) else {
             continue;
@@ -278,6 +280,79 @@ impl AgentExecutionTool {
         }
     }
 
+    /// Why the parent may not delegate to a remote agent beyond the checks it
+    /// shares with external agents, or `None` when it may.
+    pub(super) fn remote_agent_parent_refusal(context: &ToolUseContext) -> Option<&'static str> {
+        let delegated_here = context
+            .custom_data
+            .get(crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY)
+            .and_then(Value::as_bool)
+            == Some(true);
+        delegated_here.then_some(
+            "is not available in a turn another device delegated here: delegation does not chain across devices",
+        )
+    }
+
+    /// Admits a `remote:<deviceId>/<openAgentId>` subagent under the same
+    /// parent checks as external agents: the target device runs its own
+    /// tools, so a parent restriction could not be held to them. A remote
+    /// agent also runs only in the background, never from a delegated turn,
+    /// and only when the host lists it as open to this device and available.
+    pub(super) async fn ensure_remote_agent_available(
+        coordinator: &crate::agentic::coordination::ConversationCoordinator,
+        context: &ToolUseContext,
+        address: &openbitfun_runtime_ports::RemoteAgentAddress,
+        run_in_background: bool,
+        facts: ExternalAgentAdmissionFacts<'_>,
+    ) -> OpenBitFunResult<openbitfun_runtime_ports::RemoteAgentDescriptor> {
+        let agent_type = address.agent_type();
+        if let Some(refusal) = Self::external_agent_parent_refusal(
+            context,
+            facts.parent_ceiling,
+            facts.parent_is_swarm,
+        )
+        .or_else(|| Self::remote_agent_parent_refusal(context))
+        {
+            return Err(OpenBitFunError::tool(format!(
+                "remote agent {agent_type} {refusal}"
+            )));
+        }
+        if facts.model_override_requested {
+            return Err(OpenBitFunError::tool(
+                "external_subagent_model_override_unsupported: remote agents use the model their device configured"
+                    .to_string(),
+            ));
+        }
+        if !run_in_background {
+            return Err(OpenBitFunError::tool(format!(
+                "remote agent {agent_type} runs only in the background; set run_in_background to true and collect the result with AgentWait"
+            )));
+        }
+        let port = coordinator.remote_agent_port().ok_or_else(|| {
+            OpenBitFunError::tool(format!(
+                "remote agent {agent_type} is unavailable: this host cannot delegate to other devices"
+            ))
+        })?;
+        let descriptor = port
+            .list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
+            .await
+            .into_iter()
+            .find(|descriptor| &descriptor.address == address)
+            .ok_or_else(|| {
+                OpenBitFunError::tool(format!(
+                    "remote agent {agent_type} is not open to this device"
+                ))
+            })?;
+        match &descriptor.availability {
+            openbitfun_runtime_ports::RemoteAgentAvailability::Available => Ok(descriptor),
+            openbitfun_runtime_ports::RemoteAgentAvailability::Unavailable { reason, detail } => {
+                Err(OpenBitFunError::tool(format!(
+                    "remote agent {agent_type} is unavailable ({reason:?}): {detail}"
+                )))
+            }
+        }
+    }
+
     pub(super) async fn derive_parent_permission_runtime_ceiling(
         context: &ToolUseContext,
     ) -> OpenBitFunResult<PermissionRuntimeCeiling> {
@@ -461,6 +536,26 @@ impl AgentExecutionTool {
                     },
                 )
                 .await?;
+            } else if let Some(address) =
+                openbitfun_runtime_ports::RemoteAgentAddress::parse(&target_agent_type)
+            {
+                let parent_ceiling =
+                    Self::derive_parent_permission_runtime_ceiling(context).await?;
+                Self::ensure_remote_agent_available(
+                    &coordinator,
+                    context,
+                    &address,
+                    invocation.run_in_background,
+                    ExternalAgentAdmissionFacts {
+                        parent_is_swarm,
+                        model_override_requested: external_subagent_model_override_requested(
+                            invocation.model_id.as_deref(),
+                            invocation.inherit_parent_model,
+                        ),
+                        parent_ceiling: &parent_ceiling,
+                    },
+                )
+                .await?;
             }
         }
         let mut model_id = invocation.model_id.clone();
@@ -482,10 +577,35 @@ impl AgentExecutionTool {
             .as_deref()
             .and_then(external_agent_client_id)
             .map(str::to_string);
+        let requested_remote_agent = invocation
+            .subagent_type
+            .as_deref()
+            .and_then(openbitfun_runtime_ports::RemoteAgentAddress::parse);
         let subagent_type = match context_mode {
             SubagentContextMode::Fresh => {
                 if target_session_id.is_some() {
                     None
+                } else if let Some(address) = requested_remote_agent.as_ref() {
+                    let parent_ceiling =
+                        Self::derive_parent_permission_runtime_ceiling(context).await?;
+                    Self::ensure_remote_agent_available(
+                        &coordinator,
+                        context,
+                        address,
+                        run_in_background,
+                        ExternalAgentAdmissionFacts {
+                            parent_is_swarm,
+                            model_override_requested: external_subagent_model_override_requested(
+                                model_id.as_deref(),
+                                inherit_parent_model,
+                            ),
+                            parent_ceiling: &parent_ceiling,
+                        },
+                    )
+                    .await?;
+                    let subagent_type = address.agent_type();
+                    logical_subagent_type = Some(subagent_type.clone());
+                    Some(subagent_type)
                 } else if let Some(client_id) = requested_external_agent.as_deref() {
                     let subagent_type = invocation.subagent_type.clone().unwrap_or_default();
                     let parent_ceiling =
@@ -1648,6 +1768,20 @@ mod target_context_tests {
                 Some(if value { "true" } else { "false" })
             );
         }
+    }
+
+    #[test]
+    fn child_context_keeps_the_delegated_turn_marker() {
+        let key = crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
+        let mut parent = parent_tool_context();
+        parent
+            .custom_data
+            .insert(key.to_string(), Value::Bool(true));
+        let mut child = HashMap::new();
+
+        forward_subagent_invocation_context(&parent, &mut child);
+
+        assert_eq!(child.get(key).map(String::as_str), Some("true"));
     }
 
     #[test]

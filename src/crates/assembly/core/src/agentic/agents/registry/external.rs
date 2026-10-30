@@ -906,5 +906,6 @@ fn external_agent_info(
         supports_follow_up: matches!(projection, ExternalAgentProjection::Primary),
         execution_kind: None,
         external_availability: None,
+        remote_agent: None,
     }
 }

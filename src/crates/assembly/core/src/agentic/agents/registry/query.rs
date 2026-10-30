@@ -436,30 +436,44 @@ impl AgentRegistry {
     }
 
     /// Registry-management listing plus the external agents the host's
-    /// executor can run for `host`. The Task catalog adds external agents
-    /// itself, after checking that the parent session may delegate to them.
+    /// executor can run for `host` and the agents other devices of this
+    /// account opened to this one. The Task catalog adds both itself, after
+    /// checking that the parent session may delegate to them.
     pub async fn get_subagents_for_management(
         &self,
         query: &SubagentQueryContext<'_>,
         host: ExternalAgentHost<'_>,
     ) -> Vec<AgentInfo> {
-        let result = self.get_subagents_for_query(query).await;
-        let Some(remote_connection_id) = host.remote_connection_id() else {
-            return result;
-        };
-        let Some(executor) = crate::agentic::coordination::get_global_coordinator()
-            .and_then(|coordinator| coordinator.external_agent_executor())
-        else {
-            return result;
-        };
-        let descriptors = executor
-            .list_agents(ExternalAgentListing::Probed, remote_connection_id)
-            .await;
-        Self::sort_subagents_for_presentation(Self::merge_acp_agents(
-            result,
-            descriptors,
-            query.include_disabled,
-        ))
+        let mut result = self.get_subagents_for_query(query).await;
+        let coordinator = crate::agentic::coordination::get_global_coordinator();
+        if let (Some(remote_connection_id), Some(executor)) = (
+            host.remote_connection_id(),
+            coordinator
+                .as_ref()
+                .and_then(|coordinator| coordinator.external_agent_executor()),
+        ) {
+            let descriptors = executor
+                .list_agents(ExternalAgentListing::Probed, remote_connection_id)
+                .await;
+            result = Self::merge_acp_agents(result, descriptors, query.include_disabled);
+        }
+        // Remote agents run on their own device, so the workspace host does
+        // not decide whether they are listed. The short-lived cache keeps the
+        // listing from waiting on every device each time it is opened.
+        if let Some(port) = coordinator
+            .as_ref()
+            .and_then(|coordinator| coordinator.remote_agent_port())
+        {
+            let descriptors = port
+                .list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
+                .await;
+            result = super::remote_agents::merge_remote_agents(
+                result,
+                descriptors,
+                query.include_disabled,
+            );
+        }
+        Self::sort_subagents_for_presentation(result)
     }
 
     /// Appends executor agents, skipping unavailable ones unless disabled

@@ -462,6 +462,7 @@ fn build_tool_context_custom_data(context: &ToolExecutionContext) -> HashMap<Str
     for key in [
         USER_INPUT_AVAILABLE_CONTEXT_KEY,
         AUTO_APPROVE_ASK_CONTEXT_KEY,
+        crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY,
     ] {
         let value = match context.context_vars.get(key).map(String::as_str) {
             Some("true") => Some(true),

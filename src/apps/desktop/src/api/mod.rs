@@ -44,6 +44,7 @@ pub mod miniapp_market_api;
 pub mod pages_api;
 pub mod path_target;
 pub mod peer_host_invoke;
+pub mod remote_agent_delegation;
 pub mod remote_connect_api;
 pub mod remote_workspace_policy;
 pub mod review_platform_api;

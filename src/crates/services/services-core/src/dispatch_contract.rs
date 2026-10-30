@@ -191,6 +191,8 @@ pub struct DispatchCatalogResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DispatchCatalogAgent {
     pub id: String,
+    /// The agent the open agent runs; a delegated submission must name it.
+    pub agent_type: String,
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,

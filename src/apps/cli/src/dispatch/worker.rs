@@ -756,8 +756,9 @@ fn turn_metadata(
     metadata
 }
 
-/// Turn context key naming the device that delegated a dispatch job.
-pub(crate) const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
+/// Turn context key naming the device that delegated a dispatch job. The
+/// kernel reads it to refuse delegating such a turn onward.
+pub(crate) use openbitfun_core::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
 
 #[cfg(test)]
 mod tests {

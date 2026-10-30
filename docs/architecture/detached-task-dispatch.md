@@ -467,7 +467,8 @@ workspace, and the granted device ids (`*` for every device of the account).
 Unreadable entries stay on disk, are reported, and count as closed.
 
 `dispatch_target_catalog` (CLI verb `catalog`) returns the entries granted to the
-requesting device: id, display name, description, and task kinds. Target paths and the
+requesting device: id, agent mode, display name, description, and task kinds. A
+delegated submission must name that agent mode. Target paths and the
 grants of other devices are not returned. The requester is the reserved
 `__sourceDeviceId` argument, which only the receiving host sets from the
 relay-authenticated sender (`bind_dispatch_source_device` in `dispatch_contract.rs`);

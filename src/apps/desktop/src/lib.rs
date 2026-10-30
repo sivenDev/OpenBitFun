@@ -705,6 +705,7 @@ pub async fn run() {
             openbitfun_acp::client::AcpExternalAgentExecutor::new(acp_client_service),
         ));
     }
+    coordinator.set_remote_agent_port(api::remote_agent_delegation::remote_agent_port());
 
     // A Turn that is still executing exists nowhere durable but this log: the
     // persisted Session record stores a running Turn as idle so a restart never

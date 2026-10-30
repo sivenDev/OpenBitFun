@@ -47,9 +47,10 @@ pub use registry::catalog::{builtin_agent_specs, BuiltinAgentSpec};
 #[cfg(feature = "external-sources")]
 pub(crate) use registry::external_subagent_runtime_key;
 pub(crate) use registry::initialize_global_agent_registry_for_profile;
+pub(crate) use registry::merge_remote_agents;
 pub use registry::types::{
     subagent_source_from_custom_kind, AgentCategory, AgentInfo, AgentSource, AgentToolPolicy,
-    CustomSubagentConfig, SubAgentSource, SubagentListScope, SubagentQueryContext,
+    CustomSubagentConfig, RemoteAgentInfo, SubAgentSource, SubagentListScope, SubagentQueryContext,
     SubagentStateReason,
 };
 pub use registry::visibility::{

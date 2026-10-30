@@ -33,7 +33,7 @@ use tauri::State;
 
 use super::app_state::AppState;
 
-struct AccountDeviceDispatchRpc;
+pub(crate) struct AccountDeviceDispatchRpc;
 
 #[async_trait]
 impl DeviceDispatchRpc for AccountDeviceDispatchRpc {

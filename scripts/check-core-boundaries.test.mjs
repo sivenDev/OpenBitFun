@@ -559,6 +559,7 @@ test('portable contract crates expose only capability-local feature slices', asy
       'plugin-runtime',
       'product-search',
       'ptc-runtime',
+      'remote-agent-port',
       'remote-exec-port',
       'remote-workspace-ports',
       'runtime-event-port',
@@ -821,6 +822,7 @@ const RUNTIME_PORT_FEATURE_PROFILES = {
   'plugin-runtime': [],
   'product-search': ['dep:openbitfun-product-domains'],
   'ptc-runtime': [],
+  'remote-agent-port': ['dep:openbitfun-product-domains'],
   'remote-exec-port': ['dep:tokio'],
   'remote-workspace-ports': [],
   'runtime-event-port': [],
@@ -1081,6 +1083,11 @@ test('contract and AI adapter tests keep reviewed feature and failure-domain top
       name: 'external_agent_port_contracts',
       path: 'tests/external_agent_port_contracts.rs',
       requiredFeatures: ['external-agent-port'],
+    },
+    {
+      name: 'remote_agent_port_contracts',
+      path: 'tests/remote_agent_port_contracts.rs',
+      requiredFeatures: ['remote-agent-port'],
     },
     {
       name: 'session_store_contracts',
