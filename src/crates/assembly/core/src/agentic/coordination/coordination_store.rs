@@ -87,6 +87,8 @@ pub(crate) struct BackgroundTaskRecord {
     pub error_message: Option<String>,
     pub execution_owner_token: String,
     pub delivered_at_ms: Option<u64>,
+    /// JSON `RemoteAgentJob` when the task runs on another device.
+    pub remote_job: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -780,6 +782,89 @@ WHERE task_pk = ?3
         .await
     }
 
+    /// Links the running background task of `child_dialog_turn_id` to the job
+    /// it delegated to another device, so a restarted host can observe it.
+    pub(crate) async fn set_remote_job(
+        &self,
+        parent_session_id: &str,
+        child_dialog_turn_id: &str,
+        remote_job: String,
+    ) -> OpenBitFunResult<bool> {
+        let parent_session_id = parent_session_id.to_string();
+        let child_dialog_turn_id = child_dialog_turn_id.to_string();
+        self.with_connection(move |connection| {
+            let changed = connection
+                .execute(
+                    "UPDATE background_tasks SET remote_job = ?1 WHERE parent_session_id = ?2 AND child_dialog_turn_id = ?3",
+                    params![remote_job, parent_session_id, child_dialog_turn_id],
+                )
+                .map_err(db_error)?;
+            Ok(changed > 0)
+        })
+        .await
+    }
+
+    /// The job most recently delegated for `child_session_id`, which a
+    /// follow-up turn continues.
+    pub(crate) async fn latest_remote_job_for_child(
+        &self,
+        child_session_id: &str,
+    ) -> OpenBitFunResult<Option<String>> {
+        let child_session_id = child_session_id.to_string();
+        self.with_connection(move |connection| {
+            connection
+                .query_row(
+                    r#"
+SELECT tasks.remote_job FROM background_tasks AS tasks
+JOIN agents ON agents.agent_pk = tasks.agent_pk
+WHERE agents.child_session_id = ?1 AND tasks.remote_job IS NOT NULL
+ORDER BY tasks.task_pk DESC LIMIT 1
+                    "#,
+                    params![child_session_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(db_error)
+        })
+        .await
+    }
+
+    /// Running delegated tasks that an earlier process started.
+    pub(crate) async fn orphaned_remote_tasks(
+        &self,
+    ) -> OpenBitFunResult<Vec<BackgroundTaskRecord>> {
+        let execution_owner_token = self.execution_owner_token.clone();
+        self.with_connection(move |connection| {
+            let mut statement = connection
+                .prepare(&format!(
+                    "{} WHERE tasks.status = 'running' AND tasks.remote_job IS NOT NULL AND tasks.execution_owner_token != ?1",
+                    BACKGROUND_TASK_SELECT
+                ))
+                .map_err(db_error)?;
+            let rows = statement
+                .query_map(params![execution_owner_token], background_task_from_row)
+                .map_err(db_error)?;
+            collect_rows(rows)
+        })
+        .await
+    }
+
+    /// Makes this process the owner of a delegated task an earlier process
+    /// started. Only one caller wins.
+    pub(crate) async fn adopt_remote_task(&self, task_pk: i64) -> OpenBitFunResult<bool> {
+        let execution_owner_token = self.execution_owner_token.clone();
+        self.with_connection(move |connection| {
+            let changed = connection
+                .execute(
+                    "UPDATE background_tasks SET execution_owner_token = ?1 WHERE task_pk = ?2 AND status = 'running' AND remote_job IS NOT NULL AND execution_owner_token != ?1",
+                    params![execution_owner_token, task_pk],
+                )
+                .map_err(db_error)?;
+            Ok(changed > 0)
+        })
+        .await
+    }
+
     pub(crate) async fn delete_session_references(
         &self,
         session_id: &str,
@@ -962,7 +1047,8 @@ SELECT
     tasks.error_code,
     tasks.error_message,
     tasks.execution_owner_token,
-    tasks.delivered_at_ms
+    tasks.delivered_at_ms,
+    tasks.remote_job
 FROM background_tasks AS tasks
 JOIN agents ON agents.agent_pk = tasks.agent_pk
 "#;
@@ -996,6 +1082,7 @@ fn background_task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Backgro
         error_message: row.get(10)?,
         execution_owner_token: row.get(11)?,
         delivered_at_ms,
+        remote_job: row.get(13)?,
     })
 }
 
@@ -1326,6 +1413,11 @@ PRAGMA user_version = 2;
             "delivered_parent_dialog_turn_id"
         )
         .expect("inspect delivered_parent_dialog_turn_id"));
+        assert!(
+            coordination_table_has_column(&connection, "background_tasks", "remote_job")
+                .expect("inspect remote_job")
+        );
+        assert!(candidates.records[0].remote_job.is_none());
     }
 
     #[tokio::test]
@@ -2206,5 +2298,101 @@ PRAGMA user_version = 2;
             .expect("load remaining tasks")
             .records
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn delegated_jobs_are_linked_continued_and_adopted_after_restart() {
+        let root = test_tempdir();
+        let db_path = root.path().join("coordination.sqlite");
+        let earlier = CoordinationStore::new(db_path.clone());
+        let first = earlier
+            .register_background_task(registration("parent", "child", "spawn-1", None))
+            .await
+            .expect("register delegated task");
+        let local = earlier
+            .register_background_task(registration("parent", "local-child", "spawn-2", None))
+            .await
+            .expect("register local task");
+        assert!(earlier
+            .set_remote_job("parent", "turn-child-spawn-1", "job-1".to_string())
+            .await
+            .expect("link job"));
+        assert!(!earlier
+            .set_remote_job("parent", "turn-missing", "job-x".to_string())
+            .await
+            .expect("link missing task"));
+        assert_eq!(
+            earlier
+                .latest_remote_job_for_child("child")
+                .await
+                .expect("latest job"),
+            Some("job-1".to_string())
+        );
+        assert_eq!(
+            earlier
+                .latest_remote_job_for_child("local-child")
+                .await
+                .expect("local child"),
+            None
+        );
+        // The process that runs the task never sees it as orphaned.
+        assert!(earlier
+            .orphaned_remote_tasks()
+            .await
+            .expect("own tasks")
+            .is_empty());
+        drop(earlier);
+
+        let restarted = CoordinationStore::new(db_path.clone());
+        let orphaned = restarted
+            .orphaned_remote_tasks()
+            .await
+            .expect("orphaned tasks");
+        assert_eq!(
+            orphaned
+                .iter()
+                .map(|record| record.task_pk)
+                .collect::<Vec<_>>(),
+            vec![first.task_pk],
+            "local task {} is not delegated",
+            local.task_pk
+        );
+        assert_eq!(orphaned[0].remote_job.as_deref(), Some("job-1"));
+        let competing = CoordinationStore::new(db_path);
+        assert!(restarted
+            .adopt_remote_task(first.task_pk)
+            .await
+            .expect("adopt"));
+        assert!(!restarted
+            .adopt_remote_task(first.task_pk)
+            .await
+            .expect("adopt again"));
+        // Another process adopting it afterwards takes it over only once.
+        assert!(competing
+            .adopt_remote_task(first.task_pk)
+            .await
+            .expect("competing adopt"));
+        assert!(!restarted
+            .adopt_remote_task(local.task_pk)
+            .await
+            .expect("local tasks are never adopted"));
+
+        restarted
+            .update_task_status(first.task_pk, BackgroundTaskStatus::Completed, None, None)
+            .await
+            .expect("complete task");
+        assert!(competing
+            .orphaned_remote_tasks()
+            .await
+            .expect("finished tasks")
+            .is_empty());
+        // A follow-up continues the finished job.
+        assert_eq!(
+            competing
+                .latest_remote_job_for_child("child")
+                .await
+                .expect("latest after completion"),
+            Some("job-1".to_string())
+        );
     }
 }

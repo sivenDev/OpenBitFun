@@ -110,6 +110,10 @@ impl BackgroundSubagentOutcomeStore {
         }
     }
 
+    pub(crate) fn coordination_store(&self) -> Arc<CoordinationStore> {
+        Arc::clone(&self.coordination_store)
+    }
+
     pub(crate) async fn register(
         &self,
         registration: BackgroundTaskRegistration,
@@ -485,6 +489,14 @@ impl BackgroundSubagentOutcomeStore {
             .stale_running_tasks(parent_session_id)
             .await?;
         for record in stale {
+            // A delegated task keeps running on its device; it is observed
+            // again instead of being reported as interrupted.
+            if record.remote_job.is_some() {
+                if let Some(coordinator) = super::get_global_coordinator() {
+                    coordinator.resume_remote_background_task(record);
+                }
+                continue;
+            }
             let turn = self
                 .session_manager
                 .load_related_dialog_turn(

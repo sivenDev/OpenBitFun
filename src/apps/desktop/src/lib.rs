@@ -706,6 +706,7 @@ pub async fn run() {
         ));
     }
     coordinator.set_remote_agent_port(api::remote_agent_delegation::remote_agent_port());
+    coordinator.resume_remote_background_tasks();
 
     // A Turn that is still executing exists nowhere durable but this log: the
     // persisted Session record stores a running Turn as idle so a restart never

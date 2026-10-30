@@ -107,10 +107,15 @@ PRAGMA user_version = 2;
 /// schema v1. A retired build could nevertheless leave a database stamped as
 /// v2 without those additive columns. Keep the repair keyed to the physical
 /// shape so reopening such a database is safe and idempotent.
+///
+/// `remote_job` links a background task to a job delegated to another device.
+/// It is nullable and added in place without a version bump, so an older build
+/// keeps opening the database and simply ignores the link.
 fn ensure_v2_additive_columns(connection: &Connection) -> OpenBitFunResult<()> {
     for (column, declaration) in [
         ("delivered_at_ms", "INTEGER"),
         ("delivered_parent_dialog_turn_id", "TEXT"),
+        ("remote_job", "TEXT"),
     ] {
         if !coordination_table_has_column(connection, "background_tasks", column)? {
             connection

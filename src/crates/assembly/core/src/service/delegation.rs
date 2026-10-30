@@ -24,6 +24,9 @@ const MAX_OPEN_AGENT_ID_LEN: usize = 64;
 /// Turn context key a target sets on a delegated job's turns, naming the
 /// device that asked. A turn that carries it must not delegate onward.
 pub const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
+/// Job ids a requester gives the jobs it delegates. Its manual dispatch list
+/// never adopts them: the delegating subagent already observes them.
+pub const DELEGATED_JOB_ID_PREFIX: &str = "delegation-";
 
 /// What a delegated job may do on this device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

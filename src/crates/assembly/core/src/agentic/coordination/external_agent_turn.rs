@@ -70,13 +70,13 @@ pub(crate) fn external_agent_turn_context(
 }
 
 /// Projects executor events onto the child session's stream events.
-struct ChildSessionStream {
+pub(super) struct ChildSessionStream {
     session_id: String,
     turn_id: String,
     agent_type: String,
     client_id: String,
     current_round: Option<OpenRound>,
-    rounds: usize,
+    pub(super) rounds: usize,
 }
 
 struct OpenRound {
@@ -86,7 +86,7 @@ struct OpenRound {
 }
 
 impl ChildSessionStream {
-    fn new(session_id: &str, turn_id: &str, agent_type: &str, client_id: &str) -> Self {
+    pub(super) fn new(session_id: &str, turn_id: &str, agent_type: &str, client_id: &str) -> Self {
         Self {
             session_id: session_id.to_string(),
             turn_id: turn_id.to_string(),
@@ -97,7 +97,7 @@ impl ChildSessionStream {
         }
     }
 
-    fn project(&mut self, event: ExternalAgentTurnEvent) -> Vec<AgenticEvent> {
+    pub(super) fn project(&mut self, event: ExternalAgentTurnEvent) -> Vec<AgenticEvent> {
         match event {
             ExternalAgentTurnEvent::RoundStarted {
                 round_id,
@@ -181,7 +181,7 @@ impl ChildSessionStream {
     }
 
     /// Opens a round when the executor streams content before announcing one.
-    fn ensure_round(&mut self) -> (Option<AgenticEvent>, String) {
+    pub(super) fn ensure_round(&mut self) -> (Option<AgenticEvent>, String) {
         if let Some(round) = self.current_round.as_ref() {
             return (None, round.round_id.clone());
         }
@@ -190,7 +190,7 @@ impl ChildSessionStream {
         (Some(started), round_id)
     }
 
-    fn close_round(&mut self) -> Option<AgenticEvent> {
+    pub(super) fn close_round(&mut self) -> Option<AgenticEvent> {
         let round = self.current_round.take()?;
         Some(AgenticEvent::ModelRoundCompleted {
             session_id: self.session_id.clone(),
@@ -779,7 +779,7 @@ pub(crate) async fn run_external_agent_turn(
     }
 }
 
-fn execution_result(
+pub(super) fn execution_result(
     text: String,
     total_rounds: usize,
     duration_ms: u64,

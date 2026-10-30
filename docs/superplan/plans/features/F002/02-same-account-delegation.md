@@ -141,7 +141,24 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib coordination_store`
 - 包含旧后台任务记录的反序列化与往返测试
 
-- [ ] 后台委派、结果交付、取消、审批与重启补收都有内核测试覆盖
+- [x] 后台委派、结果交付、取消、审批与重启补收都有内核测试覆盖
+
+**Deviations:**
+- 委派作业不写入发起端的 `OutboundDispatchStore`，作业关联以 JSON 存在协调库后台任务的新列 `remote_job`（设备、作业、会话与游标）。作业 id 使用前缀 `delegation-`，Dispatch 面板的目标作业接管会跳过它们，避免同一作业被两个观察器读取。
+- `remote_job` 是可空列，在 `ensure_v2_additive_columns` 中原地补齐，不提升 schema 版本：旧版本仍能打开数据库并忽略该列；已有记录读出为无关联。
+- `device_controller.rs` 未修改：提交、观察、取消、审批与继续直接在 `service/dispatch/remote_agents.rs` 的端口实现中调用 `dispatch_target_*`；桌面 `remote_agent_delegation.rs` 未修改，`lib.rs` 在注册端口后调用 `resume_remote_background_tasks`。
+- 目标端的每个审批都在本机重新提问（不带可保存资源，不套用本机策略或自动批准），回答后再发回目标；目标端已处理的请求在本机撤回。
+- 重启补收只继续观察并交付终态，不把重启前错过的过程事件重新投影到子会话。
+- 设备暂时不可达时按 1.5 秒起、最长 30 秒退避重试，不把任务判为失败；取消时异步通知目标端取消。
+- 编码任务在 Task 3 前由端口明确拒绝（不可用），不在本机替代执行。
+
+**Evidence (2026-10-30):**
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib remote_agent`：13 passed（含 `remote_agent_turn`：最终文本只取作业会话最后一轮且跳过嵌套会话与未知事件；作业关联往返与无游标旧值、无法解析的值；按游标观察并重试不可达设备；失败原因来自目标端；取消观察会取消目标作业；目标审批在本机提问、回答发回目标、目标端已处理的请求在本机撤回）。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib coordination_store`：18 passed（含关联、后续回合继续最近作业、本进程任务不算孤儿、重启后只接管一次且本地任务不被接管；无 `remote_job` 列的旧库补列后旧记录读出为无关联）。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git,dispatch-store,ssh-remote --lib service::dispatch`：57 passed；其中 `remote_agents` 5 个（提交载荷指明开放项且不带本机路径、审批与取消的线上形状、未开放与编码任务在发送前被拒绝）。
+- `--lib tools::implementations::task`：94 passed；`--lib external_agent_turn`：23 passed；`--lib background_outcomes`：1 passed；`cargo +1.95.0 check -p openbitfun-desktop`：通过；`pnpm run check:core-boundaries`：通过。
+- `--lib coordination` 中 `coordinator::tests::remote_session_metadata_never_falls_back_to_a_local_workspace_binding` 失败；在未改动的 HEAD（e9e7e95cb）干净工作树上同样失败，与本任务无关。
+- 远程场景：只有内核测试，尚未在真实设备或本机模拟中跑通委派（见 Task 5）。
 
 ## Task 3: 编码任务的 Git 交付与结果同步
 

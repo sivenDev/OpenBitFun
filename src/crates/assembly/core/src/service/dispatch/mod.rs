@@ -738,6 +738,12 @@ async fn adopt_target_jobs(
     let entries: Vec<DispatchTargetJobEntry> =
         serde_json::from_value(response.clone()).context("decode target dispatch job list")?;
     for entry in entries {
+        if entry
+            .job_id
+            .starts_with(crate::service::delegation::DELEGATED_JOB_ID_PREFIX)
+        {
+            continue;
+        }
         if !matches!(
             entry.state.as_str(),
             "queued" | "running" | "succeeded" | "failed" | "cancelled"

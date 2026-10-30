@@ -194,45 +194,176 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for RemoteAgentDirector
         &self,
         request: openbitfun_runtime_ports::RemoteAgentSubmitRequest,
     ) -> PortResult<openbitfun_runtime_ports::RemoteAgentJob> {
-        Err(not_yet_supported(&request.address.agent_type()))
+        let agent_type = request.address.agent_type();
+        let descriptor = self.find(&request.address).await.ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::NotFound,
+                format!("{agent_type} is not open to this device"),
+            )
+        })?;
+        if let RemoteAgentAvailability::Unavailable { detail, .. } = &descriptor.availability {
+            return Err(PortError::new(PortErrorKind::NotAvailable, detail.clone()));
+        }
+        if !descriptor.task_kinds.contains(&request.task_kind) {
+            return Err(PortError::new(
+                PortErrorKind::InvalidRequest,
+                format!("{agent_type} does not accept {:?} tasks", request.task_kind),
+            ));
+        }
+        if request.task_kind == RemoteAgentTaskKind::Coding {
+            return Err(PortError::new(
+                PortErrorKind::NotAvailable,
+                "coding tasks for remote agents are not supported by this build yet",
+            ));
+        }
+        let payload = delegated_submit_payload(&request, &descriptor);
+        let response = self
+            .rpc
+            .invoke(
+                &request.address.device_id,
+                "dispatch_target_submit",
+                payload,
+            )
+            .await
+            .map_err(target_error)?;
+        super::controller::validate_submit_ack(&response, &request.job_id, &request.session_id)
+            .map_err(target_error)?;
+        Ok(openbitfun_runtime_ports::RemoteAgentJob {
+            device_id: request.address.device_id,
+            job_id: request.job_id,
+            session_id: request.session_id,
+        })
     }
 
     async fn observe(
         &self,
         job: &openbitfun_runtime_ports::RemoteAgentJob,
-        _cursor: u64,
+        cursor: u64,
     ) -> PortResult<openbitfun_runtime_ports::RemoteAgentJobSnapshot> {
-        Err(not_yet_supported(&job.job_id))
+        let response = self
+            .rpc
+            .invoke(
+                &job.device_id,
+                "dispatch_target_status",
+                json!({ "jobId": job.job_id, "cursor": cursor }),
+            )
+            .await
+            .map_err(target_error)?;
+        serde_json::from_value(response).map_err(|error| {
+            PortError::new(
+                PortErrorKind::Backend,
+                format!("the device returned an unreadable job status: {error}"),
+            )
+        })
     }
 
     async fn cancel(&self, job: &openbitfun_runtime_ports::RemoteAgentJob) -> PortResult<bool> {
-        Err(not_yet_supported(&job.job_id))
+        let response = self
+            .rpc
+            .invoke(
+                &job.device_id,
+                "dispatch_target_cancel",
+                json!({ "jobId": job.job_id }),
+            )
+            .await
+            .map_err(target_error)?;
+        Ok(response
+            .get("cancelled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false))
     }
 
     async fn answer(
         &self,
         job: &openbitfun_runtime_ports::RemoteAgentJob,
-        _request_id: &str,
-        _reply: openbitfun_runtime_ports::PermissionReply,
+        request_id: &str,
+        reply: openbitfun_runtime_ports::PermissionReply,
     ) -> PortResult<()> {
-        Err(not_yet_supported(&job.job_id))
+        // The target reads the reply flat beside the job and request ids.
+        let mut payload = serde_json::to_value(&reply)
+            .map_err(|error| PortError::new(PortErrorKind::InvalidRequest, error.to_string()))?;
+        let Some(fields) = payload.as_object_mut() else {
+            return Err(PortError::new(
+                PortErrorKind::InvalidRequest,
+                "permission reply is not an object",
+            ));
+        };
+        fields.insert("jobId".into(), Value::String(job.job_id.clone()));
+        fields.insert("requestId".into(), Value::String(request_id.to_string()));
+        self.rpc
+            .invoke(&job.device_id, "dispatch_target_answer", payload)
+            .await
+            .map(|_| ())
+            .map_err(target_error)
     }
 
     async fn continue_job(
         &self,
         job: &openbitfun_runtime_ports::RemoteAgentJob,
-        _turn_id: &str,
-        _prompt: String,
+        turn_id: &str,
+        prompt: String,
     ) -> PortResult<()> {
-        Err(not_yet_supported(&job.job_id))
+        self.rpc
+            .invoke(
+                &job.device_id,
+                "dispatch_target_continue",
+                json!({
+                    "protocolVersion": super::controller::DISPATCH_PROTOCOL_VERSION,
+                    "jobId": job.job_id,
+                    "turnId": turn_id,
+                    "prompt": prompt,
+                }),
+            )
+            .await
+            .map(|_| ())
+            .map_err(target_error)
     }
 }
 
-fn not_yet_supported(subject: &str) -> PortError {
-    PortError::new(
-        PortErrorKind::NotAvailable,
-        format!("delegating {subject} to another device is not supported by this build yet"),
-    )
+/// A delegated message job. The target chooses where it runs, which agent
+/// mode it uses, and asks its owner for every permission.
+fn delegated_submit_payload(
+    request: &openbitfun_runtime_ports::RemoteAgentSubmitRequest,
+    descriptor: &RemoteAgentDescriptor,
+) -> Value {
+    let task_kind = match request.task_kind {
+        RemoteAgentTaskKind::Message => "message",
+        RemoteAgentTaskKind::Coding => "coding",
+    };
+    let mut source = json!({
+        "sessionId": request.source.session_id,
+        "agentType": request.source.agent_type,
+    });
+    if let Some(display_name) = &request.source.display_name {
+        source["displayName"] = Value::String(display_name.clone());
+    }
+    let mut payload = json!({
+        "protocolVersion": super::controller::DISPATCH_PROTOCOL_VERSION,
+        "jobId": request.job_id,
+        "sessionId": request.session_id,
+        "workspacePath": "",
+        "agentType": descriptor.agent_type,
+        "prompt": request.prompt,
+        "approvalPolicy": DELEGATED_APPROVAL_POLICY,
+        "delegation": {
+            "openAgentId": request.address.open_agent_id,
+            "taskKind": task_kind,
+            "source": source,
+        },
+    });
+    if let Some(title) = request
+        .title
+        .as_ref()
+        .filter(|title| !title.trim().is_empty())
+    {
+        payload["title"] = Value::String(title.clone());
+    }
+    payload
+}
+
+/// The target's refusal reads as the reason, so it is passed through.
+fn target_error(error: anyhow::Error) -> PortError {
+    PortError::new(PortErrorKind::Backend, format!("{error:#}"))
 }
 
 enum CatalogError {
@@ -327,6 +458,22 @@ mod tests {
         probes: HashMap<&'static str, Value>,
         catalogs: HashMap<&'static str, Value>,
         catalog_calls: AtomicUsize,
+        /// Job commands this device received.
+        job_calls: Mutex<Vec<(String, Value)>>,
+    }
+
+    impl Targets {
+        fn new(
+            probes: HashMap<&'static str, Value>,
+            catalogs: HashMap<&'static str, Value>,
+        ) -> Self {
+            Self {
+                probes,
+                catalogs,
+                catalog_calls: AtomicUsize::new(0),
+                job_calls: Mutex::new(Vec::new()),
+            }
+        }
     }
 
     #[async_trait]
@@ -337,6 +484,21 @@ mod tests {
             command: &str,
             args: Value,
         ) -> anyhow::Result<Value> {
+            if command.starts_with("dispatch_target_")
+                && command != "dispatch_target_probe"
+                && command != "dispatch_target_catalog"
+            {
+                self.job_calls
+                    .lock()
+                    .unwrap()
+                    .push((command.to_string(), args.clone()));
+                return Ok(json!({
+                    "accepted": true,
+                    "jobId": args["jobId"],
+                    "sessionId": args["sessionId"],
+                    "cancelled": true,
+                }));
+            }
             assert_eq!(args, json!({}), "the requester never names itself");
             let table = match command {
                 "dispatch_target_probe" => &self.probes,
@@ -405,6 +567,7 @@ mod tests {
                 ("old", catalog("never-asked", &["message"])),
             ]),
             catalog_calls: AtomicUsize::new(0),
+            job_calls: Mutex::new(Vec::new()),
         };
         let (directory, _, targets) = directory(
             targets,
@@ -432,6 +595,7 @@ mod tests {
             probes: HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
             catalogs: HashMap::from([("laptop", catalog("helper", &["message", "coding"]))]),
             catalog_calls: AtomicUsize::new(0),
+            job_calls: Mutex::new(Vec::new()),
         };
         let (directory, devices, targets) = directory(targets, vec![device("laptop", true)]);
         assert_eq!(directory.list(RemoteAgentListing::Cached).await.len(), 1);
@@ -465,6 +629,7 @@ mod tests {
             probes: HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
             catalogs: HashMap::new(),
             catalog_calls: AtomicUsize::new(0),
+            job_calls: Mutex::new(Vec::new()),
         };
         let (directory, _, _) = directory(targets, vec![device("laptop", true)]);
         // Nothing was ever listed, so there is no agent to report.
@@ -472,5 +637,95 @@ mod tests {
             .list(RemoteAgentListing::Refreshed)
             .await
             .is_empty());
+    }
+
+    fn submit_request(
+        open_agent_id: &str,
+        task_kind: RemoteAgentTaskKind,
+    ) -> openbitfun_runtime_ports::RemoteAgentSubmitRequest {
+        openbitfun_runtime_ports::RemoteAgentSubmitRequest {
+            address: RemoteAgentAddress {
+                device_id: "laptop".to_string(),
+                open_agent_id: open_agent_id.to_string(),
+            },
+            job_id: "delegation-1".to_string(),
+            session_id: "job-session".to_string(),
+            task_kind,
+            prompt: "Summarize the notes".to_string(),
+            title: Some("Notes".to_string()),
+            source: openbitfun_runtime_ports::RemoteAgentSource {
+                session_id: "parent".to_string(),
+                agent_type: "Standard".to_string(),
+                display_name: None,
+            },
+            source_workspace_path: Some("/local/workspace".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn submissions_name_the_open_agent_and_never_the_local_workspace() {
+        use openbitfun_runtime_ports::RemoteAgentDelegationPort;
+        let targets = Targets::new(
+            HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
+            HashMap::from([("laptop", catalog("helper", &["message"]))]),
+        );
+        let (directory, _, targets) = directory(targets, vec![device("laptop", true)]);
+
+        let job = directory
+            .submit(submit_request("helper", RemoteAgentTaskKind::Message))
+            .await
+            .expect("submit");
+        assert_eq!(job.job_id, "delegation-1");
+        let calls = targets.job_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        let (command, payload) = &calls[0];
+        assert_eq!(command, "dispatch_target_submit");
+        assert_eq!(payload["agentType"], "Standard");
+        assert_eq!(payload["workspacePath"], "");
+        assert_eq!(payload["approvalPolicy"], "remote");
+        assert_eq!(payload["delegation"]["openAgentId"], "helper");
+        assert_eq!(payload["delegation"]["taskKind"], "message");
+        assert_eq!(payload["delegation"]["source"]["sessionId"], "parent");
+        assert_eq!(payload["title"], "Notes");
+        assert!(
+            !payload.to_string().contains("/local/workspace"),
+            "a message job never carries a local path"
+        );
+
+        directory
+            .answer(
+                &job,
+                "target-1",
+                openbitfun_runtime_ports::PermissionReply::Once,
+            )
+            .await
+            .expect("answer");
+        let calls = targets.job_calls.lock().unwrap().clone();
+        assert_eq!(calls[1].0, "dispatch_target_answer");
+        assert_eq!(calls[1].1["jobId"], "delegation-1");
+        assert_eq!(calls[1].1["requestId"], "target-1");
+        assert!(directory.cancel(&job).await.expect("cancel"));
+    }
+
+    #[tokio::test]
+    async fn refused_submissions_never_reach_the_device() {
+        use openbitfun_runtime_ports::RemoteAgentDelegationPort;
+        let targets = Targets::new(
+            HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
+            HashMap::from([("laptop", catalog("helper", &["message", "coding"]))]),
+        );
+        let (directory, _, targets) = directory(targets, vec![device("laptop", true)]);
+
+        let unknown = directory
+            .submit(submit_request("writer", RemoteAgentTaskKind::Message))
+            .await
+            .unwrap_err();
+        assert_eq!(unknown.kind, PortErrorKind::NotFound);
+        let coding = directory
+            .submit(submit_request("helper", RemoteAgentTaskKind::Coding))
+            .await
+            .unwrap_err();
+        assert_eq!(coding.kind, PortErrorKind::NotAvailable);
+        assert!(targets.job_calls.lock().unwrap().is_empty());
     }
 }

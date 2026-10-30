@@ -2644,6 +2644,131 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         self.remote_agent_port.get().map(Arc::clone)
     }
 
+    /// Observes again the delegated background tasks an earlier process
+    /// started, so their results still reach AgentWait or the parent's next
+    /// turn instead of being reported as interrupted.
+    pub fn resume_remote_background_tasks(self: &Arc<Self>) {
+        if self.remote_agent_port().is_none() {
+            return;
+        }
+        let coordinator = Arc::clone(self);
+        tokio::spawn(async move {
+            match coordinator
+                .background_subagent_outcomes
+                .coordination_store()
+                .orphaned_remote_tasks()
+                .await
+            {
+                Ok(records) => {
+                    for record in records {
+                        coordinator.resume_remote_background_task(record);
+                    }
+                }
+                Err(error) => warn!("Failed to list delegated background tasks: {error}"),
+            }
+        });
+    }
+
+    pub(crate) fn resume_remote_background_task(
+        self: &Arc<Self>,
+        record: super::coordination_store::BackgroundTaskRecord,
+    ) {
+        let Some(link) = record
+            .remote_job
+            .as_deref()
+            .and_then(super::remote_agent_turn::RemoteJobLink::parse)
+        else {
+            return;
+        };
+        let Some(port) = self.remote_agent_port() else {
+            return;
+        };
+        let coordinator = Arc::clone(self);
+        tokio::spawn(async move {
+            let outcomes = Arc::clone(&coordinator.background_subagent_outcomes);
+            let store = outcomes.coordination_store();
+            match store.adopt_remote_task(record.task_pk).await {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    warn!(
+                        "Failed to adopt a delegated background task: task_pk={}, error={}",
+                        record.task_pk, error
+                    );
+                    return;
+                }
+            }
+            info!(
+                "Observing a delegated background task again after restart: bg_task_id={}, job_id={}",
+                record.bg_task_id, link.job.job_id
+            );
+            let cancel = CancellationToken::new();
+            let mut sink = super::remote_agent_turn::ResumedTaskSink {
+                store: Arc::clone(&store),
+                task_pk: record.task_pk,
+                cancel: cancel.clone(),
+            };
+            let (end, _) =
+                super::remote_agent_turn::observe_job(&port, &link, &cancel, &mut sink).await;
+            if let Err(error) = coordinator
+                .ensure_subagent_session_loaded_for_reuse(
+                    &record.child_session_id,
+                    &record.parent_session_id,
+                )
+                .await
+            {
+                warn!(
+                    "Delegated task result cannot be saved to its subagent session: session_id={}, error={}",
+                    record.child_session_id, error
+                );
+            }
+            match end {
+                super::remote_agent_turn::RemoteJobEnd::Succeeded { final_text } => {
+                    if let Err(error) = coordinator
+                        .session_manager
+                        .complete_dialog_turn(
+                            &record.child_session_id,
+                            &record.child_dialog_turn_id,
+                            final_text.clone(),
+                            &[],
+                            TurnStats {
+                                total_rounds: 0,
+                                total_tools: 0,
+                                total_tokens: 0,
+                                duration_ms: 0,
+                            },
+                            Some("complete".to_string()),
+                            Some(true),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "Failed to save a delegated task result: session_id={}, error={}",
+                            record.child_session_id, error
+                        );
+                    }
+                    let result = SubagentResult::completed(final_text)
+                        .with_session_id(record.child_session_id.clone());
+                    outcomes.complete(record.task_pk, Ok(&result)).await;
+                }
+                super::remote_agent_turn::RemoteJobEnd::Failed { error } => {
+                    let error = OpenBitFunError::service(format!(
+                        "Remote agent job {} failed: {error}",
+                        link.job.job_id
+                    ));
+                    outcomes.complete(record.task_pk, Err(&error)).await;
+                }
+                super::remote_agent_turn::RemoteJobEnd::Cancelled { .. } => {
+                    let error = OpenBitFunError::Cancelled(format!(
+                        "Remote agent job {} was cancelled",
+                        link.job.job_id
+                    ));
+                    outcomes.complete(record.task_pk, Err(&error)).await;
+                }
+            }
+        });
+    }
+
     /// Availability of an external agent in `context`, reporting a missing
     /// executor explicitly instead of failing later in the turn.
     pub async fn external_agent_availability(
@@ -11207,7 +11332,46 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             timeout_seconds,
             wait_ms
         );
+        let remote_agent = super::remote_agent_turn::remote_agent_address(&agent_type);
         let mut execution_task = match external_agent_client_id(&agent_type) {
+            _ if remote_agent.is_some() => {
+                // The target device asks for every permission; local rules
+                // describe local resources, so no local policy decides them.
+                let permissions = ExternalAgentPermissionRoute::for_workspace(
+                    tool_pipeline.permission_request_manager(),
+                    execution_context.workspace.as_ref(),
+                    execution_context.permission_delegation.clone(),
+                    None,
+                );
+                let task_kind =
+                    super::remote_agent_turn::requested_task_kind(&execution_context.context);
+                drop((execution_engine, initial_messages, execution_context));
+                let parent_agent_type = self
+                    .session_manager
+                    .get_session(parent_session_id)
+                    .map(|session| session.agent_type)
+                    .unwrap_or_default();
+                tokio::spawn(super::remote_agent_turn::run_remote_agent_turn(
+                    super::remote_agent_turn::RemoteAgentTurn {
+                        port: self.remote_agent_port(),
+                        coordination_store: self.background_subagent_outcomes.coordination_store(),
+                        event_queue: self.event_queue.clone(),
+                        agent_type: agent_type_for_execution,
+                        parent_session_id: parent_session_id.to_string(),
+                        session_id: session_id.clone(),
+                        dialog_turn_id: dialog_turn_id.clone(),
+                        prompt: user_input_text.clone(),
+                        task_kind,
+                        source: openbitfun_runtime_ports::RemoteAgentSource {
+                            session_id: parent_session_id.to_string(),
+                            agent_type: parent_agent_type,
+                            display_name: None,
+                        },
+                        permissions,
+                        cancel_token: subagent_cancel_token.clone(),
+                    },
+                ))
+            }
             Some(client_id) => {
                 let turn_context = external_agent_turn_context(
                     &agent_type_for_execution,
