@@ -2,7 +2,7 @@
 id: "F002-02"
 title: "同账号委派给远程原生智能体"
 type: "feature"
-status: "draft"
+status: "approved"
 summary: "发起方的智能体列表显示同账号设备开放的远程智能体；助理用 AgentSpawn 后台委派纯消息或编码任务，后端观察器按游标收回结果交给 AgentWait，重启后可补收。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"

@@ -2,7 +2,7 @@
 id: "F002-05"
 title: "跨账号配对、连接级密钥与连接管理"
 type: "feature"
-status: "draft"
+status: "approved"
 summary: "设备之间通过一次性邀请配对，接受前核对指纹；连接级密钥由双方设备身份密钥派生，跨账号委派 RPC 用它端到端加密；双方都能查看与撤销连接。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"

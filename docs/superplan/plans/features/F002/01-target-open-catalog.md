@@ -2,7 +2,7 @@
 id: "F002-01"
 title: "目标端开放智能体清单与纯消息任务"
 type: "feature"
-status: "draft"
+status: "in_progress"
 summary: "目标设备主人可以把指定原生智能体开放给同账号的其他设备；目标端声明 agent_delegation_v1，提供按调用设备过滤的目录查询，并能执行不经 Git 的纯消息委派任务。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"

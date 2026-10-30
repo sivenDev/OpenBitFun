@@ -4,9 +4,9 @@
 
 ## Status
 
-| Type | Plans | Draft | In Progress | Complete |
+| Type | Plans | Approved | In Progress | Complete |
 | --- | --- | --- | --- | --- |
-| `feature` | 10 | 6 | 1 | 3 |
+| `feature` | 10 | 5 | 2 | 3 |
 
 ## Plan Groups
 
@@ -15,12 +15,12 @@
 | ID | Plan | Status | Created |
 | --- | --- | --- | --- |
 | `F001-01` | [宿主中立的外部智能体执行器（ACP）](features/F001/01-external-agent-executor.md) | `complete` | 2026-10-29 |
-| `F002-01` | [目标端开放智能体清单与纯消息任务](features/F002/01-target-open-catalog.md) | `draft` | 2026-10-30 |
+| `F002-01` | [目标端开放智能体清单与纯消息任务](features/F002/01-target-open-catalog.md) | `in_progress` | 2026-10-30 |
 | `F001-02` | [通过 Task 后台委派外部智能体](features/F001/02-task-delegation.md) | `complete` | 2026-10-29 |
-| `F002-02` | [同账号委派给远程原生智能体](features/F002/02-same-account-delegation.md) | `draft` | 2026-10-30 |
+| `F002-02` | [同账号委派给远程原生智能体](features/F002/02-same-account-delegation.md) | `approved` | 2026-10-30 |
 | `F001-03` | [智能体列表展示外部智能体与可用状态](features/F001/03-agent-list.md) | `complete` | 2026-10-29 |
-| `F002-03` | [同账号委派给远程设备上的 Claude Code](features/F002/03-remote-claude-code.md) | `draft` | 2026-10-30 |
+| `F002-03` | [同账号委派给远程设备上的 ACP 外部智能体](features/F002/03-remote-external-agents.md) | `approved` | 2026-10-30 |
 | `F001-04` | [外部智能体委派的远程场景](features/F001/04-remote-scenarios.md) | `in_progress` | 2026-10-29 |
-| `F002-04` | [relay 跨账号连接登记与路由授权](features/F002/04-relay-cross-account-routing.md) | `draft` | 2026-10-30 |
-| `F002-05` | [跨账号配对、连接级密钥与连接管理](features/F002/05-cross-account-pairing.md) | `draft` | 2026-10-30 |
-| `F002-06` | [跨账号委派：按连接授权、目标端审批、额度与审计](features/F002/06-cross-account-delegation.md) | `draft` | 2026-10-30 |
+| `F002-04` | [relay 跨账号连接登记与路由授权](features/F002/04-relay-cross-account-routing.md) | `approved` | 2026-10-30 |
+| `F002-05` | [跨账号配对、连接级密钥与连接管理](features/F002/05-cross-account-pairing.md) | `approved` | 2026-10-30 |
+| `F002-06` | [跨账号委派：按连接授权、目标端审批、额度与审计](features/F002/06-cross-account-delegation.md) | `approved` | 2026-10-30 |

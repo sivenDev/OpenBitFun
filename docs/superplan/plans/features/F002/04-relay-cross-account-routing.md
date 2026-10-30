@@ -2,7 +2,7 @@
 id: "F002-04"
 title: "relay 跨账号连接登记与路由授权"
 type: "feature"
-status: "draft"
+status: "approved"
 summary: "relay 支持一次性跨账号邀请、双方确认的连接记录与撤销，只在有效连接的两台设备之间路由委派 RPC，并在信息接口声明 cross_account_routing_v1。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"

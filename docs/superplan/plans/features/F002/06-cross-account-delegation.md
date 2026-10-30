@@ -2,7 +2,7 @@
 id: "F002-06"
 title: "跨账号委派：按连接授权、目标端审批、额度与审计"
 type: "feature"
-status: "draft"
+status: "approved"
 summary: "目标主人把开放项逐项授权给某个连接；发起方经连接看到并委派远程智能体；危险操作只由目标主人审批；按连接设置并发与时长额度；跨账号委派写入目标端审计；撤销后进行中的任务被取消。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"
@@ -18,7 +18,7 @@ parent: "F002"
 **Scope:**
 - **按连接授权**：
   - 开放项的授权增加「连接」维度，跨账号必须逐项授权，默认不授权。
-  - 外部智能体（如 Claude Code）的跨账号授权默认关闭，授权前再次提示额度与条款风险，并需要显式确认。
+  - 任意 ACP 外部智能体（如 Claude Code、Codex）的跨账号授权默认关闭，授权前按智能体再次提示额度与条款风险（Claude Code 另有订阅个人使用的说明），并需要显式确认。
 - **目录与列表**：发起方经有效连接查询对方目录，只返回授权给该连接的条目。智能体列表中的这些条目标明所属账号、设备、在线状态与兼容性。目标声明 `cross_account_delegation_v1` 时才查询。
 - **委派**：
   - 沿用 F002-02 的寻址、后台运行、观察、结果回收与重启补收，传输换成 F002-05 的连接 RPC。
@@ -129,6 +129,6 @@ parent: "F002"
 - `docs/superplan/rfcs/F002.md`
 - `docs/superplan/plans/features/F002/01-target-open-catalog.md`
 - `docs/superplan/plans/features/F002/02-same-account-delegation.md`
-- `docs/superplan/plans/features/F002/03-remote-claude-code.md`
+- `docs/superplan/plans/features/F002/03-remote-external-agents.md`
 - `docs/superplan/plans/features/F002/05-cross-account-pairing.md`
 - `docs/architecture/detached-task-dispatch.md`
