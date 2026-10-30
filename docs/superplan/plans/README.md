@@ -4,7 +4,7 @@
 
 ## Status
 
-| Type | Plans | Approved | Complete |
+| Type | Plans | In Progress | Complete |
 | --- | --- | --- | --- |
 | `feature` | 4 | 1 | 3 |
 
@@ -17,4 +17,4 @@
 | `F001-01` | [宿主中立的外部智能体执行器（ACP）](features/F001/01-external-agent-executor.md) | `complete` | 2026-10-29 |
 | `F001-02` | [通过 Task 后台委派外部智能体](features/F001/02-task-delegation.md) | `complete` | 2026-10-29 |
 | `F001-03` | [智能体列表展示外部智能体与可用状态](features/F001/03-agent-list.md) | `complete` | 2026-10-29 |
-| `F001-04` | [外部智能体委派的远程场景](features/F001/04-remote-scenarios.md) | `approved` | 2026-10-29 |
+| `F001-04` | [外部智能体委派的远程场景](features/F001/04-remote-scenarios.md) | `in_progress` | 2026-10-29 |

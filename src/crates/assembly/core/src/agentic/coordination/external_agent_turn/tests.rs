@@ -541,3 +541,54 @@ async fn delegated_subagent_without_a_registered_executor_fails_clearly() {
         .to_string()
         .contains("no external agent executor is registered"));
 }
+
+fn remote_binding(connection_id: &str, root: &str) -> WorkspaceBinding {
+    WorkspaceBinding::new_remote(
+        Some("remote-ws".to_string()),
+        std::path::PathBuf::from(root),
+        connection_id.to_string(),
+        "dev-box".to_string(),
+        openbitfun_services_core::workspace_identity::WorkspaceSessionIdentity {
+            workspace_kind: openbitfun_core_types::WorkspaceKind::Remote,
+            hostname: "dev-box".to_string(),
+            logical_workspace_path: root.to_string(),
+            remote_connection_id: Some(connection_id.to_string()),
+        },
+    )
+}
+
+#[test]
+fn remote_turns_carry_the_ssh_connection_and_posix_root() {
+    let binding = remote_binding("ssh-1", "/home/dev/project");
+    let context = external_agent_turn_context("acp:claude-code", "child-1", true, Some(&binding))
+        .expect("remote context");
+    assert_eq!(context.openbitfun_session_id, "child-1");
+    assert_eq!(context.remote_connection_id.as_deref(), Some("ssh-1"));
+    assert_eq!(context.workspace_path.as_deref(), Some("/home/dev/project"));
+}
+
+#[test]
+fn local_turns_have_no_connection() {
+    let binding = WorkspaceBinding::new(
+        Some("local-ws".to_string()),
+        std::path::PathBuf::from("/tmp/project"),
+    );
+    let context = external_agent_turn_context("acp:claude-code", "child-1", false, Some(&binding))
+        .expect("local context");
+    assert_eq!(context.remote_connection_id, None);
+    assert_eq!(context.workspace_path.as_deref(), Some("/tmp/project"));
+}
+
+#[test]
+fn remote_sessions_without_a_resolved_connection_never_run_locally() {
+    let local_binding = WorkspaceBinding::new(None, std::path::PathBuf::from("/home/dev/project"));
+    for workspace in [None, Some(&local_binding)] {
+        let error = external_agent_turn_context("acp:claude-code", "child-1", true, workspace)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("will not run on this host"),
+            "unexpected error: {error}"
+        );
+    }
+}

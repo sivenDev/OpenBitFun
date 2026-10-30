@@ -142,9 +142,15 @@ pub trait ExternalAgentExecutor: Send + Sync {
         context: &ExternalAgentContext,
     ) -> ExternalAgentAvailability;
 
-    /// Lists the external agents this executor can run, with host-level
-    /// availability. Context-specific checks still go through `availability`.
-    async fn list_agents(&self, _listing: ExternalAgentListing) -> Vec<ExternalAgentDescriptor> {
+    /// Lists the external agents this executor can run. With a
+    /// `remote_connection_id`, probed availability describes that remote
+    /// host instead of this one. Per-session checks still go through
+    /// `availability`.
+    async fn list_agents(
+        &self,
+        _listing: ExternalAgentListing,
+        _remote_connection_id: Option<&str>,
+    ) -> Vec<ExternalAgentDescriptor> {
         Vec::new()
     }
 

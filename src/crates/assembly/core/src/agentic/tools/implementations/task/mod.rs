@@ -133,11 +133,11 @@ impl AgentExecutionTool {
                 external_sources_supported,
             })
             .await;
+        // External agents are not external-source routes: in a remote
+        // workspace they run on the remote host through its connection.
         match context {
-            Some(context) if external_sources_supported => {
-                Self::append_external_agents(context, agents).await
-            }
-            _ => agents,
+            Some(context) => Self::append_external_agents(context, agents).await,
+            None => agents,
         }
     }
 
@@ -156,11 +156,20 @@ impl AgentExecutionTool {
         else {
             return agents;
         };
-        if Self::external_agent_parent_refusal(context, &parent_ceiling, false).is_some() {
+        let parent_is_swarm =
+            context.delegation_policy().scope == openbitfun_runtime_ports::DelegationScope::Swarm;
+        if Self::external_agent_parent_refusal(context, &parent_ceiling, parent_is_swarm).is_some()
+        {
             return agents;
         }
         let descriptors = executor
-            .list_agents(openbitfun_runtime_ports::ExternalAgentListing::Configured)
+            .list_agents(
+                openbitfun_runtime_ports::ExternalAgentListing::Configured,
+                context
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.connection_id()),
+            )
             .await;
         crate::agentic::agents::AgentRegistry::merge_acp_agents(agents, descriptors, false)
     }

@@ -2,7 +2,7 @@
 id: "F001-04"
 title: "外部智能体委派的远程场景"
 type: "feature"
-status: "approved"
+status: "in_progress"
 summary: "外部智能体委派在 SSH 远程工作区、手机端与 IM 远程控制、Peer Device Mode 下可用，Detached Dispatch 中明确报不支持。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-29"
@@ -47,21 +47,41 @@ parent: "F001"
 **Outcome:** ACP 子会话在远程工作区中经远程连接执行；不可用时明确报错。
 
 **Files:**
+- Modify: `src/crates/contracts/runtime-ports/src/external_agent.rs`
 - Modify: `src/crates/interfaces/acp/src/client/executor.rs`
-- Modify: `src/crates/interfaces/acp/src/client/directory.rs`
-- Modify: `src/crates/assembly/core/src/agentic/tools/implementations/task/validation.rs`
+- Modify: `src/crates/assembly/core/src/agentic/coordination/external_agent_turn.rs`
+- Modify: `src/crates/assembly/core/src/agentic/coordination/coordinator.rs`
+- Modify: `src/crates/assembly/core/src/agentic/agents/registry/acp_agents.rs`
+- Modify: `src/crates/assembly/core/src/agentic/agents/registry/query.rs`
+- Modify: `src/crates/assembly/core/src/agentic/tools/implementations/task/mod.rs`
+- Modify: `src/apps/desktop/src/api/subagent_api.rs`
+- Modify: `src/apps/cli/src/peer_host/commands/tools.rs`
 - Test: `src/crates/interfaces/acp/src/client/executor.rs`
+- Test: `src/crates/assembly/core/src/agentic/coordination/external_agent_turn/tests.rs`
+- Test: `src/crates/assembly/core/src/agentic/agents/registry/tests.rs`
 
 **Change Map:**
-- `executor.rs`：从工作区上下文取出远程连接标识并透传
-- `directory.rs`：远程工作区的可用状态使用远程探测结果
-- `validation.rs`：远程上下文不可用时返回明确原因
+- `external_agent.rs`：`list_agents` 增加 `remote_connection_id`，带连接时探测结果描述远程主机
+- `executor.rs`：远程探测（含首次无缓存时强制探测）抽成 `requirement_probes`，`availability` 与 `list_agents` 共用；远程主机缺少探测结果时报告「远程主机上未找到」
+- `external_agent_turn.rs`、`coordinator.rs`：`external_agent_turn_context` 从子会话的工作区绑定取连接标识与 POSIX 根路径；远程会话解析不到连接时直接失败，不在本机执行
+- `acp_agents.rs`、`query.rs`：新增 `ExternalAgentHost { Local, Remote, Unsupported }` 与 `get_subagents_for_management`；ACP 条目只进入总览列表，并按工作区所在主机探测
+- `task/mod.rs`：Task 目录中的 ACP 条目不再跟随 external-sources 开关，远程工作区也会列出；Swarm 判定与准入一致
+- `subagent_api.rs`、`tools.rs`：桌面端与 CLI peer 的 `list_subagents` 传入工作区所在主机；按模式的可管理列表只保留本地可开关的智能体
+
+**Deviations:**
+- `directory.rs`、`validation.rs` 未改动：目录能力在 `executor.rs`（见 F001-03），远程不可用原因由准入时的 `availability` 给出，无需在 `validation.rs` 另加分支。
+- F001-03 中按模式的可管理列表（`list_manageable_subagents`）也会带出 ACP 条目；本任务收窄为只在总览 `list_subagents` 中出现，因为按模式列表只用于开关，而 ACP 条目不能在那里开关。
 
 **Verification:**
-- `cargo test -p openbitfun-acp --no-default-features --features client,openbitfun-core/git --lib client::executor`
-- `cargo test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::tools::implementations::task`
+- `cargo +1.95.0 test -p openbitfun-acp --no-default-features --features client,openbitfun-core/git --lib client::`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::coordination::external_agent_turn`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::tools::implementations::task`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::agents::registry`
+- `cargo +1.95.0 test --locked -p openbitfun-runtime-ports --no-default-features --features external-agent-port --test external_agent_port_contracts`
+- `cargo +1.95.0 test -p openbitfun-cli --bin openbitfun peer_host::`
+- `cargo +1.95.0 test -p openbitfun-desktop --lib api::subagent_api`
 
-- [ ] 测试证明远程上下文会透传连接标识；远程不可用时返回明确原因且不在本地执行
+- [x] 远程会话透传 SSH 连接标识与 POSIX 根路径；远程会话缺少连接时报错且不在本机执行；远程主机缺少探测时报告原因（external_agent_turn 14、acp `client::` 94、task 90、registry 58、端口契约 7、CLI `peer_host::` 105、desktop 1 passed）。仅单元测试，尚未在真实 SSH 主机上运行。
 
 ## Task 2: 远程控制、Peer 与 Dispatch
 

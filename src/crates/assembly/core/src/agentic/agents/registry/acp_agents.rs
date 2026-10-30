@@ -71,3 +71,34 @@ fn acp_agent_description(descriptor: &ExternalAgentDescriptor) -> String {
     }
     description
 }
+
+/// Which host external agents are probed on for a management listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalAgentHost<'a> {
+    /// The host running this process.
+    Local,
+    /// An SSH remote workspace; agents run on that host.
+    Remote { connection_id: &'a str },
+    /// The workspace cannot run external agents (for example a remote record
+    /// without a saved connection). Nothing is listed, so no local agent is
+    /// offered in its place.
+    Unsupported,
+}
+
+impl<'a> ExternalAgentHost<'a> {
+    pub fn for_workspace(workspace: Option<&'a crate::service::workspace::WorkspaceInfo>) -> Self {
+        match workspace.map(|record| record.filesystem_connection_id()) {
+            None | Some(Ok(None)) => Self::Local,
+            Some(Ok(Some(connection_id))) => Self::Remote { connection_id },
+            Some(Err(_)) => Self::Unsupported,
+        }
+    }
+
+    pub(crate) fn remote_connection_id(self) -> Option<Option<&'a str>> {
+        match self {
+            Self::Local => Some(None),
+            Self::Remote { connection_id } => Some(Some(connection_id)),
+            Self::Unsupported => None,
+        }
+    }
+}

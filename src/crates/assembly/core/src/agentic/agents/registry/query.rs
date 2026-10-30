@@ -1,4 +1,4 @@
-use super::acp_agents::acp_agent_info;
+use super::acp_agents::{acp_agent_info, ExternalAgentHost};
 use super::availability::resolve_availability;
 use super::support::{
     get_mode_configs, get_subagent_overrides, load_project_subagent_overrides_local,
@@ -331,13 +331,16 @@ impl AgentRegistry {
 
     /// get all subagent information (including source and availability status, used for TaskTool and frontend subagent list etc.)
     pub async fn get_subagents_info(&self, workspace_id: Option<&str>) -> Vec<AgentInfo> {
-        self.get_subagents_for_query(&SubagentQueryContext {
-            parent_agent_type: None,
-            workspace_id,
-            list_scope: SubagentListScope::RegistryManagement,
-            include_disabled: true,
-            external_sources_supported: true,
-        })
+        self.get_subagents_for_management(
+            &SubagentQueryContext {
+                parent_agent_type: None,
+                workspace_id,
+                list_scope: SubagentListScope::RegistryManagement,
+                include_disabled: true,
+                external_sources_supported: true,
+            },
+            ExternalAgentHost::Local,
+        )
         .await
     }
 
@@ -429,20 +432,34 @@ impl AgentRegistry {
                 result = self.apply_external_routes_to_query(workspace_id, result);
             }
         }
-        // The Task catalog adds executor agents itself, after checking that
-        // the parent session may delegate to them.
-        if query.external_sources_supported
-            && query.list_scope == SubagentListScope::RegistryManagement
-        {
-            let descriptors = match crate::agentic::coordination::get_global_coordinator()
-                .and_then(|coordinator| coordinator.external_agent_executor())
-            {
-                Some(executor) => executor.list_agents(ExternalAgentListing::Probed).await,
-                None => Vec::new(),
-            };
-            result = Self::merge_acp_agents(result, descriptors, query.include_disabled);
-        }
         Self::sort_subagents_for_presentation(result)
+    }
+
+    /// Registry-management listing plus the external agents the host's
+    /// executor can run for `host`. The Task catalog adds external agents
+    /// itself, after checking that the parent session may delegate to them.
+    pub async fn get_subagents_for_management(
+        &self,
+        query: &SubagentQueryContext<'_>,
+        host: ExternalAgentHost<'_>,
+    ) -> Vec<AgentInfo> {
+        let result = self.get_subagents_for_query(query).await;
+        let Some(remote_connection_id) = host.remote_connection_id() else {
+            return result;
+        };
+        let Some(executor) = crate::agentic::coordination::get_global_coordinator()
+            .and_then(|coordinator| coordinator.external_agent_executor())
+        else {
+            return result;
+        };
+        let descriptors = executor
+            .list_agents(ExternalAgentListing::Probed, remote_connection_id)
+            .await;
+        Self::sort_subagents_for_presentation(Self::merge_acp_agents(
+            result,
+            descriptors,
+            query.include_disabled,
+        ))
     }
 
     /// Appends executor agents, skipping unavailable ones unless disabled

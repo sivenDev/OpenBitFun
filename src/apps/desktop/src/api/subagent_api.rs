@@ -3,10 +3,11 @@
 use crate::api::app_state::AppState;
 use log::warn;
 use openbitfun_core::agentic::agents::{
-    AgentInfo, CustomSubagent, CustomSubagentDetail, CustomSubagentKind, SubAgentSource,
-    SubagentListScope, SubagentQueryContext,
+    AgentInfo, CustomSubagent, CustomSubagentDetail, CustomSubagentKind, ExternalAgentHost,
+    SubAgentSource, SubagentListScope, SubagentQueryContext,
 };
 use openbitfun_core::service::config::model_pool::AgentModelSelection;
+use openbitfun_core::service::workspace::WorkspaceInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tauri::State;
@@ -41,15 +42,15 @@ pub struct ListManageableSubagentsRequest {
     pub parent_agent_type: String,
 }
 
-async fn query_workspace_from_request(
+async fn workspace_record_from_request(
     state: &AppState,
     workspace_id: Option<&str>,
     legacy_path: Option<&str>,
-) -> Result<(Option<String>, bool), String> {
+) -> Result<Option<WorkspaceInfo>, String> {
     if workspace_id.is_none() && legacy_path.is_none() {
-        return Ok((None, true));
+        return Ok(None);
     }
-    let record = state
+    state
         .workspace_service
         .resolve_legacy_workspace_reference(
             workspace_id,
@@ -59,9 +60,24 @@ async fn query_workspace_from_request(
         )
         .await
         .map_err(|error| error.to_string())?
-        .ok_or("Unknown workspace reference")?;
-    let local = record.workspace_kind != openbitfun_core::service::workspace::WorkspaceKind::Remote;
-    Ok((Some(record.id), local))
+        .ok_or_else(|| "Unknown workspace reference".to_string())
+        .map(Some)
+}
+
+fn is_local_workspace(record: Option<&WorkspaceInfo>) -> bool {
+    record.is_none_or(|record| {
+        record.workspace_kind != openbitfun_core::service::workspace::WorkspaceKind::Remote
+    })
+}
+
+async fn query_workspace_from_request(
+    state: &AppState,
+    workspace_id: Option<&str>,
+    legacy_path: Option<&str>,
+) -> Result<(Option<String>, bool), String> {
+    let record = workspace_record_from_request(state, workspace_id, legacy_path).await?;
+    let local = is_local_workspace(record.as_ref());
+    Ok((record.map(|record| record.id), local))
 }
 
 pub(super) async fn local_workspace_from_request(
@@ -107,24 +123,28 @@ pub async fn list_subagents(
     state: State<'_, AppState>,
     request: ListSubagentsRequest,
 ) -> Result<Vec<AgentInfo>, String> {
-    let (workspace, external_sources_supported) = query_workspace_from_request(
+    let workspace = workspace_record_from_request(
         &state,
         request.workspace_id.as_deref(),
         request.workspace_path.as_deref(),
     )
     .await?;
+    let external_sources_supported = is_local_workspace(workspace.as_ref());
     let query_workspace = external_sources_supported
-        .then_some(workspace.as_deref())
+        .then_some(workspace.as_ref().map(|record| record.id.as_str()))
         .flatten();
     let list = state
         .agent_registry
-        .get_subagents_for_query(&SubagentQueryContext {
-            parent_agent_type: None,
-            workspace_id: query_workspace,
-            list_scope: SubagentListScope::RegistryManagement,
-            include_disabled: true,
-            external_sources_supported,
-        })
+        .get_subagents_for_management(
+            &SubagentQueryContext {
+                parent_agent_type: None,
+                workspace_id: query_workspace,
+                list_scope: SubagentListScope::RegistryManagement,
+                include_disabled: true,
+                external_sources_supported,
+            },
+            ExternalAgentHost::for_workspace(workspace.as_ref()),
+        )
         .await;
 
     let result = match request.source {

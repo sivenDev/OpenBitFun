@@ -25,6 +25,32 @@ impl AcpExternalAgentExecutor {
     pub fn new(service: Arc<AcpClientService>) -> Self {
         Self { service }
     }
+
+    /// Requirement probes for this host or for `remote_connection_id`.
+    async fn requirement_probes(
+        &self,
+        remote_connection_id: Option<&str>,
+    ) -> Vec<AcpClientRequirementProbe> {
+        let probes = self
+            .service
+            .probe_client_requirements(remote_connection_id, false)
+            .await
+            .unwrap_or_default();
+        if remote_connection_id.is_none() || !probes.is_empty() {
+            return probes;
+        }
+        // A remote host that was never probed has no cached snapshot yet.
+        self.service
+            .probe_client_requirements(remote_connection_id, true)
+            .await
+            .unwrap_or_default()
+    }
+}
+
+fn normalized_connection_id(remote_connection_id: Option<&str>) -> Option<&str> {
+    remote_connection_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 /// Decides availability from configuration facts alone.
@@ -84,6 +110,7 @@ fn availability_from_facts(
 fn descriptors_from_facts(
     clients: &[AcpClientInfo],
     probes: Option<&[AcpClientRequirementProbe]>,
+    remote: bool,
 ) -> Vec<ExternalAgentDescriptor> {
     clients
         .iter()
@@ -93,7 +120,7 @@ fn descriptors_from_facts(
                     &client.id,
                     Some(client),
                     probes.iter().find(|probe| probe.id == client.id),
-                    false,
+                    remote,
                 ),
                 None => configured_availability(&client.id, Some(client)),
             };
@@ -197,11 +224,8 @@ impl ExternalAgentExecutor for AcpExternalAgentExecutor {
         client_id: &str,
         context: &ExternalAgentContext,
     ) -> ExternalAgentAvailability {
-        let remote_connection_id = context
-            .remote_connection_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
+        let remote_connection_id =
+            normalized_connection_id(context.remote_connection_id.as_deref());
         let clients = match self.service.list_clients().await {
             Ok(clients) => clients,
             Err(error) => {
@@ -213,25 +237,18 @@ impl ExternalAgentExecutor for AcpExternalAgentExecutor {
         };
         let client = clients.iter().find(|client| client.id == client_id);
 
-        let mut probes = self
-            .service
-            .probe_client_requirements(remote_connection_id, false)
-            .await
-            .unwrap_or_default();
-        if remote_connection_id.is_some() && probes.is_empty() {
-            // A remote host that was never probed has no cached snapshot yet.
-            probes = self
-                .service
-                .probe_client_requirements(remote_connection_id, true)
-                .await
-                .unwrap_or_default();
-        }
+        let probes = self.requirement_probes(remote_connection_id).await;
         let probe = probes.iter().find(|probe| probe.id == client_id);
 
         availability_from_facts(client_id, client, probe, remote_connection_id.is_some())
     }
 
-    async fn list_agents(&self, listing: ExternalAgentListing) -> Vec<ExternalAgentDescriptor> {
+    async fn list_agents(
+        &self,
+        listing: ExternalAgentListing,
+        remote_connection_id: Option<&str>,
+    ) -> Vec<ExternalAgentDescriptor> {
+        let remote_connection_id = normalized_connection_id(remote_connection_id);
         let clients = match self.service.list_clients().await {
             Ok(clients) => clients,
             Err(error) => {
@@ -240,14 +257,12 @@ impl ExternalAgentExecutor for AcpExternalAgentExecutor {
             }
         };
         match listing {
-            ExternalAgentListing::Configured => descriptors_from_facts(&clients, None),
+            ExternalAgentListing::Configured => {
+                descriptors_from_facts(&clients, None, remote_connection_id.is_some())
+            }
             ExternalAgentListing::Probed => {
-                let probes = self
-                    .service
-                    .probe_client_requirements(None, false)
-                    .await
-                    .unwrap_or_default();
-                descriptors_from_facts(&clients, Some(&probes))
+                let probes = self.requirement_probes(remote_connection_id).await;
+                descriptors_from_facts(&clients, Some(&probes), remote_connection_id.is_some())
             }
         }
     }
@@ -422,7 +437,7 @@ mod tests {
         disabled.name = "Codex".to_string();
         let clients = vec![described, disabled];
 
-        let configured = descriptors_from_facts(&clients, None);
+        let configured = descriptors_from_facts(&clients, None, false);
         assert_eq!(configured.len(), 2);
         assert_eq!(configured[0].client_id, "claude-code");
         assert_eq!(configured[0].name, "Claude Code");
@@ -438,7 +453,7 @@ mod tests {
         );
 
         let probes = vec![probe(false, &["claude is not available on PATH"])];
-        let probed = descriptors_from_facts(&clients, Some(&probes));
+        let probed = descriptors_from_facts(&clients, Some(&probes), false);
         assert_eq!(
             probed[0].availability,
             ExternalAgentAvailability::Unavailable {
@@ -450,6 +465,24 @@ mod tests {
             reason(probed[1].availability.clone()),
             Some(ExternalAgentUnavailableReason::NotEnabled)
         );
+
+        // A remote host without a probe for the client reports it missing
+        // there instead of borrowing this host's install.
+        let remote = descriptors_from_facts(&clients, Some(&[]), true);
+        assert_eq!(
+            remote[0].availability,
+            ExternalAgentAvailability::Unavailable {
+                reason: ExternalAgentUnavailableReason::NotInstalled,
+                detail: "ACP client 'claude-code' was not found on the remote host".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn blank_connection_ids_mean_this_host() {
+        assert_eq!(normalized_connection_id(None), None);
+        assert_eq!(normalized_connection_id(Some("  ")), None);
+        assert_eq!(normalized_connection_id(Some(" ssh-1 ")), Some("ssh-1"));
     }
 
     #[test]

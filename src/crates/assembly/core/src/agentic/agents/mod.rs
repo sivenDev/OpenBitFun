@@ -56,7 +56,7 @@ pub use registry::visibility::{
     BuiltinSubagentExposure, SubagentVisibilityPolicy, SubagentVisibilitySummary,
 };
 pub use registry::{
-    get_agent_registry, AgentRegistry, CustomAgentDetail, CustomSubagentDetail,
+    get_agent_registry, AgentRegistry, CustomAgentDetail, CustomSubagentDetail, ExternalAgentHost,
     ExternalPrimaryAgentTurnBinding, ExternalSubagentGenerationLease,
     ExternalSubagentInvocationBinding, ExternalSubagentModelBinding, ExternalSubagentRegistration,
     ExternalSubagentRoute,

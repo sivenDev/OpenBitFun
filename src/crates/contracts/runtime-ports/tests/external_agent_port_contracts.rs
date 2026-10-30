@@ -289,11 +289,11 @@ fn turn_request_tolerates_unknown_and_missing_optional_fields() {
 async fn executors_without_a_directory_list_no_agents() {
     let executor = FakeExecutor::default();
     assert!(executor
-        .list_agents(ExternalAgentListing::Configured)
+        .list_agents(ExternalAgentListing::Configured, None)
         .await
         .is_empty());
     assert!(executor
-        .list_agents(ExternalAgentListing::Probed)
+        .list_agents(ExternalAgentListing::Probed, Some("ssh-1"))
         .await
         .is_empty());
 }

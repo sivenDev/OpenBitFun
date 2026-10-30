@@ -2640,3 +2640,22 @@ fn acp_agent_info_for_test() -> AgentInfo {
         unavailable(openbitfun_runtime_ports::ExternalAgentUnavailableReason::NotInstalled),
     ))
 }
+
+#[test]
+fn external_agent_hosts_select_where_agents_are_probed() {
+    use super::ExternalAgentHost;
+    assert_eq!(
+        ExternalAgentHost::for_workspace(None),
+        ExternalAgentHost::Local
+    );
+    assert_eq!(ExternalAgentHost::Local.remote_connection_id(), Some(None));
+    assert_eq!(
+        ExternalAgentHost::Remote {
+            connection_id: "ssh-1"
+        }
+        .remote_connection_id(),
+        Some(Some("ssh-1"))
+    );
+    // An unresolved remote host lists nothing rather than local agents.
+    assert_eq!(ExternalAgentHost::Unsupported.remote_connection_id(), None);
+}

@@ -11,7 +11,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use log::warn;
 use openbitfun_runtime_ports::{
-    ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentTurnEvent,
+    ExternalAgentContext, ExternalAgentEventSink, ExternalAgentExecutor, ExternalAgentTurnEvent,
     ExternalAgentTurnOutcome, ExternalAgentTurnRequest, PortError, PortErrorKind, PortResult,
 };
 use tokio_util::sync::CancellationToken;
@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::agentic::core::Message;
 use crate::agentic::events::{AgenticEvent, EventPriority, EventQueue};
 use crate::agentic::execution::{ExecutionResult, FinishReason};
+use crate::agentic::WorkspaceBinding;
 use crate::util::errors::{OpenBitFunError, OpenBitFunResult};
 
 pub(crate) const EXTERNAL_AGENT_TYPE_PREFIX: &str = "acp:";
@@ -29,6 +30,33 @@ pub(crate) fn external_agent_client_id(agent_type: &str) -> Option<&str> {
         .strip_prefix(EXTERNAL_AGENT_TYPE_PREFIX)
         .map(str::trim)
         .filter(|client_id| !client_id.is_empty())
+}
+
+/// Where the delegated turn runs. A remote session runs on its SSH host; when
+/// that host cannot be resolved the turn fails instead of running here.
+pub(crate) fn external_agent_turn_context(
+    agent_type: &str,
+    session_id: &str,
+    session_is_remote: bool,
+    workspace: Option<&WorkspaceBinding>,
+) -> OpenBitFunResult<ExternalAgentContext> {
+    let remote_connection_id = workspace.and_then(WorkspaceBinding::connection_id);
+    if session_is_remote && remote_connection_id.is_none() {
+        return Err(OpenBitFunError::service(format!(
+            "External agent '{agent_type}' is unavailable: the remote workspace has no resolved SSH connection, and it will not run on this host instead"
+        )));
+    }
+    Ok(ExternalAgentContext {
+        openbitfun_session_id: session_id.to_string(),
+        workspace_path: workspace.map(WorkspaceBinding::logical_workspace_path_string),
+        remote_connection_id: remote_connection_id.map(str::to_string),
+        session_storage_path: workspace.map(|workspace| {
+            workspace
+                .session_storage_dir()
+                .to_string_lossy()
+                .into_owned()
+        }),
+    })
 }
 
 /// Projects executor events onto the child session's stream events.

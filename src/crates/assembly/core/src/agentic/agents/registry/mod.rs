@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::sync::{Arc, OnceLock};
 
+pub use acp_agents::ExternalAgentHost;
 #[cfg(feature = "external-sources")]
 pub(crate) use external::external_subagent_runtime_key;
 pub use external::{

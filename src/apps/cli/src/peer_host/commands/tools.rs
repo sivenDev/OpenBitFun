@@ -28,7 +28,9 @@ pub(crate) async fn get_all_tools_info() -> Result<Value, String> {
 /// Query the host registry using the same visibility and remote-source rules as Desktop.
 pub(crate) async fn list_subagents(command: &str, args: &Value) -> Result<Value, String> {
     use crate::peer_host::args::{get_string, optional_string, request_value};
-    use openbitfun_core::agentic::agents::{SubagentListScope, SubagentQueryContext};
+    use openbitfun_core::agentic::agents::{
+        ExternalAgentHost, SubagentListScope, SubagentQueryContext,
+    };
     let request = request_value(args);
     let parent = if command == "list_subagents" {
         None
@@ -65,21 +67,32 @@ pub(crate) async fn list_subagents(command: &str, args: &Value) -> Result<Value,
     let external_sources_supported = workspace.as_ref().is_none_or(|record| {
         record.workspace_kind != openbitfun_core::service::workspace::WorkspaceKind::Remote
     });
-    let mut agents = openbitfun_core::agentic::get_agent_registry()
-        .get_subagents_for_query(&SubagentQueryContext {
-            parent_agent_type: parent.as_deref(),
-            workspace_id: external_sources_supported
-                .then_some(workspace.as_ref().map(|record| record.id.as_str()))
-                .flatten(),
-            list_scope: if visible {
-                SubagentListScope::TaskVisible
-            } else {
-                SubagentListScope::RegistryManagement
-            },
-            include_disabled: !visible,
-            external_sources_supported,
-        })
-        .await;
+    let query = SubagentQueryContext {
+        parent_agent_type: parent.as_deref(),
+        workspace_id: external_sources_supported
+            .then_some(workspace.as_ref().map(|record| record.id.as_str()))
+            .flatten(),
+        list_scope: if visible {
+            SubagentListScope::TaskVisible
+        } else {
+            SubagentListScope::RegistryManagement
+        },
+        include_disabled: !visible,
+        external_sources_supported,
+    };
+    let registry = openbitfun_core::agentic::get_agent_registry();
+    // Only the registry overview lists external agents, matching Desktop;
+    // per-mode lists stay limited to agents the mode can toggle.
+    let mut agents = if command == "list_subagents" {
+        registry
+            .get_subagents_for_management(
+                &query,
+                ExternalAgentHost::for_workspace(workspace.as_ref()),
+            )
+            .await
+    } else {
+        registry.get_subagents_for_query(&query).await
+    };
     if let Some(source) = source {
         agents.retain(|agent| agent.subagent_source.as_ref() == Some(&source));
     }
