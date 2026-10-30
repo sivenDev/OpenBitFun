@@ -15,7 +15,8 @@ use serde_json::{json, Value};
 
 use openbitfun_services_integrations::remote_connect::account::AccountSession;
 use openbitfun_services_integrations::remote_connect::connections::{
-    self, ConnectionStore, RouteRefusal, RELAY_CAPABILITY_CROSS_ACCOUNT_ROUTING,
+    self, ConnectionStore, Direction, ReplayGuard, RouteRefusal,
+    RELAY_CAPABILITY_CROSS_ACCOUNT_ROUTING,
 };
 use openbitfun_services_integrations::remote_connect::relay_client::RelayClient;
 
@@ -128,10 +129,24 @@ impl ConnectionRpc {
             &self.context.local_device_id,
         )?;
         let key = record.connection_key(&self.context.session.master_key)?;
-        let (data, nonce) = connections::seal_request(&key, connection_id, command, &args)?;
+        let sealed = connections::seal_request(
+            &key,
+            Direction {
+                connection_id,
+                from_device_id: &self.context.local_device_id,
+                to_device_id: &record.peer_device_id,
+            },
+            command,
+            &args,
+        )?;
         let answer = match self
             .transport
-            .request_connection(connection_id, command, &data, &nonce)
+            .request_connection(
+                connection_id,
+                command,
+                &sealed.encrypted_data,
+                &sealed.nonce,
+            )
             .await
         {
             Ok(answer) => answer,
@@ -159,7 +174,17 @@ impl ConnectionRpc {
         else {
             bail!("connection answer is malformed");
         };
-        connections::open_response(&key, data, nonce)
+        connections::open_response(
+            &key,
+            Direction {
+                connection_id,
+                from_device_id: &record.peer_device_id,
+                to_device_id: &self.context.local_device_id,
+            },
+            &sealed.request_id,
+            data,
+            nonce,
+        )
     }
 }
 
@@ -223,6 +248,12 @@ pub struct IncomingConnectionRequest {
     pub nonce: String,
 }
 
+/// Request ids this process has accepted; see `connections::ReplayGuard`.
+fn replay_guard() -> &'static ReplayGuard {
+    static GUARD: std::sync::OnceLock<ReplayGuard> = std::sync::OnceLock::new();
+    GUARD.get_or_init(ReplayGuard::default)
+}
+
 fn refused(reason: &str) -> Value {
     json!({ "refused": reason })
 }
@@ -266,14 +297,36 @@ pub async fn answer_connection_request(
             return refused("connection_unusable");
         }
     };
-    let result = match connections::open_request(
+    let opened = match connections::open_request(
         &key,
-        &request.connection_id,
+        Direction {
+            connection_id: &record.connection_id,
+            from_device_id: &record.peer_device_id,
+            to_device_id: &context.local_device_id,
+        },
         &request.command,
         &request.encrypted_data,
         &request.nonce,
     ) {
-        Ok(opened) if connections::is_connection_command(&opened.command) => {
+        Ok(opened) => opened,
+        Err(error) => {
+            // Without an authentic request there is no id to answer under.
+            log::warn!(
+                "Connection request rejected: connection={} error={error}",
+                request.connection_id
+            );
+            return refused("request_rejected");
+        }
+    };
+    let result = match replay_guard().admit(&opened, chrono::Utc::now().timestamp()) {
+        Err(error) => {
+            log::warn!(
+                "Connection request rejected: connection={} error={error}",
+                request.connection_id
+            );
+            Err(error.to_string())
+        }
+        Ok(()) if connections::is_connection_command(&opened.command) => {
             let caller = ConnectionCaller {
                 connection_id: record.connection_id.clone(),
                 peer_user_id: record.peer_user_id.clone(),
@@ -285,18 +338,18 @@ pub async fn answer_connection_request(
                 request.connection_id,
                 opened.command
             );
-            handler.handle(&caller, &opened.command, opened.args).await
+            handler
+                .handle(&caller, &opened.command, opened.args.clone())
+                .await
         }
-        Ok(_) => Err("command is not routable across accounts".to_owned()),
-        Err(error) => {
-            log::warn!(
-                "Connection request rejected: connection={} error={error}",
-                request.connection_id
-            );
-            Err(error.to_string())
-        }
+        Ok(()) => Err("command is not routable across accounts".to_owned()),
     };
-    match connections::seal_response(&key, result) {
+    let reply = Direction {
+        connection_id: &record.connection_id,
+        from_device_id: &context.local_device_id,
+        to_device_id: &record.peer_device_id,
+    };
+    match connections::seal_response(&key, reply, &opened.request_id, result) {
         Ok((data, nonce)) => json!({ "encrypted_data": data, "nonce": nonce }),
         Err(error) => {
             log::warn!("Failed to encrypt connection answer: {error}");

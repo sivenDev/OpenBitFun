@@ -82,6 +82,11 @@ enum Behavior {
     /// The relay reports another source device.
     SpoofSource(&'static str),
     Refuse(&'static str),
+    /// The relay delivers the same request a second time and returns the
+    /// second answer.
+    Replay,
+    /// The relay answers every later call with the first answer it saw.
+    SwapInFirstAnswer,
 }
 
 /// An in-process relay: delivers each call to `target` as the real relay
@@ -93,6 +98,7 @@ struct FakeRelay {
     handler: Box<dyn ConnectionRequestHandler>,
     behavior: Behavior,
     seen: Mutex<Vec<String>>,
+    first_answer: Mutex<Option<Value>>,
 }
 
 #[async_trait]
@@ -106,7 +112,9 @@ impl ConnectionTransport for FakeRelay {
     ) -> Result<Value> {
         self.seen.lock().unwrap().push(encrypted_data.to_owned());
         let (command, source) = match self.behavior {
-            Behavior::Deliver => (command, self.source_device.as_str()),
+            Behavior::Deliver | Behavior::Replay | Behavior::SwapInFirstAnswer => {
+                (command, self.source_device.as_str())
+            }
             Behavior::RewriteCommand(other) => (other, self.source_device.as_str()),
             Behavior::SpoofSource(other) => (command, other),
             Behavior::Refuse(reason) => return Err(route_refusal(reason, "refused by test relay")),
@@ -119,13 +127,23 @@ impl ConnectionTransport for FakeRelay {
             encrypted_data: encrypted_data.into(),
             nonce: nonce.into(),
         };
-        Ok(answer_connection_request(
-            &self.target.context,
-            &self.target.store,
-            &request,
-            self.handler.as_ref(),
-        )
-        .await)
+        let deliver = || {
+            answer_connection_request(
+                &self.target.context,
+                &self.target.store,
+                &request,
+                self.handler.as_ref(),
+            )
+        };
+        let answer = deliver().await;
+        match self.behavior {
+            Behavior::Replay => Ok(deliver().await),
+            Behavior::SwapInFirstAnswer => {
+                let mut first = self.first_answer.lock().unwrap();
+                Ok(first.get_or_insert(answer).clone())
+            }
+            _ => Ok(answer),
+        }
     }
 }
 
@@ -145,6 +163,7 @@ fn paired(
         handler,
         behavior,
         seen: Mutex::new(Vec::new()),
+        first_answer: Mutex::new(None),
     });
     let rpc = ConnectionRpc::new(
         relay.clone(),
@@ -185,9 +204,81 @@ async fn request_and_answer_round_trip_under_the_connection_key() {
         CONNECTION,
     )
     .unwrap();
+    let to_target = Direction {
+        connection_id: CONNECTION,
+        from_device_id: "device-a",
+        to_device_id: "device-b",
+    };
     assert!(
-        connections::open_request(&key, CONNECTION, "dispatch_target_probe", &seen[0], "").is_err()
+        connections::open_request(&key, to_target, "dispatch_target_probe", &seen[0], "").is_err()
     );
+}
+
+#[tokio::test]
+async fn a_replayed_request_is_refused_by_the_target() {
+    let (rpc, _relay, _requester) = paired(Box::new(Echo), Behavior::Replay, SUPPORTED);
+    let error = rpc
+        .invoke_connection(CONNECTION, "dispatch_target_submit", json!({}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "connection request was already received");
+}
+
+#[tokio::test]
+async fn an_older_answer_swapped_in_by_the_relay_is_refused() {
+    let (rpc, _relay, _requester) = paired(Box::new(Echo), Behavior::SwapInFirstAnswer, SUPPORTED);
+    let first = rpc
+        .invoke_connection(CONNECTION, "dispatch_target_status", json!({"n": 1}))
+        .await
+        .unwrap();
+    assert_eq!(first["args"], json!({"n": 1}));
+    let error = rpc
+        .invoke_connection(CONNECTION, "dispatch_target_status", json!({"n": 2}))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "connection answer does not match its request"
+    );
+}
+
+#[tokio::test]
+async fn a_request_reflected_back_to_its_sender_is_refused() {
+    // Both devices are pinned to each other; the relay hands device A's own
+    // request back to device A, reporting device B as the source.
+    let (rpc, relay, requester) = paired(Box::new(Echo), Behavior::Deliver, SUPPORTED);
+    rpc.invoke_connection(CONNECTION, "dispatch_target_probe", json!({}))
+        .await
+        .unwrap();
+    let record = requester
+        .store
+        .usable(CONNECTION, RELAY, "device-a")
+        .unwrap();
+    let key = record
+        .connection_key(&requester.context.session.master_key)
+        .unwrap();
+    let sealed = connections::seal_request(
+        &key,
+        Direction {
+            connection_id: CONNECTION,
+            from_device_id: "device-a",
+            to_device_id: "device-b",
+        },
+        "dispatch_target_probe",
+        &json!({}),
+    )
+    .unwrap();
+    let reflected = IncomingConnectionRequest {
+        connection_id: CONNECTION.into(),
+        command: "dispatch_target_probe".into(),
+        source_account_id: relay.target.context.session.user_id.clone(),
+        source_device_id: relay.target.context.local_device_id.clone(),
+        encrypted_data: sealed.encrypted_data,
+        nonce: sealed.nonce,
+    };
+    let answer =
+        answer_connection_request(&requester.context, &requester.store, &reflected, &Echo).await;
+    assert_eq!(answer, json!({"refused": "request_rejected"}));
 }
 
 #[tokio::test]
@@ -293,10 +384,9 @@ async fn the_target_checks_routing_against_its_own_record() {
         .invoke_connection(CONNECTION, "dispatch_target_probe", json!({}))
         .await
         .unwrap_err();
-    assert!(
-        error.to_string().contains("does not match its routing"),
-        "{error}"
-    );
+    // The target cannot open it under the reported routing, so it has no
+    // authentic request id to answer under and refuses in plaintext.
+    assert_eq!(refusal_reason(&error), Some("request_rejected"), "{error}");
 
     let (rpc, _relay, _requester) =
         paired(Box::new(Echo), Behavior::SpoofSource("device-z"), SUPPORTED);

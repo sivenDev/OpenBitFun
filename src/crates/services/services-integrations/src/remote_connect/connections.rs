@@ -1093,24 +1093,59 @@ impl ConnectionsClient<'_> {
 }
 
 // ── Request envelope ───────────────────────────────────────────────────
+//
+// Both directions share the connection key, so every sealed message names
+// its sender and recipient: a Relay cannot reflect a request back to the
+// device that sent it. Each request has a random id and an issue time; the
+// target refuses stale or repeated ids, and the answer echoes the id, so a
+// Relay can neither replay a request nor swap in an older answer.
 
-/// Encrypt one connection request. The connection id and command are inside
-/// the ciphertext too, so the receiver can check them against the routing
-/// fields the Relay reports.
+/// How far a request's issue time may be from the target's clock.
+pub const REQUEST_MAX_AGE_SECONDS: i64 = 300;
+
+/// Who sends a sealed message to whom on one connection.
+#[derive(Debug, Clone, Copy)]
+pub struct Direction<'a> {
+    pub connection_id: &'a str,
+    pub from_device_id: &'a str,
+    pub to_device_id: &'a str,
+}
+
+/// A sealed request and the id its answer must echo.
+#[derive(Debug, Clone)]
+pub struct SealedRequest {
+    pub encrypted_data: String,
+    pub nonce: String,
+    pub request_id: String,
+}
+
+/// Encrypt one connection request. Connection, sender, recipient and
+/// command are inside the ciphertext, so the receiver checks them against
+/// its own record and the routing fields the Relay reports.
 pub fn seal_request(
     key: &[u8; 32],
-    connection_id: &str,
+    direction: Direction<'_>,
     command: &str,
     args: &Value,
-) -> Result<(String, String)> {
+) -> Result<SealedRequest> {
+    let request_id = uuid::Uuid::new_v4().to_string();
     let plaintext = json!({
         "cmd": "host_invoke",
-        "connectionId": connection_id,
+        "connectionId": direction.connection_id,
+        "from": direction.from_device_id,
+        "to": direction.to_device_id,
+        "requestId": request_id,
+        "issuedAt": chrono::Utc::now().timestamp(),
         "command": command,
         "args": args,
     })
     .to_string();
-    super::encryption::encrypt_to_base64(key, &plaintext)
+    let (encrypted_data, nonce) = super::encryption::encrypt_to_base64(key, &plaintext)?;
+    Ok(SealedRequest {
+        encrypted_data,
+        nonce,
+        request_id,
+    })
 }
 
 /// A decrypted request whose inner fields match the routing fields.
@@ -1118,11 +1153,15 @@ pub fn seal_request(
 pub struct OpenedRequest {
     pub command: String,
     pub args: Value,
+    pub request_id: String,
+    pub issued_at: i64,
 }
 
+/// Open a request sent to this device. `direction` is what this device
+/// expects: the pinned peer as sender, itself as recipient.
 pub fn open_request(
     key: &[u8; 32],
-    connection_id: &str,
+    direction: Direction<'_>,
     routed_command: &str,
     data: &str,
     nonce: &str,
@@ -1131,36 +1170,91 @@ pub fn open_request(
         .map_err(|_| anyhow!("connection request could not be decrypted"))?;
     let value: Value = serde_json::from_str(&plaintext)?;
     if value["cmd"] != "host_invoke"
-        || value["connectionId"] != connection_id
+        || value["connectionId"] != direction.connection_id
+        || value["from"] != direction.from_device_id
+        || value["to"] != direction.to_device_id
         || value["command"] != routed_command
     {
         bail!("connection request does not match its routing");
     }
+    let (Some(request_id), Some(issued_at)) =
+        (value["requestId"].as_str(), value["issuedAt"].as_i64())
+    else {
+        bail!("connection request is malformed");
+    };
     Ok(OpenedRequest {
         command: routed_command.to_owned(),
         args: value.get("args").cloned().unwrap_or(Value::Null),
+        request_id: request_id.to_owned(),
+        issued_at,
     })
 }
 
-/// Encrypt an answer: `Ok(value)` or an error message.
-pub fn seal_response(
-    key: &[u8; 32],
-    result: std::result::Result<Value, String>,
-) -> Result<(String, String)> {
-    let plaintext = match result {
-        Ok(value) => json!({"resp": "host_invoke_result", "ok": true, "value": value}),
-        Err(error) => json!({"resp": "host_invoke_result", "ok": false, "error": error}),
-    }
-    .to_string();
-    super::encryption::encrypt_to_base64(key, &plaintext)
+/// Request ids a target has accepted recently. One per target process: a
+/// request is refused when it is older than `REQUEST_MAX_AGE_SECONDS` (so
+/// ids need not be kept longer) or when its id was already accepted.
+#[derive(Debug, Default)]
+pub struct ReplayGuard {
+    seen: std::sync::Mutex<std::collections::HashMap<String, i64>>,
 }
 
-pub fn open_response(key: &[u8; 32], data: &str, nonce: &str) -> Result<Value> {
+impl ReplayGuard {
+    /// Records `request` as accepted, or says why it is refused.
+    pub fn admit(&self, request: &OpenedRequest, now: i64) -> Result<()> {
+        if (now - request.issued_at).abs() > REQUEST_MAX_AGE_SECONDS {
+            bail!("connection request is stale");
+        }
+        let mut seen = self
+            .seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        seen.retain(|_, issued| now - *issued <= REQUEST_MAX_AGE_SECONDS);
+        if seen.contains_key(&request.request_id) {
+            bail!("connection request was already received");
+        }
+        seen.insert(request.request_id.clone(), request.issued_at);
+        Ok(())
+    }
+}
+
+/// Encrypt an answer: `Ok(value)` or an error message. It names its
+/// direction and echoes the request id it answers.
+pub fn seal_response(
+    key: &[u8; 32],
+    direction: Direction<'_>,
+    request_id: &str,
+    result: std::result::Result<Value, String>,
+) -> Result<(String, String)> {
+    let mut answer = match result {
+        Ok(value) => json!({"resp": "host_invoke_result", "ok": true, "value": value}),
+        Err(error) => json!({"resp": "host_invoke_result", "ok": false, "error": error}),
+    };
+    answer["connectionId"] = json!(direction.connection_id);
+    answer["from"] = json!(direction.from_device_id);
+    answer["to"] = json!(direction.to_device_id);
+    answer["requestId"] = json!(request_id);
+    super::encryption::encrypt_to_base64(key, &answer.to_string())
+}
+
+/// Open the answer to `request_id`. `direction` is what the requester
+/// expects: the peer as sender, itself as recipient.
+pub fn open_response(
+    key: &[u8; 32],
+    direction: Direction<'_>,
+    request_id: &str,
+    data: &str,
+    nonce: &str,
+) -> Result<Value> {
     let plaintext = super::encryption::decrypt_from_base64(key, data, nonce)
         .map_err(|_| anyhow!("connection answer could not be decrypted"))?;
     let value: Value = serde_json::from_str(&plaintext)?;
-    if value["resp"] != "host_invoke_result" {
-        bail!("connection answer is malformed");
+    if value["resp"] != "host_invoke_result"
+        || value["connectionId"] != direction.connection_id
+        || value["from"] != direction.from_device_id
+        || value["to"] != direction.to_device_id
+        || value["requestId"] != request_id
+    {
+        bail!("connection answer does not match its request");
     }
     if value["ok"] == true {
         Ok(value.get("value").cloned().unwrap_or(Value::Null))

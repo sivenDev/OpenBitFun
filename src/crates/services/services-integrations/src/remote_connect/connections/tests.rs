@@ -74,35 +74,93 @@ fn invite_link_round_trips_and_rejects_incomplete_links() {
     assert!(InviteLink::parse("openbitfun://connect?relay=ftp%3A%2F%2Fr&code=A&fp=AB").is_err());
 }
 
-#[test]
-fn requests_open_only_with_matching_routing() {
-    let key = [7u8; 32];
-    let (data, nonce) =
-        seal_request(&key, "conn-1", "dispatch_target_submit", &json!({"x": 1})).unwrap();
-    let opened = open_request(&key, "conn-1", "dispatch_target_submit", &data, &nonce).unwrap();
-    assert_eq!(opened.args, json!({"x": 1}));
-    // A relay that rewrites the routed command or connection is caught.
-    assert!(open_request(&key, "conn-1", "dispatch_target_cancel", &data, &nonce).is_err());
-    assert!(open_request(&key, "conn-2", "dispatch_target_submit", &data, &nonce).is_err());
-    assert!(open_request(
-        &[8u8; 32],
-        "conn-1",
-        "dispatch_target_submit",
-        &data,
-        &nonce
-    )
-    .is_err());
+const A_TO_B: Direction<'static> = Direction {
+    connection_id: "conn-1",
+    from_device_id: "device-a",
+    to_device_id: "device-b",
+};
+const B_TO_A: Direction<'static> = Direction {
+    connection_id: "conn-1",
+    from_device_id: "device-b",
+    to_device_id: "device-a",
+};
 
-    let (data, nonce) = seal_response(&key, Ok(json!({"ok": "yes"}))).unwrap();
+#[test]
+fn requests_open_only_with_matching_routing_and_direction() {
+    let key = [7u8; 32];
+    let sealed = seal_request(&key, A_TO_B, "dispatch_target_submit", &json!({"x": 1})).unwrap();
+    let open = |direction: Direction<'_>, command: &str, key: &[u8; 32]| {
+        open_request(
+            key,
+            direction,
+            command,
+            &sealed.encrypted_data,
+            &sealed.nonce,
+        )
+    };
+    let opened = open(A_TO_B, "dispatch_target_submit", &key).unwrap();
+    assert_eq!(opened.args, json!({"x": 1}));
+    assert_eq!(opened.request_id, sealed.request_id);
+    // A relay that rewrites the routed command or connection is caught.
+    assert!(open(A_TO_B, "dispatch_target_cancel", &key).is_err());
+    let other_connection = Direction {
+        connection_id: "conn-2",
+        ..A_TO_B
+    };
+    assert!(open(other_connection, "dispatch_target_submit", &key).is_err());
+    assert!(open(A_TO_B, "dispatch_target_submit", &[8u8; 32]).is_err());
+    // Reflection: A's own request handed back to A as if B sent it.
+    assert!(open(B_TO_A, "dispatch_target_submit", &key).is_err());
+}
+
+#[test]
+fn answers_must_echo_their_request_and_direction() {
+    let key = [7u8; 32];
+    let (data, nonce) = seal_response(&key, B_TO_A, "req-1", Ok(json!({"ok": "yes"}))).unwrap();
     assert_eq!(
-        open_response(&key, &data, &nonce).unwrap(),
+        open_response(&key, B_TO_A, "req-1", &data, &nonce).unwrap(),
         json!({"ok": "yes"})
     );
-    let (data, nonce) = seal_response(&key, Err("refused".into())).unwrap();
+    // An older answer swapped in for another request is refused.
+    assert!(open_response(&key, B_TO_A, "req-2", &data, &nonce).is_err());
+    // An answer reflected back to the device that sent it is refused.
+    assert!(open_response(&key, A_TO_B, "req-1", &data, &nonce).is_err());
+    let (data, nonce) = seal_response(&key, B_TO_A, "req-1", Err("refused".into())).unwrap();
     assert_eq!(
-        open_response(&key, &data, &nonce).unwrap_err().to_string(),
+        open_response(&key, B_TO_A, "req-1", &data, &nonce)
+            .unwrap_err()
+            .to_string(),
         "refused"
     );
+}
+
+#[test]
+fn replay_guard_refuses_repeated_and_stale_requests() {
+    let key = [7u8; 32];
+    let sealed = seal_request(&key, A_TO_B, "dispatch_target_submit", &json!({})).unwrap();
+    let opened = open_request(
+        &key,
+        A_TO_B,
+        "dispatch_target_submit",
+        &sealed.encrypted_data,
+        &sealed.nonce,
+    )
+    .unwrap();
+    let guard = ReplayGuard::default();
+    let now = opened.issued_at;
+    guard.admit(&opened, now).unwrap();
+    assert!(
+        guard.admit(&opened, now + 1).is_err(),
+        "a replay is refused"
+    );
+    let fresh = OpenedRequest {
+        request_id: "other".into(),
+        ..opened.clone()
+    };
+    assert!(guard
+        .admit(&fresh, now + REQUEST_MAX_AGE_SECONDS + 1)
+        .is_err());
+    assert!(guard.admit(&fresh, now).is_ok());
 }
 
 #[test]

@@ -74,6 +74,7 @@ parent: "F002"
   - 连接级密钥：设备 X25519 密钥协商后经 HKDF-SHA256 派生。salt 与同账号设备密钥不同，info 为排序后的两把公钥加连接 id，每条连接一把密钥，账号主密钥不参与。
   - 本地存储：`relay-v1.0.0/connections.json`（与账号会话同目录，权限仅本人）。无法解析的条目原样保留并显示为停用；整个文件无法解析时不覆盖。新增字段都有默认值，旧记录可读，未知字段忽略。
   - 请求信封：密文内也带连接 id 与命令，目标端核对与 relay 报告的路由一致。
+  - 防反射、重放与换答（提交后的安全审查发现，已补上）：两个方向共用一把连接密钥，所以密文内同时写明发送方与接收方设备，接收方按自己固定的记录核对，relay 无法把 A 的请求送回 A。每个请求带随机 id 与签发时间，目标端拒绝与本机时钟相差超过 300 秒的请求，以及 300 秒内已经收到过的 id（每个进程记一份，重启后靠时间窗兜底）。应答的密文回带请求 id 与方向，请求方核对后才接受，relay 无法用旧应答冒充新请求的结果。目标端打不开的请求没有可信的 id，只回明文拒绝 `request_rejected`。
 - 偏差：
   - 模块入口是 `remote_connect.rs`，计划写的是 `remote_connect/mod.rs`。
   - 计划中的验证命令缺少 feature，实际命令为 `--no-default-features --features remote-connect`。
@@ -158,6 +159,7 @@ parent: "F002"
   - 跨账号调用的目标端在 CLI daemon 上实测（见下方 CLI 测试）。桌面的目标端只接入了同一个核心处理函数并通过编译，没有作为目标实测。
   - 跨机器实测、旧版 relay 实测都未做：relay 能力缺失只有单元测试与页面测试覆盖。
 - Evidence：
+  - 防反射、重放与换答：`connections::tests` 新增方向、回带 id 与重放守卫测试（服务层 `remote_connect::` 185 passed）；`connection_rpc::tests` 新增 relay 重放请求、换入旧应答、把请求反射回发送方三个测试（11 passed）。
   - `cargo +1.95.0 test --locked -p openbitfun-cli --test cli_command_contracts delegation_simulation::`：2 passed。新测试 `devices_of_different_accounts_pair_and_call_over_a_connection` 在进程内 relay 与真实 B1 daemon 上走完 CLI 邀请、接受、单次邀请、错误指纹确认被拒、确认、双方列表、经连接的加密调用（B1 daemon 解密并在加密应答中拒绝）、撤销后 relay 拒绝且双方显示已撤销。同账号委派测试照常通过。
   - `cargo +1.95.0 test -p openbitfun-product-domains --no-default-features remote_surface`：20 passed。
   - `pnpm run capabilities:generate && pnpm run capabilities:check`：通过。
