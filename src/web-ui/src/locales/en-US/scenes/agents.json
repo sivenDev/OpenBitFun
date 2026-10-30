@@ -295,6 +295,7 @@
       "offline": "Device offline",
       "incompatible": "Device needs an update",
       "unreachable": "Device not responding",
+      "agentUnavailable": "Agent not available on the device",
       "device": "On {{device}}",
       "managedOnDevice": "{{device}} opened this agent to this device. Change or close it on {{device}}.",
       "taskKinds": "Tasks · {{kinds}}",

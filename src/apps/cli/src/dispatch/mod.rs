@@ -147,9 +147,11 @@ async fn catalog(
 ) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
     let path_manager = openbitfun_core::infrastructure::PathManager::new()
         .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
+    let executor = crate::agent::agentic_system::external_agent_executor().await;
     catalog_from(
         &openbitfun_core::service::delegation::OpenAgentStore::for_product_home(&path_manager),
         request,
+        executor.as_deref(),
     )
     .await
 }
@@ -157,6 +159,7 @@ async fn catalog(
 async fn catalog_from(
     store: &openbitfun_core::service::delegation::OpenAgentStore,
     request: openbitfun_services_core::dispatch_contract::DispatchCatalogRequest,
+    executor: Option<&dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
 ) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
     use openbitfun_services_core::dispatch_contract::{
         DispatchCatalogAgent, DispatchCatalogResponse,
@@ -171,22 +174,47 @@ async fn catalog_from(
         .granted_to_device(&device_id)
         .await
         .context("read agents opened to other devices")?;
-    Ok(DispatchCatalogResponse {
-        agents: agents
-            .into_iter()
-            .map(|agent| DispatchCatalogAgent {
-                id: agent.id,
-                agent_type: agent.agent_type,
-                display_name: agent.display_name,
-                description: agent.description,
-                task_kinds: agent
-                    .task_kinds
-                    .into_iter()
-                    .filter_map(|kind| kind.wire_name().map(str::to_string))
-                    .collect(),
-            })
-            .collect(),
-    })
+    let mut entries = Vec::with_capacity(agents.len());
+    for agent in agents {
+        let unavailable = external_agent_unavailable(&agent.agent_type, executor).await;
+        entries.push(DispatchCatalogAgent {
+            id: agent.id,
+            agent_type: agent.agent_type,
+            display_name: agent.display_name,
+            description: agent.description,
+            task_kinds: agent
+                .task_kinds
+                .into_iter()
+                .filter_map(|kind| kind.wire_name().map(str::to_string))
+                .collect(),
+            unavailable,
+        });
+    }
+    Ok(DispatchCatalogResponse { agents: entries })
+}
+
+/// Why an opened external agent cannot run on this device now; `None` for
+/// native agents and for external agents that can.
+async fn external_agent_unavailable(
+    agent_type: &str,
+    executor: Option<&dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
+) -> Option<String> {
+    let client_id = agent_type.strip_prefix("acp:")?;
+    let Some(executor) = executor else {
+        return Some("this device cannot run external agents".to_string());
+    };
+    let context = openbitfun_runtime_ports::ExternalAgentContext {
+        openbitfun_session_id: String::new(),
+        workspace_path: None,
+        remote_connection_id: None,
+        session_storage_path: None,
+    };
+    match executor.availability(client_id, &context).await {
+        openbitfun_runtime_ports::ExternalAgentAvailability::Available => None,
+        openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable { detail, .. } => {
+            Some(detail)
+        }
+    }
 }
 
 async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
@@ -231,7 +259,10 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
             .to_string(),
     );
     // Delegated jobs run opened `acp:` agents through this CLI's ACP client.
-    if crate::agent::agentic_system::external_agent_executor_available().await {
+    if crate::agent::agentic_system::external_agent_executor()
+        .await
+        .is_some()
+    {
         capabilities.push(
             openbitfun_services_core::dispatch_contract::DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY
                 .to_string(),
@@ -1149,6 +1180,103 @@ mod tests {
     use super::*;
     use crate::dispatch::protocol::{DispatchApprovalPolicy, DispatchSubmitRequest};
 
+    /// Reports the listed clients available and every other one not enabled.
+    struct Clients(&'static [&'static str]);
+
+    #[async_trait::async_trait]
+    impl openbitfun_runtime_ports::ExternalAgentExecutor for Clients {
+        async fn availability(
+            &self,
+            client_id: &str,
+            _context: &openbitfun_runtime_ports::ExternalAgentContext,
+        ) -> openbitfun_runtime_ports::ExternalAgentAvailability {
+            if self.0.contains(&client_id) {
+                openbitfun_runtime_ports::ExternalAgentAvailability::Available
+            } else {
+                openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable {
+                    reason: openbitfun_runtime_ports::ExternalAgentUnavailableReason::NotEnabled,
+                    detail: format!("{client_id} is not enabled"),
+                }
+            }
+        }
+
+        async fn run_turn(
+            &self,
+            _request: openbitfun_runtime_ports::ExternalAgentTurnRequest,
+            _sink: &dyn openbitfun_runtime_ports::ExternalAgentEventSink,
+        ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::ExternalAgentTurnOutcome>
+        {
+            unreachable!("the catalog never runs an agent")
+        }
+
+        async fn cancel(
+            &self,
+            _client_id: &str,
+            _session_id: &str,
+        ) -> openbitfun_runtime_ports::PortResult<bool> {
+            Ok(false)
+        }
+
+        async fn close(
+            &self,
+            _client_id: &str,
+            _session_id: &str,
+        ) -> openbitfun_runtime_ports::PortResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_marks_external_agents_that_cannot_run_now() {
+        use openbitfun_core::service::delegation::{DelegationTaskKind, OpenAgent, OpenAgentStore};
+        use openbitfun_services_core::dispatch_contract::DispatchCatalogRequest;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = OpenAgentStore::new(dir.path().join("open-agents.json"));
+        for client in ["codex", "claude-code"] {
+            let agent = OpenAgent {
+                id: client.to_string(),
+                agent_type: format!("acp:{client}"),
+                display_name: client.to_string(),
+                description: None,
+                task_kinds: vec![DelegationTaskKind::Message],
+                message_workspace: None,
+                same_account_devices: vec!["laptop".to_string()],
+            };
+            // Opened while it could run; the device later disabled one.
+            store
+                .open_external_agent(agent, true, Some(&Clients(&["codex", "claude-code"])))
+                .await
+                .expect("open");
+        }
+        let request = DispatchCatalogRequest {
+            source_device_id: Some("laptop".to_string()),
+        };
+
+        let catalog = catalog_from(&store, request.clone(), Some(&Clients(&["codex"])))
+            .await
+            .unwrap();
+        let states: Vec<_> = catalog
+            .agents
+            .iter()
+            .map(|agent| (agent.id.as_str(), agent.unavailable.as_deref()))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("codex", None),
+                ("claude-code", Some("claude-code is not enabled")),
+            ]
+        );
+
+        // A target that cannot run external agents marks every one.
+        let catalog = catalog_from(&store, request, None).await.unwrap();
+        assert!(catalog
+            .agents
+            .iter()
+            .all(|agent| agent.unavailable.as_deref()
+                == Some("this device cannot run external agents")));
+    }
+
     #[tokio::test]
     async fn catalog_lists_only_agents_granted_to_the_bound_requester() {
         use openbitfun_core::service::delegation::{
@@ -1169,7 +1297,9 @@ mod tests {
         };
 
         // Nothing is open by default.
-        let empty = catalog_from(&store, request_from("laptop")).await.unwrap();
+        let empty = catalog_from(&store, request_from("laptop"), None)
+            .await
+            .unwrap();
         assert!(empty.agents.is_empty());
 
         let open = |id: &str, devices: &[&str]| OpenAgent {
@@ -1187,7 +1317,9 @@ mod tests {
             .await
             .unwrap();
 
-        let laptop = catalog_from(&store, request_from("laptop")).await.unwrap();
+        let laptop = catalog_from(&store, request_from("laptop"), None)
+            .await
+            .unwrap();
         let ids: Vec<_> = laptop
             .agents
             .iter()
@@ -1202,14 +1334,18 @@ mod tests {
             .contains("/srv/private"));
 
         // A forged source device in the payload is replaced by the bound sender.
-        let phone = catalog_from(&store, request_from("phone")).await.unwrap();
+        let phone = catalog_from(&store, request_from("phone"), None)
+            .await
+            .unwrap();
         let ids: Vec<_> = phone.agents.iter().map(|agent| agent.id.as_str()).collect();
         assert_eq!(ids, vec!["for-all"]);
 
         // Without a bound requester there is no answer.
-        assert!(catalog_from(&store, DispatchCatalogRequest::default())
-            .await
-            .is_err());
+        assert!(
+            catalog_from(&store, DispatchCatalogRequest::default(), None)
+                .await
+                .is_err()
+        );
     }
 
     fn probe_failure(diagnostic: &str) -> Result<GitProbeOutput, GitProbeOutput> {

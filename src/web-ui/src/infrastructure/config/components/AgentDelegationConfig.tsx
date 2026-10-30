@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Select, Switch } from '@openbitfun/ui';
 import { agentAPI, type ModeInfo } from '@/infrastructure/api/service-api/AgentAPI';
+import { ACPClientAPI, type AcpClientInfo } from '@/infrastructure/api/service-api/ACPClientAPI';
 import {
   ALL_SAME_ACCOUNT_DEVICES,
   delegationAPI,
+  externalAgentClientId,
   openAgentRecordId,
   type DelegationTaskKind,
   type OpenAgentRecord,
@@ -37,11 +39,20 @@ interface OpenAgentDraft {
   allDevices: boolean;
   devices: string[];
   messageWorkspace: string;
+  /** The owner confirmed the external agent's usage notice. */
+  usageConfirmed: boolean;
+}
+
+/** An agent that can be opened: a local mode or an enabled external agent. */
+interface AgentChoice {
+  id: string;
+  name: string;
 }
 
 interface LoadedState {
   records: OpenAgentRecord[];
-  modes: ModeInfo[];
+  /** Local modes, then enabled external agents as `acp:<id>`. */
+  agents: AgentChoice[];
   devices: AccountDeviceInfo[];
 }
 
@@ -49,17 +60,26 @@ function suggestedId(agentType: string): string {
   return agentType.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
 }
 
-function newDraft(modes: ModeInfo[]): OpenAgentDraft {
-  const agentType = modes[0]?.id ?? '';
+function agentChoices(modes: ModeInfo[], clients: AcpClientInfo[]): AgentChoice[] {
+  // The device re-checks that an external agent can run before opening it.
+  const external = clients
+    .filter(client => client.enabled && client.subagent?.enabled !== false)
+    .map(client => ({ id: `acp:${client.id}`, name: client.name || client.id }));
+  return [...modes.map(mode => ({ id: mode.id, name: mode.name })), ...external];
+}
+
+function newDraft(agents: AgentChoice[]): OpenAgentDraft {
+  const agentType = agents[0]?.id ?? '';
   return {
     id: suggestedId(agentType),
     agentType,
-    displayName: modes[0]?.name ?? '',
+    displayName: agents[0]?.name ?? '',
     description: '',
     taskKinds: ['message'],
     allDevices: false,
     devices: [],
     messageWorkspace: '',
+    usageConfirmed: false,
   };
 }
 
@@ -86,9 +106,11 @@ export const AgentDelegationConfig: React.FC = () => {
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const [records, modes, devices, currentDevice] = await Promise.all([
+      const [records, modes, clients, devices, currentDevice] = await Promise.all([
         delegationAPI.listOpenAgents(),
         agentAPI.getAvailableModes(),
+        // External agents are optional: a host without ACP clients opens local modes only.
+        ACPClientAPI.getClients().catch(() => [] as AcpClientInfo[]),
         // Devices are optional: without an account the owner can still allow all devices.
         remoteConnectAPI.accountListDevices().catch(() => [] as AccountDeviceInfo[]),
         remoteConnectAPI.getDeviceInfo().catch(() => null),
@@ -96,7 +118,7 @@ export const AgentDelegationConfig: React.FC = () => {
       if (!activeRef.current) return;
       setState({
         records,
-        modes,
+        agents: agentChoices(modes, clients),
         devices: devices.filter(device => device.device_id !== currentDevice?.device_id),
       });
     } catch (error) {
@@ -114,7 +136,7 @@ export const AgentDelegationConfig: React.FC = () => {
   const describeRecord = (record: OpenAgentRecord): string => {
     const agent = record.agent;
     if (!agent) return t('agentDelegation.unreadable', { problem: record.problem ?? '' });
-    const mode = state?.modes.find(item => item.id === agent.agentType);
+    const choice = state?.agents.find(item => item.id === agent.agentType);
     const tasks = agent.taskKinds
       .map(kind => kind === 'message'
         ? t('agentDelegation.taskKindMessage')
@@ -126,7 +148,7 @@ export const AgentDelegationConfig: React.FC = () => {
       : agent.sameAccountDevices
         .map(id => state?.devices.find(device => device.device_id === id)?.device_name ?? id)
         .join(', ');
-    return t('agentDelegation.summary', { agent: mode?.name ?? agent.agentType, tasks, devices });
+    return t('agentDelegation.summary', { agent: choice?.name ?? agent.agentType, tasks, devices });
   };
 
   const closeRecord = async (id: string) => {
@@ -160,6 +182,7 @@ export const AgentDelegationConfig: React.FC = () => {
         taskKinds: draft.taskKinds,
         messageWorkspace: draft.messageWorkspace.trim() || null,
         sameAccountDevices: draft.allDevices ? [ALL_SAME_ACCOUNT_DEVICES] : draft.devices,
+        ...(externalAgentClientId(draft.agentType) !== null ? { usageConfirmed: draft.usageConfirmed } : {}),
       });
       if (!activeRef.current) return;
       notificationService.success(t('agentDelegation.saved'), { duration: 2000 });
@@ -205,10 +228,12 @@ export const AgentDelegationConfig: React.FC = () => {
       return <ConfigRetryState message={t('loading.failed')} retryLabel={t('loading.retry')} onRetry={() => void load()} />;
     }
     if (!state) return <ConfigLoadingState label={t('loading.text')} />;
+    const externalClientId = draft ? externalAgentClientId(draft.agentType) : null;
     const canSave = draft !== null
       && draft.agentType !== ''
       && draft.taskKinds.length > 0
-      && (draft.allDevices || draft.devices.length > 0);
+      && (draft.allDevices || draft.devices.length > 0)
+      && (externalClientId === null || draft.usageConfirmed);
     return <>
       {state.records.length === 0 && !draft && (
         <ConfigPageRow label={t('agentDelegation.empty')} align="center"><span /></ConfigPageRow>
@@ -236,19 +261,38 @@ export const AgentDelegationConfig: React.FC = () => {
             size="sm"
             value={draft.agentType}
             disabled={busy}
-            options={state.modes.map(mode => ({ value: mode.id, label: mode.name }))}
+            options={state.agents.map(agent => ({
+              value: agent.id,
+              label: externalAgentClientId(agent.id) === null
+                ? agent.name
+                : t('agentDelegation.externalAgent', { name: agent.name }),
+            }))}
             onValueChange={value => {
               const agentType = String(Array.isArray(value) ? value[0] : value);
-              const mode = state.modes.find(item => item.id === agentType);
+              const choice = state.agents.find(item => item.id === agentType);
               setDraft(current => current && ({
                 ...current,
                 agentType,
                 id: suggestedId(agentType),
-                displayName: mode?.name ?? current.displayName,
+                displayName: choice?.name ?? current.displayName,
+                // A confirmation covers only the agent it was given for.
+                usageConfirmed: false,
               }));
             }}
           />
         </ConfigPageRow>
+        {externalClientId !== null && (
+          <ConfigPageRow
+            label={t('agentDelegation.usageNoticeTitle')}
+            description={externalClientId === 'claude-code'
+              ? `${t('agentDelegation.usageNotice')} ${t('agentDelegation.usageNoticeClaudeCode')}`
+              : t('agentDelegation.usageNotice')}
+          >
+            <Checkbox checked={draft.usageConfirmed} disabled={busy}
+              label={t('agentDelegation.usageConfirm')}
+              onChange={event => setDraft({ ...draft, usageConfirmed: event.target.checked })} />
+          </ConfigPageRow>
+        )}
         <ConfigPageRow label={t('agentDelegation.id')} description={t('agentDelegation.idDescription')} align="center">
           <Input size="sm" value={draft.id} disabled={busy}
             onChange={event => setDraft({ ...draft, id: event.target.value })} />
@@ -305,8 +349,8 @@ export const AgentDelegationConfig: React.FC = () => {
         </ConfigPageRow>
       </> : (
         <ConfigPageRow label="" align="center">
-          <Button type="button" size="sm" variant="outline" disabled={busy || state.modes.length === 0}
-            onClick={() => setDraft(newDraft(state.modes))}>
+          <Button type="button" size="sm" variant="outline" disabled={busy || state.agents.length === 0}
+            onClick={() => setDraft(newDraft(state.agents))}>
             {t('agentDelegation.open')}
           </Button>
         </ConfigPageRow>

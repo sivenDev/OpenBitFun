@@ -5,7 +5,7 @@
 
 use openbitfun_core::infrastructure::PathManager;
 use openbitfun_core::service::delegation::{
-    DelegationTaskKind, OpenAgent, OpenAgentRecord, OpenAgentStore,
+    DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord, OpenAgentStore,
 };
 use serde::Deserialize;
 
@@ -22,6 +22,10 @@ pub struct DelegationOpenAgentRequest {
     #[serde(default)]
     pub message_workspace: Option<String>,
     pub same_account_devices: Vec<String>,
+    /// The owner confirmed the external agent's usage notice. Ignored for
+    /// local agent modes; absent from older callers.
+    #[serde(default)]
+    pub usage_confirmed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,18 +65,26 @@ pub async fn delegation_open_agent(
             return Err(format!("message workspace {workspace} is not a directory"));
         }
     }
-    open_agent_store()?
-        .open_local_agent(OpenAgent {
-            id: request.id.trim().to_string(),
-            agent_type: request.agent_type,
-            display_name: request.display_name.trim().to_string(),
-            description,
-            task_kinds: request.task_kinds,
-            message_workspace,
-            same_account_devices: request.same_account_devices,
-        })
-        .await
-        .map_err(|error| error.to_string())
+    let agent = OpenAgent {
+        id: request.id.trim().to_string(),
+        agent_type: request.agent_type,
+        display_name: request.display_name.trim().to_string(),
+        description,
+        task_kinds: request.task_kinds,
+        message_workspace,
+        same_account_devices: request.same_account_devices,
+    };
+    let store = open_agent_store()?;
+    let opened = if ExternalAgentUsageNotice::for_agent_type(&agent.agent_type).is_some() {
+        let executor = openbitfun_core::agentic::coordination::get_global_coordinator()
+            .and_then(|coordinator| coordinator.external_agent_executor());
+        store
+            .open_external_agent(agent, request.usage_confirmed, executor.as_deref())
+            .await
+    } else {
+        store.open_local_agent(agent).await
+    };
+    opened.map_err(|error| error.to_string())
 }
 
 #[tauri::command]

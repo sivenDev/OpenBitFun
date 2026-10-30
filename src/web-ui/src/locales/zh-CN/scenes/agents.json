@@ -295,6 +295,7 @@
       "offline": "设备离线",
       "incompatible": "设备需要更新",
       "unreachable": "设备无响应",
+      "agentUnavailable": "该设备上的智能体当前不可用",
       "device": "位于 {{device}}",
       "managedOnDevice": "{{device}} 向本设备开放了这个智能体，请在 {{device}} 上修改或关闭。",
       "taskKinds": "任务 · {{kinds}}",

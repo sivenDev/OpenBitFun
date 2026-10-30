@@ -104,12 +104,16 @@ impl OpenAgent {
         if agent_type.is_empty() {
             return Err("open agent requires an agent type".to_string());
         }
-        // Delegated jobs never reach another device, and external agents are
-        // opened by a later capability.
-        if agent_type.starts_with("acp:") || agent_type.starts_with("remote:") {
+        // Delegated jobs never reach another device.
+        if agent_type.starts_with("remote:") {
             return Err(format!(
                 "agent type '{agent_type}' cannot be opened to other devices"
             ));
+        }
+        if agent_type.starts_with(EXTERNAL_AGENT_TYPE_PREFIX)
+            && external_client_id(agent_type).is_none()
+        {
+            return Err("external agent type requires a client id".to_string());
         }
         if self.display_name.trim().is_empty() {
             return Err("open agent requires a display name".to_string());
@@ -134,6 +138,40 @@ impl OpenAgent {
             return Err("granted device ids must not be empty".to_string());
         }
         Ok(())
+    }
+}
+
+const EXTERNAL_AGENT_TYPE_PREFIX: &str = "acp:";
+
+/// The ACP client an `acp:<client_id>` agent type names.
+fn external_client_id(agent_type: &str) -> Option<&str> {
+    agent_type
+        .strip_prefix(EXTERNAL_AGENT_TYPE_PREFIX)
+        .map(str::trim)
+        .filter(|client_id| !client_id.is_empty())
+}
+
+/// What the owner confirms before opening an external agent: delegated jobs
+/// run it with this device's own login or credentials.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalAgentUsageNotice {
+    /// Jobs use the owner's quota with the agent's provider; its terms apply.
+    ProviderQuota,
+    /// As `ProviderQuota`, and a Claude subscription login is for the owner's
+    /// own use: an API key is the recommended login for delegated jobs.
+    ClaudeCodeSubscription,
+}
+
+impl ExternalAgentUsageNotice {
+    pub fn for_agent_type(agent_type: &str) -> Option<Self> {
+        external_client_id(agent_type.trim()).map(|client_id| {
+            if client_id == "claude-code" {
+                Self::ClaudeCodeSubscription
+            } else {
+                Self::ProviderQuota
+            }
+        })
     }
 }
 
@@ -303,8 +341,64 @@ impl OpenAgentStore {
         Ok(Ok(agent))
     }
 
-    /// Opens `agent`, replacing any stored entry with the same id.
-    pub async fn open(&self, mut agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
+    /// Opens `agent`, replacing any stored entry with the same id. External
+    /// agents are opened only through [`Self::open_external_agent`].
+    pub async fn open(&self, agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
+        if ExternalAgentUsageNotice::for_agent_type(&agent.agent_type).is_some() {
+            return Err(OpenAgentStoreError::Invalid(
+                "external agents are opened only after confirming their usage notice".to_string(),
+            ));
+        }
+        self.store_entry(agent).await
+    }
+
+    /// Opens an `acp:` external agent after the owner confirmed its usage
+    /// notice and `executor` reports that this device can run it now.
+    #[cfg(feature = "agent-runtime")]
+    pub async fn open_external_agent(
+        &self,
+        mut agent: OpenAgent,
+        usage_confirmed: bool,
+        executor: Option<&dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
+    ) -> Result<OpenAgent, OpenAgentStoreError> {
+        agent.agent_type = agent.agent_type.trim().to_string();
+        let Some(client_id) = external_client_id(&agent.agent_type).map(str::to_string) else {
+            return Err(OpenAgentStoreError::Invalid(format!(
+                "agent '{}' is not an external agent",
+                agent.agent_type
+            )));
+        };
+        if !usage_confirmed {
+            return Err(OpenAgentStoreError::Invalid(
+                "opening an external agent requires confirming its usage notice".to_string(),
+            ));
+        }
+        let Some(executor) = executor else {
+            return Err(OpenAgentStoreError::Invalid(
+                "this device cannot run external agents".to_string(),
+            ));
+        };
+        let context = openbitfun_runtime_ports::ExternalAgentContext {
+            openbitfun_session_id: String::new(),
+            workspace_path: None,
+            remote_connection_id: None,
+            session_storage_path: None,
+        };
+        if let openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable { detail, .. } =
+            executor.availability(&client_id, &context).await
+        {
+            return Err(OpenAgentStoreError::Invalid(format!(
+                "external agent '{client_id}' cannot run on this device: {detail}"
+            )));
+        }
+        if agent.display_name.trim().is_empty() {
+            agent.display_name = client_id;
+        }
+        self.store_entry(agent.clone()).await?;
+        Ok(agent)
+    }
+
+    async fn store_entry(&self, mut agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
         agent.agent_type =
             openbitfun_core_types::agent_identity::canonical_agent_id(agent.agent_type.trim())
                 .to_string();
@@ -516,7 +610,7 @@ mod tests {
                 ..agent("x", &["laptop"])
             },
             OpenAgent {
-                agent_type: "acp:claude-code".to_string(),
+                agent_type: "acp:".to_string(),
                 ..agent("x", &["laptop"])
             },
             OpenAgent {
@@ -538,6 +632,129 @@ mod tests {
             ));
         }
         assert!(store.records().await.unwrap().is_empty());
+    }
+
+    /// Reports `client_id` available when listed, otherwise not enabled.
+    #[cfg(feature = "agent-runtime")]
+    struct Clients(&'static [&'static str]);
+
+    #[cfg(feature = "agent-runtime")]
+    #[async_trait::async_trait]
+    impl openbitfun_runtime_ports::ExternalAgentExecutor for Clients {
+        async fn availability(
+            &self,
+            client_id: &str,
+            _context: &openbitfun_runtime_ports::ExternalAgentContext,
+        ) -> openbitfun_runtime_ports::ExternalAgentAvailability {
+            if self.0.contains(&client_id) {
+                openbitfun_runtime_ports::ExternalAgentAvailability::Available
+            } else {
+                openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable {
+                    reason: openbitfun_runtime_ports::ExternalAgentUnavailableReason::NotEnabled,
+                    detail: format!("{client_id} is not enabled"),
+                }
+            }
+        }
+
+        async fn run_turn(
+            &self,
+            _request: openbitfun_runtime_ports::ExternalAgentTurnRequest,
+            _sink: &dyn openbitfun_runtime_ports::ExternalAgentEventSink,
+        ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::ExternalAgentTurnOutcome>
+        {
+            unreachable!("opening never runs the agent")
+        }
+
+        async fn cancel(
+            &self,
+            _client_id: &str,
+            _session_id: &str,
+        ) -> openbitfun_runtime_ports::PortResult<bool> {
+            Ok(false)
+        }
+
+        async fn close(
+            &self,
+            _client_id: &str,
+            _session_id: &str,
+        ) -> openbitfun_runtime_ports::PortResult<()> {
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "agent-runtime")]
+    fn external(id: &str, agent_type: &str) -> OpenAgent {
+        OpenAgent {
+            agent_type: agent_type.to_string(),
+            display_name: String::new(),
+            ..agent(id, &["laptop"])
+        }
+    }
+
+    #[cfg(feature = "agent-runtime")]
+    #[tokio::test]
+    async fn external_agents_open_only_when_confirmed_and_runnable() {
+        let (store, _dir) = store();
+        let codex = Clients(&["codex"]);
+        let refused = |result: Result<OpenAgent, OpenAgentStoreError>| match result {
+            Err(OpenAgentStoreError::Invalid(reason)) => reason,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+
+        // The plain open path never stores an external agent.
+        assert!(matches!(
+            store.open(external("codex", "acp:codex")).await,
+            Err(OpenAgentStoreError::Invalid(_))
+        ));
+        assert!(refused(
+            store
+                .open_external_agent(external("codex", "acp:codex"), false, Some(&codex))
+                .await
+        )
+        .contains("confirming"));
+        assert!(refused(
+            store
+                .open_external_agent(external("codex", "acp:codex"), true, None)
+                .await
+        )
+        .contains("cannot run external agents"));
+        assert!(refused(
+            store
+                .open_external_agent(external("claude", "acp:claude-code"), true, Some(&codex))
+                .await
+        )
+        .contains("claude-code is not enabled"));
+        assert!(refused(
+            store
+                .open_external_agent(external("helper", "Standard"), true, Some(&codex))
+                .await
+        )
+        .contains("not an external agent"));
+        assert!(store.records().await.unwrap().is_empty());
+
+        let opened = store
+            .open_external_agent(external("codex", " acp:codex "), true, Some(&codex))
+            .await
+            .unwrap();
+        assert_eq!(opened.agent_type, "acp:codex");
+        assert_eq!(opened.display_name, "codex");
+        let granted = store.granted_to_device("laptop").await.unwrap();
+        assert_eq!(granted.len(), 1);
+        assert_eq!(granted[0].agent_type, "acp:codex");
+    }
+
+    #[test]
+    fn external_agents_name_their_usage_notice() {
+        assert_eq!(
+            ExternalAgentUsageNotice::for_agent_type("acp:claude-code"),
+            Some(ExternalAgentUsageNotice::ClaudeCodeSubscription)
+        );
+        assert_eq!(
+            ExternalAgentUsageNotice::for_agent_type("acp:codex"),
+            Some(ExternalAgentUsageNotice::ProviderQuota)
+        );
+        assert_eq!(ExternalAgentUsageNotice::for_agent_type("Standard"), None);
+        assert_eq!(ExternalAgentUsageNotice::for_agent_type("acp:"), None);
     }
 
     #[tokio::test]

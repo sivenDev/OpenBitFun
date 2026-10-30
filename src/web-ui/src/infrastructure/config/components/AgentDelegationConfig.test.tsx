@@ -9,19 +9,31 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   close: vi.fn(),
   modes: vi.fn(),
+  clients: vi.fn(),
   devices: vi.fn(),
   deviceInfo: vi.fn(),
   tauri: vi.fn(),
   peer: vi.fn(),
 }));
-const translate = (key: string, values?: Record<string, string>) =>
-  values ? `${key}:${Object.values(values).join('|')}` : key;
+import runtimeCopy from '@/locales/en-US/settings/runtime.json';
+
+/** Echoes the key, and fails on a key or placeholder the copy does not have. */
+const translate = (key: string, values?: Record<string, string>) => {
+  const copy = key.split('.').reduce<unknown>(
+    (node, part) => (node as Record<string, unknown> | undefined)?.[part], runtimeCopy);
+  if (typeof copy !== 'string') throw new Error(`missing copy ${key}`);
+  for (const [, name] of copy.matchAll(/{{(\w+)}}/g)) {
+    if (values?.[name] === undefined) throw new Error(`${key} needs {{${name}}}`);
+  }
+  return values ? `${key}:${Object.values(values).join('|')}` : key;
+};
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({ useI18n: () => ({ t: translate }) }));
 vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
   delegationAPI: { listOpenAgents: mocks.list, openAgent: mocks.open, closeAgent: mocks.close },
 }));
 vi.mock('@/infrastructure/api/service-api/AgentAPI', () => ({ agentAPI: { getAvailableModes: mocks.modes } }));
+vi.mock('@/infrastructure/api/service-api/ACPClientAPI', () => ({ ACPClientAPI: { getClients: mocks.clients } }));
 vi.mock('@/infrastructure/api/service-api/RemoteConnectAPI', () => ({
   remoteConnectAPI: { accountListDevices: mocks.devices, getDeviceInfo: mocks.deviceInfo },
 }));
@@ -57,6 +69,7 @@ describe('AgentDelegationConfig', () => {
     mocks.peer.mockReturnValue({ peerMode: { active: false } });
     mocks.list.mockResolvedValue([]);
     mocks.modes.mockResolvedValue([{ id: 'Standard', name: 'Standard' }]);
+    mocks.clients.mockResolvedValue([]);
     mocks.devices.mockResolvedValue([
       { device_id: 'this-device', device_name: 'This Mac', online: true, last_seen_at: null },
       { device_id: 'laptop', device_name: 'Laptop', online: true, last_seen_at: null },
@@ -100,6 +113,57 @@ describe('AgentDelegationConfig', () => {
       messageWorkspace: null,
       sameAccountDevices: ['laptop'],
     });
+  });
+
+  it('opens an enabled external agent only after its usage notice is confirmed', async () => {
+    mocks.clients.mockResolvedValue([
+      { id: 'claude-code', name: 'Claude Code', enabled: true },
+      { id: 'codex', name: 'Codex', enabled: true },
+      { id: 'gemini', name: 'Gemini', enabled: false },
+      { id: 'opencode', name: 'OpenCode', enabled: true, subagent: { enabled: false } },
+    ]);
+    mocks.open.mockResolvedValue({});
+    await render();
+    await click('agentDelegation.open');
+    const options = Array.from(container.querySelectorAll('option')).map(option => option.value);
+    // Disabled clients, and clients that refuse delegated work, are not offered.
+    expect(options).toEqual(['Standard', 'acp:claude-code', 'acp:codex']);
+    expect(container.textContent).not.toContain('agentDelegation.usageNotice');
+
+    const select = container.querySelector('select')!;
+    await act(async () => {
+      select.value = 'acp:claude-code';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('agentDelegation.usageNotice agentDelegation.usageNoticeClaudeCode');
+    await check('Laptop');
+    expect(button('agentDelegation.save')!.disabled).toBe(true);
+    await check('agentDelegation.usageConfirm');
+    expect(button('agentDelegation.save')!.disabled).toBe(false);
+
+    // Switching agents asks again, and other agents show only the provider notice.
+    await act(async () => {
+      select.value = 'acp:codex';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.textContent).not.toContain('agentDelegation.usageNoticeClaudeCode');
+    expect(button('agentDelegation.save')!.disabled).toBe(true);
+    await check('agentDelegation.usageConfirm');
+    await click('agentDelegation.save');
+    expect(mocks.open).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'acp-codex',
+      agentType: 'acp:codex',
+      displayName: 'Codex',
+      sameAccountDevices: ['laptop'],
+      usageConfirmed: true,
+    }));
+  });
+
+  it('opens local modes when the host has no external agents', async () => {
+    mocks.clients.mockRejectedValue(new Error('no ACP'));
+    await render();
+    await click('agentDelegation.open');
+    expect(Array.from(container.querySelectorAll('option')).map(option => option.value)).toEqual(['Standard']);
   });
 
   it('lists unreadable entries as closed and can still close them', async () => {

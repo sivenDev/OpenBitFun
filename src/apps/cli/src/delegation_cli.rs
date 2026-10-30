@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Subcommand, ValueEnum};
 use openbitfun_core::service::delegation::{
-    DelegationTaskKind, OpenAgent, OpenAgentRecord, OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
+    DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord, OpenAgentStore,
+    ALL_SAME_ACCOUNT_DEVICES,
 };
 
 use crate::plugin_diagnostics::escape_terminal_text;
@@ -20,14 +21,15 @@ pub(crate) enum DelegationAction {
         #[arg(long)]
         json: bool,
     },
-    /// Open a local agent mode to other devices of this account
+    /// Open a local agent mode, or an enabled external agent (`acp:<id>`),
+    /// to other devices of this account
     Open {
         /// Stable id other devices address (letters, digits, '-' or '_')
         id: String,
-        /// Local agent mode that runs delegated jobs
+        /// Local agent mode or external agent that runs delegated jobs
         #[arg(long = "agent")]
         agent_type: String,
-        /// Name shown to other devices; defaults to the agent mode's name
+        /// Name shown to other devices; defaults to the agent's name
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -45,6 +47,10 @@ pub(crate) enum DelegationAction {
         /// Allow every device of this account
         #[arg(long, conflicts_with = "devices")]
         all_devices: bool,
+        /// Confirm the usage notice of an external agent: delegated jobs run
+        /// it with this device's own login or credentials
+        #[arg(long)]
+        accept_usage: bool,
     },
     /// Close an opened agent
     Close { id: String },
@@ -91,6 +97,7 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
             workspace,
             devices,
             all_devices,
+            accept_usage,
         } => {
             let message_workspace = workspace
                 .map(|path| {
@@ -102,21 +109,32 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                     Ok(path.to_string_lossy().into_owned())
                 })
                 .transpose()?;
-            let agent = store
-                .open_local_agent(OpenAgent {
-                    id,
-                    agent_type,
-                    display_name: name.unwrap_or_default(),
-                    description,
-                    task_kinds: task_kinds.into_iter().map(Into::into).collect(),
-                    message_workspace,
-                    same_account_devices: if all_devices {
-                        vec![ALL_SAME_ACCOUNT_DEVICES.to_string()]
-                    } else {
-                        devices
-                    },
-                })
-                .await?;
+            let entry = OpenAgent {
+                id,
+                agent_type,
+                display_name: name.unwrap_or_default(),
+                description,
+                task_kinds: task_kinds.into_iter().map(Into::into).collect(),
+                message_workspace,
+                same_account_devices: if all_devices {
+                    vec![ALL_SAME_ACCOUNT_DEVICES.to_string()]
+                } else {
+                    devices
+                },
+            };
+            let agent = match ExternalAgentUsageNotice::for_agent_type(&entry.agent_type) {
+                Some(notice) if !accept_usage => {
+                    println!("{}", usage_notice_text(notice));
+                    bail!("run again with --accept-usage to open this external agent");
+                }
+                Some(_) => {
+                    let executor = crate::agent::agentic_system::external_agent_executor().await;
+                    store
+                        .open_external_agent(entry, true, executor.as_deref())
+                        .await?
+                }
+                None => store.open_local_agent(entry).await?,
+            };
             println!(
                 "Opened {} ({}) to {}",
                 escape_terminal_text(&agent.id),
@@ -133,6 +151,20 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn usage_notice_text(notice: ExternalAgentUsageNotice) -> &'static str {
+    match notice {
+        ExternalAgentUsageNotice::ProviderQuota => {
+            "Delegated jobs run this external agent with this device's own login or credentials. \
+             They use your quota with the agent's provider; check that its terms of service allow this use."
+        }
+        ExternalAgentUsageNotice::ClaudeCodeSubscription => {
+            "Delegated jobs run Claude Code with this device's own login or credentials. \
+             They use your quota with Anthropic; check that its terms of service allow this use. \
+             A Claude subscription login is for your own everyday use; an API key is recommended for delegated jobs."
+        }
+    }
 }
 
 fn print_records(records: &[OpenAgentRecord]) {

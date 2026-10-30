@@ -188,6 +188,8 @@ function remoteAvailabilityLabel(
       return t('agentsOverview.remote.incompatible');
     case 'unreachable':
       return t('agentsOverview.remote.unreachable');
+    case 'agent_unavailable':
+      return t('agentsOverview.remote.agentUnavailable');
     default:
       return t('agentsOverview.remote.unavailable');
   }

@@ -41,7 +41,7 @@ export type ExternalAgentAvailability =
 
 export type RemoteAgentTaskKind = 'message' | 'coding';
 
-export type RemoteAgentUnavailableReason = 'offline' | 'incompatible' | 'unreachable';
+export type RemoteAgentUnavailableReason = 'offline' | 'incompatible' | 'unreachable' | 'agent_unavailable';
 
 /** Whether the device that opened a remote agent can take work now. */
 export type RemoteAgentAvailability =

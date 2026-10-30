@@ -32,6 +32,14 @@ export interface OpenAgentRequest {
   taskKinds: DelegationTaskKind[];
   messageWorkspace?: string | null;
   sameAccountDevices: string[];
+  /** The owner confirmed an external agent's usage notice; required for `acp:` agents. */
+  usageConfirmed?: boolean;
+}
+
+/** The ACP client an external (`acp:<id>`) agent type names, if any. */
+export function externalAgentClientId(agentType: string): string | null {
+  const clientId = agentType.startsWith('acp:') ? agentType.slice(4).trim() : '';
+  return clientId === '' ? null : clientId;
 }
 
 export function openAgentRecordId(record: OpenAgentRecord): string | null {

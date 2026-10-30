@@ -71,6 +71,9 @@ pub enum RemoteAgentUnavailableReason {
     Incompatible,
     /// The device is online but did not answer in time or refused the query.
     Unreachable,
+    /// The device answered, but cannot run the agent it opened right now,
+    /// such as an external agent that is no longer enabled there.
+    AgentUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

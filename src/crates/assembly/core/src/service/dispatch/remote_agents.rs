@@ -593,7 +593,15 @@ fn descriptors_for(device_id: &str, catalog: &DeviceCatalog) -> Vec<RemoteAgentD
                 },
                 description: agent.description.clone(),
                 task_kinds,
-                availability: availability.clone(),
+                availability: match (&availability, &agent.unavailable) {
+                    (RemoteAgentAvailability::Available, Some(detail)) => {
+                        RemoteAgentAvailability::Unavailable {
+                            reason: RemoteAgentUnavailableReason::AgentUnavailable,
+                            detail: detail.clone(),
+                        }
+                    }
+                    _ => availability.clone(),
+                },
             })
         })
         .collect()
@@ -755,6 +763,8 @@ mod tests {
         let both = json!({ "agents": [
             { "id": "helper", "agentType": "Standard", "displayName": "Helper", "taskKinds": ["message"] },
             { "id": "codex", "agentType": "acp:codex", "displayName": "Codex", "taskKinds": ["message", "coding"] },
+            { "id": "claude", "agentType": "acp:claude-code", "displayName": "Claude Code",
+              "taskKinds": ["message"], "unavailable": "claude-code is not enabled" },
         ]});
         let targets = Targets {
             probes: HashMap::from([
@@ -772,9 +782,8 @@ mod tests {
             job_calls: Mutex::new(Vec::new()),
         };
         let (directory, _, _) = directory(targets, vec![device("old", true), device("new", true)]);
-        let mut listed: Vec<String> = directory
-            .list(RemoteAgentListing::Refreshed)
-            .await
+        let agents = directory.list(RemoteAgentListing::Refreshed).await;
+        let mut listed: Vec<String> = agents
             .iter()
             .map(|agent| agent.address.agent_type())
             .collect();
@@ -782,11 +791,28 @@ mod tests {
         assert_eq!(
             listed,
             vec![
+                "remote:new/claude".to_string(),
                 "remote:new/codex".to_string(),
                 "remote:new/helper".to_string(),
                 "remote:old/helper".to_string(),
             ]
         );
+        // An opened agent the target cannot run now stays listed with why.
+        let claude = agents
+            .iter()
+            .find(|agent| agent.address.open_agent_id == "claude")
+            .unwrap();
+        assert_eq!(
+            claude.availability,
+            RemoteAgentAvailability::Unavailable {
+                reason: RemoteAgentUnavailableReason::AgentUnavailable,
+                detail: "claude-code is not enabled".to_string(),
+            }
+        );
+        assert!(agents
+            .iter()
+            .filter(|agent| agent.address.open_agent_id != "claude")
+            .all(|agent| agent.availability.is_available()));
     }
 
     #[tokio::test]

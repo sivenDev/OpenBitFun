@@ -91,7 +91,18 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run <changed test files>`
 - `pnpm run i18n:audit`
 
-- [ ] 外部智能体的开放需要确认，不可用时不能开放
+- [x] 外部智能体的开放需要确认，不可用时不能开放
+  - 实现：
+    - 核心 `OpenAgentStore::open_external_agent` 要求确认使用提示，并经执行器的可用性检查；普通 `open` 不再能写入 `acp:` 条目。
+    - 桌面命令新增可选字段 `usageConfirmed`，旧调用方缺省为未确认；CLI 新增 `--accept-usage`，未确认时打印提示并拒绝。
+    - 设置页只列出已启用、且允许接收委派的 ACP 客户端，切换智能体后需要重新确认；Claude Code 额外显示订阅登录的提示。
+    - 目标端目录给不可运行的已开放外部智能体带上 `unavailable` 原因（可选字段，旧发起方忽略）；发起方显示为 `agent_unavailable`。
+  - 证据：
+    - `service::delegation` 8 项通过；`service::` 406 项通过，其中 `remote_agents` 覆盖不可用条目的原因；
+    - CLI `dispatch::` 105 项通过，其中目录测试覆盖可用、未启用、无执行器三种情况；
+    - CLI 合约测试 `external_agents_open_only_after_confirming_their_usage_notice` 用真实二进制确认：未确认时打印 Claude Code 提示并拒绝；确认后若该智能体不可运行仍拒绝；清单保持为空；
+    - `AgentDelegationConfig.test.tsx` 与 `AgentsScene.test.tsx` 共 26 项通过；`type-check:web` 通过；`i18n:audit` 通过，0 警告；
+    - `runtime-ports` 的 `remote_agent_port_contracts` 7 项通过；桌面 `cargo check -p openbitfun-desktop --lib` 通过；不带特性的核心构建通过。
 
 ## Task 3: 工作进程中的权限请求进入审批邮箱，并实测
 

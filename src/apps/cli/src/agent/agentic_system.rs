@@ -38,13 +38,17 @@ pub(crate) fn allow_primary_external_agent_turns_for_process() {
     let _ = PRIMARY_EXTERNAL_AGENT_TURNS.set(());
 }
 
-/// Whether this CLI can run external agents: its ACP client service builds.
-pub(crate) async fn external_agent_executor_available() -> bool {
+/// This CLI's executor for external agents, when its ACP client service
+/// builds. It answers availability without starting the runtime.
+pub(crate) async fn external_agent_executor(
+) -> Option<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>> {
     match crate::acp_cli::new_client_service().await {
-        Ok(_) => true,
+        Ok(service) => Some(Arc::new(
+            openbitfun_acp::client::AcpExternalAgentExecutor::new(service),
+        )),
         Err(error) => {
             tracing::warn!("External agent executor unavailable: {}", error);
-            false
+            None
         }
     }
 }

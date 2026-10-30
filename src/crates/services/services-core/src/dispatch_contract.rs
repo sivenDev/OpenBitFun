@@ -204,6 +204,10 @@ pub struct DispatchCatalogAgent {
     /// `message` and/or `coding`; unknown kinds from newer targets are kept.
     #[serde(default)]
     pub task_kinds: Vec<String>,
+    /// Set when the target cannot run this agent now, such as an opened
+    /// external agent that is no longer enabled there: why, for display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
 }
 
 /// Whether a target advertising `capabilities` accepts this audit action.

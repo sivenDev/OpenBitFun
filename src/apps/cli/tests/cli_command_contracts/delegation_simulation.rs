@@ -867,6 +867,51 @@ fn targets_advertise_delegation_to_external_agents() {
     );
 }
 
+#[test]
+fn external_agents_open_only_after_confirming_their_usage_notice() {
+    let environment = CliTestEnvironment::new();
+    let open = |extra: &[&str]| {
+        let mut command = environment.std_command();
+        command
+            .args([
+                "delegation",
+                "open",
+                "claude",
+                "--agent",
+                "acp:claude-code",
+                "--task-kind",
+                "message",
+                "--all-devices",
+            ])
+            .args(extra)
+            .stdin(Stdio::null());
+        support::command_output_with_timeout(&mut command, Duration::from_secs(60))
+    };
+
+    let unconfirmed = open(&[]);
+    assert!(!unconfirmed.status.success());
+    let stdout = String::from_utf8_lossy(&unconfirmed.stdout);
+    assert!(stdout.contains("API key is recommended"), "{stdout}");
+    assert!(String::from_utf8_lossy(&unconfirmed.stderr).contains("--accept-usage"));
+
+    // Confirmed, it still opens only an agent this device can run now.
+    let not_enabled = open(&["--accept-usage"]);
+    assert!(!not_enabled.status.success());
+    assert!(
+        String::from_utf8_lossy(&not_enabled.stderr).contains("cannot run on this device"),
+        "{}",
+        String::from_utf8_lossy(&not_enabled.stderr)
+    );
+
+    let mut list = environment.std_command();
+    list.args(["delegation", "list", "--json"])
+        .stdin(Stdio::null());
+    let listed = support::command_output_with_timeout(&mut list, Duration::from_secs(60));
+    assert!(listed.status.success());
+    let records: Value = serde_json::from_slice(&listed.stdout).expect("list JSON");
+    assert_eq!(records, json!([]));
+}
+
 /// The edit the `coding` behavior makes: a `farewell` function next to the
 /// requester's `greet`, a test for it, and a check that it imports.
 const CODING_EDIT: &str = "printf '\\n\\ndef farewell(name: str) -> str:\\n    return f\"Goodbye, {name}!\"\\n' >> ibot/greet.py && printf '\\n\\ndef test_farewell():\\n    from ibot.greet import farewell\\n\\n    assert farewell(\"ibot\") == \"Goodbye, ibot!\"\\n' >> tests/test_greet.py && python3 -c 'from ibot.greet import farewell; print(farewell(\"ibot\"))'";
