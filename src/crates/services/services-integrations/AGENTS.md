@@ -46,6 +46,13 @@ slices that are outside pure product logic but still platform-neutral.
   by Remote Connect, remote SSH, and offline migration. Keep it free of network,
   SSH transport, and runtime orchestration dependencies so owner readers and
   writers can validate staged data without enabling those heavier families.
+- `remote_connect::connections` owns cross-account pairing: fingerprints,
+  invite links, connection keys (device X25519 plus HKDF bound to the
+  connection id, never the account keys), the local connection store, and the
+  request envelope. The store keeps unreadable entries, reports them disabled,
+  and never deletes them; a pinned peer key never changes, and a different
+  reported key disables the connection. Core `connection_rpc` sends and
+  answers calls; product hosts only expose management.
 - `remote_connect::file_projection` performs bounded output reads through the
   session-selected `WorkspaceFileSystem`; `remote-connect` therefore selects
   `runtime-ports/workspace-ports` without enabling an SSH implementation. Core
@@ -138,6 +145,7 @@ cargo test -p openbitfun-services-integrations --no-default-features --features 
 cargo test -p openbitfun-services-integrations --no-default-features --features remote-ssh-concrete --lib remote_ssh::wsl::tests::
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-ssh-concrete --lib remote_ssh::relay_deploy::tests::
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::account::tests
+cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::connections
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::relay_client::tests::
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::host_stream::tests::
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::host_stream_subscriber::tests::

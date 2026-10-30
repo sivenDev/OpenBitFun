@@ -173,8 +173,9 @@ Shared TUI must not claim the host-wide scheduling lease: its workspace scope an
 last-controller idle shutdown cannot own all persisted jobs.
 
 For delegated jobs between same-account devices (catalog, message, cancel,
-approval) and cross-account refusal, against an in-process Relay and real
-`daemon run` targets with isolated storage:
+approval), cross-account refusal, and cross-account pairing through
+`openbitfun connections` (invite, accept, confirm, encrypted call, revoke),
+against an in-process Relay and real `daemon run` targets with isolated storage:
 
 ```bash
 cargo test --locked -p openbitfun-cli --test cli_command_contracts delegation_simulation::

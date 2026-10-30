@@ -16,6 +16,7 @@ mod agent;
 #[allow(dead_code)]
 mod chat_state;
 mod config;
+mod connections_cli;
 mod daemon;
 mod delegation_cli;
 mod diagnostics;
@@ -385,6 +386,12 @@ enum Commands {
     Dispatch {
         #[command(subcommand)]
         action: DispatchAction,
+    },
+
+    /// Pair this device with devices of other accounts
+    Connections {
+        #[command(subcommand)]
+        action: connections_cli::ConnectionsAction,
     },
 
     /// Manage the agents this device opens to other devices
@@ -1590,6 +1597,10 @@ async fn run_cli() -> Result<()> {
 
         Some(Commands::Dispatch { action }) => {
             root_handlers::handle_dispatch_action(action).await?;
+        }
+
+        Some(Commands::Connections { action }) => {
+            connections_cli::run(action).await?;
         }
 
         Some(Commands::Delegation { action }) => {

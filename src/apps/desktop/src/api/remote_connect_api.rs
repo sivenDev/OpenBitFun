@@ -587,6 +587,23 @@ pub fn wrap_peer_aware_emitter(
     Arc::new(PeerAwareEmitter::new(inner))
 }
 
+/// The routing owner's relay client, while that owner is current.
+async fn device_relay_client_with_routing_lease(
+    owner: &DeviceRoutingOwner,
+) -> Option<Arc<openbitfun_core::service::remote_connect::RelayClient>> {
+    if !device_routing_owner_is_current(owner).await {
+        return None;
+    }
+    let holder = owner.route.service().read().await;
+    let client = holder
+        .as_ref()?
+        .device_relay_client_if_connection(owner.service_connection_id)
+        .await?;
+    device_routing_owner_is_current(owner)
+        .await
+        .then_some(client)
+}
+
 async fn send_device_message_with_routing_lease(
     owner: &DeviceRoutingOwner,
     target_device_id: &str,
@@ -2660,6 +2677,7 @@ async fn connect_route_devices(route: RelayRoute) -> Result<Vec<OnlineDeviceInfo
     let event_relay_url = relay_url.clone();
     let event_session = session.clone();
     let event_owner = routing_owner.clone();
+    let event_device_id = auth_device_id.clone();
     tokio::spawn(async move {
         use openbitfun_core::service::remote_connect::relay_client::RelayEvent;
         'routing_events: while let Some(event) = event_rx.recv().await {
@@ -2994,6 +3012,48 @@ async fn connect_route_devices(route: RelayRoute) -> Result<Vec<OnlineDeviceInfo
                     if route == RelayRoute::Official {
                         emit_device_presence(&[]);
                     }
+                }
+                RelayEvent::ConnectionRequest {
+                    connection_id,
+                    command,
+                    source_account_id,
+                    source_device_id,
+                    correlation_id,
+                    encrypted_data,
+                    nonce,
+                } => {
+                    use openbitfun_core::service::remote_connect::connection_rpc::{
+                        serve_connection_request, ConnectionContext, IncomingConnectionRequest,
+                        RefuseConnectionRequests,
+                    };
+                    let Some(relay) = device_relay_client_with_routing_lease(&event_owner).await
+                    else {
+                        break 'routing_events;
+                    };
+                    let context = ConnectionContext {
+                        session: event_session.clone(),
+                        relay_url: event_relay_url.clone(),
+                        local_device_id: event_device_id.clone(),
+                    };
+                    // Nothing is granted to connections yet, so every call is
+                    // refused inside its encrypted answer.
+                    tokio::spawn(async move {
+                        serve_connection_request(
+                            &relay,
+                            &context,
+                            IncomingConnectionRequest {
+                                connection_id,
+                                command,
+                                source_account_id,
+                                source_device_id,
+                                encrypted_data,
+                                nonce,
+                            },
+                            &correlation_id,
+                            &RefuseConnectionRequests,
+                        )
+                        .await;
+                    });
                 }
                 RelayEvent::Reconnected => {
                     let Some(_routing_effect) = lock_current_device_routing(&event_owner).await

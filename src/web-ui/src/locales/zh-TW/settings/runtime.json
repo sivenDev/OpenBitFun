@@ -133,6 +133,76 @@
     "save": "開放",
     "cancel": "取消"
   },
+  "connections": {
+    "sectionTitle": "與其他帳號的連線",
+    "sectionDescription": "讓本裝置與另一個帳號的裝置配對。接受前雙方核對裝置指紋。在你授權之前，連線上不共享任何內容；任一方都可以隨時撤銷。",
+    "unsupported": "與其他帳號的連線只能在本裝置的桌面應用程式中管理。",
+    "peerUnsupported": "請在已連線的裝置上管理它的連線。",
+    "signedOut": "登入帳號後才能與其他帳號的裝置連線。",
+    "relayUnsupported": "目前 relay 不支援帳號之間的連線",
+    "relayUnsupportedDescription": "既有連線照常顯示；建立、接受和撤銷邀請需要支援跨帳號路由的 relay。",
+    "relayUnavailable": "無法連線 relay，顯示本裝置儲存的連線",
+    "localFingerprint": "本裝置指紋",
+    "localFingerprintDescription": "把它讀給對方，讓對方在自己的螢幕上核對。",
+    "fingerprintLabel": "指紋 {{fingerprint}}",
+    "peer": "{{name}}（{{account}}）",
+    "empty": "還沒有與其他帳號的連線。",
+    "unreadable": "已停用，記錄無法讀取：{{problem}}",
+    "unreadableFile": "連線檔案",
+    "revoke": "撤銷",
+    "cancel": "取消",
+    "status": {
+      "active": "已生效",
+      "pending": "等待邀請方確認",
+      "awaitingYou": "等待你確認",
+      "revoked": "已撤銷",
+      "keyChanged": "已停用：對方裝置的金鑰已變化，請重新配對",
+      "notVerified": "本裝置未核驗此連線，請撤銷後重新配對"
+    },
+    "invite": {
+      "create": "建立邀請",
+      "created": "邀請連結（單次有效）",
+      "createdDescription": "透過你信任的管道傳給對方。{{time}} 過期。",
+      "copy": "複製",
+      "copied": "已複製邀請連結",
+      "copyFailed": "無法複製邀請連結",
+      "open": "未使用的邀請",
+      "expires": "{{time}} 過期",
+      "withdraw": "收回"
+    },
+    "accept": {
+      "open": "接受邀請",
+      "link": "邀請連結",
+      "linkDescription": "貼上對方傳給你的連結。",
+      "check": "檢視邀請",
+      "previewDescription": "裝置 {{device}} · 指紋與邀請連結一致 · {{time}} 過期",
+      "submit": "接受",
+      "done": "已接受邀請",
+      "doneDescription": "把本裝置指紋讀給邀請方，對方確認後連線生效。"
+    },
+    "confirm": {
+      "open": "核對並確認",
+      "title": "確認與 {{name}} 的連線",
+      "description": "請 {{name}} 讀出其裝置上顯示的指紋，與這裡完全一致時才確認。",
+      "submit": "指紋一致，確認"
+    },
+    "errors": {
+      "relay_unsupported": "目前 relay 不支援帳號之間的連線。",
+      "fingerprint_mismatch": "裝置金鑰與指紋不一致。請不要接受，並向對方索取新的邀請。",
+      "different_relay": "這個邀請建立於另一個 relay，與本裝置使用的不同。",
+      "invalid_invite_link": "這不是有效的邀請連結。",
+      "invite_not_found": "邀請不存在。",
+      "invite_expired": "邀請已過期，請向對方索取新的邀請。",
+      "invite_used": "邀請已被使用。",
+      "same_account": "這個邀請來自你自己的帳號，同一帳號的裝置已經互通。",
+      "connection_exists": "這兩台裝置已經連線。",
+      "connection_revoked": "連線已被撤銷。",
+      "connection_not_found": "連線已不存在。",
+      "inviter_device_required": "只有建立邀請的裝置可以確認。",
+      "store_unreadable": "本裝置的連線檔案無法讀取，已原樣保留。修復或移走它之後才能再次配對。",
+      "generic": "操作失敗：{{message}}"
+    }
+  },
   "projectPermissions": {
     "description": "「始終允許」會儲存為目前專案的記憶授權；靜態專案規則會在工具執行前直接套用",
     "grantsTitle": "記憶授權",

@@ -133,6 +133,76 @@
     "save": "开放",
     "cancel": "取消"
   },
+  "connections": {
+    "sectionTitle": "与其他账号的连接",
+    "sectionDescription": "让本设备与另一个账号的设备配对。接受前双方核对设备指纹。在你授权之前，连接上不共享任何内容；任一方都可以随时撤销。",
+    "unsupported": "与其他账号的连接只能在本设备的桌面应用中管理。",
+    "peerUnsupported": "请在已连接的设备上管理它的连接。",
+    "signedOut": "登录账号后才能与其他账号的设备连接。",
+    "relayUnsupported": "当前 relay 不支持账号之间的连接",
+    "relayUnsupportedDescription": "已有连接照常显示；创建、接受和撤销邀请需要支持跨账号路由的 relay。",
+    "relayUnavailable": "无法连接 relay，显示本设备保存的连接",
+    "localFingerprint": "本设备指纹",
+    "localFingerprintDescription": "把它读给对方，让对方在自己的屏幕上核对。",
+    "fingerprintLabel": "指纹 {{fingerprint}}",
+    "peer": "{{name}}（{{account}}）",
+    "empty": "还没有与其他账号的连接。",
+    "unreadable": "已停用，记录无法读取：{{problem}}",
+    "unreadableFile": "连接文件",
+    "revoke": "撤销",
+    "cancel": "取消",
+    "status": {
+      "active": "已生效",
+      "pending": "等待邀请方确认",
+      "awaitingYou": "等待你确认",
+      "revoked": "已撤销",
+      "keyChanged": "已停用：对方设备的密钥已变化，请重新配对",
+      "notVerified": "本设备未核验此连接，请撤销后重新配对"
+    },
+    "invite": {
+      "create": "创建邀请",
+      "created": "邀请链接（一次有效）",
+      "createdDescription": "通过你信任的渠道发给对方。{{time}} 过期。",
+      "copy": "复制",
+      "copied": "已复制邀请链接",
+      "copyFailed": "无法复制邀请链接",
+      "open": "未使用的邀请",
+      "expires": "{{time}} 过期",
+      "withdraw": "收回"
+    },
+    "accept": {
+      "open": "接受邀请",
+      "link": "邀请链接",
+      "linkDescription": "粘贴对方发给你的链接。",
+      "check": "查看邀请",
+      "previewDescription": "设备 {{device}} · 指纹与邀请链接一致 · {{time}} 过期",
+      "submit": "接受",
+      "done": "已接受邀请",
+      "doneDescription": "把本设备指纹读给邀请方，对方确认后连接生效。"
+    },
+    "confirm": {
+      "open": "核对并确认",
+      "title": "确认与 {{name}} 的连接",
+      "description": "请 {{name}} 读出其设备上显示的指纹，与这里完全一致时才确认。",
+      "submit": "指纹一致，确认"
+    },
+    "errors": {
+      "relay_unsupported": "当前 relay 不支持账号之间的连接。",
+      "fingerprint_mismatch": "设备密钥与指纹不一致。请不要接受，并向对方索取新的邀请。",
+      "different_relay": "这个邀请创建于另一个 relay，与本设备使用的不同。",
+      "invalid_invite_link": "这不是有效的邀请链接。",
+      "invite_not_found": "邀请不存在。",
+      "invite_expired": "邀请已过期，请向对方索取新的邀请。",
+      "invite_used": "邀请已被使用。",
+      "same_account": "这个邀请来自你自己的账号，同一账号的设备已经互通。",
+      "connection_exists": "这两台设备已经连接。",
+      "connection_revoked": "连接已被撤销。",
+      "connection_not_found": "连接已不存在。",
+      "inviter_device_required": "只有创建邀请的设备可以确认。",
+      "store_unreadable": "本设备的连接文件无法读取，已原样保留。修复或移走它之后才能再次配对。",
+      "generic": "操作失败：{{message}}"
+    }
+  },
   "projectPermissions": {
     "description": "“始终允许”会保存为当前项目的记忆授权；静态项目规则会在工具执行前直接应用",
     "grantsTitle": "记忆授权",

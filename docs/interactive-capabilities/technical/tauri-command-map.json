@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "26faf62f78dee6552e42da2027f7f59c703e47f6a04261c4e40f3b835bbfb126",
-  "commandCount": 709,
+  "catalogDigest": "bdbf3f113645efbead8f3f370145a0ca2b88097369499150166d87b8a86871c4",
+  "commandCount": 716,
   "coverage": {
-    "commandCount": 709,
-    "documentedCommandCount": 649,
+    "commandCount": 716,
+    "documentedCommandCount": 656,
     "implementationCommandCount": 60,
     "implementationDigest": "5047b674e890f899e65baf9235e9df4bd912fa28f44eb10a656e079a1b89974d"
   },
@@ -1609,6 +1609,118 @@
       "sourceFile": "src/apps/desktop/src/frontend_workbench.rs",
       "signature": "fn confirm_frontend_update( state: tauri::State<'_, Arc<FrontendWorkbenchManager>>, webview: tauri::WebviewWindow, request: FrontendUpdateDecisionRequest, ) -> Result<Value, String>",
       "remoteWorkspacePolicy": "LocalOnly"
+    },
+    {
+      "id": "connections_accept_invite",
+      "moduleId": "connections",
+      "capabilityId": "feature.remote-connect",
+      "capabilityIds": [
+        "feature.remote-connect"
+      ],
+      "documentedItemIds": [
+        "feature.remote-connect:connections"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::connections_api::connections_accept_invite",
+      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
+      "signature": "fn connections_accept_invite( request: InviteLinkRequest, ) -> Result<ConnectionSummary, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "connections_confirm",
+      "moduleId": "connections",
+      "capabilityId": "feature.remote-connect",
+      "capabilityIds": [
+        "feature.remote-connect"
+      ],
+      "documentedItemIds": [
+        "feature.remote-connect:connections"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::connections_api::connections_confirm",
+      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
+      "signature": "fn connections_confirm( request: ConfirmConnectionRequest, ) -> Result<ConnectionSummary, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "connections_create_invite",
+      "moduleId": "connections",
+      "capabilityId": "feature.remote-connect",
+      "capabilityIds": [
+        "feature.remote-connect"
+      ],
+      "documentedItemIds": [
+        "feature.remote-connect:connections"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::connections_api::connections_create_invite",
+      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
+      "signature": "fn connections_create_invite(request: CreateInviteRequest) -> Result<Value, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "connections_overview",
+      "moduleId": "connections",
+      "capabilityId": "feature.remote-connect",
+      "capabilityIds": [
+        "feature.remote-connect"
+      ],
+      "documentedItemIds": [
+        "feature.remote-connect:connections"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::connections_api::connections_overview",
+      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
+      "signature": "fn connections_overview() -> Result<ConnectionsOverview, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "connections_preview_invite",
+      "moduleId": "connections",
+      "capabilityId": "feature.remote-connect",
+      "capabilityIds": [
+        "feature.remote-connect"
+      ],
+      "documentedItemIds": [
+        "feature.remote-connect:connections"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::connections_api::connections_preview_invite",
+      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
+      "signature": "fn connections_preview_invite( request: InviteLinkRequest, ) -> Result<InvitePreviewView, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "connections_revoke",
+      "moduleId": "connections",
+      "capabilityId": "feature.remote-connect",
+      "capabilityIds": [
+        "feature.remote-connect"
+      ],
+      "documentedItemIds": [
+        "feature.remote-connect:connections"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::connections_api::connections_revoke",
+      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
+      "signature": "fn connections_revoke(request: ConnectionIdRequest) -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "connections_withdraw_invite",
+      "moduleId": "connections",
+      "capabilityId": "feature.remote-connect",
+      "capabilityIds": [
+        "feature.remote-connect"
+      ],
+      "documentedItemIds": [
+        "feature.remote-connect:connections"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::connections_api::connections_withdraw_invite",
+      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
+      "signature": "fn connections_withdraw_invite(request: InviteIdRequest) -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
       "id": "control_background_command",

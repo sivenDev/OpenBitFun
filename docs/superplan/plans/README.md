@@ -6,7 +6,7 @@
 
 | Type | Plans | Approved | In Progress | Complete |
 | --- | --- | --- | --- | --- |
-| `feature` | 10 | 3 | 2 | 5 |
+| `feature` | 10 | 2 | 2 | 6 |
 
 ## Plan Groups
 
@@ -22,5 +22,5 @@
 | `F002-03` | [同账号委派给远程设备上的 ACP 外部智能体](features/F002/03-remote-external-agents.md) | `approved` | 2026-10-30 |
 | `F001-04` | [外部智能体委派的远程场景](features/F001/04-remote-scenarios.md) | `in_progress` | 2026-10-29 |
 | `F002-04` | [relay 跨账号连接登记与路由授权](features/F002/04-relay-cross-account-routing.md) | `complete` | 2026-10-30 |
-| `F002-05` | [跨账号配对、连接级密钥与连接管理](features/F002/05-cross-account-pairing.md) | `approved` | 2026-10-30 |
+| `F002-05` | [跨账号配对、连接级密钥与连接管理](features/F002/05-cross-account-pairing.md) | `complete` | 2026-10-30 |
 | `F002-06` | [跨账号委派：按连接授权、目标端审批、额度与审计](features/F002/06-cross-account-delegation.md) | `approved` | 2026-10-30 |

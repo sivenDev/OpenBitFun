@@ -10,6 +10,7 @@
 
 pub mod account_runtime;
 pub mod bot;
+pub mod connection_rpc;
 pub mod embedded_relay_host;
 pub mod lan;
 mod permission_publication;
@@ -57,6 +58,10 @@ pub mod session_records {
 
 pub mod session_store {
     pub use openbitfun_services_integrations::remote_connect::session_store::*;
+}
+
+pub mod connections {
+    pub use openbitfun_services_integrations::remote_connect::connections::*;
 }
 
 pub use account::{validate_relay_base_url, AccountClient, AccountSession, DelegateToken};
@@ -1081,6 +1086,25 @@ impl RemoteConnectService {
             .send_device_message(target_device_id, correlation_id, encrypted_data, nonce)
             .await?;
         Ok(true)
+    }
+
+    /// The device-routing client of connection `expected_connection_id`, if
+    /// it is still the active one. Cross-account calls must use this device
+    /// socket; the Relay refuses them from controller sockets.
+    pub async fn device_relay_client_if_connection(
+        &self,
+        expected_connection_id: u64,
+    ) -> Option<Arc<RelayClient>> {
+        let _lifecycle = self.device_relay_lifecycle.lock().await;
+        if *self.active_device_connection_id.read().await != Some(expected_connection_id) {
+            return None;
+        }
+        self.device_relay_client.read().await.clone()
+    }
+
+    /// The active device-routing client, if any.
+    pub async fn device_relay_client(&self) -> Option<Arc<RelayClient>> {
+        self.device_relay_client.read().await.clone()
     }
 
     /// Current online devices in the account (presence list).

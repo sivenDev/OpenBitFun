@@ -4625,6 +4625,26 @@
           ]
         },
         {
+          "id": "connections",
+          "titleZh": "与其他账号的设备配对、核对指纹、查看与撤销连接",
+          "titleEn": "Pair with devices of other accounts, check fingerprints, and view or revoke connections",
+          "control": {
+            "kind": "open",
+            "reasonCode": "unstructuredInteraction",
+            "reasonZh": "“与其他账号的设备配对、核对指纹、查看与撤销连接”需要两个人通过可信渠道交换邀请并当面核对指纹，智能体不能代替任一方确认。连接使用本机的账户身份，不随 Peer Device 切换到目标主机；Relay 不支持跨账号路由时入口明确显示不可用。智能体打开连接管理入口，由用户完成后续交互。",
+            "reasonEn": "“Pair with devices of other accounts, check fingerprints, and view or revoke connections” requires two people to exchange an invite over a trusted channel and compare fingerprints; the Agent cannot confirm for either side. Connections use this device's account identity, not the selected Peer host; when the Relay cannot route between accounts the entry explicitly shows it as unavailable. The Agent opens connection management and leaves subsequent interaction to the user."
+          },
+          "evidence": [
+            "command:connections_overview",
+            "command:connections_create_invite",
+            "command:connections_preview_invite",
+            "command:connections_accept_invite",
+            "command:connections_confirm",
+            "command:connections_revoke",
+            "command:connections_withdraw_invite"
+          ]
+        },
+        {
           "id": "peer-device",
           "titleZh": "进入 Peer Device Mode，把另一台 OpenBitFun 设备作为命令与事件数据面",
           "titleEn": "Enter Peer Device Mode and use another OpenBitFun device as the command and event data plane",
@@ -9980,6 +10000,9 @@
     },
     "dispatch": {
       "capabilityId": "feature.detached-dispatch"
+    },
+    "connections": {
+      "capabilityId": "feature.remote-connect"
     },
     "system": {
       "capabilityId": "setting.application.general"

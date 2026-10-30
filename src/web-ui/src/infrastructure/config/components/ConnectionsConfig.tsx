@@ -1,0 +1,348 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Input } from '@openbitfun/ui';
+import {
+  connectionErrorReason,
+  connectionsAPI,
+  type ConnectionInvitePreview,
+  type ConnectionsOverview,
+  type ConnectionSummary,
+  type CreatedConnectionInvite,
+} from '@/infrastructure/api/service-api/ConnectionsAPI';
+import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
+import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
+import { isTauriRuntime } from '@/infrastructure/runtime';
+import { notificationService } from '@/shared/notification-system';
+import { writeNativeClipboardText } from '@/shared/utils/nativeClipboard';
+import { createLogger } from '@/shared/utils/logger';
+import {
+  ConfigLoadingState,
+  ConfigPageRow,
+  ConfigPageSection,
+  ConfigRetryState,
+} from './common';
+
+const log = createLogger('ConnectionsConfig');
+
+type LoadState =
+  | { kind: 'loading' }
+  | { kind: 'signedOut' }
+  | { kind: 'failed' }
+  | { kind: 'ready'; overview: ConnectionsOverview };
+
+interface AcceptDraft {
+  link: string;
+  preview: ConnectionInvitePreview | null;
+}
+
+function isSignedOut(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('not logged in');
+}
+
+/**
+ * Connections of this device with devices of other accounts. Pairing uses
+ * this device's own account identity, so it is managed only here: hosts
+ * without the desktop commands and connected peer devices show an explicit
+ * state. Nothing is shared over a connection until items are granted to it.
+ */
+export const ConnectionsConfig: React.FC = () => {
+  const { t, formatDate } = useI18n('settings/runtime');
+  const peerMode = usePeerDeviceModeOptional()?.peerMode;
+  const supported = isTauriRuntime() && peerMode?.active !== true;
+  const [state, setState] = useState<LoadState>({ kind: 'loading' });
+  const [invite, setInvite] = useState<CreatedConnectionInvite | null>(null);
+  const [accept, setAccept] = useState<AcceptDraft | null>(null);
+  const [confirming, setConfirming] = useState<ConnectionSummary | null>(null);
+  const [acceptedFingerprint, setAcceptedFingerprint] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const activeRef = useRef(true);
+
+  const load = useCallback(async () => {
+    try {
+      const overview = await connectionsAPI.overview();
+      if (activeRef.current) setState({ kind: 'ready', overview });
+    } catch (error) {
+      if (!activeRef.current) return;
+      if (isSignedOut(error)) {
+        setState({ kind: 'signedOut' });
+        return;
+      }
+      log.error('Failed to load connections', { error });
+      setState({ kind: 'failed' });
+    }
+  }, []);
+
+  useEffect(() => {
+    activeRef.current = true;
+    if (supported) void load();
+    return () => { activeRef.current = false; };
+  }, [load, supported]);
+
+  const describeError = (error: unknown): string => {
+    const reason = connectionErrorReason(error);
+    if (reason) return t(`connections.errors.${reason}`);
+    return t('connections.errors.generic', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  /** Runs an action, shows its error inline, and reloads the overview. */
+  const run = async (action: () => Promise<void>, failureLog: string) => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await action();
+      await load();
+    } catch (error) {
+      log.error(failureLog, { error });
+      if (activeRef.current) setActionError(describeError(error));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const formatTime = (seconds: number) => formatDate(seconds * 1000, {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+
+  const statusText = (connection: ConnectionSummary): string => {
+    if (connection.awaitingConfirmation) return t('connections.status.awaitingYou');
+    if (connection.unusableReason === 'key_changed') return t('connections.status.keyChanged');
+    if (connection.unusableReason === 'not_verified') return t('connections.status.notVerified');
+    if (connection.status === 'active') return t('connections.status.active');
+    if (connection.status === 'pending') return t('connections.status.pending');
+    if (connection.status === 'revoked') return t('connections.status.revoked');
+    return connection.status;
+  };
+
+  const copyLink = async (link: string) => {
+    const copied = await writeNativeClipboardText(link).catch(() => false)
+      || await navigator.clipboard?.writeText(link).then(() => true, () => false);
+    if (copied) notificationService.success(t('connections.invite.copied'), { duration: 2000 });
+    else notificationService.error(t('connections.invite.copyFailed'));
+  };
+
+  const renderConnection = (connection: ConnectionSummary) => {
+    const details = [
+      connection.peerDeviceName || connection.peerDeviceId,
+      statusText(connection),
+      connection.peerFingerprint
+        ? t('connections.fingerprintLabel', { fingerprint: connection.peerFingerprint })
+        : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <ConfigPageRow
+        key={connection.connectionId}
+        label={t('connections.peer', { name: connection.peerDisplayName, account: connection.peerUserId })}
+        description={details}
+        align="center"
+      >
+        <div>
+          {connection.awaitingConfirmation && (
+            <Button type="button" size="sm" variant="primary" disabled={busy}
+              onClick={() => { setConfirming(connection); setActionError(null); }}>
+              {t('connections.confirm.open')}
+            </Button>
+          )}
+          {connection.status !== 'revoked' && (
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              onClick={() => void run(() => connectionsAPI.revoke(connection.connectionId), 'Failed to revoke connection')}>
+              {t('connections.revoke')}
+            </Button>
+          )}
+        </div>
+      </ConfigPageRow>
+    );
+  };
+
+  const renderConfirm = (connection: ConnectionSummary) => (
+    <>
+      <ConfigPageRow
+        label={t('connections.confirm.title', { name: connection.peerDisplayName })}
+        description={t('connections.confirm.description', { name: connection.peerDisplayName })}
+      >
+        <code data-testid="confirm-fingerprint">{connection.peerFingerprint ?? ''}</code>
+      </ConfigPageRow>
+      <ConfigPageRow label="" align="center">
+        <div>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setConfirming(null)}>
+            {t('connections.cancel')}
+          </Button>
+          <Button type="button" size="sm" variant="primary" disabled={busy || !connection.peerFingerprint}
+            onClick={() => void run(async () => {
+              await connectionsAPI.confirm(connection.connectionId, connection.peerFingerprint ?? '');
+              if (activeRef.current) setConfirming(null);
+            }, 'Failed to confirm connection')}>
+            {t('connections.confirm.submit')}
+          </Button>
+        </div>
+      </ConfigPageRow>
+    </>
+  );
+
+  const renderAccept = (draft: AcceptDraft) => (
+    <>
+      <ConfigPageRow label={t('connections.accept.link')} description={t('connections.accept.linkDescription')} align="center">
+        <Input size="sm" value={draft.link} disabled={busy || draft.preview !== null}
+          placeholder="openbitfun://connect?..."
+          onChange={event => setAccept({ link: event.target.value, preview: null })} />
+      </ConfigPageRow>
+      {draft.preview && (
+        <ConfigPageRow
+          label={t('connections.peer', {
+            name: draft.preview.inviterDisplayName,
+            account: draft.preview.inviterUserId,
+          })}
+          description={t('connections.accept.previewDescription', {
+            device: draft.preview.inviterDeviceName,
+            time: formatTime(draft.preview.expiresAt),
+          })}
+        >
+          <code data-testid="preview-fingerprint">{draft.preview.fingerprint}</code>
+        </ConfigPageRow>
+      )}
+      <ConfigPageRow label="" align="center">
+        <div>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setAccept(null)}>
+            {t('connections.cancel')}
+          </Button>
+          {draft.preview ? (
+            <Button type="button" size="sm" variant="primary" disabled={busy}
+              onClick={() => void run(async () => {
+                await connectionsAPI.acceptInvite(draft.link.trim());
+                if (!activeRef.current) return;
+                setAccept(null);
+                setAcceptedFingerprint(state.kind === 'ready' ? state.overview.localFingerprint : null);
+              }, 'Failed to accept invite')}>
+              {t('connections.accept.submit')}
+            </Button>
+          ) : (
+            <Button type="button" size="sm" variant="primary" disabled={busy || draft.link.trim() === ''}
+              onClick={() => void run(async () => {
+                const preview = await connectionsAPI.previewInvite(draft.link.trim());
+                if (activeRef.current) setAccept({ link: draft.link, preview });
+              }, 'Failed to read invite')}>
+              {t('connections.accept.check')}
+            </Button>
+          )}
+        </div>
+      </ConfigPageRow>
+    </>
+  );
+
+  const renderBody = () => {
+    if (!supported) {
+      return (
+        <ConfigPageRow label={t('connections.sectionTitle')} description={peerMode?.active
+          ? t('connections.peerUnsupported')
+          : t('connections.unsupported')}>
+          <span />
+        </ConfigPageRow>
+      );
+    }
+    if (state.kind === 'loading') return <ConfigLoadingState label={t('loading.text')} />;
+    if (state.kind === 'failed') {
+      return <ConfigRetryState message={t('loading.failed')} retryLabel={t('loading.retry')} onRetry={() => void load()} />;
+    }
+    if (state.kind === 'signedOut') {
+      return <ConfigPageRow label={t('connections.signedOut')} align="center"><span /></ConfigPageRow>;
+    }
+    const { overview } = state;
+    return <>
+      {!overview.supported && (
+        <ConfigPageRow label={t('connections.relayUnsupported')} description={t('connections.relayUnsupportedDescription')}>
+          <span />
+        </ConfigPageRow>
+      )}
+      {overview.relayError && (
+        <ConfigPageRow label={t('connections.relayUnavailable')} description={overview.relayError}>
+          <span />
+        </ConfigPageRow>
+      )}
+      <ConfigPageRow label={t('connections.localFingerprint')} description={t('connections.localFingerprintDescription')}>
+        <code data-testid="local-fingerprint">{overview.localFingerprint}</code>
+      </ConfigPageRow>
+      {acceptedFingerprint && (
+        <ConfigPageRow label={t('connections.accept.done')} description={t('connections.accept.doneDescription')}>
+          <code>{acceptedFingerprint}</code>
+        </ConfigPageRow>
+      )}
+      {overview.connections.length === 0 && overview.unreadable.length === 0 && (
+        <ConfigPageRow label={t('connections.empty')} align="center"><span /></ConfigPageRow>
+      )}
+      {overview.connections.map(connection =>
+        confirming?.connectionId === connection.connectionId
+          ? <React.Fragment key={connection.connectionId}>{renderConfirm(connection)}</React.Fragment>
+          : renderConnection(connection))}
+      {overview.unreadable.map((entry, index) => (
+        <ConfigPageRow
+          key={`unreadable-${entry.connectionId ?? index}`}
+          label={entry.connectionId ?? t('connections.unreadableFile')}
+          description={t('connections.unreadable', { problem: entry.error })}
+        >
+          <span />
+        </ConfigPageRow>
+      ))}
+      {overview.invites.map(open => (
+        <ConfigPageRow
+          key={open.inviteId}
+          label={t('connections.invite.open')}
+          description={t('connections.invite.expires', { time: formatTime(open.expiresAt) })}
+          align="center"
+        >
+          <Button type="button" size="sm" variant="outline" disabled={busy || !overview.supported}
+            onClick={() => void run(async () => {
+              await connectionsAPI.withdrawInvite(open.inviteId);
+              if (activeRef.current && invite?.inviteId === open.inviteId) setInvite(null);
+            }, 'Failed to withdraw invite')}>
+            {t('connections.invite.withdraw')}
+          </Button>
+        </ConfigPageRow>
+      ))}
+      {invite && (
+        <ConfigPageRow
+          label={t('connections.invite.created')}
+          description={t('connections.invite.createdDescription', { time: formatTime(invite.expiresAt) })}
+        >
+          <div>
+            <code data-testid="invite-link">{invite.link}</code>
+            <Button type="button" size="sm" variant="outline" onClick={() => void copyLink(invite.link)}>
+              {t('connections.invite.copy')}
+            </Button>
+          </div>
+        </ConfigPageRow>
+      )}
+      {accept && renderAccept(accept)}
+      {actionError && <div role="alert">{actionError}</div>}
+      {!accept && (
+        <ConfigPageRow label="" align="center">
+          <div>
+            <Button type="button" size="sm" variant="outline" disabled={busy || !overview.supported}
+              onClick={() => void run(async () => {
+                const created = await connectionsAPI.createInvite();
+                if (activeRef.current) setInvite(created);
+              }, 'Failed to create invite')}>
+              {t('connections.invite.create')}
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy || !overview.supported}
+              onClick={() => { setAccept({ link: '', preview: null }); setActionError(null); }}>
+              {t('connections.accept.open')}
+            </Button>
+          </div>
+        </ConfigPageRow>
+      )}
+    </>;
+  };
+
+  return (
+    <ConfigPageSection
+      title={t('connections.sectionTitle')}
+      description={t('connections.sectionDescription')}
+    >
+      {renderBody()}
+    </ConfigPageSection>
+  );
+};
+
+export default ConnectionsConfig;

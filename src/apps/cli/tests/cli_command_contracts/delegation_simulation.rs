@@ -496,6 +496,187 @@ fn find_file(root: &Path, name: &str) -> bool {
     })
 }
 
+/// Runs `openbitfun connections ...` as `device` and returns its stdout.
+fn connections_cli(device: &SimulatedDevice, args: &[&str]) -> (bool, String) {
+    let mut command = device.environment.std_command_for(&device.binary);
+    command
+        .arg("connections")
+        .args(args)
+        .env("NO_PROXY", "127.0.0.1,localhost")
+        .env("no_proxy", "127.0.0.1,localhost");
+    let output =
+        support::command_output_with_timeout(command.stdin(Stdio::null()), Duration::from_secs(60));
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
+fn json_output(device: &SimulatedDevice, args: &[&str]) -> Value {
+    let (ok, output) = connections_cli(device, args);
+    assert!(ok, "connections {args:?} failed: {output}");
+    serde_json::from_str(&output).unwrap_or_else(|_| panic!("not JSON: {output}"))
+}
+
+/// Two accounts pair one device each and call each other over the
+/// connection. A1 is this test on its own device socket; B1 is a real daemon
+/// managed through the shipped `openbitfun connections` command.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
+    use openbitfun_core::service::remote_connect::connection_rpc::{
+        ConnectionContext, ConnectionRpc, CROSS_ACCOUNT_NOT_ENABLED,
+    };
+    use openbitfun_core::service::remote_connect::connections::{
+        fingerprint_of, refusal_reason, same_fingerprint, ConnectionStore, ConnectionsClient,
+    };
+    use openbitfun_core::service::remote_connect::RelayClient;
+
+    let relay = LocalRelay::start("127.0.0.1", 0).await;
+    let requester = relay
+        .seed_device(ACCOUNT_A, "sim-a", A1, "A1 Desktop", "desktop")
+        .await;
+    let mut target =
+        SimulatedDevice::configure(B1, "B1 Desktop", MockOpenAiServer::immediate(), false);
+    let target_session = relay
+        .seed_device(ACCOUNT_B, "sim-b", B1, "B1 Desktop", "cli")
+        .await;
+    write_session(
+        target.environment.home_root(),
+        &relay.url,
+        &target_session,
+        B1,
+    );
+    target.start_daemon();
+
+    // A1's own device socket: the Relay routes connection calls only from devices.
+    let (socket, mut events) = RelayClient::new();
+    socket.connect(&relay.url).await.expect("A1 relay endpoint");
+    socket
+        .connect_authenticated(&requester.token, "A1 Desktop")
+        .await
+        .expect("A1 device socket");
+    tokio::spawn(async move { while events.recv().await.is_some() {} });
+    let socket = Arc::new(socket);
+
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while !AccountClient::new()
+        .list_devices(&relay.url, &target_session)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|device| device.device_id == B1 && device.online)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "B1 did not come online: {}",
+            std::fs::read_to_string(target.daemon_log_path()).unwrap_or_default()
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    let store_dir = tempfile::tempdir().expect("A1 connection store");
+    let store = ConnectionStore::at(store_dir.path().join("connections.json"));
+    let client = ConnectionsClient {
+        relay_url: &relay.url,
+        session: &requester,
+        local_device_id: A1,
+        store: &store,
+    };
+
+    // A1 invites; B1 sees who invited it, with the fingerprint from the link.
+    let invite = client.create_invite(None).await.expect("create invite");
+    let link = invite.link.to_string();
+    let (ok, shown) = connections_cli(&target, &["accept", &link]);
+    assert!(ok, "{shown}");
+    assert!(shown.contains("A1 Desktop"), "{shown}");
+    assert!(shown.contains(&client.local_fingerprint()), "{shown}");
+    let accepted = json_output(&target, &["accept", &link, "--yes", "--json"]);
+    let connection_id = accepted["connectionId"]
+        .as_str()
+        .expect("connection id")
+        .to_owned();
+    assert_eq!(accepted["status"], "pending");
+    // The invite is single use.
+    let (ok, again) = connections_cli(&target, &["accept", &link, "--yes"]);
+    assert!(!ok && again.contains("invite_used"), "{again}");
+
+    // A1 checks the fingerprint B1's owner reads out, then confirms.
+    let target_view = json_output(&target, &["list", "--json"]);
+    let target_fingerprint = target_view["localFingerprint"].as_str().unwrap().to_owned();
+    let overview = client.overview(true).await.expect("A1 overview");
+    let pending = &overview.connections[0];
+    assert!(pending.awaiting_confirmation);
+    assert!(same_fingerprint(
+        pending.peer_fingerprint.as_deref().unwrap(),
+        &target_fingerprint
+    ));
+    let wrong = fingerprint_of(
+        &openbitfun_services_integrations::remote_connect::device_crypto::public_key_base64(
+            &random_secret(),
+        ),
+    )
+    .unwrap();
+    let error = client.confirm(&connection_id, &wrong).await.unwrap_err();
+    assert_eq!(refusal_reason(&error), Some("fingerprint_mismatch"));
+    let confirmed = client
+        .confirm(&connection_id, &target_fingerprint)
+        .await
+        .expect("confirm");
+    assert_eq!(confirmed.status, "active");
+
+    // Both sides list the other, active.
+    let target_view = json_output(&target, &["list", "--json"]);
+    let listed = &target_view["connections"][0];
+    assert_eq!(listed["connectionId"], connection_id.as_str());
+    assert_eq!(listed["status"], "active");
+    assert_eq!(listed["usable"], true);
+    assert_eq!(listed["peerDeviceId"], A1);
+
+    // A call reaches B1's daemon, which opens it with the connection key and
+    // refuses inside the encrypted answer: nothing is granted to connections.
+    let capabilities = AccountClient::new()
+        .relay_capabilities(&relay.url)
+        .await
+        .expect("relay capabilities");
+    let rpc = ConnectionRpc::new(
+        socket.clone(),
+        ConnectionContext {
+            session: requester.clone(),
+            relay_url: relay.url.clone(),
+            local_device_id: A1.into(),
+        },
+        store.clone(),
+        capabilities,
+    );
+    let error = rpc
+        .invoke_connection(&connection_id, "dispatch_target_catalog", json!({}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), CROSS_ACCOUNT_NOT_ENABLED);
+
+    // B1 revokes; both sides show it and new calls are refused by the Relay.
+    let (ok, output) = connections_cli(&target, &["revoke", &connection_id]);
+    assert!(ok, "{output}");
+    let error = rpc
+        .invoke_connection(&connection_id, "dispatch_target_catalog", json!({}))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refusal_reason(&error),
+        Some("connection_revoked"),
+        "{error}"
+    );
+    let overview = client.overview(true).await.expect("A1 overview");
+    assert_eq!(overview.connections[0].status, "revoked");
+    let target_view = json_output(&target, &["list", "--json"]);
+    assert_eq!(target_view["connections"][0]["status"], "revoked");
+    socket.disconnect().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn same_account_devices_take_delegated_jobs_and_other_accounts_cannot_reach_them() {
     let simulation = Simulation::start("127.0.0.1", 0, None).await;

@@ -133,6 +133,76 @@
     "save": "Open",
     "cancel": "Cancel"
   },
+  "connections": {
+    "sectionTitle": "Connections with other accounts",
+    "sectionDescription": "Pair this device with a device of another account. Before accepting, both people compare the device fingerprints. Nothing is shared over a connection until you grant it, and either side can revoke it at any time.",
+    "unsupported": "Connections with other accounts are available only in the desktop app on this device.",
+    "peerUnsupported": "Manage the connections of a connected device on that device.",
+    "signedOut": "Sign in to an account to connect with devices of other accounts.",
+    "relayUnsupported": "The relay does not support connections between accounts",
+    "relayUnsupportedDescription": "Existing connections are shown, but new invites, accepts and revocations need a relay with cross-account routing.",
+    "relayUnavailable": "The relay could not be reached; showing the connections stored on this device",
+    "localFingerprint": "This device's fingerprint",
+    "localFingerprintDescription": "Read it to the other person so they can check it on their screen.",
+    "fingerprintLabel": "fingerprint {{fingerprint}}",
+    "peer": "{{name}} ({{account}})",
+    "empty": "No connections with other accounts.",
+    "unreadable": "Disabled, the record could not be read: {{problem}}",
+    "unreadableFile": "Connections file",
+    "revoke": "Revoke",
+    "cancel": "Cancel",
+    "status": {
+      "active": "Active",
+      "pending": "Waiting for the inviter to confirm",
+      "awaitingYou": "Waiting for your confirmation",
+      "revoked": "Revoked",
+      "keyChanged": "Disabled: the other device's key changed; pair again",
+      "notVerified": "Not verified on this device; revoke it and pair again"
+    },
+    "invite": {
+      "create": "Create invite",
+      "created": "Invite link (one use)",
+      "createdDescription": "Send it to the other person over a channel you trust. It expires at {{time}}.",
+      "copy": "Copy",
+      "copied": "Invite link copied",
+      "copyFailed": "Could not copy the invite link",
+      "open": "Open invite",
+      "expires": "Expires at {{time}}",
+      "withdraw": "Withdraw"
+    },
+    "accept": {
+      "open": "Accept invite",
+      "link": "Invite link",
+      "linkDescription": "Paste the link the other person sent you.",
+      "check": "Check invite",
+      "previewDescription": "Device {{device}} · the fingerprint matches the invite link · expires at {{time}}",
+      "submit": "Accept",
+      "done": "Invite accepted",
+      "doneDescription": "Read this device's fingerprint to the inviter. The connection becomes active once they confirm."
+    },
+    "confirm": {
+      "open": "Check and confirm",
+      "title": "Confirm the connection with {{name}}",
+      "description": "Ask {{name}} to read the fingerprint shown on their device. Confirm only if it matches this one exactly.",
+      "submit": "Fingerprints match, confirm"
+    },
+    "errors": {
+      "relay_unsupported": "The relay does not support connections between accounts.",
+      "fingerprint_mismatch": "The device key does not match the fingerprint. Do not accept; ask for a new invite.",
+      "different_relay": "The invite was created on another relay than the one this device uses.",
+      "invalid_invite_link": "This is not a valid invite link.",
+      "invite_not_found": "The invite does not exist.",
+      "invite_expired": "The invite has expired. Ask for a new one.",
+      "invite_used": "The invite has already been used.",
+      "same_account": "The invite comes from your own account. Devices of one account are connected already.",
+      "connection_exists": "These two devices are already connected.",
+      "connection_revoked": "The connection has been revoked.",
+      "connection_not_found": "The connection no longer exists.",
+      "inviter_device_required": "Only the device that created the invite can confirm.",
+      "store_unreadable": "The connections file on this device cannot be read. It is kept unchanged; repair or move it to pair again.",
+      "generic": "The operation failed: {{message}}"
+    }
+  },
   "projectPermissions": {
     "description": "Always allow decisions are saved as remembered grants for the current project; static project rules apply before a tool runs.",
     "grantsTitle": "Remembered grants",
