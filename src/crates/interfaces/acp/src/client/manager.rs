@@ -2804,10 +2804,24 @@ pub(super) fn select_permission_by_kind(
     } else {
         PermissionOptionKind::RejectAlways
     };
-    let option_id = request
+    let mut matching = request
         .options
         .iter()
-        .find(|option| option.kind == preferred)
+        .filter(|option| option.kind == preferred);
+    // Some agents offer a second rejection that also ends their turn (Codex:
+    // `decline` continues without the action, `cancel` stops). A rejection
+    // declines only the action, so it prefers a non-stopping option.
+    let preferred_option = if approve {
+        matching.next()
+    } else {
+        let options: Vec<_> = matching.collect();
+        options
+            .iter()
+            .find(|option| !ends_agent_turn(option))
+            .or_else(|| options.first())
+            .copied()
+    };
+    let option_id = preferred_option
         .or_else(|| {
             request
                 .options
@@ -2819,6 +2833,14 @@ pub(super) fn select_permission_by_kind(
     RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
         SelectedPermissionOutcome::new(option_id),
     ))
+}
+
+/// Whether a rejection option also stops the agent's turn, by its id.
+fn ends_agent_turn(option: &PermissionOption) -> bool {
+    matches!(
+        option.option_id.to_string().to_ascii_lowercase().as_str(),
+        "cancel" | "abort"
+    )
 }
 
 fn select_permission_option_id(options: &[PermissionOption], approve: bool) -> String {

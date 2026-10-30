@@ -1,6 +1,6 @@
 use super::*;
 use crate::agentic::coordination::coordinator::tests::{
-    test_coordinator, test_persistent_coordinator,
+    test_coordinator, test_coordinator_with_permissions, test_persistent_coordinator,
 };
 use crate::agentic::coordination::SubagentExecutionRequest;
 use crate::agentic::core::{SessionConfig, SessionContinuationPolicy, SessionModelBindingPolicy};
@@ -973,10 +973,11 @@ async fn unresolved_prompts_are_refused_under_deny_rules_and_auto_approve() {
     }
 }
 
-/// A top-level session whose own agent is `acp:claude-code`, as a Dispatch
-/// worker creates for a job delegated to an opened external agent.
+/// A top-level session whose own agent is `acp:claude-code`, created through
+/// the coordinator as a Dispatch worker does for a job delegated to an opened
+/// external agent. The coordinator must already allow such sessions.
 async fn external_job_session(
-    session_manager: &crate::agentic::session::SessionManager,
+    coordinator: &crate::agentic::coordination::ConversationCoordinator,
 ) -> (String, String, tempfile::TempDir) {
     let workspace = tempfile::tempdir().expect("workspace");
     let workspace_path = dunce::canonicalize(workspace.path()).expect("canonical workspace");
@@ -984,15 +985,17 @@ async fn external_job_session(
         crate::service::workspace::legacy_compat::register_local_fixture(&workspace_path, None)
             .await;
     let path = workspace_path.to_string_lossy().into_owned();
-    let session = session_manager
-        .create_session(
+    let session = coordinator
+        .create_session_with_workspace_and_creator(
+            None,
             "Delegated job".to_string(),
             "acp:claude-code".to_string(),
             SessionConfig {
-                workspace_path: Some(path.clone()),
                 workspace_id: Some(record.id),
                 ..Default::default()
             },
+            path.clone(),
+            None,
         )
         .await
         .expect("job session");
@@ -1005,6 +1008,25 @@ async fn start_external_job_turn(
     workspace_path: &str,
     turn_id: &str,
     prompt: &str,
+) -> OpenBitFunResult<()> {
+    start_external_job_turn_with(
+        coordinator,
+        session_id,
+        workspace_path,
+        turn_id,
+        prompt,
+        None,
+    )
+    .await
+}
+
+async fn start_external_job_turn_with(
+    coordinator: &crate::agentic::coordination::ConversationCoordinator,
+    session_id: &str,
+    workspace_path: &str,
+    turn_id: &str,
+    prompt: &str,
+    metadata: Option<serde_json::Value>,
 ) -> OpenBitFunResult<()> {
     coordinator
         .start_dialog_turn(
@@ -1026,24 +1048,38 @@ async fn start_external_job_turn(
 
 #[tokio::test]
 async fn a_top_level_session_runs_its_external_agent_only_where_allowed() {
+    // Hosts that did not opt in keep refusing `acp:` as a session mode.
+    let (other_host, _) = test_coordinator();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let workspace_path = dunce::canonicalize(workspace.path()).expect("canonical workspace");
+    let record =
+        crate::service::workspace::legacy_compat::register_local_fixture(&workspace_path, None)
+            .await;
+    let refused = other_host
+        .create_session_with_workspace_and_creator(
+            None,
+            "Delegated job".to_string(),
+            "acp:claude-code".to_string(),
+            SessionConfig {
+                workspace_id: Some(record.id),
+                ..Default::default()
+            },
+            workspace_path.to_string_lossy().into_owned(),
+            None,
+        )
+        .await;
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("Unknown session mode")),
+        "{refused:?}"
+    );
+
     let (coordinator, session_manager) = test_coordinator();
     let executor = Arc::new(ScriptedExecutor::default());
     coordinator.set_external_agent_executor(executor.clone());
-    let (session_id, workspace_path, _workspace) = external_job_session(&session_manager).await;
-
-    // Hosts that did not opt in keep refusing `acp:` as a session mode.
-    let refused = start_external_job_turn(
-        &coordinator,
-        &session_id,
-        &workspace_path,
-        "turn-0",
-        "fix it",
-    )
-    .await;
-    assert!(refused.is_err());
-    assert!(executor.requests.lock().unwrap().is_empty());
-
     coordinator.allow_primary_external_agent_turns();
+    let (session_id, workspace_path, _workspace) = external_job_session(&coordinator).await;
     start_external_job_turn(
         &coordinator,
         &session_id,
@@ -1098,7 +1134,7 @@ async fn cancelling_a_top_level_external_turn_cancels_the_agent() {
     });
     coordinator.set_external_agent_executor(executor.clone());
     coordinator.allow_primary_external_agent_turns();
-    let (session_id, workspace_path, _workspace) = external_job_session(&session_manager).await;
+    let (session_id, workspace_path, _workspace) = external_job_session(&coordinator).await;
 
     start_external_job_turn(&coordinator, &session_id, &workspace_path, "turn-1", "wait")
         .await
@@ -1127,5 +1163,143 @@ async fn cancelling_a_top_level_external_turn_cancels_the_agent() {
             .turn_settlement_result(&session_id, "turn-1")
             .map(|result| result.status),
         Some(openbitfun_runtime_ports::AgentTurnSettlementStatus::Cancelled)
+    );
+}
+
+#[tokio::test]
+async fn top_level_external_prompts_are_refused_without_a_resolved_policy() {
+    // Without a resolvable permission policy (here: no global configuration),
+    // a prompt is refused at once; the job never waits for an answer.
+    let (coordinator, session_manager) = test_coordinator_with_permissions();
+    coordinator.set_external_agent_executor(Arc::new(PromptingExecutor(npm_test_prompt())));
+    coordinator.allow_primary_external_agent_turns();
+    let manager = coordinator
+        .permission_request_manager_for_test()
+        .expect("permission manager");
+    let (session_id, workspace_path, _workspace) = external_job_session(&coordinator).await;
+
+    start_external_job_turn(
+        &coordinator,
+        &session_id,
+        &workspace_path,
+        "turn-1",
+        "run tests",
+    )
+    .await
+    .expect("turn starts");
+    coordinator
+        .wait_for_turn_settlement(&session_id, "turn-1", std::time::Duration::from_secs(10))
+        .await
+        .expect("turn settles");
+    assert_eq!(
+        session_manager
+            .turn_settlement_result(&session_id, "turn-1")
+            .and_then(|result| result.final_response),
+        Some("Reject".to_string())
+    );
+    assert!(manager.pending_requests().is_empty());
+}
+
+#[tokio::test]
+async fn prompts_of_a_session_without_a_parent_are_filed_for_that_session() {
+    // A Dispatch job session runs the external agent itself: its prompts
+    // carry no delegation and name the job session the worker supervises.
+    let manager = test_permission_manager();
+    let mut turn = prompting_turn(manager.clone(), CancellationToken::new());
+    if let Some(route) = turn.permissions.as_mut() {
+        route.delegation = None;
+    }
+    let running = tokio::spawn(run_external_agent_turn(turn));
+
+    let request = first_pending(&manager).await;
+    assert_eq!(request.session_id, "child-session");
+    assert!(request.delegation.is_none());
+    assert_eq!(request.source.kind, PermissionRequestSourceKind::Extension);
+    manager
+        .reply(
+            &request.request_id,
+            PermissionReply::Reject { feedback: None },
+            openbitfun_runtime_ports::PermissionReplySource::User,
+        )
+        .await
+        .expect("reply");
+    let result = running.await.unwrap().expect("turn completes");
+    assert_eq!(final_text(&result), "Reject");
+}
+
+/// Asks one permission prompt and, like Codex, ends its turn when declined.
+struct StopsWhenDeclinedExecutor;
+
+#[async_trait]
+impl ExternalAgentExecutor for StopsWhenDeclinedExecutor {
+    async fn availability(
+        &self,
+        _client_id: &str,
+        _context: &ExternalAgentContext,
+    ) -> ExternalAgentAvailability {
+        ExternalAgentAvailability::Available
+    }
+
+    async fn run_turn(
+        &self,
+        _request: ExternalAgentTurnRequest,
+        sink: &dyn ExternalAgentEventSink,
+    ) -> PortResult<ExternalAgentTurnOutcome> {
+        sink.emit(text("I will run the tests.")).await?;
+        Ok(match sink.request_permission(npm_test_prompt()).await? {
+            ExternalAgentPermissionDecision::AllowOnce
+            | ExternalAgentPermissionDecision::AllowAlways => ExternalAgentTurnOutcome::Completed {
+                final_text: "tests passed".to_string(),
+            },
+            _ => ExternalAgentTurnOutcome::Cancelled {
+                partial_text: "I will run the tests.".to_string(),
+            },
+        })
+    }
+
+    async fn cancel(&self, _client_id: &str, _openbitfun_session_id: &str) -> PortResult<bool> {
+        Ok(false)
+    }
+
+    async fn close(&self, _client_id: &str, _openbitfun_session_id: &str) -> PortResult<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn an_agent_that_stops_after_a_declined_prompt_completes_and_says_why() {
+    let manager = test_permission_manager();
+    let mut turn = prompting_turn(manager.clone(), CancellationToken::new());
+    turn.executor = Some(Arc::new(StopsWhenDeclinedExecutor));
+    let event_queue = turn.event_queue.clone();
+    let running = tokio::spawn(run_external_agent_turn(turn));
+
+    let request = first_pending(&manager).await;
+    manager
+        .reply(
+            &request.request_id,
+            PermissionReply::Reject { feedback: None },
+            openbitfun_runtime_ports::PermissionReplySource::User,
+        )
+        .await
+        .expect("reply");
+
+    let result = running.await.unwrap().expect("not reported as cancelled");
+    let streamed: String = drained_events(&event_queue)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            AgenticEvent::TextChunk { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        streamed.ends_with(DECLINED_STOP_NOTE),
+        "the stream says why the agent stopped: {streamed:?}"
+    );
+    assert!(matches!(result.finish_reason, FinishReason::Complete));
+    assert_eq!(
+        final_text(&result),
+        format!("I will run the tests.\n\n{DECLINED_STOP_NOTE}")
     );
 }

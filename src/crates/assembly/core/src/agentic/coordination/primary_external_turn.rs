@@ -24,6 +24,13 @@ impl ConversationCoordinator {
             .store(true, Ordering::SeqCst);
     }
 
+    /// Whether a top-level session of `agent_type` runs an external agent in
+    /// this process.
+    pub(super) fn runs_primary_external_agent(&self, agent_type: &str) -> bool {
+        self.primary_external_agent_turns.load(Ordering::SeqCst)
+            && external_agent_client_id(agent_type).is_some()
+    }
+
     pub(super) fn primary_external_agent_client_id<'a>(
         &self,
         session: &Session,

@@ -462,6 +462,8 @@ struct EventQueueSink {
     stream: tokio::sync::Mutex<ChildSessionStream>,
     permissions: Option<ExternalAgentPermissionRoute>,
     cancel_token: CancellationToken,
+    /// A permission prompt of this turn was declined.
+    declined: std::sync::atomic::AtomicBool,
 }
 
 impl EventQueueSink {
@@ -474,25 +476,7 @@ impl EventQueueSink {
         }
     }
 
-    async fn finish(&self) -> usize {
-        let (closed, rounds) = {
-            let mut stream = self.stream.lock().await;
-            (stream.close_round(), stream.rounds)
-        };
-        self.enqueue_all(closed.into_iter().collect()).await;
-        rounds
-    }
-}
-
-#[async_trait]
-impl ExternalAgentEventSink for EventQueueSink {
-    async fn emit(&self, event: ExternalAgentTurnEvent) -> PortResult<()> {
-        let events = self.stream.lock().await.project(event);
-        self.enqueue_all(events).await;
-        Ok(())
-    }
-
-    async fn request_permission(
+    async fn decide_permission(
         &self,
         request: ExternalAgentPermissionRequest,
     ) -> PortResult<ExternalAgentPermissionDecision> {
@@ -676,6 +660,36 @@ impl ExternalAgentEventSink for EventQueueSink {
             ExternalAgentPermissionDecision::AllowOnce
         })
     }
+
+    async fn finish(&self) -> usize {
+        let (closed, rounds) = {
+            let mut stream = self.stream.lock().await;
+            (stream.close_round(), stream.rounds)
+        };
+        self.enqueue_all(closed.into_iter().collect()).await;
+        rounds
+    }
+}
+
+#[async_trait]
+impl ExternalAgentEventSink for EventQueueSink {
+    async fn emit(&self, event: ExternalAgentTurnEvent) -> PortResult<()> {
+        let events = self.stream.lock().await.project(event);
+        self.enqueue_all(events).await;
+        Ok(())
+    }
+
+    async fn request_permission(
+        &self,
+        request: ExternalAgentPermissionRequest,
+    ) -> PortResult<ExternalAgentPermissionDecision> {
+        let decision = self.decide_permission(request).await?;
+        if decision == ExternalAgentPermissionDecision::Reject {
+            self.declined
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(decision)
+    }
 }
 
 pub(crate) struct ExternalAgentTurn {
@@ -735,6 +749,7 @@ pub(crate) async fn run_external_agent_turn(
         )),
         permissions,
         cancel_token: cancel_token.clone(),
+        declined: std::sync::atomic::AtomicBool::new(false),
     };
 
     let outcome = {
@@ -753,6 +768,18 @@ pub(crate) async fn run_external_agent_turn(
             }
         }
     };
+    let stopped_after_decline = matches!(outcome, Ok(ExternalAgentTurnOutcome::Cancelled { .. }))
+        && !cancel_token.is_cancelled()
+        && sink.declined.load(std::sync::atomic::Ordering::SeqCst);
+    if stopped_after_decline {
+        // Observers that build the answer from the stream (a Dispatch
+        // requester) see why the agent stopped, not just its partial text.
+        let _ = sink
+            .emit(ExternalAgentTurnEvent::Text {
+                text: format!("\n\n{DECLINED_STOP_NOTE}"),
+            })
+            .await;
+    }
     let total_rounds = sink.finish().await;
     let duration_ms = started_at.elapsed().as_millis() as u64;
 
@@ -773,11 +800,31 @@ pub(crate) async fn run_external_agent_turn(
                 FinishReason::Cancelled,
             ))
         }
+        // Some agents end their turn when a prompt is declined (Codex offers
+        // no rejection that continues). Nobody cancelled it, so it completes
+        // and says why it stopped instead of reporting a cancellation.
+        ExternalAgentTurnOutcome::Cancelled { partial_text } if stopped_after_decline => {
+            let mut text = partial_text.trim_end().to_string();
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(DECLINED_STOP_NOTE);
+            Ok(execution_result(
+                text,
+                total_rounds,
+                duration_ms,
+                FinishReason::Complete,
+            ))
+        }
         ExternalAgentTurnOutcome::Cancelled { .. } => Err(OpenBitFunError::Cancelled(format!(
             "External agent '{agent_type}' turn was cancelled"
         ))),
     }
 }
+
+/// Final text of a turn the agent ended after a permission prompt was declined.
+pub(crate) const DECLINED_STOP_NOTE: &str =
+    "The external agent stopped because its permission request was declined.";
 
 pub(super) fn execution_result(
     text: String,

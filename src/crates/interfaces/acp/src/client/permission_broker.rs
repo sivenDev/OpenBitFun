@@ -168,6 +168,55 @@ mod tests {
     }
 
     #[test]
+    fn a_rejection_declines_the_action_without_stopping_the_agent() {
+        // Codex offers both rejections; `cancel` would also end its turn.
+        for options in [
+            vec![
+                PermissionOption::new("allow_once", "Yes", PermissionOptionKind::AllowOnce),
+                PermissionOption::new("cancel", "No, and stop", PermissionOptionKind::RejectOnce),
+                PermissionOption::new("decline", "No, continue", PermissionOptionKind::RejectOnce),
+            ],
+            vec![
+                PermissionOption::new("allow_once", "Yes", PermissionOptionKind::AllowOnce),
+                PermissionOption::new("decline", "No, continue", PermissionOptionKind::RejectOnce),
+                PermissionOption::new("cancel", "No, and stop", PermissionOptionKind::RejectOnce),
+            ],
+        ] {
+            let request = RequestPermissionRequest::new(
+                SessionId::new("acp-session-1".to_string()),
+                ToolCallUpdate::new("tool-1".to_string(), ToolCallUpdateFields::new()),
+                options,
+            );
+            assert_eq!(
+                selected(response_for_decision(
+                    &request,
+                    ExternalAgentPermissionDecision::Reject
+                ))
+                .as_deref(),
+                Some("decline")
+            );
+        }
+
+        // An agent whose only rejection stops it still gets that rejection.
+        let request = RequestPermissionRequest::new(
+            SessionId::new("acp-session-1".to_string()),
+            ToolCallUpdate::new("tool-1".to_string(), ToolCallUpdateFields::new()),
+            vec![
+                PermissionOption::new("allow_once", "Yes", PermissionOptionKind::AllowOnce),
+                PermissionOption::new("cancel", "No", PermissionOptionKind::RejectOnce),
+            ],
+        );
+        assert_eq!(
+            selected(response_for_decision(
+                &request,
+                ExternalAgentPermissionDecision::Reject
+            ))
+            .as_deref(),
+            Some("cancel")
+        );
+    }
+
+    #[test]
     fn decisions_select_the_matching_acp_option() {
         let request = request(ToolCallUpdateFields::new());
         assert_eq!(

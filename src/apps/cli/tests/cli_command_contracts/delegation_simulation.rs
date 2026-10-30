@@ -182,8 +182,17 @@ impl SimulatedDevice {
     /// Opens the Standard agent to `devices` for `task_kinds` through the
     /// shipped CLI command.
     fn open_agent(&self, devices: &[&str], task_kinds: &[&str]) {
+        self.open_agent_as("Standard", devices, task_kinds);
+    }
+
+    /// Opens `agent_type` as [`OPEN_AGENT_ID`]. An external agent is opened
+    /// with its usage notice confirmed, as its owner does on the device.
+    fn open_agent_as(&self, agent_type: &str, devices: &[&str], task_kinds: &[&str]) {
         let mut command = self.environment.std_command_for(&self.binary);
-        command.args(["delegation", "open", OPEN_AGENT_ID, "--agent", "Standard"]);
+        command.args(["delegation", "open", OPEN_AGENT_ID, "--agent", agent_type]);
+        if agent_type.starts_with("acp:") {
+            command.arg("--accept-usage");
+        }
         for kind in task_kinds {
             command.args(["--task-kind", kind]);
         }
@@ -197,6 +206,23 @@ impl SimulatedDevice {
         assert!(
             output.status.success(),
             "delegation open failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Enables a built-in external agent that asks before acting, through the
+    /// shipped CLI command. Its login stays wherever the machine keeps it.
+    fn enable_external_agent(&self, client: &str) {
+        let mut command = self.environment.std_command_for(&self.binary);
+        command.args(["acp", "clients", "enable", client, "--permission", "ask"]);
+        let output = support::command_output_with_timeout(
+            command.stdin(Stdio::null()),
+            Duration::from_secs(60),
+        );
+        assert!(
+            output.status.success(),
+            "acp clients enable failed: {}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -921,9 +947,12 @@ const CODING_EDIT: &str = "printf '\\n\\ndef farewell(name: str) -> str:\\n    r
 /// `OPENBITFUN_SIM_EXTERNAL_DEVICE_ID`. `OPENBITFUN_SIM_EXTERNAL` names a
 /// JSON file with the manifest's `external` entry plus `relayUrl` (the
 /// simulation's address on the network) and `behavior` (`immediate`,
-/// `gated`, `approval`, or `coding`); it is removed once read because it holds the
-/// device secret. The session is written here, since session files are
-/// bound to the machine that writes them. `OPENBITFUN_SIM_CLI_BIN` names
+/// `gated`, `approval`, `coding`, or `codex`); it is removed once read because it holds the
+/// device secret. Behavior `codex` opens this machine's Codex (`acp:codex`)
+/// instead of a scripted model; run it with `CODEX_HOME` naming the
+/// machine's Codex home so the isolated device uses its existing login. The
+/// session is written here, since session files are bound to the machine
+/// that writes them. `OPENBITFUN_SIM_CLI_BIN` names
 /// this machine's `openbitfun`. Stops when `<file>.running` is removed or
 /// stdin closes (see `wait_for_stop`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -967,7 +996,7 @@ async fn serve_external_device() {
         ),
         _ => (MockOpenAiServer::immediate(), false),
     };
-    let task_kinds: &[&str] = if text("behavior") == "coding" {
+    let task_kinds: &[&str] = if matches!(text("behavior").as_str(), "coding" | "codex") {
         &["message", "coding"]
     } else {
         &["message"]
@@ -983,7 +1012,12 @@ async fn serve_external_device() {
         &session,
         &device.device_id,
     );
-    device.open_agent(&[&text("requesterDeviceId")], task_kinds);
+    if text("behavior") == "codex" {
+        device.enable_external_agent("codex");
+        device.open_agent_as("acp:codex", &[&text("requesterDeviceId")], task_kinds);
+    } else {
+        device.open_agent(&[&text("requesterDeviceId")], task_kinds);
+    }
     device.start_daemon();
 
     let marker = request_path.with_extension("running");

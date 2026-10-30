@@ -2,7 +2,7 @@
 id: "F002-03"
 title: "同账号委派给远程设备上的 ACP 外部智能体"
 type: "feature"
-status: "approved"
+status: "complete"
 summary: "目标设备可以开放任意已启用的 acp: 外部智能体（如 Claude Code、Codex）；委派任务的 Dispatch 工作进程用目标设备自己的登录或凭据运行它，权限请求进入目标端权限邮箱，目标端声明 external_agent_executor_v1。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"
@@ -119,7 +119,22 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib external_agent`
 - 手动：两台同账号设备分别用 Claude Code 和另一个 ACP 智能体实测纯消息、编码、审批通过与拒绝、取消；确认目标端使用自己的登录或凭据，结果记录在本计划中
 
-- [ ] 审批往返有测试，两台设备的实测结果已记录
+- [x] 审批往返有测试，两台设备的实测结果已记录
+  - 实现：
+    - 工作进程中顶层外部智能体会话的权限请求以任务会话为目标、不带委派信息，进入 Dispatch `remote` 审批邮箱；无法解析权限策略时直接拒绝，任务不会一直等待。
+    - 会话创建在允许顶层外部智能体的进程中跳过原生模式解析（实测发现的 `Unknown session mode: acp:codex`）。
+    - 拒绝时优先选择不结束智能体回合的拒绝选项（Codex 的 `decline`），只有 `cancel` 一类选项时才用它。
+    - 智能体在拒绝后自行结束回合（Codex 对沙箱外命令只提供 `cancel`）时，不再报告为取消：回合正常完成，并在流式文本中附上 "The external agent stopped because its permission request was declined."，发起方据此得到原因。
+  - 证据：
+    - 核心 `external_agent` 40 项通过，其中新增无父会话的请求归档、无策略时拒绝、拒绝后智能体停止三项；ACP `client::` 97 项通过，覆盖两种 Codex 选项顺序和只有 `cancel` 的情况；CLI `dispatch::` 105 项通过；
+    - 实测（本机调试桌面 A1 + 另一台 x86_64 macOS 设备，同账号，模拟仓库）：目标端开放 `acp:codex`，Codex 使用目标设备自己的 `CODEX_HOME` 登录；
+      - 纯消息：返回 391；编码：在同步回来的分支上新增 `ibot/greet.py` 与测试，本机测试通过，`main` 未改动；
+      - 审批通过：A1 出现“此操作在 Shimo Mac (x86_64) 上执行”的审批卡，点允许一次后目标端写入文件，结果 done 返回；
+      - 审批拒绝：点拒绝后文件未写入，任务状态 succeeded，A1 收到上述停止原因；
+      - 取消：在 A1 停止回合后，目标端任务为 cancelled（记录了 `cancelRequestedAt`），Codex 的 `sleep` 进程已退出。
+  - 限制：
+    - Claude Code 在目标设备上未安装，未实测；执行路径与 Codex 相同，不按智能体分支。
+    - codex-acp 默认模式为 Auto review，由 Codex 自己的审查决定、不向客户端请求审批；实测审批时目标端以 `INITIAL_AGENT_MODE=workspace-write` 启动。是否发起审批由智能体自身配置决定。
 
 ## References
 - `docs/superplan/rfcs/F002.md`

@@ -2630,13 +2630,20 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         self.external_agent_executor.get().map(Arc::clone)
     }
 
-    /// Registers the host's delegation to agents other devices of this
-    /// account opened. A host that registers none offers no `remote:` agents.
     #[cfg(test)]
     pub(super) fn event_queue_for_test(&self) -> &Arc<EventQueue> {
         &self.event_queue
     }
 
+    #[cfg(test)]
+    pub(super) fn permission_request_manager_for_test(
+        &self,
+    ) -> Option<Arc<openbitfun_agent_runtime::permission::PermissionRequestManager>> {
+        self.tool_pipeline.permission_request_manager()
+    }
+
+    /// Registers the host's delegation to agents other devices of this
+    /// account opened. A host that registers none offers no `remote:` agents.
     pub fn set_remote_agent_port(
         &self,
         port: Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>,
@@ -3160,20 +3167,24 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         let external_sources_supported = workspace_binding
             .as_ref()
             .is_some_and(|workspace| !workspace.is_remote());
-        let primary_agent_binding = Self::resolve_primary_agent_for_workspace(
-            &agent_type,
-            config.workspace_id.as_deref(),
-            external_sources_supported,
-            None,
-            expected_route_key.as_deref(),
-        )
-        .await?;
-        config.agent_route_owner = primary_agent_binding.route_owner;
-        config.agent_route_key = primary_agent_binding.route_key.clone();
-        apply_primary_agent_model_default(
-            &mut config,
-            primary_agent_binding.model_binding.as_ref(),
-        );
+        // An external agent is not a local mode: a host that runs it as the
+        // session's own agent keeps the default local route and model.
+        if !self.runs_primary_external_agent(&agent_type) {
+            let primary_agent_binding = Self::resolve_primary_agent_for_workspace(
+                &agent_type,
+                config.workspace_id.as_deref(),
+                external_sources_supported,
+                None,
+                expected_route_key.as_deref(),
+            )
+            .await?;
+            config.agent_route_owner = primary_agent_binding.route_owner;
+            config.agent_route_key = primary_agent_binding.route_key.clone();
+            apply_primary_agent_model_default(
+                &mut config,
+                primary_agent_binding.model_binding.as_ref(),
+            );
+        }
         let defaults = Self::agent_model_defaults().await?;
         snapshot_normal_session_model(&mut config, &defaults)?;
         let session = if transient {
@@ -19338,6 +19349,12 @@ pub(crate) mod tests {
 
     fn test_persistent_user_shell_coordinator() -> (ConversationCoordinator, Arc<SessionManager>) {
         test_persistent_user_shell_coordinator_with_tool(Arc::new(TestExecCommandTool::default()))
+    }
+
+    /// A persistent coordinator whose tool pipeline has a permission manager.
+    pub(crate) fn test_coordinator_with_permissions(
+    ) -> (ConversationCoordinator, Arc<SessionManager>) {
+        test_persistent_user_shell_coordinator()
     }
 
     pub(crate) fn test_coordinator() -> (ConversationCoordinator, Arc<SessionManager>) {
