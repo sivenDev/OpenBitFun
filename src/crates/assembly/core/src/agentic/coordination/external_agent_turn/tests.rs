@@ -617,7 +617,8 @@ impl ExternalAgentExecutor for PromptingExecutor {
                 tool_call_id: Some("acp-tool-1".to_string()),
                 title: "Run npm test".to_string(),
                 kind: ExternalAgentPermissionKind::Execute,
-                resources: vec!["npm test".to_string()],
+                resources: Vec::new(),
+                command: Some("npm test".to_string()),
             })
             .await?;
         Ok(ExternalAgentTurnOutcome::Completed {
@@ -675,9 +676,47 @@ fn prompting_turn(
             parent_tool_call_id: "task-call".to_string(),
             subagent_type: "acp:claude-code".to_string(),
         }),
-        auto_approve: false,
+        policy: Some(test_policy(Vec::new(), false)),
     });
     turn
+}
+
+fn test_policy(
+    rules: Vec<openbitfun_runtime_ports::PermissionRule>,
+    auto_approve_ask: bool,
+) -> ExternalAgentPermissionPolicy {
+    ExternalAgentPermissionPolicy {
+        policy: ResolvedPermissionPolicy::new(rules, Vec::new()),
+        auto_approve_ask,
+        tool_context: crate::agentic::tools::tool_context_runtime::build_tool_description_context(
+            "acp:claude-code",
+            None,
+            None,
+            Some("child-session"),
+            None,
+            None,
+            None,
+            &HashMap::new(),
+            &ToolRuntimeRestrictions::default(),
+        ),
+    }
+}
+
+fn with_policy(
+    mut turn: ExternalAgentTurn,
+    policy: Option<ExternalAgentPermissionPolicy>,
+) -> ExternalAgentTurn {
+    if let Some(route) = turn.permissions.as_mut() {
+        route.policy = policy;
+    }
+    turn
+}
+
+fn bash_rule(
+    resource: &str,
+    effect: openbitfun_runtime_ports::PermissionEffect,
+) -> openbitfun_runtime_ports::PermissionRule {
+    openbitfun_runtime_ports::PermissionRule::new("bash", resource, effect)
 }
 
 async fn first_pending(manager: &PermissionRequestManager) -> PermissionRequest {
@@ -766,11 +805,60 @@ fn approvals_that_edit_input_are_not_treated_as_approval() {
 #[tokio::test]
 async fn auto_approve_sessions_answer_prompts_without_asking() {
     let manager = test_permission_manager();
-    let mut turn = prompting_turn(manager.clone(), CancellationToken::new());
-    if let Some(route) = turn.permissions.as_mut() {
-        route.auto_approve = true;
-    }
+    let turn = with_policy(
+        prompting_turn(manager.clone(), CancellationToken::new()),
+        Some(test_policy(Vec::new(), true)),
+    );
     let result = run_external_agent_turn(turn).await.expect("turn completes");
     assert_eq!(final_text(&result), "AllowOnce");
+    assert!(manager.pending_requests().is_empty());
+}
+
+#[tokio::test]
+async fn policy_denials_win_even_in_auto_approve_sessions() {
+    use openbitfun_runtime_ports::PermissionEffect;
+
+    for auto_approve_ask in [false, true] {
+        let manager = test_permission_manager();
+        let turn = with_policy(
+            prompting_turn(manager.clone(), CancellationToken::new()),
+            Some(test_policy(
+                vec![bash_rule("npm *", PermissionEffect::Deny)],
+                auto_approve_ask,
+            )),
+        );
+        let result = run_external_agent_turn(turn).await.expect("turn completes");
+        assert_eq!(final_text(&result), "Reject");
+        assert!(manager.pending_requests().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn policy_allows_answer_without_a_prompt() {
+    let manager = test_permission_manager();
+    let turn = with_policy(
+        prompting_turn(manager.clone(), CancellationToken::new()),
+        Some(test_policy(
+            vec![bash_rule(
+                "npm test",
+                openbitfun_runtime_ports::PermissionEffect::Allow,
+            )],
+            false,
+        )),
+    );
+    let result = run_external_agent_turn(turn).await.expect("turn completes");
+    assert_eq!(final_text(&result), "AllowOnce");
+    assert!(manager.pending_requests().is_empty());
+}
+
+#[tokio::test]
+async fn prompts_are_rejected_when_the_policy_cannot_be_resolved() {
+    let manager = test_permission_manager();
+    let turn = with_policy(
+        prompting_turn(manager.clone(), CancellationToken::new()),
+        None,
+    );
+    let result = run_external_agent_turn(turn).await.expect("turn completes");
+    assert_eq!(final_text(&result), "Reject");
     assert!(manager.pending_requests().is_empty());
 }

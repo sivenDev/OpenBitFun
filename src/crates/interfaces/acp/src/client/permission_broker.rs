@@ -31,21 +31,19 @@ pub(crate) fn external_permission_request(
         Some(ToolKind::Fetch) => ExternalAgentPermissionKind::Fetch,
         _ => ExternalAgentPermissionKind::Other,
     };
-    let mut resources: Vec<String> = fields
+    let resources: Vec<String> = fields
         .locations
         .iter()
         .flatten()
         .map(|location| location.path.to_string_lossy().into_owned())
         .collect();
-    if let Some(command) = fields
+    let command = fields
         .raw_input
         .as_ref()
         .and_then(|input| input.get("command"))
         .and_then(serde_json::Value::as_str)
         .filter(|command| !command.trim().is_empty())
-    {
-        resources.push(command.to_string());
-    }
+        .map(str::to_string);
     let tool_call_id = request.tool_call.tool_call_id.to_string();
     ExternalAgentPermissionRequest {
         title: fields
@@ -56,6 +54,7 @@ pub(crate) fn external_permission_request(
         tool_call_id: (!tool_call_id.is_empty()).then_some(tool_call_id),
         kind,
         resources,
+        command,
     }
 }
 
@@ -134,7 +133,8 @@ mod tests {
         ));
         assert_eq!(execute.kind, ExternalAgentPermissionKind::Execute);
         assert_eq!(execute.title, "tool-1");
-        assert_eq!(execute.resources, vec!["npm test"]);
+        assert!(execute.resources.is_empty());
+        assert_eq!(execute.command.as_deref(), Some("npm test"));
 
         let other = external_permission_request(&request(
             ToolCallUpdateFields::new().kind(ToolKind::SwitchMode),

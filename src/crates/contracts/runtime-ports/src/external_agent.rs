@@ -138,9 +138,12 @@ pub struct ExternalAgentPermissionRequest {
     /// What the agent wants to do, as the agent describes it.
     pub title: String,
     pub kind: ExternalAgentPermissionKind,
-    /// Paths or commands the request touches; may be empty.
+    /// Paths the request touches; may be empty.
     #[serde(default)]
     pub resources: Vec<String>,
+    /// Shell command the request would run, for execute prompts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// Coarse kind of a permission prompt, for presentation and policy.

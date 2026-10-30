@@ -10,19 +10,25 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use log::warn;
-use openbitfun_agent_runtime::permission::{PermissionRequestManager, PermissionWaitOutcome};
+use openbitfun_agent_runtime::permission::{
+    plan_permission_intents, PermissionIntentPlan, PermissionRequestManager, PermissionWaitOutcome,
+};
 use openbitfun_runtime_ports::{
     ExternalAgentContext, ExternalAgentEventSink, ExternalAgentExecutor,
     ExternalAgentPermissionDecision, ExternalAgentPermissionKind, ExternalAgentPermissionRequest,
     ExternalAgentTurnEvent, ExternalAgentTurnOutcome, ExternalAgentTurnRequest,
     PermissionDelegationContext, PermissionReply, PermissionRequest, PermissionRequestSource,
-    PermissionRequestSourceKind, PortError, PortErrorKind, PortResult,
+    PermissionRequestSourceKind, PermissionRuntimeCeiling, PortError, PortErrorKind, PortResult,
+    ResolvedPermissionPolicy,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::agentic::core::Message;
 use crate::agentic::events::{AgenticEvent, EventPriority, EventQueue};
 use crate::agentic::execution::{ExecutionResult, FinishReason};
+use crate::agentic::tools::framework::{PermissionIntent, ToolUseContext};
+use crate::agentic::tools::ToolRuntimeRestrictions;
+use crate::agentic::workspace::WorkspaceServices;
 use crate::agentic::WorkspaceBinding;
 use crate::util::errors::{OpenBitFunError, OpenBitFunResult};
 
@@ -214,9 +220,132 @@ pub(crate) struct ExternalAgentPermissionRoute {
     pub(crate) project_id: String,
     pub(crate) project_path: String,
     pub(crate) delegation: Option<PermissionDelegationContext>,
-    /// The session's permission mode answers on its own (Auto or Full
-    /// Access), as it does for native tools; the request is still audited.
-    pub(crate) auto_approve: bool,
+    /// The child turn's resolved policy. `None` when it could not be
+    /// resolved; every prompt is then rejected rather than guessed.
+    pub(crate) policy: Option<ExternalAgentPermissionPolicy>,
+}
+
+/// The policy a native round of the child session would apply, so an
+/// external agent's prompts meet the same deny, allow, grant, and
+/// auto-approval rules as native tools.
+pub(crate) struct ExternalAgentPermissionPolicy {
+    pub(crate) policy: ResolvedPermissionPolicy,
+    /// Answers prompts the policy leaves as ask, as AutoApprove does for
+    /// native tools. Deny rules still win.
+    pub(crate) auto_approve_ask: bool,
+    /// Resolves the agent's paths against the child workspace.
+    pub(crate) tool_context: ToolUseContext,
+}
+
+impl ExternalAgentPermissionPolicy {
+    /// Resolves the child turn's policy from the same layers a native round
+    /// uses: global rules, the session's permission mode, project rules,
+    /// the agent profile, and the parent ceiling.
+    pub(crate) async fn resolve(
+        agent_type: &str,
+        session_id: &str,
+        workspace: Option<&WorkspaceBinding>,
+        workspace_services: Option<&WorkspaceServices>,
+        context_vars: &std::collections::HashMap<String, String>,
+        parent_runtime_ceiling: Option<&PermissionRuntimeCeiling>,
+    ) -> OpenBitFunResult<Self> {
+        use crate::service::config::project_permission_store::{
+            load_project_permission_config_local, load_project_permission_config_remote,
+        };
+
+        let global: crate::service::config::types::GlobalConfig =
+            crate::service::config::GlobalConfigManager::get_service()
+                .await?
+                .get_config(None)
+                .await?;
+        let mode =
+            crate::agentic::permission_policy::permission_mode_from_context(&global, context_vars);
+        let project_rules = match workspace {
+            Some(workspace) if workspace.is_remote() => {
+                let services = workspace_services.ok_or_else(|| {
+                    OpenBitFunError::service(
+                        "Remote workspace services are unavailable for project permission rules"
+                            .to_string(),
+                    )
+                })?;
+                load_project_permission_config_remote(
+                    services.fs.as_ref(),
+                    &workspace.root_path_string(),
+                )
+                .await?
+                .rules
+            }
+            Some(workspace) => {
+                load_project_permission_config_local(workspace.root_path())
+                    .await?
+                    .rules
+            }
+            None => Vec::new(),
+        };
+        let profile_id = crate::agentic::agents::resolve_mode_config_profile_id(agent_type);
+        let policy = crate::agentic::permission_policy::resolve_effective_permission_policy(
+            &global,
+            Some(mode),
+            &project_rules,
+            global.ai.agent_profiles.get(profile_id.as_ref()),
+            None,
+            parent_runtime_ceiling,
+            &[],
+        );
+        let tool_context =
+            crate::agentic::tools::tool_context_runtime::build_tool_description_context(
+                agent_type,
+                workspace,
+                workspace_services,
+                Some(session_id),
+                None,
+                None,
+                None,
+                context_vars,
+                &ToolRuntimeRestrictions::default(),
+            );
+        Ok(Self {
+            policy,
+            auto_approve_ask: mode.auto_approve_ask(),
+            tool_context,
+        })
+    }
+
+    /// Describes a prompt with the intents the matching native tool would
+    /// raise, including `external_directory` for paths outside the workspace.
+    fn intents(
+        &self,
+        request: &ExternalAgentPermissionRequest,
+    ) -> OpenBitFunResult<Vec<PermissionIntent>> {
+        let title = || vec![request.title.clone()];
+        Ok(match request.kind {
+            ExternalAgentPermissionKind::Read | ExternalAgentPermissionKind::Edit
+                if !request.resources.is_empty() =>
+            {
+                crate::agentic::tools::file_permissions::file_permission_intents(
+                    permission_action(request.kind),
+                    request.resources.iter().map(String::as_str),
+                    &self.tool_context,
+                )?
+            }
+            ExternalAgentPermissionKind::Read | ExternalAgentPermissionKind::Edit => {
+                vec![PermissionIntent::new("custom_tool", title())]
+            }
+            ExternalAgentPermissionKind::Execute => vec![PermissionIntent::new(
+                "bash",
+                request
+                    .command
+                    .clone()
+                    .map(|command| vec![command])
+                    .unwrap_or_else(title),
+            )],
+            kind => vec![PermissionIntent::new(permission_action(kind), title())],
+        })
+    }
+
+    fn case_sensitivity(&self) -> openbitfun_runtime_ports::PermissionResourceCaseSensitivity {
+        crate::agentic::tools::pipeline::permission_resource_case_sensitivity(&self.tool_context)
+    }
 }
 
 impl ExternalAgentPermissionRoute {
@@ -224,7 +353,7 @@ impl ExternalAgentPermissionRoute {
         manager: Option<Arc<PermissionRequestManager>>,
         workspace: Option<&WorkspaceBinding>,
         delegation: Option<PermissionDelegationContext>,
-        permission_mode: openbitfun_runtime_ports::PermissionMode,
+        policy: Option<ExternalAgentPermissionPolicy>,
     ) -> Option<Self> {
         let manager = manager?;
         let workspace = workspace?;
@@ -248,11 +377,7 @@ impl ExternalAgentPermissionRoute {
                 .logical_workspace_path()
                 .to_string(),
             delegation,
-            auto_approve: matches!(
-                permission_mode,
-                openbitfun_runtime_ports::PermissionMode::AutoApprove
-                    | openbitfun_runtime_ports::PermissionMode::FullAccess
-            ),
+            policy,
         })
     }
 }
@@ -343,81 +468,147 @@ impl ExternalAgentEventSink for EventQueueSink {
         };
         self.enqueue_all(opened.into_iter().collect()).await;
 
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let mut resources = request.resources;
-        if resources.is_empty() {
-            resources.push(request.title.clone());
-        }
-        let mut display_metadata = serde_json::Map::new();
-        display_metadata.insert(
-            "riskDescription".into(),
-            serde_json::Value::String(request.title),
-        );
-        display_metadata.insert(
-            "externalAgent".into(),
-            serde_json::Value::String(agent_type.clone()),
-        );
-        let request = PermissionRequest {
-            request_id: request_id.clone(),
-            round_id,
-            order: 0,
-            tool_call_id: request.tool_call_id,
-            project_path: Some(route.project_path.clone()),
-            project_id: route.project_id.clone(),
-            session_id,
-            agent_id: agent_type.clone(),
-            action: permission_action(request.kind).to_string(),
-            resources,
-            save_resources: Vec::new(),
-            source: PermissionRequestSource {
-                kind: PermissionRequestSourceKind::Extension,
-                identity: agent_type,
-            },
-            delegation: route.delegation.clone(),
-            display_metadata,
+        let Some(policy) = route.policy.as_ref() else {
+            warn!(
+                "External agent permission rejected: the session permission policy could not be resolved, agent_type={}",
+                agent_type
+            );
+            return Ok(ExternalAgentPermissionDecision::Reject);
         };
-        if route.auto_approve {
-            route
-                .manager
-                .register_batch_non_interactive_for_turn(vec![request], turn_id)
-                .await
-                .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
-            route
-                .manager
-                .reply(
-                    &request_id,
-                    PermissionReply::Once,
-                    openbitfun_runtime_ports::PermissionReplySource::AutoApprove,
-                )
-                .await
-                .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
-            return Ok(ExternalAgentPermissionDecision::AllowOnce);
-        }
-        let mut pending = route
-            .manager
-            .register_batch_for_turn(vec![request], turn_id)
-            .await
-            .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
-        let pending = pending
-            .pop()
-            .expect("a single-request batch must return one receiver");
-        let outcome = tokio::select! {
-            outcome = pending.wait() => outcome,
-            _ = self.cancel_token.cancelled() => {
-                if let Err(error) = route
-                    .manager
-                    .cancel_request(&request_id, "External agent turn was cancelled")
-                    .await
-                {
-                    warn!(
-                        "Failed to cancel external agent permission request: request_id={}, error={}",
-                        request_id, error
-                    );
-                }
-                return Ok(ExternalAgentPermissionDecision::Cancelled);
+        let intents = match policy.intents(&request) {
+            Ok(intents) => intents,
+            Err(error) => {
+                warn!(
+                    "External agent permission rejected: invalid resources, agent_type={}, error={}",
+                    agent_type, error
+                );
+                return Ok(ExternalAgentPermissionDecision::Reject);
             }
         };
-        Ok(permission_decision(outcome))
+        let grants = route
+            .manager
+            .list_project_grants(&route.project_id)
+            .await
+            .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
+        let asks = match plan_permission_intents(
+            intents,
+            &policy.policy,
+            &grants,
+            policy.case_sensitivity(),
+        ) {
+            PermissionIntentPlan::Allowed => return Ok(ExternalAgentPermissionDecision::AllowOnce),
+            PermissionIntentPlan::Denied(intent) => {
+                log::debug!(
+                    "External agent permission denied by policy: agent_type={}, action={}",
+                    agent_type,
+                    intent.action
+                );
+                return Ok(ExternalAgentPermissionDecision::Reject);
+            }
+            PermissionIntentPlan::RequiresApproval(asks) => asks,
+        };
+
+        let requests: Vec<PermissionRequest> = asks
+            .into_iter()
+            .zip(0u32..)
+            .map(|(intent, order)| {
+                let mut display_metadata = intent.display_metadata;
+                display_metadata.insert(
+                    "riskDescription".into(),
+                    serde_json::Value::String(request.title.clone()),
+                );
+                display_metadata.insert(
+                    "externalAgent".into(),
+                    serde_json::Value::String(agent_type.clone()),
+                );
+                PermissionRequest {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    round_id: round_id.clone(),
+                    order,
+                    tool_call_id: request.tool_call_id.clone(),
+                    project_path: Some(route.project_path.clone()),
+                    project_id: route.project_id.clone(),
+                    session_id: session_id.clone(),
+                    agent_id: agent_type.clone(),
+                    action: intent.action,
+                    resources: intent.resources,
+                    save_resources: intent.save_resources,
+                    source: PermissionRequestSource {
+                        kind: PermissionRequestSourceKind::Extension,
+                        identity: agent_type.clone(),
+                    },
+                    delegation: route.delegation.clone(),
+                    display_metadata,
+                }
+            })
+            .collect();
+        let request_ids: Vec<String> = requests
+            .iter()
+            .map(|request| request.request_id.clone())
+            .collect();
+
+        if policy.auto_approve_ask {
+            route
+                .manager
+                .register_batch_non_interactive_for_turn(requests, turn_id)
+                .await
+                .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
+            for request_id in &request_ids {
+                route
+                    .manager
+                    .reply(
+                        request_id,
+                        PermissionReply::Once,
+                        openbitfun_runtime_ports::PermissionReplySource::AutoApprove,
+                    )
+                    .await
+                    .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
+            }
+            return Ok(ExternalAgentPermissionDecision::AllowOnce);
+        }
+
+        let pending = route
+            .manager
+            .register_batch_for_turn(requests, turn_id)
+            .await
+            .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
+        let mut all_always = true;
+        for (index, receiver) in pending.into_iter().enumerate() {
+            let decision = tokio::select! {
+                outcome = receiver.wait() => permission_decision(outcome),
+                _ = self.cancel_token.cancelled() => ExternalAgentPermissionDecision::Cancelled,
+            };
+            match decision {
+                ExternalAgentPermissionDecision::AllowOnce => all_always = false,
+                ExternalAgentPermissionDecision::AllowAlways => {}
+                declined => {
+                    let reason = if declined == ExternalAgentPermissionDecision::Cancelled {
+                        "External agent turn was cancelled"
+                    } else {
+                        "An earlier external agent permission was declined"
+                    };
+                    let first_open = if declined == ExternalAgentPermissionDecision::Cancelled {
+                        index
+                    } else {
+                        index + 1
+                    };
+                    for request_id in &request_ids[first_open..] {
+                        if let Err(error) = route.manager.cancel_request(request_id, reason).await {
+                            warn!(
+                                "Failed to cancel external agent permission request: request_id={}, error={}",
+                                request_id, error
+                            );
+                        }
+                    }
+                    return Ok(declined);
+                }
+            }
+        }
+        Ok(if all_always {
+            ExternalAgentPermissionDecision::AllowAlways
+        } else {
+            ExternalAgentPermissionDecision::AllowOnce
+        })
     }
 }
 

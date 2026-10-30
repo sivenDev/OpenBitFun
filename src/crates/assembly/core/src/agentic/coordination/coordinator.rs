@@ -4,7 +4,7 @@
 
 use super::external_agent_turn::{
     external_agent_client_id, external_agent_turn_context, run_external_agent_turn,
-    ExternalAgentPermissionRoute, ExternalAgentTurn,
+    ExternalAgentPermissionPolicy, ExternalAgentPermissionRoute, ExternalAgentTurn,
 };
 use super::{
     coordination_store::{BackgroundTaskRegistration, CoordinationStore},
@@ -11176,19 +11176,30 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     session.config.is_remote_workspace(),
                     execution_context.workspace.as_ref(),
                 );
-                let global_config: crate::service::config::types::GlobalConfig =
-                    match GlobalConfigManager::get_service().await {
-                        Ok(service) => service.get_config(None).await.unwrap_or_default(),
-                        Err(_) => Default::default(),
-                    };
+                let permission_policy = match ExternalAgentPermissionPolicy::resolve(
+                    &agent_type_for_execution,
+                    &session_id,
+                    execution_context.workspace.as_ref(),
+                    execution_context.workspace_services.as_ref(),
+                    &execution_context.context,
+                    execution_context.permission_runtime_ceiling.as_ref(),
+                )
+                .await
+                {
+                    Ok(policy) => Some(policy),
+                    Err(error) => {
+                        warn!(
+                            "External agent permission policy unavailable; its prompts will be rejected: agent_type={}, error={}",
+                            agent_type_for_execution, error
+                        );
+                        None
+                    }
+                };
                 let permissions = ExternalAgentPermissionRoute::for_workspace(
                     tool_pipeline.permission_request_manager(),
                     execution_context.workspace.as_ref(),
                     execution_context.permission_delegation.clone(),
-                    crate::agentic::permission_policy::permission_mode_from_context(
-                        &global_config,
-                        &execution_context.context,
-                    ),
+                    permission_policy,
                 );
                 drop((execution_engine, initial_messages, execution_context));
                 match turn_context {

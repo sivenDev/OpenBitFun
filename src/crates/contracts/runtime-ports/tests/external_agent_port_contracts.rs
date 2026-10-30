@@ -348,7 +348,8 @@ async fn sinks_without_a_permission_route_report_not_available() {
             tool_call_id: Some("call-1".to_string()),
             title: "Run npm test".to_string(),
             kind: ExternalAgentPermissionKind::Execute,
-            resources: vec!["npm test".to_string()],
+            resources: Vec::new(),
+            command: Some("npm test".to_string()),
         })
         .await
         .unwrap_err();

@@ -693,7 +693,7 @@ fn permission_scope(
     ))
 }
 
-fn permission_resource_case_sensitivity(
+pub(crate) fn permission_resource_case_sensitivity(
     context: &ToolUseContext,
 ) -> PermissionResourceCaseSensitivity {
     if context.is_remote() || !cfg!(windows) {
