@@ -152,6 +152,8 @@ fn paired(
     behavior: Behavior,
     capabilities: &[&str],
 ) -> (ConnectionRpc, Arc<FakeRelay>, Device) {
+    // As the relay connection does before registering for connection calls.
+    connections::replay_guard();
     let requester = device("user-a", "device-a", secret(1));
     let target = device("user-b", "device-b", secret(2));
     pin(&requester, &target, ConnectionRole::Inviter);

@@ -1190,31 +1190,60 @@ pub fn open_request(
     })
 }
 
-/// Request ids a target has accepted recently. One per target process: a
-/// request is refused when it is older than `REQUEST_MAX_AGE_SECONDS` (so
-/// ids need not be kept longer) or when its id was already accepted.
-#[derive(Debug, Default)]
+/// Request ids a target has accepted recently, kept in memory by one
+/// target process. A request is refused when it is older than
+/// `REQUEST_MAX_AGE_SECONDS`, when it was issued before the guard was
+/// created (so ids accepted by an earlier process cannot be replayed after a
+/// restart), or when its id was already accepted on that connection.
+#[derive(Debug)]
 pub struct ReplayGuard {
-    seen: std::sync::Mutex<std::collections::HashMap<String, i64>>,
+    started_at: i64,
+    seen: std::sync::Mutex<std::collections::HashMap<(String, String), i64>>,
+}
+
+impl Default for ReplayGuard {
+    fn default() -> Self {
+        Self::started_at(chrono::Utc::now().timestamp())
+    }
 }
 
 impl ReplayGuard {
-    /// Records `request` as accepted, or says why it is refused.
-    pub fn admit(&self, request: &OpenedRequest, now: i64) -> Result<()> {
+    pub fn started_at(started_at: i64) -> Self {
+        Self {
+            started_at,
+            seen: Default::default(),
+        }
+    }
+
+    /// Records `request` on `connection_id` as accepted, or says why it is
+    /// refused.
+    pub fn admit(&self, connection_id: &str, request: &OpenedRequest, now: i64) -> Result<()> {
         if (now - request.issued_at).abs() > REQUEST_MAX_AGE_SECONDS {
             bail!("connection request is stale");
+        }
+        if request.issued_at < self.started_at {
+            bail!("connection request was issued before this device started; send it again");
         }
         let mut seen = self
             .seen
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         seen.retain(|_, issued| now - *issued <= REQUEST_MAX_AGE_SECONDS);
-        if seen.contains_key(&request.request_id) {
+        let key = (connection_id.to_owned(), request.request_id.clone());
+        if seen.contains_key(&key) {
             bail!("connection request was already received");
         }
-        seen.insert(request.request_id.clone(), request.issued_at);
+        seen.insert(key, request.issued_at);
         Ok(())
     }
+}
+
+/// The replay guard of this process. Its start time is when it is first
+/// used, so the relay connection creates it before it registers for
+/// connection calls.
+pub fn replay_guard() -> &'static ReplayGuard {
+    static GUARD: std::sync::OnceLock<ReplayGuard> = std::sync::OnceLock::new();
+    GUARD.get_or_init(ReplayGuard::default)
 }
 
 /// Encrypt an answer: `Ok(value)` or an error message. It names its

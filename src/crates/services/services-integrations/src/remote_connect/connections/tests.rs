@@ -146,21 +146,34 @@ fn replay_guard_refuses_repeated_and_stale_requests() {
         &sealed.nonce,
     )
     .unwrap();
-    let guard = ReplayGuard::default();
     let now = opened.issued_at;
-    guard.admit(&opened, now).unwrap();
+    let guard = ReplayGuard::started_at(now);
+    guard.admit("conn-1", &opened, now).unwrap();
     assert!(
-        guard.admit(&opened, now + 1).is_err(),
+        guard.admit("conn-1", &opened, now + 1).is_err(),
         "a replay is refused"
     );
+    // The same id on another connection is a different request.
+    assert!(guard.admit("conn-2", &opened, now + 1).is_ok());
     let fresh = OpenedRequest {
         request_id: "other".into(),
         ..opened.clone()
     };
     assert!(guard
-        .admit(&fresh, now + REQUEST_MAX_AGE_SECONDS + 1)
+        .admit("conn-1", &fresh, now + REQUEST_MAX_AGE_SECONDS + 1)
         .is_err());
-    assert!(guard.admit(&fresh, now).is_ok());
+    assert!(guard.admit("conn-1", &fresh, now).is_ok());
+
+    // After a restart the new guard knows no ids, so anything issued before
+    // it started is refused, even inside the age window.
+    let restarted = ReplayGuard::started_at(now + 10);
+    assert!(restarted.admit("conn-1", &opened, now + 11).is_err());
+    let later = OpenedRequest {
+        request_id: "later".into(),
+        issued_at: now + 10,
+        ..opened
+    };
+    assert!(restarted.admit("conn-1", &later, now + 11).is_ok());
 }
 
 #[test]

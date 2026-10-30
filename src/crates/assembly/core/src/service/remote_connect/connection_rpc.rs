@@ -15,8 +15,7 @@ use serde_json::{json, Value};
 
 use openbitfun_services_integrations::remote_connect::account::AccountSession;
 use openbitfun_services_integrations::remote_connect::connections::{
-    self, ConnectionStore, Direction, ReplayGuard, RouteRefusal,
-    RELAY_CAPABILITY_CROSS_ACCOUNT_ROUTING,
+    self, ConnectionStore, Direction, RouteRefusal, RELAY_CAPABILITY_CROSS_ACCOUNT_ROUTING,
 };
 use openbitfun_services_integrations::remote_connect::relay_client::RelayClient;
 
@@ -248,12 +247,6 @@ pub struct IncomingConnectionRequest {
     pub nonce: String,
 }
 
-/// Request ids this process has accepted; see `connections::ReplayGuard`.
-fn replay_guard() -> &'static ReplayGuard {
-    static GUARD: std::sync::OnceLock<ReplayGuard> = std::sync::OnceLock::new();
-    GUARD.get_or_init(ReplayGuard::default)
-}
-
 fn refused(reason: &str) -> Value {
     json!({ "refused": reason })
 }
@@ -318,7 +311,11 @@ pub async fn answer_connection_request(
             return refused("request_rejected");
         }
     };
-    let result = match replay_guard().admit(&opened, chrono::Utc::now().timestamp()) {
+    let result = match connections::replay_guard().admit(
+        &record.connection_id,
+        &opened,
+        chrono::Utc::now().timestamp(),
+    ) {
         Err(error) => {
             log::warn!(
                 "Connection request rejected: connection={} error={error}",

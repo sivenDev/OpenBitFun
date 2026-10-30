@@ -145,7 +145,9 @@ impl RealtimeConnection {
                 bail!("Relay RPC registration rejected");
             }
             // Calls from paired devices of other accounts. Optional: a Relay
-            // without cross-account routing never sends them.
+            // without cross-account routing never sends them. The replay
+            // guard starts before any call can be routed here.
+            super::connections::replay_guard();
             let method = format!(
                 "{}:{}",
                 connection.device_id,
