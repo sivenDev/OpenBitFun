@@ -455,6 +455,50 @@ async fn delegated_subagent_turns_run_through_the_executor_and_reuse_the_child_s
 }
 
 #[tokio::test]
+async fn delegated_subagent_turns_complete_the_child_turn_for_surfaces() {
+    // The execution engine announces completion for native turns only;
+    // without it a surface keeps showing the child agent as running.
+    let (coordinator, session_manager) = test_coordinator();
+    coordinator.set_external_agent_executor(Arc::new(ScriptedExecutor::default()));
+    let (parent_session_id, _workspace) = parent_session(&session_manager).await;
+
+    let result = coordinator
+        .execute_subagent(
+            delegation(&parent_session_id, Some("acp:claude-code"), None, "fix it"),
+            None,
+            None,
+        )
+        .await
+        .expect("delegated turn completes");
+    let child_session_id = result.session_id().expect("child session").to_string();
+
+    let events = drained_events(coordinator.event_queue_for_test()).await;
+    let child_turn_id = events
+        .iter()
+        .find_map(|event| match event {
+            AgenticEvent::DialogTurnStarted {
+                session_id,
+                turn_id,
+                ..
+            } if *session_id == child_session_id => Some(turn_id.clone()),
+            _ => None,
+        })
+        .expect("the child turn was announced");
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgenticEvent::DialogTurnCompleted {
+                session_id,
+                turn_id,
+                success: Some(true),
+                ..
+            } if *session_id == child_session_id && *turn_id == child_turn_id
+        )),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
 async fn delegated_subagent_timeout_cancels_the_external_turn() {
     let (coordinator, session_manager) = test_coordinator();
     let executor = Arc::new(ScriptedExecutor {

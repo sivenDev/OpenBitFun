@@ -33,6 +33,7 @@ vi.mock('react-i18next', async importOriginal => ({
   useTranslation: () => ({
     t: (key: string, values?: Record<string, string>) => {
       if (key === 'permission.subagentOwner') return `${values?.subagent} subagent`;
+      if (key === 'toolCards.taskTool.remoteAgentLabel') return `${values?.agent} (remote agent)`;
       if (key === 'permission.allowAlwaysTooltip') {
         return `Remember approval in ${values?.projectPath}, limited to:\n${values?.resources}`;
       }
@@ -175,6 +176,29 @@ describe('ChatInputApprovalBand', () => {
     expect(container.querySelector('[data-openbitfun-part="risk"]')?.textContent).toBe(
       'Runs on Laptop. This deletes the build directory.',
     );
+  });
+
+  it('names a remote agent by its open agent instead of its address', async () => {
+    await act(async () => {
+      root.render(
+        <ChatInputApprovalBand
+          requests={[request({
+            delegation: {
+              parentSessionId: 'session-1',
+              parentDialogTurnId: 'turn-1',
+              parentToolCallId: 'task-1',
+              subagentType: 'remote:00000000000000000000000000000a04/helper',
+            },
+          })]}
+          onRespond={vi.fn(async () => undefined)}
+          onRespondBatch={vi.fn(async () => undefined)}
+        />
+      );
+    });
+
+    const band = container.querySelector<HTMLElement>('[data-testid="chat-input-approval-band"]');
+    expect(band?.textContent).toContain('helper (remote agent)');
+    expect(band?.textContent).not.toContain('remote:');
   });
 
   it('answers only the request in front of the reader by default', async () => {

@@ -35,6 +35,7 @@ import type {
 } from '@/infrastructure/api/service-api/AgentAPI';
 import { useCopyTextAction } from '../hooks/useCopyTextAction';
 import { CopyableTextPreview } from './CopyableTextPreview';
+import { remoteAgentFromAgentType } from '../utils/remoteAgent';
 import './ChatInputApprovalBand.scss';
 
 export interface ChatInputApprovalBandProps {
@@ -173,9 +174,12 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
     || request.action === 'mcp'
     || request.action === 'custom_tool'
     || !PERMISSION_ACTION_LABEL_KEYS[request.action];
-  const ownerLabel = request.delegation
-    ? t('permission.subagentOwner', { subagent: request.delegation.subagentType })
-    : showSourceIdentity ? request.source.identity : undefined;
+  const remoteOwner = remoteAgentFromAgentType(request.delegation?.subagentType);
+  const ownerLabel = remoteOwner
+    ? t('toolCards.taskTool.remoteAgentLabel', { agent: remoteOwner.openAgentId })
+    : request.delegation
+      ? t('permission.subagentOwner', { subagent: request.delegation.subagentType })
+      : showSourceIdentity ? request.source.identity : undefined;
   const saveResources = request.saveResources ?? [];
   const isExactCommandGrant = request.action === 'bash'
     && request.resources.length === 1

@@ -2629,6 +2629,11 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
 
     /// Registers the host's delegation to agents other devices of this
     /// account opened. A host that registers none offers no `remote:` agents.
+    #[cfg(test)]
+    pub(super) fn event_queue_for_test(&self) -> &Arc<EventQueue> {
+        &self.event_queue
+    }
+
     pub fn set_remote_agent_port(
         &self,
         port: Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>,
@@ -3380,6 +3385,47 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             warn!(
                 "Failed to finalize turn in workspace: session_id={}, turn_index={}, error={}",
                 session_id, turn_index, e
+            );
+        }
+    }
+
+    /// Emits the child turn's `DialogTurnCompleted` for a subagent turn that
+    /// ran outside the execution engine (an external or remote agent). The
+    /// engine emits it for native turns, and the coordinator already emits
+    /// `DialogTurnStarted` and the failure and cancellation events for every
+    /// subagent; without this, surfaces keep the child session running.
+    async fn emit_outside_engine_turn_completed(
+        event_queue: &EventQueue,
+        session_manager: &SessionManager,
+        session_id: &str,
+        turn_id: &str,
+        execution_result: &ExecutionResult,
+    ) {
+        if let Err(error) = event_queue
+            .enqueue(
+                AgenticEvent::DialogTurnCompleted {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                    total_rounds: execution_result.total_rounds,
+                    total_tools: execution_result.total_tools,
+                    duration_ms: execution_result.duration_ms,
+                    partial_recovery_reason: execution_result.partial_recovery_reason.clone(),
+                    success: Some(execution_result.success),
+                    finish_reason: Some(execution_result.effective_finish_reason.clone()),
+                    has_final_response: Some(execution_result.has_final_response),
+                    background_delivery: session_manager
+                        .background_delivery_for_turn(session_id, turn_id)
+                        .await
+                        .ok()
+                        .flatten(),
+                },
+                None,
+            )
+            .await
+        {
+            warn!(
+                "Failed to emit DialogTurnCompleted for an external or remote agent turn: session_id={}, turn_id={}, error={}",
+                session_id, turn_id, error
             );
         }
     }
@@ -11344,6 +11390,11 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             wait_ms
         );
         let remote_agent = super::remote_agent_turn::remote_agent_address(&agent_type);
+        // External and remote turns run outside the execution engine, which
+        // otherwise emits the child turn's completion; see
+        // `emit_outside_engine_turn_completed`.
+        let turn_runs_outside_engine =
+            remote_agent.is_some() || external_agent_client_id(&agent_type).is_some();
         let mut execution_task = match external_agent_client_id(&agent_type) {
             _ if remote_agent.is_some() => {
                 // The target device asks for every permission; local rules
@@ -11727,6 +11778,16 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 .await
                 {
                     Ok(Ok(Ok(exec_result))) => {
+                        if emit_lifecycle_events && turn_runs_outside_engine {
+                            Self::emit_outside_engine_turn_completed(
+                                self.event_queue.as_ref(),
+                                self.session_manager.as_ref(),
+                                &session_id,
+                                &dialog_turn_id,
+                                &exec_result,
+                            )
+                            .await;
+                        }
                         let (_status, response_text) = Self::persist_completed_dialog_turn(
                             self.event_queue.as_ref(),
                             self.session_manager.as_ref(),
@@ -11879,6 +11940,16 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         // Persist turn lifecycle before cleaning up the hidden subagent runtime.
         let (workspace_turn_status, response_text) = match result {
             Ok(exec_result) => {
+                if emit_lifecycle_events && turn_runs_outside_engine {
+                    Self::emit_outside_engine_turn_completed(
+                        self.event_queue.as_ref(),
+                        self.session_manager.as_ref(),
+                        &session_id,
+                        &dialog_turn_id,
+                        &exec_result,
+                    )
+                    .await;
+                }
                 Self::persist_completed_dialog_turn(
                     self.event_queue.as_ref(),
                     self.session_manager.as_ref(),
