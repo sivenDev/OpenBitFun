@@ -490,3 +490,16 @@ agent's; and the approval policy must be `remote`. Message tasks must leave
 must name a worktree under the target's own dispatch worktree root. The source is kept
 in the job record and in the `dispatchDelegation` turn context; it is deliberately not
 added to `list` entries, which older controllers parse strictly.
+
+On the requesting side, a `remote:<deviceId>/<openAgentId>` subagent drives the job
+(`RemoteAgentDirectory` in `service/dispatch/remote_agents.rs`). Job ids start with
+`delegation-`. A message job writes no outbound record; its link (device, job, session,
+cursor, task kind) lives in the coordination database's `remote_job` column, which a
+restarted requester reads to observe it again. A coding job reuses the device dispatch
+baseline: it creates a managed baseline worktree of the requesting session's local Git
+workspace (committed `HEAD` only), provisions the target from it, and records an
+outbound record that owns the baseline claim. When a turn succeeds the result is synced
+with a fast-forward into that worktree; a baseline that gained its own commits is left
+untouched and the subagent reports the sync failure with its answer. Delegated jobs are
+left out of the Dispatch panel's job list and target-job adoption, so only the
+delegating subagent observes them.

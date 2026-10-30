@@ -2724,3 +2724,128 @@ fn task_description_documents_remote_agent_types() {
     assert!(description.contains("`remote:<device_id>/<open_agent_id>`"));
     assert!(description.contains("run_in_background=true"));
 }
+
+#[test]
+fn task_kind_is_accepted_only_when_spawning_remote_agents() {
+    use openbitfun_runtime_ports::RemoteAgentTaskKind;
+
+    let spawn = |agent_type: &str, task_kind: &str| {
+        AgentExecutionTool::parse_invocation(
+            &json!({
+                "action": "spawn",
+                "agent_id": "helper",
+                "subagent_type": agent_type,
+                "prompt": "Fix the parser",
+                "run_in_background": true,
+                "task_kind": task_kind,
+            }),
+            false,
+        )
+    };
+    let coding = spawn("remote:laptop/helper", "coding").expect("remote coding task");
+    assert_eq!(coding.remote_task_kind, Some(RemoteAgentTaskKind::Coding));
+    let error = spawn("Standard", "coding").unwrap_err().to_string();
+    assert!(
+        error.contains("task_kind applies only to remote:"),
+        "{error}"
+    );
+    let error = spawn("remote:laptop/helper", "deploy")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("task_kind must be 'message' or 'coding'"),
+        "{error}"
+    );
+    let error = AgentExecutionTool::parse_invocation(
+        &json!({
+            "action": "send_input",
+            "agent_id": "helper",
+            "prompt": "Continue",
+            "task_kind": "coding",
+        }),
+        false,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("task_kind is not allowed"), "{error}");
+
+    let task_input = AgentSpawnTool::task_input(&json!({
+        "agent_id": "helper",
+        "agent_type": "remote:laptop/helper",
+        "prompt": "Fix the parser",
+        "task_kind": "coding",
+    }))
+    .expect("AgentSpawn accepts task_kind");
+    assert_eq!(task_input["task_kind"], "coding");
+    let schema = AgentSpawnTool::agent_spawn_input_schema();
+    assert_eq!(
+        schema["properties"]["task_kind"]["enum"],
+        json!(["message", "coding"])
+    );
+}
+
+#[test]
+fn remote_coding_tasks_need_an_accepting_agent_and_a_local_workspace() {
+    use openbitfun_runtime_ports::{RemoteAgentAvailability, RemoteAgentTaskKind};
+
+    let message_only = remote_descriptor("helper", RemoteAgentAvailability::Available);
+    let mut coding = message_only.clone();
+    coding.task_kinds.push(RemoteAgentTaskKind::Coding);
+    let mut local = test_tool_context("Standard");
+    local.workspace = Some(crate::agentic::WorkspaceBinding::new(
+        None,
+        std::path::PathBuf::from("/work/project"),
+    ));
+
+    AgentExecutionTool::ensure_remote_task_kind(
+        &local,
+        &message_only,
+        RemoteAgentTaskKind::Message,
+    )
+    .expect("message tasks are the default");
+    let error = AgentExecutionTool::ensure_remote_task_kind(
+        &local,
+        &message_only,
+        RemoteAgentTaskKind::Coding,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("does not accept coding tasks; it accepts: message"),
+        "{error}"
+    );
+    AgentExecutionTool::ensure_remote_task_kind(&local, &coding, RemoteAgentTaskKind::Coding)
+        .expect("a local workspace can branch a coding task");
+
+    let no_workspace = test_tool_context("Standard");
+    let error = AgentExecutionTool::ensure_remote_task_kind(
+        &no_workspace,
+        &coding,
+        RemoteAgentTaskKind::Coding,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("need this session in a Git workspace on this device"));
+
+    let mut remote = test_tool_context("Standard");
+    remote.workspace = Some(crate::agentic::WorkspaceBinding::new_remote(
+        None,
+        std::path::PathBuf::from("/srv/project"),
+        "ssh-user@example.test:22".to_string(),
+        "example.test".to_string(),
+        openbitfun_services_core::workspace_identity::WorkspaceSessionIdentity {
+            workspace_kind: openbitfun_core_types::WorkspaceKind::Remote,
+            hostname: "example.test".to_string(),
+            logical_workspace_path: "/srv/project".to_string(),
+            remote_connection_id: Some("ssh-user@example.test:22".to_string()),
+        },
+    ));
+    let error =
+        AgentExecutionTool::ensure_remote_task_kind(&remote, &coding, RemoteAgentTaskKind::Coding)
+            .unwrap_err()
+            .to_string();
+    assert!(
+        error.contains("a remote workspace cannot provide the baseline"),
+        "{error}"
+    );
+}

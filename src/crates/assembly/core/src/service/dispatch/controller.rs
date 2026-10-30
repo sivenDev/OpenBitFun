@@ -1639,7 +1639,16 @@ pub async fn list_jobs(
     request: DispatchListJobsRequest,
 ) -> anyhow::Result<Value> {
     let Some(target) = request.target else {
-        return Ok(serde_json::to_value(store.list().await?)?);
+        // Delegated coding jobs keep an outbound record for their baseline,
+        // but their delegating subagent observes them; listing them here
+        // would start a second observer in the Dispatch panel.
+        let records: Vec<OutboundDispatchRecord> = store
+            .list()
+            .await?
+            .into_iter()
+            .filter(|record| listed_in_dispatch_panel(&record.job_id))
+            .collect();
+        return Ok(serde_json::to_value(records)?);
     };
     let DispatchTargetRequest::Ssh { connection_id, .. } = target else {
         anyhow::bail!("SSH dispatch listing requires an SSH target");
@@ -1663,6 +1672,11 @@ pub async fn list_jobs(
     )
     .await?;
     Ok(response)
+}
+
+/// Jobs a subagent delegated are observed by that subagent, not the panel.
+pub(super) fn listed_in_dispatch_panel(job_id: &str) -> bool {
+    !job_id.starts_with(crate::service::delegation::DELEGATED_JOB_ID_PREFIX)
 }
 
 pub(super) fn validate_submit_request(request: &DispatchSubmitRequest) -> anyhow::Result<()> {

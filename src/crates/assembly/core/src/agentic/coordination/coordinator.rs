@@ -2710,6 +2710,17 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             };
             let (end, _) =
                 super::remote_agent_turn::observe_job(&port, &link, &cancel, &mut sink).await;
+            let end = match end {
+                super::remote_agent_turn::RemoteJobEnd::Succeeded { final_text } => {
+                    super::remote_agent_turn::RemoteJobEnd::Succeeded {
+                        final_text: super::remote_agent_turn::delivered_text(
+                            &port, &link, final_text,
+                        )
+                        .await,
+                    }
+                }
+                other => other,
+            };
             if let Err(error) = coordinator
                 .ensure_subagent_session_loaded_for_reuse(
                     &record.child_session_id,
@@ -11345,6 +11356,13 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 );
                 let task_kind =
                     super::remote_agent_turn::requested_task_kind(&execution_context.context);
+                // A coding task branches from this workspace with local Git, so
+                // a remote workspace offers none and the directory refuses it.
+                let source_workspace_path = execution_context
+                    .workspace
+                    .as_ref()
+                    .filter(|workspace| !workspace.is_remote())
+                    .map(|workspace| workspace.root_path_string());
                 drop((execution_engine, initial_messages, execution_context));
                 let parent_agent_type = self
                     .session_manager
@@ -11362,6 +11380,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         dialog_turn_id: dialog_turn_id.clone(),
                         prompt: user_input_text.clone(),
                         task_kind,
+                        source_workspace_path,
                         source: openbitfun_runtime_ports::RemoteAgentSource {
                             session_id: parent_session_id.to_string(),
                             agent_type: parent_agent_type,

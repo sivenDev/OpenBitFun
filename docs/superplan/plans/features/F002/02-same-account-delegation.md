@@ -174,7 +174,23 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib remote_agent`
 - `cargo +1.95.0 check -p openbitfun-desktop`
 
-- [ ] 编码任务的基线、同步与失败（非 Git 工作区、基线分叉）都有测试
+- [x] 编码任务的基线、同步与失败（非 Git 工作区、基线分叉）都有测试
+
+**Deviations:**
+- 编码任务复用设备 Dispatch 的整条基线流程（`submit_device_job`，即 `submit_device` 加 `delegation` 字段；结果用 `sync_device_result`），因此会写出站记录，由它持有基线 worktree 的保留声明；纯消息任务仍不写。出站记录列表（Dispatch 面板）不显示 `delegation-` 作业，避免第二个观察器。
+- 基线只取发起工作区已提交的 `HEAD`（`include_uncommitted = false`），不带未提交改动；`task_kind` 的说明中告知模型。
+- `AgentSpawn` 与 `Task` 新增可选参数 `task_kind`（`message` 默认 / `coding`），只对 `remote:` 类型有效，其他类型、`send_input`、`cancel` 与 DeepReview 都拒绝它；后续回合沿用作业记录中的任务类型（`RemoteJobLink.taskKind`，旧值读为 `message`）。
+- 端口新增 `sync_coding_result`，默认实现返回不可用；桌面宿主在有应用路径时注册出站存储后才支持编码任务。
+- 提交前拒绝：开放项不接受该任务类型、发起会话无工作区或是远程工作区、不是 Git 工作区；这些情况都不联系目标设备。
+- 同步失败（如基线 worktree 自己有了提交，快进被拒）不判任务失败：回答照常交付，并附上无法同步的原因与作业 id，作业成果仍在目标设备上。每个成功回合（含后续回合与重启补收）都同步一次。
+- `remote_agent_delegation.rs` 改为在注册端口时附上 `OutboundDispatchStore`；`baseline.rs` 只新增测试。
+
+**Evidence (2026-10-30):**
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib remote_agent`：17 passed（新增：编码结果给出分支、提交范围、worktree 与改动文件；消息任务不同步；同步失败时保留回答并给出原因；无改动时如实说明；作业关联带任务类型且旧值读为 message）。
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git,dispatch-store,ssh-remote --lib service::dispatch`：64 passed（新增：结果包快进基线分支；基线自有提交时拒绝且不改动；无出站存储、无工作区、非 Git 工作区在联系设备前被拒；同步回答映射为编码结果且以同步后的 head 为准；委派作业不进入 Dispatch 面板列表）。
+- `--lib tools::implementations::task`：96 passed（`task_kind` 只用于生成 `remote:` 智能体、非法值与 `send_input` 被拒、AgentSpawn 透传与 schema；开放项不接受编码、无工作区、远程工作区被拒）。
+- `cargo +1.95.0 test --locked -p openbitfun-runtime-ports --features remote-agent-port --test remote_agent_port_contracts`：7 passed；`cargo +1.95.0 check -p openbitfun-desktop` 与 `-p openbitfun-cli`：通过；`pnpm run check:core-boundaries`：通过。
+- 远程场景：只有单元测试与本机 Git 仓库测试；编码任务端到端（真实目标设备的检出、提交与回传）留给 Task 4 实测与 Task 5 模拟。
 
 ## Task 4: 界面展示与两台设备实测
 

@@ -17,9 +17,9 @@ use log::{debug, warn};
 use openbitfun_agent_runtime::permission::PermissionWaitOutcome;
 use openbitfun_runtime_ports::{
     ExternalAgentTurnEvent, PermissionRequest, PermissionRequestSource,
-    PermissionRequestSourceKind, PortErrorKind, RemoteAgentAddress, RemoteAgentDelegationPort,
-    RemoteAgentJob, RemoteAgentJobSnapshot, RemoteAgentJobState, RemoteAgentSource,
-    RemoteAgentSubmitRequest, RemoteAgentTaskKind,
+    PermissionRequestSourceKind, PortErrorKind, RemoteAgentAddress, RemoteAgentCodingResult,
+    RemoteAgentDelegationPort, RemoteAgentJob, RemoteAgentJobSnapshot, RemoteAgentJobState,
+    RemoteAgentSource, RemoteAgentSubmitRequest, RemoteAgentTaskKind,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -68,6 +68,9 @@ pub(crate) struct RemoteJobLink {
     /// Event cursor where the task's own turn begins on the target.
     #[serde(default)]
     pub(crate) cursor: u64,
+    /// Coding jobs sync their branch back when a turn succeeds.
+    #[serde(default)]
+    pub(crate) task_kind: RemoteAgentTaskKind,
 }
 
 impl RemoteJobLink {
@@ -90,6 +93,8 @@ pub(crate) struct RemoteAgentTurn {
     pub(crate) dialog_turn_id: String,
     pub(crate) prompt: String,
     pub(crate) task_kind: RemoteAgentTaskKind,
+    /// The local workspace a coding task branches from.
+    pub(crate) source_workspace_path: Option<String>,
     pub(crate) source: RemoteAgentSource,
     pub(crate) permissions: Option<ExternalAgentPermissionRoute>,
     pub(crate) cancel_token: CancellationToken,
@@ -145,11 +150,17 @@ pub(crate) async fn run_remote_agent_turn(
                     prompt: turn.prompt.clone(),
                     title: None,
                     source: turn.source.clone(),
-                    source_workspace_path: None,
+                    source_workspace_path: (turn.task_kind == RemoteAgentTaskKind::Coding)
+                        .then(|| turn.source_workspace_path.clone())
+                        .flatten(),
                 })
                 .await
                 .map_err(|error| remote_error(&agent_type, error))?;
-            RemoteJobLink { job, cursor: 0 }
+            RemoteJobLink {
+                job,
+                cursor: 0,
+                task_kind: turn.task_kind,
+            }
         }
     };
     record_link(&turn, &link).await;
@@ -178,8 +189,8 @@ pub(crate) async fn run_remote_agent_turn(
     record_link(
         &turn,
         &RemoteJobLink {
-            job: link.job.clone(),
             cursor,
+            ..link.clone()
         },
     )
     .await;
@@ -187,7 +198,7 @@ pub(crate) async fn run_remote_agent_turn(
     let duration_ms = started_at.elapsed().as_millis() as u64;
     match end {
         RemoteJobEnd::Succeeded { final_text } => Ok(execution_result(
-            final_text,
+            delivered_text(&port, &link, final_text).await,
             rounds,
             duration_ms,
             FinishReason::Complete,
@@ -209,6 +220,75 @@ pub(crate) async fn run_remote_agent_turn(
             "Remote agent '{agent_type}' failed: {error}"
         ))),
     }
+}
+
+/// The result handed to the parent. A coding job's branch is synced into
+/// its baseline worktree first; a failed sync is reported with the result
+/// instead of failing it, because the work is safe on the device.
+pub(crate) async fn delivered_text(
+    port: &Arc<dyn RemoteAgentDelegationPort>,
+    link: &RemoteJobLink,
+    final_text: String,
+) -> String {
+    if link.task_kind != RemoteAgentTaskKind::Coding {
+        return final_text;
+    }
+    let summary = match port.sync_coding_result(&link.job).await {
+        Ok(result) => coding_summary(&result),
+        Err(error) => {
+            warn!(
+                "Delegated coding result was not synced: job_id={}, error={}",
+                link.job.job_id, error.message
+            );
+            format!(
+                "The coding result could not be synced to this device: {}\nThe work is kept in job {} on the device.",
+                error.message, link.job.job_id
+            )
+        }
+    };
+    if final_text.trim().is_empty() {
+        summary
+    } else {
+        format!("{final_text}\n\n{summary}")
+    }
+}
+
+/// Most changed files named in a coding summary.
+const MAX_SUMMARY_FILES: usize = 50;
+
+fn coding_summary(result: &RemoteAgentCodingResult) -> String {
+    let short = |commit: &str| commit.chars().take(12).collect::<String>();
+    let mut summary = if result.changes.is_empty() && result.commit_count == 0 {
+        format!(
+            "The coding task made no changes; branch {} stays at {}.",
+            result.branch,
+            short(&result.base_commit)
+        )
+    } else {
+        format!(
+            "Coding result synced to this device on branch {} ({} commit(s), {} -> {}).",
+            result.branch,
+            result.commit_count,
+            short(&result.base_commit),
+            short(&result.head_commit)
+        )
+    };
+    if let Some(path) = &result.worktree_path {
+        summary.push_str(&format!(
+            "\nWorktree: {path}\nYour own working directory was not changed."
+        ));
+    }
+    if !result.changes.is_empty() {
+        summary.push_str("\nChanged files:");
+        for change in result.changes.iter().take(MAX_SUMMARY_FILES) {
+            summary.push_str(&format!("\n{} {}", change.status, change.path));
+        }
+        let omitted = result.changes.len().saturating_sub(MAX_SUMMARY_FILES);
+        if omitted > 0 || result.truncated_changes {
+            summary.push_str("\n(more files changed; see the branch)");
+        }
+    }
+    summary
 }
 
 async fn record_link(turn: &RemoteAgentTurn, link: &RemoteJobLink) {

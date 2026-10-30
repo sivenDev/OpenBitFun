@@ -127,6 +127,19 @@ pub async fn submit_device(
     display_name: String,
     request: DispatchSubmitRequest,
 ) -> anyhow::Result<Value> {
+    submit_device_job(rpc, store, display_name, request, None).await
+}
+
+/// Submits a job on a Git baseline. `delegation` names the open agent a
+/// delegated coding task runs; the target admits it against its open-agent
+/// list instead of treating the job as a manual dispatch.
+pub(super) async fn submit_device_job(
+    rpc: &dyn DeviceDispatchRpc,
+    store: &OutboundDispatchStore,
+    display_name: String,
+    request: DispatchSubmitRequest,
+    delegation: Option<Value>,
+) -> anyhow::Result<Value> {
     validate_submit_request(&request)?;
     let DispatchTargetRequest::Device {
         device_id,
@@ -317,6 +330,9 @@ pub async fn submit_device(
     if !request.attachments.is_empty() {
         validate_device_attachment_budget(&request.attachments)?;
         payload["attachments"] = serde_json::to_value(&request.attachments).unwrap_or(Value::Null);
+    }
+    if let Some(delegation) = delegation {
+        payload["delegation"] = delegation;
     }
 
     let response = match rpc

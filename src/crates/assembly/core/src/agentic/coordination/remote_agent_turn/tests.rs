@@ -1,7 +1,8 @@
 use super::*;
 use openbitfun_agent_runtime::permission::PermissionRequestManager;
 use openbitfun_runtime_ports::{
-    PermissionReply, PortError, PortResult, RemoteAgentDescriptor, RemoteAgentListing,
+    PermissionReply, PortError, PortResult, RemoteAgentChangedFile, RemoteAgentDescriptor,
+    RemoteAgentListing,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -16,6 +17,8 @@ struct ScriptedDevice {
     answers: Mutex<Vec<(String, PermissionReply)>>,
     cancel_seen: tokio::sync::Notify,
     answer_seen: tokio::sync::Notify,
+    sync: Mutex<Option<PortResult<RemoteAgentCodingResult>>>,
+    syncs: Mutex<u32>,
 }
 
 impl ScriptedDevice {
@@ -79,6 +82,18 @@ impl RemoteAgentDelegationPort for ScriptedDevice {
     ) -> PortResult<()> {
         Ok(())
     }
+
+    async fn sync_coding_result(
+        &self,
+        _job: &RemoteAgentJob,
+    ) -> PortResult<RemoteAgentCodingResult> {
+        *self.syncs.lock().unwrap() += 1;
+        self.sync
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the test scripted a sync result")
+    }
 }
 
 fn page(state: RemoteAgentJobState, cursor: u64, events: Vec<Value>) -> RemoteAgentJobSnapshot {
@@ -124,6 +139,7 @@ fn link() -> RemoteJobLink {
             session_id: "job-session".to_string(),
         },
         cursor: 4,
+        task_kind: RemoteAgentTaskKind::Message,
     }
 }
 
@@ -162,7 +178,16 @@ fn job_links_round_trip_and_reject_unreadable_values() {
     assert_eq!(RemoteJobLink::parse(&encoded), Some(link()));
     // A link written without a cursor starts at the beginning.
     let legacy = r#"{"deviceId":"laptop","jobId":"delegation-1","sessionId":"job-session"}"#;
-    assert_eq!(RemoteJobLink::parse(legacy).unwrap().cursor, 0);
+    let legacy = RemoteJobLink::parse(legacy).unwrap();
+    assert_eq!(legacy.cursor, 0);
+    assert_eq!(legacy.task_kind, RemoteAgentTaskKind::Message);
+    let coding = RemoteJobLink {
+        task_kind: RemoteAgentTaskKind::Coding,
+        ..link()
+    };
+    let value: Value = serde_json::from_str(&coding.encode()).unwrap();
+    assert_eq!(value["taskKind"], "coding");
+    assert_eq!(RemoteJobLink::parse(&coding.encode()), Some(coding));
     assert_eq!(RemoteJobLink::parse("not json"), None);
 }
 
@@ -339,4 +364,85 @@ async fn target_prompts_are_asked_here_and_answered_on_the_device() {
     forwarder.sync(&[], String::new()).await;
     assert!(manager.pending_requests().is_empty());
     cancel.cancel();
+}
+
+fn coding_link() -> RemoteJobLink {
+    RemoteJobLink {
+        task_kind: RemoteAgentTaskKind::Coding,
+        ..link()
+    }
+}
+
+#[tokio::test]
+async fn coding_results_name_the_synced_branch_and_changed_files() {
+    let device = ScriptedDevice::with_pages(Vec::new());
+    *device.sync.lock().unwrap() = Some(Ok(RemoteAgentCodingResult {
+        branch: "openbitfun/dispatch/delegation-1".to_string(),
+        base_commit: "a".repeat(40),
+        head_commit: "b".repeat(40),
+        commit_count: 2,
+        changes: vec![
+            RemoteAgentChangedFile {
+                status: "M".to_string(),
+                path: "src/lib.rs".to_string(),
+            },
+            RemoteAgentChangedFile {
+                status: "A".to_string(),
+                path: "src/new.rs".to_string(),
+            },
+        ],
+        truncated_changes: false,
+        worktree_path: Some("/home/me/.openbitfun/worktrees/delegation-1".to_string()),
+    }));
+    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
+
+    let text = delivered_text(&port, &coding_link(), "Fixed the parser.".to_string()).await;
+    assert!(text.starts_with("Fixed the parser.\n\n"), "{text}");
+    assert!(text.contains(
+        "branch openbitfun/dispatch/delegation-1 (2 commit(s), aaaaaaaaaaaa -> bbbbbbbbbbbb)"
+    ));
+    assert!(text.contains("Worktree: /home/me/.openbitfun/worktrees/delegation-1"));
+    assert!(text.contains("Your own working directory was not changed."));
+    assert!(text.contains("M src/lib.rs\nA src/new.rs"));
+
+    // A message job never syncs.
+    let message = delivered_text(&port, &link(), "Hello".to_string()).await;
+    assert_eq!(message, "Hello");
+    assert_eq!(*device.syncs.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_sync_keeps_the_answer_and_names_the_reason() {
+    let device = ScriptedDevice::with_pages(Vec::new());
+    *device.sync.lock().unwrap() = Some(Err(PortError::new(
+        PortErrorKind::Backend,
+        "fast-forward the dispatch baseline worktree: not possible. The baseline has its own commits",
+    )));
+    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
+
+    let text = delivered_text(&port, &coding_link(), "Done.".to_string()).await;
+    assert!(text.starts_with("Done.\n\n"), "{text}");
+    assert!(text.contains("could not be synced to this device"));
+    assert!(text.contains("The baseline has its own commits"));
+    assert!(text.contains("job delegation-1"));
+}
+
+#[tokio::test]
+async fn coding_jobs_without_changes_say_so() {
+    let device = ScriptedDevice::with_pages(Vec::new());
+    *device.sync.lock().unwrap() = Some(Ok(RemoteAgentCodingResult {
+        branch: "openbitfun/dispatch/delegation-1".to_string(),
+        base_commit: "a".repeat(40),
+        head_commit: "a".repeat(40),
+        commit_count: 0,
+        changes: Vec::new(),
+        truncated_changes: false,
+        worktree_path: None,
+    }));
+    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
+    let text = delivered_text(&port, &coding_link(), String::new()).await;
+    assert_eq!(
+        text,
+        "The coding task made no changes; branch openbitfun/dispatch/delegation-1 stays at aaaaaaaaaaaa."
+    );
 }

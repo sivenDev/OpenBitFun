@@ -778,4 +778,91 @@ mod tests {
                 .expect_err("detached baseline");
         assert!(detached.to_string().contains("baseline is detached"));
     }
+
+    /// A baseline repository on `branch` plus a copy of it standing in for the
+    /// device's checkout, which commits once and bundles its branch.
+    fn baseline_and_result_bundle(root: &Path, branch: &str) -> (PathBuf, PathBuf, String) {
+        let baseline = root.join("baseline");
+        std::fs::create_dir_all(&baseline).expect("baseline");
+        git(&baseline, &["init", "--quiet"]);
+        git(
+            &baseline,
+            &["symbolic-ref", "HEAD", &format!("refs/heads/{branch}")],
+        );
+        git(&baseline, &["config", "user.name", "Dispatch Test"]);
+        git(&baseline, &["config", "user.email", "dispatch@example.com"]);
+        std::fs::write(baseline.join("file.txt"), b"base").expect("seed");
+        git(&baseline, &["add", "-A"]);
+        git(&baseline, &["commit", "--quiet", "-m", "base"]);
+        let base_commit = git(&baseline, &["rev-parse", "HEAD"]);
+
+        let device = root.join("device");
+        let output = crate::util::create_test_command("git")
+            .arg("clone")
+            .arg("--quiet")
+            .arg(&baseline)
+            .arg(&device)
+            .output()
+            .expect("clone");
+        assert!(output.status.success(), "clone failed");
+        git(&device, &["config", "user.name", "Device"]);
+        git(&device, &["config", "user.email", "device@example.com"]);
+        std::fs::write(device.join("new.txt"), b"from the device").expect("write");
+        git(&device, &["add", "-A"]);
+        git(&device, &["commit", "--quiet", "-m", "device work"]);
+        let bundle = root.join("result.bundle");
+        git(
+            &device,
+            &[
+                "bundle",
+                "create",
+                &bundle.to_string_lossy(),
+                &format!("refs/heads/{branch}"),
+                "--not",
+                &base_commit,
+            ],
+        );
+        (baseline, bundle, base_commit)
+    }
+
+    #[tokio::test]
+    async fn result_bundles_fast_forward_the_baseline_branch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let branch = "openbitfun/dispatch/delegation-1";
+        let (baseline, bundle, base_commit) = baseline_and_result_bundle(temp.path(), branch);
+
+        let head = fetch_result_bundle(&baseline.to_string_lossy(), branch, &bundle)
+            .await
+            .expect("fast-forward");
+        assert_ne!(head, base_commit);
+        assert_eq!(git(&baseline, &["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            std::fs::read(baseline.join("new.txt")).expect("synced file"),
+            b"from the device"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_baseline_with_its_own_commits_is_never_rewritten() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let branch = "openbitfun/dispatch/delegation-1";
+        let (baseline, bundle, _) = baseline_and_result_bundle(temp.path(), branch);
+        // The user committed into the baseline while the device worked.
+        std::fs::write(baseline.join("mine.txt"), b"local work").expect("write");
+        git(&baseline, &["add", "-A"]);
+        git(&baseline, &["commit", "--quiet", "-m", "local work"]);
+        let local_head = git(&baseline, &["rev-parse", "HEAD"]);
+
+        let error = fetch_result_bundle(&baseline.to_string_lossy(), branch, &bundle)
+            .await
+            .expect_err("a diverged baseline cannot fast-forward");
+        assert!(
+            error
+                .to_string()
+                .contains("The baseline has its own commits"),
+            "{error}"
+        );
+        assert_eq!(git(&baseline, &["rev-parse", "HEAD"]), local_head);
+        assert!(!baseline.join("new.txt").exists());
+    }
 }
