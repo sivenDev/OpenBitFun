@@ -111,7 +111,8 @@
     "risks": {
       "pageSave": "以{{visibility}}可见性保存“{{slug}}”的新不可变版本，不改变当前生产版本。",
       "pagePublish": "以{{visibility}}可见性保存“{{slug}}”，并切换其生产版本。",
-      "pageDeploy": "将“{{slug}}”的生产流量切换到不可变版本“{{version}}”。"
+      "pageDeploy": "将“{{slug}}”的生产流量切换到不可变版本“{{version}}”。",
+      "remoteDevice": "此操作在 {{device}} 上执行，你的回答会发送到该设备。"
     },
     "visibility": {
       "private": "仅自己可见",
@@ -2389,6 +2390,8 @@
       "defaultAgentKind": "子代理",
       "externalAgentLabel": "{{clientId}}（外部智能体）",
       "externalAgentModel": "由外部智能体选择",
+      "remoteAgentLabel": "{{agent}}（远程智能体）",
+      "remoteAgentModel": "由远程设备选择",
       "cancelSession": "取消会话：{{sessionId}}",
       "waitingConfirm": "等待确认",
       "executing": "执行中...",

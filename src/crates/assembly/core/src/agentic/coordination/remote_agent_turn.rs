@@ -173,7 +173,13 @@ pub(crate) async fn run_remote_agent_turn(
             &link.job.device_id,
         ),
         event_queue: turn.event_queue.clone(),
-        prompts: PromptForwarder::new(turn.permissions.as_ref(), &turn, &link.job, &port),
+        prompts: PromptForwarder::new(
+            turn.permissions.as_ref(),
+            &turn,
+            &link.job,
+            &port,
+            device_name(&port, &link.job.device_id).await,
+        ),
     };
     let (end, cursor) = observe_job(&port, &link, &turn.cancel_token, &mut sink).await;
     sink.prompts
@@ -568,6 +574,8 @@ struct ForwardRoute {
     turn_id: String,
     agent_type: String,
     device_id: String,
+    /// Names the device in the prompt; the device id when it is not listed.
+    device_name: String,
     job: RemoteAgentJob,
     port: Arc<dyn RemoteAgentDelegationPort>,
     cancel: CancellationToken,
@@ -579,6 +587,7 @@ impl PromptForwarder {
         turn: &RemoteAgentTurn,
         job: &RemoteAgentJob,
         port: &Arc<dyn RemoteAgentDelegationPort>,
+        device_name: String,
     ) -> Self {
         if route.is_none() {
             warn!(
@@ -596,6 +605,7 @@ impl PromptForwarder {
                 turn_id: turn.dialog_turn_id.clone(),
                 agent_type: turn.agent_type.clone(),
                 device_id: job.device_id.clone(),
+                device_name,
                 job: job.clone(),
                 port: port.clone(),
                 cancel: turn.cancel_token.clone(),
@@ -691,6 +701,10 @@ impl ForwardRoute {
             serde_json::Value::String(self.device_id.clone()),
         );
         display_metadata.insert(
+            "remoteDeviceName".into(),
+            serde_json::Value::String(self.device_name.clone()),
+        );
+        display_metadata.insert(
             "remoteAgent".into(),
             serde_json::Value::String(self.agent_type.clone()),
         );
@@ -714,6 +728,15 @@ impl ForwardRoute {
             display_metadata,
         }
     }
+}
+
+async fn device_name(port: &Arc<dyn RemoteAgentDelegationPort>, device_id: &str) -> String {
+    port.list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
+        .await
+        .into_iter()
+        .find(|descriptor| descriptor.address.device_id == device_id)
+        .map(|descriptor| descriptor.device_name)
+        .unwrap_or_else(|| device_id.to_string())
 }
 
 fn remote_error(agent_type: &str, error: openbitfun_runtime_ports::PortError) -> OpenBitFunError {

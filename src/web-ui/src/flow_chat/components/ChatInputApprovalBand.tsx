@@ -116,9 +116,18 @@ function permissionRisk(
       { slug, visibility: translatedVisibility },
     );
   }
-  return [metadata?.riskDescription, metadata?.risk].find(
+  const declared = [metadata?.riskDescription, metadata?.risk].find(
     (value): value is string => typeof value === 'string' && value.trim().length > 0,
   );
+  // A delegated agent's prompt concerns the other device's resources; the
+  // answer is sent there, so say whose machine it is.
+  const remoteDevice = metadataString(metadata, 'remoteDeviceName')
+    ?? metadataString(metadata, 'remoteDeviceId');
+  if (remoteDevice) {
+    const remote = t('permission.risks.remoteDevice', { device: remoteDevice });
+    return declared ? `${remote} ${declared}` : remote;
+  }
+  return declared;
 }
 
 type ApprovalScope = 'this' | 'all';

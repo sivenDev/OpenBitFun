@@ -28,6 +28,7 @@ import {
   subagentTurnAwaitsApproval,
 } from '../utils/subagentProjection';
 import { acpClientIdFromAgentType } from '../utils/acpSession';
+import { remoteAgentFromAgentType } from '../utils/remoteAgent';
 import { sessionLineageLifecycleForSession } from '../utils/sessionLineage';
 import {
   SubagentAvatar,
@@ -291,6 +292,8 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
     // binding is not what runs the turn.
     const modelName = acpClientIdFromAgentType(agentType)
       ? t('toolCards.taskTool.externalAgentModel')
+      : remoteAgentFromAgentType(agentType)
+      ? t('toolCards.taskTool.remoteAgentModel')
       : readStringValue(toolItem.subagentModelDisplayName) ||
       readStringValue(linkedSubagentSession?.config?.modelName) ||
       readStringValue(toolItem.subagentModelId) ||
@@ -393,8 +396,11 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
     const raw = taskInput?.agentType;
     let agentTypeLabel: string;
     const externalClientId = acpClientIdFromAgentType(raw);
+    const remoteAgent = remoteAgentFromAgentType(raw);
     if (externalClientId) {
       agentTypeLabel = t('toolCards.taskTool.externalAgentLabel', { clientId: externalClientId });
+    } else if (remoteAgent) {
+      agentTypeLabel = t('toolCards.taskTool.remoteAgentLabel', { agent: remoteAgent.openAgentId });
     } else if (raw && raw !== 'Not provided') {
       const rc = taskInput?.isReviewCoverageTask ? null : taskInput?.reviewerContext;
       agentTypeLabel = taskInput?.isReviewCoverageTask

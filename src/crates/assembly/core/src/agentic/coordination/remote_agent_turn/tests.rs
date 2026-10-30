@@ -316,6 +316,7 @@ async fn target_prompts_are_asked_here_and_answered_on_the_device() {
             turn_id: "child-turn".to_string(),
             agent_type: "remote:laptop/helper".to_string(),
             device_id: "laptop".to_string(),
+            device_name: "Laptop".to_string(),
             job: link().job,
             port,
             cancel: cancel.clone(),
@@ -341,6 +342,7 @@ async fn target_prompts_are_asked_here_and_answered_on_the_device() {
         "a target resource never becomes a local grant"
     );
     assert_eq!(local.display_metadata["remoteDeviceId"], "laptop");
+    assert_eq!(local.display_metadata["remoteDeviceName"], "Laptop");
 
     manager
         .reply(

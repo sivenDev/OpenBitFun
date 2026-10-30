@@ -36,6 +36,9 @@ vi.mock('react-i18next', async importOriginal => ({
       if (key === 'permission.allowAlwaysTooltip') {
         return `Remember approval in ${values?.projectPath}, limited to:\n${values?.resources}`;
       }
+      if (key === 'permission.risks.remoteDevice') {
+        return `Runs on ${values?.device}.`;
+      }
       if (key === 'permission.risks.pageSave') {
         return `Save ${values?.slug} as ${values?.visibility} without deploying.`;
       }
@@ -149,6 +152,28 @@ describe('ChatInputApprovalBand', () => {
 
     expect(container.querySelector('[data-openbitfun-part="risk"]')?.textContent).toBe(
       'Save status as permission.visibility.public without deploying.',
+    );
+  });
+
+  it('names the device a delegated agent prompt runs on', async () => {
+    await act(async () => {
+      root.render(
+        <ChatInputApprovalBand
+          requests={[request({
+            displayMetadata: {
+              remoteDeviceId: 'laptop-id',
+              remoteDeviceName: 'Laptop',
+              risk: 'This deletes the build directory.',
+            },
+          })]}
+          onRespond={vi.fn(async () => undefined)}
+          onRespondBatch={vi.fn(async () => undefined)}
+        />
+      );
+    });
+
+    expect(container.querySelector('[data-openbitfun-part="risk"]')?.textContent).toBe(
+      'Runs on Laptop. This deletes the build directory.',
     );
   });
 

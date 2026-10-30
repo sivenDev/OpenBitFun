@@ -43,6 +43,12 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => {
     if (key === 'toolCards.taskTool.externalAgentModel') {
       return 'Chosen by the external agent';
     }
+    if (key === 'toolCards.taskTool.remoteAgentLabel') {
+      return `${options?.agent} (remote agent)`;
+    }
+    if (key === 'toolCards.taskTool.remoteAgentModel') {
+      return 'Chosen by the remote device';
+    }
     if (key === 'toolCards.taskTool.waitingConfirm') {
       return 'Waiting for confirmation';
     }
@@ -251,6 +257,23 @@ vi.mock('../store/FlowChatStore', () => ({
             }],
           },
         ] as const),
+        ['remote-child-processing', {
+          sessionId: 'remote-child-processing',
+          sessionKind: 'subagent',
+          parentSessionId: 'parent-session',
+          mode: 'remote:laptop/helper',
+          config: { agentType: 'remote:laptop/helper', modelName: 'fast' },
+          dialogTurns: [{
+            id: 'remote-turn-processing',
+            status: 'processing',
+            startTime: 1000,
+            modelRounds: [{
+              id: 'remote-round-processing',
+              isStreaming: false,
+              items: [],
+            }],
+          }],
+        }],
         ['review-session-dynamic', {
           sessionId: 'review-session-dynamic',
           mode: 'CodeReview',
@@ -474,6 +497,19 @@ describeWithJsdom('TaskToolDisplay', () => {
     if (statusLabel) {
       expect(text).toContain(statusLabel);
     }
+  });
+
+  it('names a remote agent by its open agent and leaves the model to its device', async () => {
+    const item = externalAgentTaskItem('remote-child-processing');
+    item.toolCall.input = { ...item.toolCall.input, subagent_type: 'remote:laptop/helper' };
+    await act(async () => root.render(
+      <TaskToolDisplay toolItem={item} config={config} sessionId="parent-session" />,
+    ));
+
+    const text = await previewText();
+    expect(text).toContain('helper (remote agent)');
+    expect(text).toContain('Chosen by the remote device');
+    expect(text).not.toContain('remote:laptop/helper');
   });
 
   it('opens the external agent child session from its task card', async () => {

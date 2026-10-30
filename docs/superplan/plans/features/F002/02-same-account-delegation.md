@@ -212,6 +212,14 @@ parent: "F002"
 
 - [ ] 界面测试通过，两台设备的实测结果已记录
 
+**Progress (2026-10-30):** 界面部分完成，两台设备实测未做。
+- 智能体详情显示远程条目所在设备、可用性（离线、需要更新、无响应，悬停显示原因）与可接受的任务类型；远程条目不提供本机管理入口，提示到开放它的设备上修改或关闭。
+- Task 卡片把 `remote:<device>/<id>` 显示为「<id>（远程智能体）」，模型显示「由远程设备选择」。
+- 转发到本机的目标端审批在审批栏写明「此操作在 <设备> 上执行，你的回答会发送到该设备」；为此转发时在显示元数据中加入 `remoteDeviceName`（来自缓存目录，取不到时用设备 id）。
+- 偏差：「等待目标设备审批」不另设状态，目标端的审批以本机审批请求出现在子会话与父会话的审批栏中，由本机回答后送达目标端。
+- Evidence：`pnpm --dir src/web-ui run test:run src/flow_chat/tool-cards/TaskToolDisplay.test.tsx src/flow_chat/components/ChatInputApprovalBand.test.tsx src/flow_chat/utils/remoteAgent.test.ts src/app/scenes/agents/AgentsScene.test.tsx src/app/scenes/agents/agentVisibility.test.ts`：79 passed；`pnpm run type-check:web`、`pnpm run i18n:audit`、`pnpm run check:web`：通过；`--lib remote_agent_turn`：9 passed（含 `remoteDeviceName`）。
+- 远程场景：两台同账号设备的实测尚未进行；Task 5 的本机模拟先覆盖目录、委派、取消与审批。
+
 ## Task 5: 本机双账号多客户端模拟
 
 **Outcome:** 不依赖真实设备，在一台电脑上模拟两个账号、多个客户端，自动化覆盖委派流程，并提供一条启动命令供人工体验。经用户批准加入本计划（2026-10-30）。

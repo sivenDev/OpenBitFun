@@ -288,6 +288,21 @@
       "unsupportedContext": "Unavailable in this workspace",
       "manage": "Manage in External Agents settings"
     },
+    "remote": {
+      "availability": "Availability reported by the device's latest answer",
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "offline": "Device offline",
+      "incompatible": "Device needs an update",
+      "unreachable": "Device not responding",
+      "device": "On {{device}}",
+      "managedOnDevice": "{{device}} opened this agent to this device. Change or close it on {{device}}.",
+      "taskKinds": "Tasks · {{kinds}}",
+      "taskKind": {
+        "message": "Message",
+        "coding": "Coding"
+      }
+    },
     "deleteConfirm": "Delete custom agent \"{{name}}\"? This cannot be undone.",
     "deleteSuccess": "Deleted \"{{name}}\"",
     "deleteFailed": "Delete failed: ",

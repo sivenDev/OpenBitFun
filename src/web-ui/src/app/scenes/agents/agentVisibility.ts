@@ -48,3 +48,10 @@ export function isAcpExternalAgent(
 ): boolean {
   return subagent?.executionKind === 'acp';
 }
+
+/** Agents another device of this account opened here; that device manages them. */
+export function isRemoteDeviceAgent(
+  subagent: { executionKind?: string | null } | null | undefined,
+): boolean {
+  return subagent?.executionKind === 'remote';
+}

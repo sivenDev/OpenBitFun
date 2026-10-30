@@ -111,7 +111,8 @@
     "risks": {
       "pageSave": "Save a new immutable version of “{{slug}}” with {{visibility}} visibility without changing production.",
       "pagePublish": "Save “{{slug}}” with {{visibility}} visibility and switch its production version.",
-      "pageDeploy": "Switch production traffic for “{{slug}}” to immutable version “{{version}}”."
+      "pageDeploy": "Switch production traffic for “{{slug}}” to immutable version “{{version}}”.",
+      "remoteDevice": "This runs on {{device}}; your answer is sent to that device."
     },
     "visibility": {
       "private": "private",
@@ -2389,6 +2390,8 @@
       "defaultAgentKind": "Sub-agent",
       "externalAgentLabel": "{{clientId}} (external agent)",
       "externalAgentModel": "Chosen by the external agent",
+      "remoteAgentLabel": "{{agent}} (remote agent)",
+      "remoteAgentModel": "Chosen by the remote device",
       "cancelSession": "Cancel session: {{sessionId}}",
       "waitingConfirm": "Waiting for confirmation",
       "executing": "Executing...",

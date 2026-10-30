@@ -288,6 +288,21 @@
       "unsupportedContext": "当前工作区不可用",
       "manage": "在外部智能体设置中管理"
     },
+    "remote": {
+      "availability": "可用性来自该设备最近一次的应答",
+      "available": "可用",
+      "unavailable": "不可用",
+      "offline": "设备离线",
+      "incompatible": "设备需要更新",
+      "unreachable": "设备无响应",
+      "device": "位于 {{device}}",
+      "managedOnDevice": "{{device}} 向本设备开放了这个智能体，请在 {{device}} 上修改或关闭。",
+      "taskKinds": "任务 · {{kinds}}",
+      "taskKind": {
+        "message": "消息",
+        "coding": "编码"
+      }
+    },
     "deleteConfirm": "确定删除自定义智能体「{{name}}」？此操作不可恢复。",
     "deleteSuccess": "已删除「{{name}}」",
     "deleteFailed": "删除失败：",

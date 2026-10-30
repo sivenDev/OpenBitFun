@@ -39,6 +39,26 @@ export type ExternalAgentAvailability =
   | { state: 'available' }
   | { state: 'unavailable'; reason: ExternalAgentUnavailableReason | string; detail: string };
 
+export type RemoteAgentTaskKind = 'message' | 'coding';
+
+export type RemoteAgentUnavailableReason = 'offline' | 'incompatible' | 'unreachable';
+
+/** Whether the device that opened a remote agent can take work now. */
+export type RemoteAgentAvailability =
+  | { state: 'available' }
+  | { state: 'unavailable'; reason: RemoteAgentUnavailableReason | string; detail: string };
+
+/** The device and open agent behind a `remote:<deviceId>/<openAgentId>` subagent. */
+export interface RemoteAgentInfo {
+  deviceId: string;
+  deviceName: string;
+  openAgentId: string;
+  /** The agent mode the open agent runs on its device. */
+  agentType: string;
+  taskKinds: RemoteAgentTaskKind[];
+  availability: RemoteAgentAvailability;
+}
+
 export interface SubagentInfo {
   key: string;
   id: string;
@@ -63,9 +83,13 @@ export interface SubagentInfo {
   configProfileMemberModeIds?: string[];
   externalProviderLabel?: string;
   supportsFollowUp?: boolean;
-  /** `acp` for external agents that run their own model loop and tools. */
+  /**
+   * `acp` for external agents that run their own model loop and tools;
+   * `remote` for agents another device of this account opened to this one.
+   */
   executionKind?: string;
   externalAvailability?: ExternalAgentAvailability;
+  remoteAgent?: RemoteAgentInfo;
 }
 
 export interface ListSubagentsOptions {

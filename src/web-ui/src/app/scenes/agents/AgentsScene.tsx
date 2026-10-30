@@ -53,6 +53,7 @@ import './components/AgentDetailDialog.scss';
 import { useGallerySceneAutoRefresh } from '@/app/hooks/useGallerySceneAutoRefresh';
 import {
   isAcpExternalAgent,
+  isRemoteDeviceAgent,
   isAgentInOverviewZone,
   isLocallyManageableSubagent,
 } from './agentVisibility';
@@ -63,7 +64,12 @@ import {
   buildSkillCoverageSourceMap,
   getModeSkillRuntimeStatus,
 } from '@/infrastructure/config/skillSourcePresentation';
-import type { ExternalAgentAvailability, SubagentInfo } from '@/infrastructure/api/service-api/SubagentAPI';
+import type {
+  ExternalAgentAvailability,
+  RemoteAgentAvailability,
+  RemoteAgentTaskKind,
+  SubagentInfo,
+} from '@/infrastructure/api/service-api/SubagentAPI';
 import { useSceneStore } from '@/app/stores/sceneStore';
 import { useSettingsStore } from '@/app/scenes/settings/settingsStore';
 import { useNotification } from '@/shared/notification-system';
@@ -168,6 +174,36 @@ function acpAvailabilityLabel(
   }
 }
 
+function remoteAvailabilityLabel(
+  availability: RemoteAgentAvailability,
+  t: TFunction<'scenes/agents'>,
+): string {
+  if (availability.state === 'available') {
+    return t('agentsOverview.remote.available');
+  }
+  switch (availability.reason) {
+    case 'offline':
+      return t('agentsOverview.remote.offline');
+    case 'incompatible':
+      return t('agentsOverview.remote.incompatible');
+    case 'unreachable':
+      return t('agentsOverview.remote.unreachable');
+    default:
+      return t('agentsOverview.remote.unavailable');
+  }
+}
+
+function remoteTaskKindLabel(kind: RemoteAgentTaskKind | string, t: TFunction<'scenes/agents'>): string {
+  switch (kind) {
+    case 'message':
+      return t('agentsOverview.remote.taskKind.message');
+    case 'coding':
+      return t('agentsOverview.remote.taskKind.coding');
+    default:
+      return kind;
+  }
+}
+
 function openExternalAgentSettings(): void {
   useSettingsStore.getState().openDestination({ pageId: 'tools.external-agents' });
   useSceneStore.getState().openScene('settings');
@@ -190,9 +226,11 @@ function subagentTooltipFields(
     },
     ...(isExternal ? [{
       label: t('agentsOverview.capabilityTooltip.status'),
-      value: subagent.externalAvailability
-        ? acpAvailabilityLabel(subagent.externalAvailability, t)
-        : t('agentsOverview.capabilityTooltip.externalManaged'),
+      value: subagent.remoteAgent
+        ? remoteAvailabilityLabel(subagent.remoteAgent.availability, t)
+        : subagent.externalAvailability
+          ? acpAvailabilityLabel(subagent.externalAvailability, t)
+          : t('agentsOverview.capabilityTooltip.externalManaged'),
     }] : []),
   ];
 }
@@ -343,6 +381,7 @@ const AgentsHomeView: React.FC = () => {
     selectedAgent?.source ?? selectedAgent?.subagentSource
   ) === 'external';
   const selectedAgentIsAcp = isAcpExternalAgent(selectedAgent);
+  const selectedRemoteAgent = isRemoteDeviceAgent(selectedAgent) ? selectedAgent?.remoteAgent : undefined;
   const selectedAgentModeConfig = useMemo(
     () => (isPrimaryAgent(selectedAgent) ? getModeConfig(selectedAgent.id) : null),
     [getModeConfig, selectedAgent],
@@ -1034,7 +1073,7 @@ const AgentsHomeView: React.FC = () => {
                       }}
                     />
                   </Tooltip>
-                ) : (showingHarnessPreview || activeDetailSection === 'basic') && selectedAgentIsExternal ? (
+                ) : selectedRemoteAgent ? null : (showingHarnessPreview || activeDetailSection === 'basic') && selectedAgentIsExternal ? (
                   <Tooltip content={t('agentsOverview.manageExternalAgent')}>
                     <IconButton
                       aria-label={t('agentsOverview.manageExternalAgent')}
@@ -1139,7 +1178,36 @@ const AgentsHomeView: React.FC = () => {
                     <Tooltip content={t('agentsOverview.detail.source')}>
                       <StatusPill tone="neutral">{selectedAgentSourceLabel}</StatusPill>
                     </Tooltip>
-                    {selectedAgent.externalProviderLabel ? (
+                    {selectedRemoteAgent ? (
+                      <>
+                        <Tooltip content={t('agentsOverview.remote.managedOnDevice', { device: selectedRemoteAgent.deviceName })}>
+                          <StatusPill tone="neutral" data-testid="agent-detail-remote-device">
+                            {t('agentsOverview.remote.device', { device: selectedRemoteAgent.deviceName })}
+                          </StatusPill>
+                        </Tooltip>
+                        <Tooltip
+                          content={selectedRemoteAgent.availability.state === 'unavailable'
+                            ? selectedRemoteAgent.availability.detail
+                            : t('agentsOverview.remote.availability')}
+                        >
+                          <StatusPill
+                            tone={selectedRemoteAgent.availability.state === 'available' ? 'success' : 'warning'}
+                            data-testid="agent-detail-remote-availability"
+                          >
+                            {remoteAvailabilityLabel(selectedRemoteAgent.availability, t)}
+                          </StatusPill>
+                        </Tooltip>
+                        {selectedRemoteAgent.taskKinds.length > 0 ? (
+                          <StatusPill tone="neutral" data-testid="agent-detail-remote-task-kinds">
+                            {t('agentsOverview.remote.taskKinds', {
+                              kinds: selectedRemoteAgent.taskKinds
+                                .map((kind) => remoteTaskKindLabel(kind, t))
+                                .join(' / '),
+                            })}
+                          </StatusPill>
+                        ) : null}
+                      </>
+                    ) : selectedAgent.externalProviderLabel ? (
                       <StatusPill tone="neutral">
                         {t('agentCard.meta.externalProvider', { provider: selectedAgent.externalProviderLabel })}
                       </StatusPill>

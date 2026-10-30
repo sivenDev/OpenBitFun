@@ -743,4 +743,58 @@ describeWithJsdom('AgentsScene', () => {
     openDestination.mockRestore();
     openScene.mockRestore();
   });
+  it('shows the device, availability, and task kinds of a remote agent without local management', async () => {
+    const remoteAgent = {
+      key: 'remote:laptop/helper',
+      id: 'remote:laptop/helper',
+      name: 'Helper',
+      description: 'Agent Helper that another device of this account opened for delegation.',
+      isReadonly: false,
+      isReview: false,
+      toolCount: 0,
+      defaultTools: [],
+      defaultEnabled: false,
+      effectiveEnabled: false,
+      source: 'external',
+      subagentSource: 'external',
+      externalProviderLabel: 'Laptop',
+      supportsFollowUp: true,
+      executionKind: 'remote',
+      remoteAgent: {
+        deviceId: 'laptop',
+        deviceName: 'Laptop',
+        openAgentId: 'helper',
+        agentType: 'Standard',
+        taskKinds: ['message', 'coding'] as const,
+        availability: {
+          state: 'unavailable',
+          reason: 'offline',
+          detail: 'Laptop is offline',
+        },
+      },
+      agentKind: 'subagent' as const,
+      capabilities: [],
+    };
+    mockAgentsList({ allAgents: [remoteAgent], filteredAgents: [remoteAgent] });
+    const { default: AgentsScene } = await import('./AgentsScene');
+
+    await act(async () => {
+      root.render(<AgentsScene />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === remoteAgent.name)
+        ?.click();
+    });
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.querySelector('[data-testid="agent-detail-remote-device"]')?.textContent)
+      .toBe('agentsOverview.remote.device');
+    expect(dialog?.querySelector('[data-testid="agent-detail-remote-availability"]')?.textContent)
+      .toBe('agentsOverview.remote.offline');
+    expect(dialog?.querySelector('[data-testid="agent-detail-remote-task-kinds"]')).not.toBeNull();
+    // The device that opened the agent manages it; nothing here edits it.
+    expect(dialog?.querySelector('[data-testid="agent-detail-manage-acp"]')).toBeNull();
+    expect(dialog?.querySelector('[aria-label="agentsOverview.manageExternalAgent"]')).toBeNull();
+  });
 });
