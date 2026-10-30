@@ -220,6 +220,9 @@ location and process.
 | `PATCH /api/devices/{id}` | Update an account device alias or self-reported metadata |
 | `GET /api/devices/{id}/key` | Same-account device public key |
 | `DELETE /api/devices/{id}` | Explicit device removal and revocation |
+| `POST /api/connections/invites`, `GET /api/connections/invites`, `DELETE /api/connections/invites/{id}` | Create, list and withdraw one-time cross-account invites |
+| `POST /api/connections/invites/preview`, `POST /api/connections/accept` | Show an invite's sender, accept it from another account |
+| `GET /api/connections`, `POST /api/connections/{id}/confirm`, `DELETE /api/connections/{id}` | Connection list, confirmation by the inviting device, revocation by either account |
 | `GET /v1/updates` | Authenticated Socket.IO account and machine scopes |
 | `POST /v1/rpc/payloads`, `GET /v1/rpc/payloads/{id}` | Account-scoped encrypted bulk RPC bodies (short-lived) |
 | `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET/POST /v3/sessions/{id}/messages` | Retired; answer `410 Gone` with `{"error":"relay_session_history_retired"}` |
@@ -230,6 +233,39 @@ same account; only the selected target socket can acknowledge a request.
 A lost acknowledgement reports an unknown outcome and never replays a mutation.
 Small encrypted messages travel over the live connection; larger RPC bodies use
 short-lived HTTP references that expire on their own.
+
+### Cross-account connections
+
+A relay that lists `cross_account_routing_v1` in `GET /api/info` routes
+delegation between devices of different accounts; clients must check it before
+offering a cross-account entry.
+
+- **Pairing.** A device creates a one-time invite (default one hour, at most
+  seven days). A device of another account previews it with the code, which
+  shows the sender's account name, device and public key, then accepts it. The
+  connection stays `pending` until the inviting device confirms it. Invites can
+  be withdrawn; used, withdrawn and expired invites answer `410` with
+  `invite_used`, `invite_withdrawn` or `invite_expired`.
+- **Visibility.** Only device credentials manage connections. A connection is
+  visible to its two accounts only; others get `404 connection_not_found`.
+  Either account, from any of its devices, may revoke it.
+- **Routing.** A paired device sends `connection-rpc-call` with
+  `connectionId`, `command` and encrypted `params`. The relay forwards it only
+  between the two paired devices, only for the `dispatch_target_*` delegation
+  commands, and only to a target that registered `<device>:connection-invoke`.
+  The forwarded `rpc-request` adds `command`, `connectionId` and
+  `sourceAccountId`; the target must check that the decrypted request names
+  the same command. Refusals carry a `reason`: `connection_not_found`,
+  `connection_pending`, `connection_revoked`, `connection_key_changed` (a
+  device registered a new key after pairing), `command_not_routable`,
+  `target_unavailable` or `device_required`.
+- **Revocation.** The connection is checked when a call arrives, right before
+  it is forwarded and before its answer is returned, so a call waiting inside
+  the relay is not forwarded after a revocation and a late answer is dropped.
+  Removing a device revokes its connections.
+- Large bodies use the same payload references; forwarding one over a
+  connection lets the other end download it. The account-scoped `rpc-call` and
+  same-account device routing are unchanged.
 
 ### Device-directory compatibility
 

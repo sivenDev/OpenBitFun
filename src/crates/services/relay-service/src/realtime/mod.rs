@@ -86,6 +86,17 @@ struct Call {
     #[serde(default, rename = "timeoutMs")]
     timeout_ms: Option<u64>,
 }
+/// A call to the other end of a cross-account connection. Only the command
+/// name is visible to the relay; `params` stays end-to-end encrypted.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConnectionCall {
+    connection_id: String,
+    command: String,
+    params: Value,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MachineEvent {
@@ -102,6 +113,14 @@ fn rpc_room(account: &str, method: &str) -> String {
 fn failure(error: &str) -> Value {
     json!({"ok":false,"error":error})
 }
+/// A refusal the caller can act on, named by a stable reason code.
+fn refused(error: &str, reason: &str) -> Value {
+    json!({"ok":false,"error":error,"reason":reason})
+}
+
+/// The method a device registers to take calls from other accounts. Older
+/// clients never register it, so they are never reached across accounts.
+const CONNECTION_METHOD: &str = "connection-invoke";
 
 async fn authorized(state: &AppState, identity: &Identity) -> bool {
     matches!(AuthToken::find(&state.db,&identity.token).await,
@@ -169,13 +188,16 @@ pub(crate) fn mount(router: Router<AppState>, state: AppState) -> Router<AppStat
     let auth_state = state.clone();
     let handler_state = state.clone();
     let handler_io = io.clone();
+    let payloads = payloads::Payloads::new();
+    let handler_payloads = payloads.clone();
     io.ns(
         "/",
         (move |socket: SocketRef| {
             let state = handler_state.clone();
             let io = handler_io.clone();
+            let payloads = handler_payloads.clone();
             async move {
-                install(socket, state, io).await;
+                install(socket, state, io, payloads).await;
             }
         })
         .with(
@@ -275,7 +297,7 @@ pub(crate) fn mount(router: Router<AppState>, state: AppState) -> Router<AppStat
             post(payloads::upload).layer(axum::extract::DefaultBodyLimit::disable()),
         )
         .route("/v1/rpc/payloads/{id}", get(payloads::download))
-        .layer(axum::Extension(payloads::Payloads::new()))
+        .layer(axum::Extension(payloads))
         // Earlier releases stored encrypted session history here. Admission
         // answers these paths before any body is read; the routes stay owned so
         // a host static fallback can never shadow the retirement answer.
@@ -289,7 +311,12 @@ pub(crate) fn mount(router: Router<AppState>, state: AppState) -> Router<AppStat
         .layer(layer)
 }
 
-async fn install(socket: SocketRef, state: AppState, io: SocketIo) {
+async fn install(
+    socket: SocketRef,
+    state: AppState,
+    io: SocketIo,
+    payloads: Arc<payloads::Payloads>,
+) {
     let Some(identity) = socket.extensions.get::<Identity>() else {
         let _ = socket.disconnect();
         return;
@@ -421,6 +448,23 @@ async fn install(socket: SocketRef, state: AppState, io: SocketIo) {
             let _=ack.send(&response);
         }
     });
+    let connection_state = state.clone();
+    let connection_io = io.clone();
+    socket.on(
+        "connection-rpc-call",
+        move |socket: SocketRef, TryData(data): TryData<ConnectionCall>, ack: AckSender| {
+            let state = connection_state.clone();
+            let io = connection_io.clone();
+            let payloads = payloads.clone();
+            async move {
+                let response = match data {
+                    Ok(data) => connection_call(&socket, &state, &io, &payloads, data).await,
+                    Err(_) => failure("invalid RPC"),
+                };
+                let _ = ack.send(&response);
+            }
+        },
+    );
     let event_state = state.clone();
     let event_io = io.clone();
     socket.on("machine-event",move |socket:SocketRef,TryData(data):TryData<MachineEvent>,ack:AckSender| {
@@ -451,6 +495,164 @@ async fn install(socket: SocketRef, state: AppState, io: SocketIo) {
         &json!({"userId":identity.account,"deviceId":identity.device}),
     );
     presence::broadcast(&io, &state, &identity.account).await;
+}
+
+async fn connection_route(
+    state: &AppState,
+    connection_id: &str,
+    identity: &Identity,
+) -> Result<crate::connections::Route, Value> {
+    match crate::connections::route(
+        &state.db,
+        connection_id,
+        &identity.account,
+        &identity.device,
+    )
+    .await
+    {
+        Ok(Ok(route)) => Ok(route),
+        Ok(Err(refusal)) => Err(refused(refusal.message(), refusal.reason())),
+        Err(_) => Err(failure("connection lookup unavailable")),
+    }
+}
+
+/// Forward one delegation command to the other end of a connection. The
+/// connection is checked on arrival, again right before forwarding (so a call
+/// that waited for its target is not forwarded after a revocation), and once
+/// more before the answer is returned. Admission and dispatch semantics are
+/// those of `rpc-call`: after dispatch a lost acknowledgement is UNKNOWN.
+async fn connection_call(
+    socket: &SocketRef,
+    state: &AppState,
+    io: &SocketIo,
+    payloads: &payloads::Payloads,
+    data: ConnectionCall,
+) -> Value {
+    let Some(identity) = socket.extensions.get::<Identity>() else {
+        return failure("RPC forbidden");
+    };
+    // A connection binds devices; controller sockets act for an account.
+    if identity.scope != Scope::Machine {
+        return refused(
+            "connection RPC requires a device connection",
+            "device_required",
+        );
+    }
+    let timeout_ms = data.timeout_ms.unwrap_or(120_000);
+    if timeout_ms == 0 || timeout_ms > i32::MAX as u64 {
+        return failure("invalid RPC timeout");
+    }
+    let call_deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    let reservation = rpc_memory_cost(&data.params)
+        .saturating_add(data.command.len())
+        .saturating_add(data.connection_id.len())
+        .min(u32::MAX as usize) as u32;
+    let Ok(_account_permit) = identity
+        .account_calls
+        .clone()
+        .try_acquire_many_owned(reservation)
+    else {
+        return failure("account RPC memory budget busy; request was not submitted");
+    };
+    let Ok(_server_permit) = identity
+        .server_calls
+        .clone()
+        .try_acquire_many_owned(reservation)
+    else {
+        return failure("server RPC memory budget busy; request was not submitted");
+    };
+    if !crate::connections::is_routable_command(&data.command) {
+        return refused(
+            "command is not routable across accounts",
+            "command_not_routable",
+        );
+    }
+    if !crate::connections::is_valid_id(&data.connection_id) {
+        let refusal = crate::connections::Refusal::NotFound;
+        return refused(refusal.message(), refusal.reason());
+    }
+    if !authorized(state, &identity).await {
+        return failure("RPC forbidden");
+    }
+    let route = match connection_route(state, &data.connection_id, &identity).await {
+        Ok(route) => route,
+        Err(refusal) => return refusal,
+    };
+    let method = format!("{}:{CONNECTION_METHOD}", route.target_device_id);
+    let room = rpc_room(&route.target_user_id, &method);
+    let deadline = (tokio::time::Instant::now() + Duration::from_secs(15)).min(call_deadline);
+    let target = loop {
+        let targets = io.within(room.clone()).sockets();
+        if targets.len() > 1 {
+            return failure("multiple RPC owners");
+        }
+        if let Some(target) = targets.into_iter().next() {
+            break target;
+        }
+        if tokio::time::Instant::now() >= deadline || !socket.connected() {
+            return refused("connection RPC target unavailable", "target_unavailable");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    let Some(target_identity) = target.extensions.get::<Identity>() else {
+        return refused("connection RPC target unavailable", "target_unavailable");
+    };
+    if target_identity.account != route.target_user_id
+        || target_identity.device != route.target_device_id
+    {
+        return refused("connection RPC target unavailable", "target_unavailable");
+    }
+    if !authorized(state, &identity).await || !authorized(state, &target_identity).await {
+        return failure("RPC authorization expired");
+    }
+    if !crate::db::client_builds_compatible(
+        identity.client_protocol,
+        target_identity.client_protocol,
+    ) {
+        return failure(
+            "incompatible client build: remote control requires matching client versions",
+        );
+    }
+    if let Err(refusal) = connection_route(state, &data.connection_id, &identity).await {
+        return refusal;
+    }
+    if !payloads.share(&data.params, &identity.account, &route.target_user_id) {
+        return failure("RPC payload unavailable; request was not submitted");
+    }
+    let remaining = call_deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        return failure("RPC deadline elapsed before dispatch");
+    }
+    let request = json!({
+        "method": method,
+        "command": data.command,
+        "connectionId": data.connection_id,
+        "sourceAccountId": identity.account,
+        "sourceDeviceId": identity.device,
+        "params": data.params,
+        "timeoutMs": remaining.as_millis(),
+    });
+    let value = match target
+        .timeout(remaining)
+        .emit_with_ack::<_, Value>("rpc-request", &request)
+    {
+        Ok(pending) => match pending.await {
+            Ok(value) => value,
+            Err(_) => return failure("RPC acknowledgement lost; delivery outcome is unknown"),
+        },
+        Err(_) => return failure("RPC target unavailable before dispatch"),
+    };
+    // A connection revoked while the target worked does not deliver its answer.
+    if let Err(refusal) = connection_route(state, &data.connection_id, &identity).await {
+        return refusal;
+    }
+    if let Some(error) = value.get("$relayError").and_then(Value::as_str) {
+        return failure(error);
+    }
+    if !payloads.share(&value, &route.target_user_id, &identity.account) {
+        return failure("RPC payload unavailable");
+    }
+    json!({"ok":true,"result":value})
 }
 
 #[cfg(test)]

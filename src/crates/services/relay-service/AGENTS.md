@@ -26,6 +26,15 @@ and embedded hosts.
   `relay_session_history_retired` reason (`realtime/retired_session_history.rs`)
   so older clients degrade loudly rather than silently.
 
+- Cross-account routing (`connections.rs`, `cross_account_routing_v1`) is
+  the only path between accounts. A connection exists after a one-time invite
+  is accepted by another account's device and confirmed by the inviting
+  device; it pins both device public keys and is visible only to its two
+  accounts. `connection-rpc-call` forwards a listed `dispatch_target_*`
+  command, re-checks the connection right before forwarding and before
+  returning the answer, and reaches only targets that registered
+  `<device>:connection-invoke`. Keep the account-scoped `rpc-call` unchanged.
+
 ## Boundaries
 
 - Do not depend on assembly, interface, or application crates.
@@ -40,7 +49,9 @@ and embedded hosts.
 ## Verification
 
 Run `cargo test -p openbitfun-relay-service` and
-`node scripts/check-core-boundaries.mjs` after changes.
+`node scripts/check-core-boundaries.mjs` after changes. For invites,
+connections and cross-account routing, `cargo test -p openbitfun-relay-service
+--lib connections` and `--lib account_transport_tests::` are the focused checks.
 
 Account identity supports independent GitHub and email-code users. Preserve legacy
 numeric GitHub Relay IDs; email `accountId` values occupy the `email-` namespace.

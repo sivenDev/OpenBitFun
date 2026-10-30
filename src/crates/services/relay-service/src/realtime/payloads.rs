@@ -20,7 +20,16 @@ struct Payload {
     file: tempfile::TempPath,
     size: usize,
     expires: std::time::Instant,
+    /// Other accounts allowed to download it: the far end of a cross-account
+    /// connection the reference was forwarded over.
+    readers: Mutex<Vec<String>>,
     _storage: Vec<OwnedSemaphorePermit>,
+}
+
+impl Payload {
+    fn readable_by(&self, account: &str) -> bool {
+        self.account == account || self.readers.lock().unwrap().iter().any(|r| r == account)
+    }
 }
 
 pub(super) struct Payloads {
@@ -50,6 +59,32 @@ impl Payloads {
             }
         });
         store
+    }
+
+    /// Before a connection RPC forwards `value` from `owner` to `reader`, let
+    /// `reader` download it when it is a payload reference. Returns false for
+    /// a reference that `owner` cannot read, which must not be forwarded.
+    pub(super) fn share(&self, value: &Value, owner: &str, reader: &str) -> bool {
+        let Some(id) = value
+            .get("$relayPayload")
+            .and_then(|reference| reference.get("id"))
+            .and_then(Value::as_str)
+        else {
+            return true;
+        };
+        let entries = self.entries.lock().unwrap();
+        match entries.get(id) {
+            Some(entry)
+                if entry.readable_by(owner) && entry.expires > std::time::Instant::now() =>
+            {
+                let mut readers = entry.readers.lock().unwrap();
+                if !readers.iter().any(|r| r == reader) {
+                    readers.push(reader.to_string());
+                }
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -115,6 +150,7 @@ pub(super) async fn upload(
             file: path,
             size,
             expires: std::time::Instant::now() + TTL,
+            readers: Mutex::new(Vec::new()),
             _storage: storage,
         }),
     );
@@ -133,7 +169,9 @@ pub(super) async fn download(
         .lock()
         .unwrap()
         .get(&id)
-        .filter(|entry| entry.account == auth.user_id && entry.expires > std::time::Instant::now())
+        .filter(|entry| {
+            entry.readable_by(&auth.user_id) && entry.expires > std::time::Instant::now()
+        })
         .cloned()
         .ok_or(StatusCode::NOT_FOUND)?;
     let file = tokio::fs::File::open(&entry.file)

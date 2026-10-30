@@ -91,6 +91,9 @@ pub(crate) async fn server_info_for_host(host_version: &'static str) -> Json<Ser
             // Clients must ask before using it: an older Relay rejects the
             // unknown kind outright, which would fail the whole login.
             "device_kind_cli_v1",
+            // Invites, two-sided connections and `connection-rpc-call`
+            // between devices of different accounts (see `connections`).
+            "cross_account_routing_v1",
         ],
     })
 }

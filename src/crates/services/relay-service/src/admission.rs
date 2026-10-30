@@ -49,7 +49,7 @@ pub(crate) async fn admit(
     {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
-    if path.starts_with("/api/devices") {
+    if path.starts_with("/api/devices") || path.starts_with("/api/connections") {
         let auth = match crate::routes::devices::validate_user(&state, request.headers()).await {
             Ok(auth) => auth,
             Err(status) => return status.into_response(),
@@ -71,7 +71,8 @@ pub(crate) async fn admit(
     };
     let mut memory_permit = None;
     if request.method() == Method::POST {
-        let maximum = if path.starts_with("/api/auth/") {
+        // Connection requests carry an invite code at most.
+        let maximum = if path.starts_with("/api/auth/") || path.starts_with("/api/connections") {
             16 * 1024
         } else {
             MAX_API_BODY
