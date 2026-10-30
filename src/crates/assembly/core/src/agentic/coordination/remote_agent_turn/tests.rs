@@ -448,3 +448,91 @@ async fn coding_jobs_without_changes_say_so() {
         "The coding task made no changes; branch openbitfun/dispatch/delegation-1 stays at aaaaaaaaaaaa."
     );
 }
+
+#[tokio::test]
+async fn a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits_on() {
+    let root = tempfile::tempdir().expect("temp dir");
+    let store = Arc::new(CoordinationStore::new(
+        root.path().join("coordination.sqlite"),
+    ));
+    let task = store
+        .register_background_task(
+            super::super::coordination_store::BackgroundTaskRegistration {
+                parent_session_id: "parent".to_string(),
+                requested_agent_id: None,
+                child_session_id: "child".to_string(),
+                parent_dialog_turn_id: "parent-turn".to_string(),
+                parent_tool_call_id: "spawn".to_string(),
+                child_dialog_turn_id: "child-turn".to_string(),
+            },
+        )
+        .await
+        .expect("register delegated task");
+    let manager = test_permission_manager();
+    let mut waiting = page(RemoteAgentJobState::Running, 3, Vec::new());
+    waiting.pending_permissions = vec![target_prompt("target-1")];
+    let device = ScriptedDevice::with_pages(vec![Ok(waiting.clone()), Ok(waiting)]);
+    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
+    let route = ExternalAgentPermissionRoute {
+        manager: manager.clone(),
+        project_id: "local-project".to_string(),
+        project_path: "/local/workspace".to_string(),
+        delegation: None,
+        policy: None,
+    };
+    let cancel = CancellationToken::new();
+    let mut sink = ResumedTaskSink::new(
+        ResumedTask {
+            store: Arc::clone(&store),
+            event_queue: Arc::new(crate::agentic::events::EventQueue::new(
+                crate::agentic::events::EventQueueConfig::default(),
+            )),
+            task_pk: task.task_pk,
+            session_id: "child",
+            turn_id: "child-turn",
+            agent_type: "remote:laptop/helper",
+            permissions: Some(&route),
+        },
+        &link(),
+        &port,
+        cancel.clone(),
+    )
+    .await;
+
+    let observation = tokio::spawn(async move {
+        let end = observe_job(&port, &link(), &cancel, &mut sink).await;
+        sink.finish().await;
+        end
+    });
+    let local = loop {
+        if let Some(request) = manager.pending_requests().pop() {
+            break request;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(local.session_id, "child");
+    assert_eq!(local.agent_id, "remote:laptop/helper");
+    assert_eq!(local.display_metadata["remoteDeviceId"], "laptop");
+    manager
+        .reply(
+            &local.request_id,
+            PermissionReply::Once,
+            openbitfun_runtime_ports::PermissionReplySource::User,
+        )
+        .await
+        .unwrap();
+    device.answer_seen.notified().await;
+    assert_eq!(
+        *device.answers.lock().unwrap(),
+        vec![("target-1".to_string(), PermissionReply::Once)]
+    );
+
+    device
+        .pages
+        .lock()
+        .unwrap()
+        .push_back(Ok(page(RemoteAgentJobState::Succeeded, 4, Vec::new())));
+    let (end, _) = observation.await.expect("observation finishes");
+    assert!(matches!(end, RemoteJobEnd::Succeeded { .. }));
+    assert!(manager.pending_requests().is_empty());
+}

@@ -2707,14 +2707,60 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 "Observing a delegated background task again after restart: bg_task_id={}, job_id={}",
                 record.bg_task_id, link.job.job_id
             );
-            let cancel = CancellationToken::new();
-            let mut sink = super::remote_agent_turn::ResumedTaskSink {
-                store: Arc::clone(&store),
-                task_pk: record.task_pk,
-                cancel: cancel.clone(),
+            // The child session carries the workspace and delegation a
+            // forwarded prompt is filed under, as for the live turn.
+            let session_loaded = coordinator
+                .ensure_subagent_session_loaded_for_reuse(
+                    &record.child_session_id,
+                    &record.parent_session_id,
+                )
+                .await;
+            if let Err(error) = &session_loaded {
+                warn!(
+                    "Delegated task session unavailable after restart; its prompts cannot be answered here: session_id={}, error={}",
+                    record.child_session_id, error
+                );
+            }
+            let (agent_type, permissions) = match coordinator
+                .session_manager
+                .get_session(&record.child_session_id)
+            {
+                Some(session) => {
+                    let workspace = Self::build_workspace_binding(&session.config).await;
+                    let continuation = coordinator
+                        .load_persisted_subagent_continuation_context(&session)
+                        .await;
+                    (
+                        session.agent_type.clone(),
+                        ExternalAgentPermissionRoute::for_workspace(
+                            coordinator.tool_pipeline.permission_request_manager(),
+                            workspace.as_ref(),
+                            continuation.permission_delegation,
+                            None,
+                        ),
+                    )
+                }
+                None => (record.agent_id.clone(), None),
             };
+            let cancel = CancellationToken::new();
+            let mut sink = super::remote_agent_turn::ResumedTaskSink::new(
+                super::remote_agent_turn::ResumedTask {
+                    store: Arc::clone(&store),
+                    event_queue: coordinator.event_queue.clone(),
+                    task_pk: record.task_pk,
+                    session_id: &record.child_session_id,
+                    turn_id: &record.child_dialog_turn_id,
+                    agent_type: &agent_type,
+                    permissions: permissions.as_ref(),
+                },
+                &link,
+                &port,
+                cancel.clone(),
+            )
+            .await;
             let (end, _) =
                 super::remote_agent_turn::observe_job(&port, &link, &cancel, &mut sink).await;
+            sink.finish().await;
             let end = match end {
                 super::remote_agent_turn::RemoteJobEnd::Succeeded { final_text } => {
                     super::remote_agent_turn::RemoteJobEnd::Succeeded {
@@ -2726,17 +2772,19 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 }
                 other => other,
             };
-            if let Err(error) = coordinator
-                .ensure_subagent_session_loaded_for_reuse(
-                    &record.child_session_id,
-                    &record.parent_session_id,
-                )
-                .await
-            {
-                warn!(
-                    "Delegated task result cannot be saved to its subagent session: session_id={}, error={}",
-                    record.child_session_id, error
-                );
+            if session_loaded.is_err() {
+                if let Err(error) = coordinator
+                    .ensure_subagent_session_loaded_for_reuse(
+                        &record.child_session_id,
+                        &record.parent_session_id,
+                    )
+                    .await
+                {
+                    warn!(
+                        "Delegated task result cannot be saved to its subagent session: session_id={}, error={}",
+                        record.child_session_id, error
+                    );
+                }
             }
             match end {
                 super::remote_agent_turn::RemoteJobEnd::Succeeded { final_text } => {

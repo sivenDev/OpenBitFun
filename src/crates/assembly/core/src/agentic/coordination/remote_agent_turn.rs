@@ -175,7 +175,12 @@ pub(crate) async fn run_remote_agent_turn(
         event_queue: turn.event_queue.clone(),
         prompts: PromptForwarder::new(
             turn.permissions.as_ref(),
-            &turn,
+            PromptScope {
+                session_id: &turn.session_id,
+                turn_id: &turn.dialog_turn_id,
+                agent_type: &turn.agent_type,
+                cancel: &turn.cancel_token,
+            },
             &link.job,
             &port,
             device_name(&port, &link.job.device_id).await,
@@ -327,16 +332,80 @@ pub(crate) trait JobPageSink: Send {
 
 /// Observes a task this process adopted after a restart. Its progress was
 /// already shown by the process that started it, so only the outcome is
-/// kept; cancelling the task through AgentControl cancels the job too.
+/// kept, but its prompts are forwarded again: the device keeps waiting for
+/// an answer the earlier process can no longer give. Cancelling the task
+/// through AgentControl cancels the job too.
 pub(crate) struct ResumedTaskSink {
+    store: Arc<CoordinationStore>,
+    task_pk: i64,
+    cancel: CancellationToken,
+    stream: ChildSessionStream,
+    event_queue: Arc<EventQueue>,
+    prompts: PromptForwarder,
+}
+
+/// The adopted task a [`ResumedTaskSink`] observes.
+pub(crate) struct ResumedTask<'a> {
     pub(crate) store: Arc<CoordinationStore>,
+    pub(crate) event_queue: Arc<EventQueue>,
     pub(crate) task_pk: i64,
-    pub(crate) cancel: CancellationToken,
+    pub(crate) session_id: &'a str,
+    pub(crate) turn_id: &'a str,
+    pub(crate) agent_type: &'a str,
+    pub(crate) permissions: Option<&'a ExternalAgentPermissionRoute>,
+}
+
+impl ResumedTaskSink {
+    pub(crate) async fn new(
+        task: ResumedTask<'_>,
+        link: &RemoteJobLink,
+        port: &Arc<dyn RemoteAgentDelegationPort>,
+        cancel: CancellationToken,
+    ) -> Self {
+        let prompts = PromptForwarder::new(
+            task.permissions,
+            PromptScope {
+                session_id: task.session_id,
+                turn_id: task.turn_id,
+                agent_type: task.agent_type,
+                cancel: &cancel,
+            },
+            &link.job,
+            port,
+            device_name(port, &link.job.device_id).await,
+        );
+        Self {
+            store: task.store,
+            task_pk: task.task_pk,
+            stream: ChildSessionStream::new(
+                task.session_id,
+                task.turn_id,
+                task.agent_type,
+                &link.job.device_id,
+            ),
+            event_queue: task.event_queue,
+            cancel,
+            prompts,
+        }
+    }
+
+    /// Withdraws the prompts still filed once observation ends.
+    pub(crate) async fn finish(mut self) {
+        self.prompts
+            .cancel_all("The remote agent job is no longer waiting")
+            .await;
+        if let Some(closed) = self.stream.close_round() {
+            let _ = self
+                .event_queue
+                .enqueue(closed, Some(EventPriority::Normal))
+                .await;
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl JobPageSink for ResumedTaskSink {
-    async fn on_page(&mut self, _: &RemoteAgentJobSnapshot, _: Vec<ExternalAgentTurnEvent>) {
+    async fn on_page(&mut self, snapshot: &RemoteAgentJobSnapshot, _: Vec<ExternalAgentTurnEvent>) {
         let still_running = match self.store.records_by_task_pks(&[self.task_pk]).await {
             Ok(records) => records.iter().any(|record| {
                 record.status == super::coordination_store::BackgroundTaskStatus::Running
@@ -348,7 +417,23 @@ impl JobPageSink for ResumedTaskSink {
         };
         if !still_running {
             self.cancel.cancel();
+            return;
         }
+        let round_id = if snapshot.pending_permissions.is_empty() {
+            String::new()
+        } else {
+            let (opened, round_id) = self.stream.ensure_round();
+            for event in opened {
+                let _ = self
+                    .event_queue
+                    .enqueue(event, Some(EventPriority::Normal))
+                    .await;
+            }
+            round_id
+        };
+        self.prompts
+            .sync(&snapshot.pending_permissions, round_id)
+            .await;
     }
 }
 
@@ -565,6 +650,15 @@ struct PromptForwarder {
     forwarded: HashMap<String, String>,
 }
 
+/// The child turn whose prompts a [`PromptForwarder`] files.
+struct PromptScope<'a> {
+    session_id: &'a str,
+    turn_id: &'a str,
+    agent_type: &'a str,
+    /// Stops waiting for answers when the turn ends.
+    cancel: &'a CancellationToken,
+}
+
 struct ForwardRoute {
     manager: Arc<openbitfun_agent_runtime::permission::PermissionRequestManager>,
     project_id: String,
@@ -584,7 +678,7 @@ struct ForwardRoute {
 impl PromptForwarder {
     fn new(
         route: Option<&ExternalAgentPermissionRoute>,
-        turn: &RemoteAgentTurn,
+        scope: PromptScope<'_>,
         job: &RemoteAgentJob,
         port: &Arc<dyn RemoteAgentDelegationPort>,
         device_name: String,
@@ -592,7 +686,7 @@ impl PromptForwarder {
         if route.is_none() {
             warn!(
                 "Remote agent prompts cannot be answered from this host: no permission mailbox, agent_type={}",
-                turn.agent_type
+                scope.agent_type
             );
         }
         Self {
@@ -601,14 +695,14 @@ impl PromptForwarder {
                 project_id: route.project_id.clone(),
                 project_path: route.project_path.clone(),
                 delegation: route.delegation.clone(),
-                session_id: turn.session_id.clone(),
-                turn_id: turn.dialog_turn_id.clone(),
-                agent_type: turn.agent_type.clone(),
+                session_id: scope.session_id.to_string(),
+                turn_id: scope.turn_id.to_string(),
+                agent_type: scope.agent_type.to_string(),
                 device_id: job.device_id.clone(),
                 device_name,
                 job: job.clone(),
                 port: port.clone(),
-                cancel: turn.cancel_token.clone(),
+                cancel: scope.cancel.clone(),
             }),
             forwarded: HashMap::new(),
         }
@@ -616,9 +710,15 @@ impl PromptForwarder {
 
     async fn sync(&mut self, pending: &[PermissionRequest], round_id: String) {
         {
-            let Some(route) = self.route.as_ref() else {
+            let Some(route) = self.route.as_mut() else {
                 return;
             };
+            // A host that just started may not have listed its devices yet;
+            // name the device once it has, before the next prompt is filed.
+            if route.device_name == route.device_id && !pending.is_empty() {
+                route.device_name = device_name(&route.port, &route.device_id).await;
+            }
+            let route = &*route;
             let answered: Vec<(String, String)> = self
                 .forwarded
                 .iter()
