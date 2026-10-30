@@ -1,0 +1,112 @@
+---
+id: "F002-03"
+title: "同账号委派给远程设备上的 Claude Code"
+type: "feature"
+status: "draft"
+summary: "目标设备可以开放 acp: 外部智能体；委派任务的 Dispatch 工作进程用目标设备自己的登录运行 Claude Code，权限请求进入目标端权限邮箱，目标端声明 external_agent_executor_v1。"
+source: "docs/superplan/human/features.md"
+created: "2026-10-30"
+order: 3
+depends_on: ["F001-04", "F002-02"]
+parent: "F002"
+---
+
+# 同账号委派给远程设备上的 Claude Code Plan
+
+**Goal:** 助理能把任务交给同账号另一台设备上的 Claude Code，任务在那台设备上用它自己的登录执行，结果回到发起会话。
+
+**Scope:**
+- **开放外部智能体**：开放清单可以选择 `acp:<client_id>`。开放前提示：
+  - 委派会消耗目标主人的 Claude 额度；
+  - 订阅登录只用于个人日常使用；
+  - 建议使用 API Key。
+
+  外部智能体在目标端未启用或不可运行时不能开放，已开放的条目在目录中显示不可用及原因。
+- **能力声明**：目标端只在 ACP 执行器可用时声明 `external_agent_executor_v1`；发起方只在目标声明了该能力时显示远程外部智能体。
+- **工作进程执行**：只有带委派、且开放项为 `acp:` 的 Dispatch 任务，工作进程才注册真实的 ACP 执行器；其他 Dispatch 任务保持 F001-04 的明确不支持。
+- **权限**：Claude Code 的权限请求按 F001-04 的路由与有效策略判定。需要询问的请求进入 Dispatch 的 `remote` 审批邮箱，`status` 中可见，`answer` 回答后继续；工作进程无人应答时不会挂起。
+- **凭据**：凭据只在目标设备使用，任何请求、事件或结果中都不携带 Claude 凭据。
+- **结果**：与 F002-02 相同；编码任务的改动以分支形式带回。
+
+**Non-Goals:**
+- 不做跨账号授权外部智能体（F002-06）。
+- 不在普通（非委派）Dispatch 任务中开放外部智能体。
+- 不新增 Claude Agent SDK 执行器。
+
+**Architecture:**
+- 工作进程按任务决定执行器：委派到 `acp:` 时注册 `AcpExternalAgentExecutor`，否则沿用 `UnsupportedExternalAgentExecutor`。这个决定在初始化前一次确定，不在运行中切换。
+- 权限请求复用内核的权限管理器。Dispatch 工作进程把需要询问的请求持久化为现有的安全展示 DTO，来源类型为 Extension，展示时标明来自外部智能体。
+- 跨版本：没有 `external_agent_executor_v1` 的目标不提供远程外部智能体；目录中的 `acp:` 条目只在该能力存在时下发。
+
+**Baseline:**
+- `src/apps/cli/src/dispatch/worker.rs` 在初始化前调用 `disable_external_agents_for_process`，工作进程中的外部智能体一律返回 `UnsupportedContext`（F001-04）。
+- 外部智能体的权限请求经 `ExternalAgentPermissionRoute` 与有效策略判定（`external_agent_turn.rs`），已有自动批准与询问两条路径。
+- Dispatch `remote` 审批策略会持久化待审批请求，并通过 `status` 与 `answer` 处理。
+
+**Exit Criteria:**
+- 目标设备开放 Claude Code 前出现额度与条款提示，确认后才开放。
+- 从另一台同账号设备委派给该 Claude Code，任务在目标设备上运行，回答回到发起会话。
+- Claude Code 的写文件或执行命令请求出现在发起方的「等待目标设备审批」中，回答后继续；拒绝后 Claude Code 收到拒绝。
+- 目标设备未启用 Claude Code、或目标版本没有声明能力时，发起方看不到该条目；强行委派时明确失败。
+- 普通 Dispatch 任务中的外部智能体仍明确报不支持。
+
+## Task 1: 工作进程按委派启用外部智能体并声明能力
+
+**Outcome:** 委派到 `acp:` 开放项的工作进程能运行 Claude Code，目标端在条件满足时声明 `external_agent_executor_v1`。
+
+**Files:**
+- Modify: `src/apps/cli/src/dispatch/worker.rs`
+- Modify: `src/apps/cli/src/agent/agentic_system.rs`
+- Modify: `src/apps/cli/src/dispatch/mod.rs`
+- Modify: `src/crates/services/services-core/src/dispatch_contract.rs`
+- Modify: `src/web-ui/src/features/dispatch/dispatch.contract.test.ts`
+- Test: `src/apps/cli/src/dispatch/mod.rs`
+
+**Verification:**
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun agentic_system`
+- `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
+
+- [ ] 只有委派到 `acp:` 的任务启用执行器，能力只在执行器可用时声明
+
+## Task 2: 开放外部智能体与提示
+
+**Outcome:** 开放清单可以选择外部智能体，开放前给出额度与条款提示，目录显示其可用状态。
+
+**Files:**
+- Modify: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+- Modify: `src/web-ui/src/infrastructure/config/components/AgentDelegationConfig.tsx`
+- Modify: `src/apps/cli/src/delegation_cli.rs`
+- Modify: `src/web-ui/src/locales/*/` 相关文案
+- Test: `src/crates/assembly/core/src/service/dispatch/delegation.rs`
+
+**Verification:**
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::dispatch::delegation`
+- `pnpm --dir src/web-ui run test:run <changed test files>`
+- `pnpm run i18n:audit`
+
+- [ ] 外部智能体的开放需要确认，不可用时不能开放
+
+## Task 3: 工作进程中的权限请求进入审批邮箱，并实测
+
+**Outcome:** Claude Code 在工作进程中的权限请求能经 Dispatch 审批邮箱回答，并在两台同账号设备上实测。
+
+**Files:**
+- Modify: `src/apps/cli/src/dispatch/permissions.rs`
+- Modify: `src/crates/assembly/core/src/agentic/coordination/external_agent_turn.rs`
+- Modify: `docs/superplan/plans/features/F002/03-remote-claude-code.md`
+- Test: `src/apps/cli/src/dispatch/permissions.rs`
+
+**Verification:**
+- `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`
+- `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib external_agent`
+- 手动：两台同账号设备实测纯消息、编码、审批通过与拒绝、取消；确认目标端使用自己的登录，结果记录在本计划中
+
+- [ ] 审批往返有测试，两台设备的实测结果已记录
+
+## References
+- `docs/superplan/rfcs/F002.md`
+- `docs/superplan/rfcs/F001.md`
+- `docs/superplan/plans/features/F001/04-remote-scenarios.md`
+- `docs/superplan/plans/features/F002/02-same-account-delegation.md`
+- `docs/architecture/detached-task-dispatch.md`
