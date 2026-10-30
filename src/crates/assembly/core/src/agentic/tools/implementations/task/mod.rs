@@ -80,6 +80,13 @@ impl Default for AgentExecutionTool {
     }
 }
 
+/// The executor and parent permission ceiling that decide which external
+/// agents a parent may be offered.
+pub(crate) struct ExternalAgentCatalog {
+    pub(crate) executor: std::sync::Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
+    pub(crate) parent_ceiling: openbitfun_runtime_ports::PermissionRuntimeCeiling,
+}
+
 impl AgentExecutionTool {
     pub(crate) fn new() -> Self {
         Self
@@ -147,22 +154,53 @@ impl AgentExecutionTool {
         context: &ToolUseContext,
         agents: Vec<AgentInfo>,
     ) -> Vec<AgentInfo> {
-        let Some(executor) =
-            get_global_coordinator().and_then(|coordinator| coordinator.external_agent_executor())
-        else {
-            return agents;
-        };
-        let Ok(parent_ceiling) = Self::derive_parent_permission_runtime_ceiling(context).await
-        else {
+        let catalog = Self::external_agent_catalog(context).await;
+        Self::append_external_agents_from(catalog.as_ref(), context, agents).await
+    }
+
+    /// Resolves the host executor and the parent's permission ceiling that
+    /// gate external agent listings for `context`.
+    pub(crate) async fn external_agent_catalog(
+        context: &ToolUseContext,
+    ) -> Option<ExternalAgentCatalog> {
+        let executor = get_global_coordinator()
+            .and_then(|coordinator| coordinator.external_agent_executor())?;
+        match Self::derive_parent_permission_runtime_ceiling(context).await {
+            Ok(parent_ceiling) => Some(ExternalAgentCatalog {
+                executor,
+                parent_ceiling,
+            }),
+            Err(error) => {
+                debug!(
+                    "External agents omitted from catalog: failed to derive parent permission ceiling: {}",
+                    error
+                );
+                None
+            }
+        }
+    }
+
+    pub(crate) async fn append_external_agents_from(
+        catalog: Option<&ExternalAgentCatalog>,
+        context: &ToolUseContext,
+        agents: Vec<AgentInfo>,
+    ) -> Vec<AgentInfo> {
+        let Some(catalog) = catalog else {
             return agents;
         };
         let parent_is_swarm =
             context.delegation_policy().scope == openbitfun_runtime_ports::DelegationScope::Swarm;
-        if Self::external_agent_parent_refusal(context, &parent_ceiling, parent_is_swarm).is_some()
+        if let Some(reason) =
+            Self::external_agent_parent_refusal(context, &catalog.parent_ceiling, parent_is_swarm)
         {
+            debug!(
+                "External agents omitted from catalog: agent_type={:?}, reason={}",
+                context.agent_type, reason
+            );
             return agents;
         }
-        let descriptors = executor
+        let descriptors = catalog
+            .executor
             .list_agents(
                 openbitfun_runtime_ports::ExternalAgentListing::Configured,
                 context

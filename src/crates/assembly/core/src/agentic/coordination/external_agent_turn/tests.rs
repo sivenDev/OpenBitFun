@@ -675,6 +675,7 @@ fn prompting_turn(
             parent_tool_call_id: "task-call".to_string(),
             subagent_type: "acp:claude-code".to_string(),
         }),
+        auto_approve: false,
     });
     turn
 }
@@ -760,4 +761,16 @@ fn approvals_that_edit_input_are_not_treated_as_approval() {
         permission_action(ExternalAgentPermissionKind::Other),
         "custom_tool"
     );
+}
+
+#[tokio::test]
+async fn auto_approve_sessions_answer_prompts_without_asking() {
+    let manager = test_permission_manager();
+    let mut turn = prompting_turn(manager.clone(), CancellationToken::new());
+    if let Some(route) = turn.permissions.as_mut() {
+        route.auto_approve = true;
+    }
+    let result = run_external_agent_turn(turn).await.expect("turn completes");
+    assert_eq!(final_text(&result), "AllowOnce");
+    assert!(manager.pending_requests().is_empty());
 }

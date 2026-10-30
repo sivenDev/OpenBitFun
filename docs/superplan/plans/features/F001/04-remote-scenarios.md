@@ -150,7 +150,16 @@ parent: "F001"
 **Verification:**
 - 手动：在 SSH 远程工作区、手机端远程控制、Peer 模式下各执行一次后台委派与取消，记录结果；在 Dispatch 任务中验证明确失败的提示
 
-- [ ] 四种场景的实测结果已记录
+- [ ] 四种场景的实测结果已记录（Dispatch 与本机基线已实测；SSH、手机端、Peer 待实测）
+
+**实测记录（2026-10-29，本机 macOS，`target/debug/openbitfun`，真实 Claude Code `claude-agent-acp@0.99.0`）：**
+- 本机基线：`exec` 中 `AgentSpawn(acp:claude-code)` 在后台启动子会话，Claude Code 用自己的 `Read` 工具读出测试文件内容，结果经 `AgentWait` 回到父会话。
+- 取消：父会话停 15 秒后 `AgentControl interrupt`，返回 `interrupted_background_tasks: 1`；日志中向 Claude Code 会话发送了 ACP `session/cancel`；`AgentWait` 返回 `outcome: cancelled`。
+- 权限往返（隔离配置目录 `OPENBITFUN_USER_ROOT`，claude-code 设为 `ask`）：Claude Code 的 Write 请求进入内核权限管理器，动作为 `edit`，带委派上下文（`acp:claude-code`、父会话、父任务）。`exec` 不带 `--auto` 时由 CLI 拒绝并报 `action-required`，文件未写入；带 `--auto` 时按会话自动批准，文件写入。
+- Detached Dispatch：真实提交任务，`AgentSpawn(acp:claude-code)` 立即失败并给出「External agents are not available in Detached Dispatch jobs…」，任务本身正常结束，没有启动 Claude Code 进程。
+- 每次运行后都没有残留的 `claude-agent-acp` 进程。
+- 实测发现并修复两处缺陷：一是模型实际看到的智能体列表来自每轮快照（`skill_agent_snapshot.rs`），之前没有加入 `acp:` 条目，模型因此看不到 Claude Code；现在与 `AgentSpawn` 目录共用同一道准入检查。二是自动批准模式的会话中，外部智能体的权限请求没有人回答，会一直挂起；现在按会话权限模式自动批准。
+- 未实测：SSH 远程工作区（本机没有 sshd，Docker 未运行；`~/.ssh/config` 中的主机是用户的真实服务器，未经同意不使用）；手机端远程控制与 Peer 模式（需要 relay 与第二台设备）。这三项目前只有单元测试证据。
 
 ## References
 - `docs/superplan/rfcs/F001.md`

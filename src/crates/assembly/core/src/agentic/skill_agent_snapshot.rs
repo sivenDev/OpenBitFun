@@ -2,7 +2,9 @@ use crate::agentic::agents::{
     get_agent_registry, render_direct_tool_listing_body, PromptBuilder, SubagentListScope,
     SubagentQueryContext, ToolListingSections, UserContextPolicy,
 };
+use crate::agentic::tools::framework::ToolUseContext;
 use crate::agentic::tools::implementations::skills::{get_skill_registry, SkillInfo};
+use crate::agentic::tools::implementations::task::{AgentExecutionTool, ExternalAgentCatalog};
 use crate::agentic::tools::manifest_resolver::{resolve_tool_manifest, ResolvedToolManifest};
 use crate::agentic::tools::product_runtime::GetToolSpecTool;
 use crate::agentic::tools::tool_context_runtime;
@@ -80,6 +82,7 @@ pub async fn resolve_skill_agent_snapshot(
         agent_type,
         &manifest,
         runtime_tool_restrictions,
+        &tool_description_context,
     )
     .await;
     let tool_listing_sections = build_tool_listing_sections(&manifest, &snapshot);
@@ -96,6 +99,7 @@ async fn build_skill_agent_snapshot(
     agent_type: &str,
     manifest: &ResolvedToolManifest,
     runtime_tool_restrictions: &ToolRuntimeRestrictions,
+    tool_context: &ToolUseContext,
 ) -> TurnSkillAgentSnapshot {
     let has_tool = |tool_name: &str| {
         manifest
@@ -117,8 +121,15 @@ async fn build_skill_agent_snapshot(
     }
 
     if has_tool("Task") || has_tool("AgentSpawn") {
-        snapshot.subagents =
-            load_subagent_entries(workspace, Some(agent_type), runtime_tool_restrictions).await;
+        snapshot.subagents = load_subagent_entries(
+            workspace,
+            tool_context,
+            runtime_tool_restrictions,
+            AgentExecutionTool::external_agent_catalog(tool_context)
+                .await
+                .as_ref(),
+        )
+        .await;
     }
 
     snapshot.deferred_tools = Some(deferred_tool_entries(manifest));
@@ -237,8 +248,9 @@ fn skill_snapshot_entry_from_skill_info(skill: SkillInfo) -> SkillSnapshotEntry 
 
 async fn load_subagent_entries(
     workspace: Option<&WorkspaceBinding>,
-    agent_type: Option<&str>,
+    tool_context: &ToolUseContext,
     runtime_tool_restrictions: &ToolRuntimeRestrictions,
+    external_agents: Option<&ExternalAgentCatalog>,
 ) -> Vec<AgentSnapshotEntry> {
     let registry = get_agent_registry();
     let workspace_id = workspace
@@ -246,13 +258,18 @@ async fn load_subagent_entries(
         .and_then(|workspace| workspace.workspace_id.as_deref());
     let agents = registry
         .get_subagents_for_query(&SubagentQueryContext {
-            parent_agent_type: agent_type,
+            parent_agent_type: tool_context.agent_type.as_deref(),
             workspace_id,
             list_scope: SubagentListScope::TaskVisible,
             include_disabled: false,
             external_sources_supported: false,
         })
         .await;
+    // Same gate as the AgentSpawn catalog, so the listing never offers an
+    // external agent that admission would refuse.
+    let agents =
+        AgentExecutionTool::append_external_agents_from(external_agents, tool_context, agents)
+            .await;
 
     agents
         .into_iter()
@@ -298,6 +315,7 @@ pub async fn build_embedded_user_context_reminder(
 mod tests {
     use super::{build_tool_listing_sections, load_subagent_entries};
     use crate::agentic::skill_agent_snapshot::TurnSkillAgentSnapshot;
+    use crate::agentic::tools::framework::ToolUseContext;
     use crate::agentic::tools::manifest_resolver::ResolvedToolManifest;
     use crate::agentic::tools::ToolRuntimeRestrictions;
     use crate::util::types::ToolDefinition;
@@ -345,7 +363,8 @@ mod tests {
             .denied_tool_names
             .insert("ControlHub".to_string());
 
-        let agents = load_subagent_entries(None, Some("Claw"), &restrictions).await;
+        let context = description_context("Claw", &restrictions);
+        let agents = load_subagent_entries(None, &context, &restrictions, None).await;
         let computer_use = agents
             .iter()
             .find(|agent| agent.id == "ComputerUse")
@@ -355,5 +374,101 @@ mod tests {
             .default_tools
             .iter()
             .any(|tool_name| !restrictions.is_tool_allowed(tool_name)));
+    }
+
+    fn description_context(
+        agent_type: &str,
+        restrictions: &ToolRuntimeRestrictions,
+    ) -> ToolUseContext {
+        crate::agentic::tools::tool_context_runtime::build_tool_description_context(
+            agent_type,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &std::collections::HashMap::new(),
+            restrictions,
+        )
+    }
+
+    struct ListedExternalAgent;
+
+    #[async_trait::async_trait]
+    impl openbitfun_runtime_ports::ExternalAgentExecutor for ListedExternalAgent {
+        async fn availability(
+            &self,
+            _client_id: &str,
+            _context: &openbitfun_runtime_ports::ExternalAgentContext,
+        ) -> openbitfun_runtime_ports::ExternalAgentAvailability {
+            openbitfun_runtime_ports::ExternalAgentAvailability::Available
+        }
+
+        async fn list_agents(
+            &self,
+            _listing: openbitfun_runtime_ports::ExternalAgentListing,
+            _remote_connection_id: Option<&str>,
+        ) -> Vec<openbitfun_runtime_ports::ExternalAgentDescriptor> {
+            vec![openbitfun_runtime_ports::ExternalAgentDescriptor {
+                client_id: "claude-code".to_string(),
+                name: "Claude Code".to_string(),
+                description: None,
+                best_for: None,
+                readonly: false,
+                availability: openbitfun_runtime_ports::ExternalAgentAvailability::Available,
+            }]
+        }
+
+        async fn run_turn(
+            &self,
+            _request: openbitfun_runtime_ports::ExternalAgentTurnRequest,
+            _sink: &dyn openbitfun_runtime_ports::ExternalAgentEventSink,
+        ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::ExternalAgentTurnOutcome>
+        {
+            unreachable!("listing never runs a turn")
+        }
+
+        async fn cancel(
+            &self,
+            _client_id: &str,
+            _openbitfun_session_id: &str,
+        ) -> openbitfun_runtime_ports::PortResult<bool> {
+            Ok(false)
+        }
+
+        async fn close(
+            &self,
+            _client_id: &str,
+            _openbitfun_session_id: &str,
+        ) -> openbitfun_runtime_ports::PortResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn subagent_projection_lists_admissible_external_agents() {
+        let restrictions = ToolRuntimeRestrictions::default();
+        let catalog = crate::agentic::tools::implementations::task::ExternalAgentCatalog {
+            executor: std::sync::Arc::new(ListedExternalAgent),
+            parent_ceiling: Default::default(),
+        };
+        let executor = &catalog;
+
+        let standard = description_context("Standard", &restrictions);
+        let agents = load_subagent_entries(None, &standard, &restrictions, Some(executor)).await;
+        assert!(
+            agents.iter().any(|agent| agent.id == "acp:claude-code"),
+            "the turn listing must offer the external agents AgentSpawn admits"
+        );
+
+        let without_executor = load_subagent_entries(None, &standard, &restrictions, None).await;
+        assert!(!without_executor
+            .iter()
+            .any(|agent| agent.id.starts_with("acp:")));
+
+        let review = description_context("DeepReview", &restrictions);
+        let agents = load_subagent_entries(None, &review, &restrictions, Some(executor)).await;
+        assert!(!agents.iter().any(|agent| agent.id.starts_with("acp:")));
     }
 }

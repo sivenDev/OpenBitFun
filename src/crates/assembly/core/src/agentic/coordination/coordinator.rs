@@ -11176,10 +11176,19 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     session.config.is_remote_workspace(),
                     execution_context.workspace.as_ref(),
                 );
+                let global_config: crate::service::config::types::GlobalConfig =
+                    match GlobalConfigManager::get_service().await {
+                        Ok(service) => service.get_config(None).await.unwrap_or_default(),
+                        Err(_) => Default::default(),
+                    };
                 let permissions = ExternalAgentPermissionRoute::for_workspace(
                     tool_pipeline.permission_request_manager(),
                     execution_context.workspace.as_ref(),
                     execution_context.permission_delegation.clone(),
+                    crate::agentic::permission_policy::permission_mode_from_context(
+                        &global_config,
+                        &execution_context.context,
+                    ),
                 );
                 drop((execution_engine, initial_messages, execution_context));
                 match turn_context {

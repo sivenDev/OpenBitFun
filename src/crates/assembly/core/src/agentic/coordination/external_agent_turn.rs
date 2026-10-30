@@ -214,6 +214,9 @@ pub(crate) struct ExternalAgentPermissionRoute {
     pub(crate) project_id: String,
     pub(crate) project_path: String,
     pub(crate) delegation: Option<PermissionDelegationContext>,
+    /// The session's permission mode answers on its own (Auto or Full
+    /// Access), as it does for native tools; the request is still audited.
+    pub(crate) auto_approve: bool,
 }
 
 impl ExternalAgentPermissionRoute {
@@ -221,6 +224,7 @@ impl ExternalAgentPermissionRoute {
         manager: Option<Arc<PermissionRequestManager>>,
         workspace: Option<&WorkspaceBinding>,
         delegation: Option<PermissionDelegationContext>,
+        permission_mode: openbitfun_runtime_ports::PermissionMode,
     ) -> Option<Self> {
         let manager = manager?;
         let workspace = workspace?;
@@ -244,6 +248,11 @@ impl ExternalAgentPermissionRoute {
                 .logical_workspace_path()
                 .to_string(),
             delegation,
+            auto_approve: matches!(
+                permission_mode,
+                openbitfun_runtime_ports::PermissionMode::AutoApprove
+                    | openbitfun_runtime_ports::PermissionMode::FullAccess
+            ),
         })
     }
 }
@@ -348,30 +357,45 @@ impl ExternalAgentEventSink for EventQueueSink {
             "externalAgent".into(),
             serde_json::Value::String(agent_type.clone()),
         );
+        let request = PermissionRequest {
+            request_id: request_id.clone(),
+            round_id,
+            order: 0,
+            tool_call_id: request.tool_call_id,
+            project_path: Some(route.project_path.clone()),
+            project_id: route.project_id.clone(),
+            session_id,
+            agent_id: agent_type.clone(),
+            action: permission_action(request.kind).to_string(),
+            resources,
+            save_resources: Vec::new(),
+            source: PermissionRequestSource {
+                kind: PermissionRequestSourceKind::Extension,
+                identity: agent_type,
+            },
+            delegation: route.delegation.clone(),
+            display_metadata,
+        };
+        if route.auto_approve {
+            route
+                .manager
+                .register_batch_non_interactive_for_turn(vec![request], turn_id)
+                .await
+                .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
+            route
+                .manager
+                .reply(
+                    &request_id,
+                    PermissionReply::Once,
+                    openbitfun_runtime_ports::PermissionReplySource::AutoApprove,
+                )
+                .await
+                .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
+            return Ok(ExternalAgentPermissionDecision::AllowOnce);
+        }
         let mut pending = route
             .manager
-            .register_batch_for_turn(
-                vec![PermissionRequest {
-                    request_id: request_id.clone(),
-                    round_id,
-                    order: 0,
-                    tool_call_id: request.tool_call_id,
-                    project_path: Some(route.project_path.clone()),
-                    project_id: route.project_id.clone(),
-                    session_id,
-                    agent_id: agent_type.clone(),
-                    action: permission_action(request.kind).to_string(),
-                    resources,
-                    save_resources: Vec::new(),
-                    source: PermissionRequestSource {
-                        kind: PermissionRequestSourceKind::Extension,
-                        identity: agent_type,
-                    },
-                    delegation: route.delegation.clone(),
-                    display_metadata,
-                }],
-                turn_id,
-            )
+            .register_batch_for_turn(vec![request], turn_id)
             .await
             .map_err(|error| PortError::new(PortErrorKind::Backend, error.to_string()))?;
         let pending = pending
