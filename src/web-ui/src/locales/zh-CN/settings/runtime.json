@@ -136,7 +136,22 @@
     "workspaceDescription": "纯消息任务运行的已有目录的绝对路径。留空时，为每个发起设备单独创建空目录。",
     "summary": "{{agent}} · {{tasks}} · {{devices}}",
     "save": "开放",
-    "cancel": "取消"
+    "cancel": "取消",
+    "otherAccounts": "其他账号",
+    "grantConnection": "授权给其他账号",
+    "grantTitle": "授权给",
+    "grantDescription": "已配对的其他账号设备可以把任务委派给这个智能体。它在本设备上的操作只由你审批。",
+    "noConnections": "没有与其他账号的有效连接。请先在「与其他账号的连接」中配对设备。",
+    "connectionLabel": "{{name}}（{{user}}），{{device}}",
+    "connectionMissing": "连接 {{id}}，本设备上已找不到",
+    "grantedTo": "已授权给 {{peer}}",
+    "withdraw": "收回",
+    "grantUsageNotice": "来自对方账号的任务会用本设备自己的登录或凭据运行这个外部智能体，并消耗你在其服务商处的额度。",
+    "grantUsageConfirm": "我已了解，并要把这个智能体授权给对方账号",
+    "grant": "授权",
+    "granted": "已授权给对方账号",
+    "grantFailed": "授权失败",
+    "withdrawFailed": "收回授权失败"
   },
   "connections": {
     "sectionTitle": "与其他账号的连接",

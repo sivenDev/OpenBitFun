@@ -75,7 +75,19 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun dispatch::`
 - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
 
-- [ ] 授权、目录过滤与提交校验按连接身份执行，外部智能体需要显式确认
+- [x] 授权、目录过滤与提交校验按连接身份执行，外部智能体需要显式确认
+  - 实现：
+    - 开放项新增 `connections`（逐项授权，默认为空，旧条目照常读取）；只经 `grant_connection` / `revoke_connection` 管理，重新开放同一智能体保留授权，换成别的智能体时清空。外部智能体授权给连接需要再次确认使用提示。同账号设备授权与连接授权互不通用。
+    - 连接请求由宿主绑定 `__sourceConnectionId`（只取自认证过的连接，并去掉两种自报来源）；连接只能发 probe、catalog、带委派的 submit，以及对自己任务的 status、cancel、query、list、continue、append。`answer` 一律拒绝；工作区相关动词先不开放，编码任务在 Task 2 中按连接记录工作区归属后再开放。
+    - 目标端在动词执行前统一检查：任务必须由该连接提交（否则按不存在处理）；query 只允许用量报告，不能读文件；continue 不能改审批策略和模型。提交时清除发起方指定的模型与推理强度，由目标端决定。
+    - 连接的 probe 只回答能力与是否可运行，不返回模型名单、目录与诊断，也不能检查目标端路径。
+    - 目标端声明 `cross_account_delegation_v1`。CLI 守护进程与桌面端都把连接请求交给分发执行器，不再一律拒绝；桌面端调用的旧版 CLI 会因不认识该字段而明确报错。
+    - 管理入口：CLI `delegation grant-connection` / `revoke-connection`，`delegation list` 显示授权；桌面命令 `delegation_grant_connection` / `delegation_revoke_connection`（远程操作登记为 ControllerLocal）；设置页可按开放项授权给可用连接、显示和收回授权，外部智能体需勾选确认，切换账号后需要重新确认。只能授权给本设备保存且未撤销的连接。
+  - 证据：
+    - 核心 `service::delegation` 10 项通过（含逐项授权、与设备授权分离、外部智能体确认、重新开放保留授权）；`connection_rpc` 12 项通过（含可授权连接检查）；`dispatch_contract` 8 项通过（含连接绑定与命令限制）；
+    - CLI `dispatch::` 110 项通过，其中 `dispatch::connection` 覆盖任务归属、读文件与改审批/模型的拒绝、动词限制，目录与准入测试覆盖连接授权和独立的消息目录；
+    - CLI 合约测试 `devices_of_different_accounts_pair_and_call_over_a_connection` 用真实守护进程验证：未授权时目录为空（即使对本账号全部设备开放）；probe 带新能力且不含模型名单，不能检查路径；`delegation grant-connection` 后目录可见，收回后为空；`answer`、他人任务、工作区动词均被拒绝。同账号委派的合约测试仍通过；
+    - `AgentDelegationConfig.test.tsx` 9 项、`dispatch.contract.test.ts` 12 项通过；`type-check:web`、`i18n:audit`（0 警告）、`capabilities:check` 通过；`remote_surface` 20 项通过；桌面 `cargo check -p openbitfun-desktop --lib` 通过。
 
 ## Task 2: 发起方经连接委派
 

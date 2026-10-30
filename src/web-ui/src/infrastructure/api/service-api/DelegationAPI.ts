@@ -15,6 +15,13 @@ export interface OpenAgent {
   taskKinds: DelegationTaskKind[];
   messageWorkspace?: string;
   sameAccountDevices: string[];
+  /** Cross-account connections granted one by one; absent when none. */
+  connections?: ConnectionGrant[];
+}
+
+/** One cross-account connection an open agent is granted to. */
+export interface ConnectionGrant {
+  connectionId: string;
 }
 
 /** One stored entry; `agent` is absent when this build cannot read it. */
@@ -63,6 +70,26 @@ class DelegationAPI {
       return await api.invoke<OpenAgent>('delegation_open_agent', { request });
     } catch (error) {
       throw createTauriCommandError('delegation_open_agent', error);
+    }
+  }
+
+  /** Grants an open agent to a paired device of another account. */
+  async grantConnection(id: string, connectionId: string, usageConfirmed: boolean): Promise<OpenAgent> {
+    const request = { id, connectionId, usageConfirmed };
+    try {
+      return await api.invoke<OpenAgent>('delegation_grant_connection', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_grant_connection', error, request);
+    }
+  }
+
+  /** Withdraws an open agent from a connection. */
+  async revokeConnection(id: string, connectionId: string): Promise<boolean> {
+    const request = { id, connectionId };
+    try {
+      return await api.invoke<boolean>('delegation_revoke_connection', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_revoke_connection', error, request);
     }
   }
 

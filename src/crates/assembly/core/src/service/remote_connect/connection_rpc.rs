@@ -417,6 +417,26 @@ impl IncomingConnectionRequest {
     }
 }
 
+/// The stored connection `connection_id`, if its owner may grant agents to
+/// it: paired with this device and not revoked. A pending connection may be
+/// granted; calls over it are refused until it becomes active.
+pub fn grantable_connection(
+    store: &ConnectionStore,
+    connection_id: &str,
+) -> Result<connections::ConnectionRecord> {
+    let stored = store.load()?;
+    if stored.file_unreadable() {
+        bail!("this device's connections file cannot be read");
+    }
+    let Some(record) = stored.find(connection_id) else {
+        bail!("connection '{connection_id}' does not exist on this device");
+    };
+    if record.status == "revoked" {
+        bail!("connection '{connection_id}' is revoked");
+    }
+    Ok(record.clone())
+}
+
 /// Fails unless the relay can route between accounts.
 pub fn require_connection_support(capabilities: &[String]) -> Result<()> {
     if ConnectionRpc::relay_supports_connections(capabilities) {

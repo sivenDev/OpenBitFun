@@ -1,3 +1,4 @@
+mod connection;
 mod delegation;
 mod permissions;
 pub(crate) mod protocol;
@@ -67,6 +68,14 @@ async fn run_dispatch_verb_canonical(
     verb: &str,
     input: serde_json::Value,
 ) -> Result<serde_json::Value> {
+    if let Some(connection_id) = connection::source_connection(&input) {
+        connection::admit_call(
+            &DispatchStore::open_default()?,
+            verb,
+            &input,
+            &connection_id,
+        )?;
+    }
     match verb {
         "probe" => {
             serde_json::to_value(probe(parse(input)?).await?).context("encode probe response")
@@ -80,8 +89,9 @@ async fn run_dispatch_verb_canonical(
         "status" => serde_json::to_value(status(parse(input)?)?).context("encode status response"),
         "cancel" => serde_json::to_value(cancel(parse(input)?)?).context("encode cancel response"),
         "list" => {
-            let _: DispatchListRequest = parse(input)?;
-            serde_json::to_value(list()?).context("encode dispatch job list")
+            let request: DispatchListRequest = parse(input)?;
+            serde_json::to_value(list(request.source_connection_id.as_deref())?)
+                .context("encode dispatch job list")
         }
         "answer" => {
             serde_json::to_value(answer(parse(input)?)?).context("encode permission answer")
@@ -164,16 +174,18 @@ async fn catalog_from(
     use openbitfun_services_core::dispatch_contract::{
         DispatchCatalogAgent, DispatchCatalogResponse,
     };
-    let Some(device_id) = request
+    let device_id = request
         .source_device_id
-        .filter(|device_id| !device_id.trim().is_empty())
-    else {
-        bail!("dispatch catalog is answered only for a requesting device");
-    };
-    let agents = store
-        .granted_to_device(&device_id)
-        .await
-        .context("read agents opened to other devices")?;
+        .filter(|device_id| !device_id.trim().is_empty());
+    let connection_id = request
+        .source_connection_id
+        .filter(|connection_id| !connection_id.trim().is_empty());
+    let agents = match (device_id, connection_id) {
+        (Some(device_id), None) => store.granted_to_device(&device_id).await,
+        (None, Some(connection_id)) => store.granted_to_connection(&connection_id).await,
+        _ => bail!("dispatch catalog is answered only for a requesting device or connection"),
+    }
+    .context("read agents opened to other devices")?;
     let mut entries = Vec::with_capacity(agents.len());
     for agent in agents {
         let unavailable = external_agent_unavailable(&agent.agent_type, executor).await;
@@ -258,6 +270,11 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
         openbitfun_services_core::dispatch_contract::DISPATCH_AGENT_DELEGATION_CAPABILITY
             .to_string(),
     );
+    // Connection grants, the connection gate, and connection-bound jobs.
+    capabilities.push(
+        openbitfun_services_core::dispatch_contract::DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY
+            .to_string(),
+    );
     // Delegated jobs run opened `acp:` agents through this CLI's ACP client.
     if crate::agent::agentic_system::external_agent_executor()
         .await
@@ -278,6 +295,22 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
                 .to_string(),
         );
     }
+    let model_configured = readiness.model_configured();
+    let mut readiness = readiness;
+    if request.source_connection_id.is_some() {
+        // Another account learns whether jobs can run, not which models this
+        // device configures or why one is missing.
+        readiness.available_models.clear();
+        let catalog = &mut readiness.model_catalog;
+        catalog.models.clear();
+        catalog.provider_catalog = Default::default();
+        catalog.models_dev_reasoning_catalog = None;
+        catalog.default_models = Default::default();
+        catalog.session_model_id = None;
+        catalog.session_reasoning_preset = None;
+        readiness.default_model = None;
+        readiness.diagnostic = None;
+    }
     Ok(DispatchProbeResponse {
         product_id: openbitfun_services_core::product_identity::product_id().to_string(),
         data_namespace: openbitfun_services_core::product_identity::data_namespace().to_string(),
@@ -286,7 +319,7 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         capabilities,
-        model_configured: readiness.model_configured(),
+        model_configured,
         available_models: readiness.available_models,
         model_catalog: readiness.model_catalog,
         default_model: readiness.default_model,
@@ -713,13 +746,38 @@ fn cancel_in_store_with_process_checks(
     })
 }
 
-fn list() -> Result<Vec<DispatchJobListEntry>> {
+/// Jobs on this device; for a connection, only the jobs it submitted.
+fn list(connection_id: Option<&str>) -> Result<Vec<DispatchJobListEntry>> {
     let store = DispatchStore::open_default()?;
-    let initial = store.list_jobs()?;
-    for job in &initial {
-        let _ = reconcile_worker_liveness(&store, &job.job_id);
+    list_in_store(&store, connection_id)
+}
+
+fn list_in_store(
+    store: &DispatchStore,
+    connection_id: Option<&str>,
+) -> Result<Vec<DispatchJobListEntry>> {
+    for job in visible_jobs(store, store.list_jobs()?, connection_id) {
+        let _ = reconcile_worker_liveness(store, &job.job_id);
     }
-    store.list_jobs()
+    Ok(visible_jobs(store, store.list_jobs()?, connection_id))
+}
+
+/// The jobs a caller may see: all for this device, its own for a connection.
+fn visible_jobs(
+    store: &DispatchStore,
+    jobs: Vec<DispatchJobListEntry>,
+    connection_id: Option<&str>,
+) -> Vec<DispatchJobListEntry> {
+    let Some(connection_id) = connection_id else {
+        return jobs;
+    };
+    jobs.into_iter()
+        .filter(|job| {
+            store
+                .load_job(&job.job_id)
+                .is_ok_and(|record| connection::owns(&record, connection_id))
+        })
+        .collect()
 }
 
 fn reconcile_worker_liveness(store: &DispatchStore, job_id: &str) -> Result<DispatchStateRecord> {
@@ -1241,6 +1299,7 @@ mod tests {
                 task_kinds: vec![DelegationTaskKind::Message],
                 message_workspace: None,
                 same_account_devices: vec!["laptop".to_string()],
+                connections: Vec::new(),
             };
             // Opened while it could run; the device later disabled one.
             store
@@ -1250,6 +1309,7 @@ mod tests {
         }
         let request = DispatchCatalogRequest {
             source_device_id: Some("laptop".to_string()),
+            source_connection_id: None,
         };
 
         let catalog = catalog_from(&store, request.clone(), Some(&Clients(&["codex"])))
@@ -1310,6 +1370,7 @@ mod tests {
             task_kinds: vec![DelegationTaskKind::Message],
             message_workspace: Some("/srv/private".to_string()),
             same_account_devices: devices.iter().map(|device| device.to_string()).collect(),
+            connections: Vec::new(),
         };
         store.open(open("for-laptop", &["laptop"])).await.unwrap();
         store
@@ -1346,6 +1407,76 @@ mod tests {
                 .await
                 .is_err()
         );
+
+        // A connection sees only what was granted to it, never device grants.
+        let over = |connection: &str| -> DispatchCatalogRequest {
+            serde_json::from_value(
+                openbitfun_services_core::dispatch_contract::bind_dispatch_source_connection(
+                    "dispatch_target_catalog",
+                    serde_json::json!({ "__sourceDeviceId": "laptop" }),
+                    connection,
+                )
+                .unwrap(),
+            )
+            .expect("catalog request")
+        };
+        assert!(catalog_from(&store, over("conn-1"), None)
+            .await
+            .unwrap()
+            .agents
+            .is_empty());
+        store
+            .grant_connection("for-laptop", "conn-1", false)
+            .await
+            .unwrap();
+        let ids =
+            |catalog: openbitfun_services_core::dispatch_contract::DispatchCatalogResponse| {
+                catalog
+                    .agents
+                    .into_iter()
+                    .map(|agent| agent.id)
+                    .collect::<Vec<_>>()
+            };
+        assert_eq!(
+            ids(catalog_from(&store, over("conn-1"), None).await.unwrap()),
+            vec!["for-laptop"]
+        );
+        assert!(ids(catalog_from(&store, over("conn-2"), None).await.unwrap()).is_empty());
+        // Both sources at once is not a requester.
+        assert!(catalog_from(
+            &store,
+            DispatchCatalogRequest {
+                source_device_id: Some("laptop".to_string()),
+                source_connection_id: Some("conn-1".to_string()),
+            },
+            None
+        )
+        .await
+        .is_err());
+    }
+
+    #[test]
+    fn a_connection_lists_only_its_own_jobs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DispatchStore::open(dir.path().join("dispatch")).expect("store");
+        for (job_id, connection) in [("job-a", Some("conn-1")), ("job-b", None)] {
+            let mut request = test_request(job_id);
+            request.source_connection_id = connection.map(str::to_string);
+            store
+                .create_job_with_intent(request.clone(), request, job_id.to_string())
+                .expect("create");
+        }
+        let ids = |connection: Option<&str>| {
+            visible_jobs(&store, store.list_jobs().expect("list"), connection)
+                .into_iter()
+                .map(|job| job.job_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(Some("conn-1")), vec!["job-a"]);
+        assert!(ids(Some("conn-2")).is_empty());
+        let mut all = ids(None);
+        all.sort();
+        assert_eq!(all, vec!["job-a", "job-b"]);
     }
 
     fn probe_failure(diagnostic: &str) -> Result<GitProbeOutput, GitProbeOutput> {
@@ -1411,6 +1542,7 @@ mod tests {
             setup_audit: Vec::new(),
             delegation: None,
             source_device_id: None,
+            source_connection_id: None,
         }
     }
 
@@ -1516,6 +1648,7 @@ mod tests {
             &store,
             DispatchCancelRequest {
                 job_id: "job-no-match".to_string(),
+                source_connection_id: None,
             },
             |_pid| true,
             |_pid, _job_id| false,
@@ -1547,6 +1680,7 @@ mod tests {
             &store,
             DispatchCancelRequest {
                 job_id: "job-signal-failure".to_string(),
+                source_connection_id: None,
             },
             |_pid| true,
             |_pid, _job_id| true,
@@ -1575,6 +1709,7 @@ mod tests {
             &store,
             DispatchCancelRequest {
                 job_id: "job-stopped".to_string(),
+                source_connection_id: None,
             },
             |_pid| false,
             |_pid, _job_id| panic!("an absent process must not undergo identity inspection"),

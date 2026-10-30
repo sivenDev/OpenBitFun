@@ -150,6 +150,34 @@ async fn handle_control_plane(
     }
 }
 
+/// Answers dispatch calls from paired devices of other accounts, bound to
+/// the calling connection. The runner decides what the connection may reach
+/// from this device's grants.
+pub(crate) struct ConnectionDispatchHandler;
+
+#[async_trait::async_trait]
+impl openbitfun_core::service::remote_connect::connection_rpc::ConnectionRequestHandler
+    for ConnectionDispatchHandler
+{
+    async fn handle(
+        &self,
+        caller: &openbitfun_core::service::remote_connect::connection_rpc::ConnectionCaller,
+        command: &str,
+        args: Value,
+    ) -> Result<Value, String> {
+        let verb = dispatch_target_verb(command)
+            .ok_or_else(|| format!("command '{command}' is not a dispatch target command"))?;
+        let args = openbitfun_services_core::dispatch_contract::bind_dispatch_source_connection(
+            command,
+            args,
+            &caller.connection_id,
+        )?;
+        crate::dispatch::run_dispatch_verb(verb, args)
+            .await
+            .map_err(|error| format!("{error:#}"))
+    }
+}
+
 fn dispatch_target_verb(command: &str) -> Option<&'static str> {
     match command {
         "dispatch_target_probe" => Some("probe"),

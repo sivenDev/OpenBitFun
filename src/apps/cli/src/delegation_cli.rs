@@ -54,6 +54,25 @@ pub(crate) enum DelegationAction {
     },
     /// Close an opened agent
     Close { id: String },
+    /// Grant an opened agent to a paired device of another account
+    /// (see `openbitfun connections list`)
+    GrantConnection {
+        /// The opened agent
+        id: String,
+        /// The connection to grant it to
+        connection_id: String,
+        /// Confirm the usage notice of an external agent again for this
+        /// connection: its jobs run on this device's own login or credentials
+        #[arg(long)]
+        accept_usage: bool,
+    },
+    /// Withdraw an opened agent from a connection
+    RevokeConnection {
+        /// The opened agent
+        id: String,
+        /// The connection to withdraw it from
+        connection_id: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -121,6 +140,7 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 } else {
                     devices
                 },
+                connections: Vec::new(),
             };
             let agent = match ExternalAgentUsageNotice::for_agent_type(&entry.agent_type) {
                 Some(notice) if !accept_usage => {
@@ -141,6 +161,61 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 escape_terminal_text(&agent.agent_type),
                 describe_devices(&agent.same_account_devices)
             );
+        }
+        DelegationAction::GrantConnection {
+            id,
+            connection_id,
+            accept_usage,
+        } => {
+            let connection = openbitfun_core::service::remote_connect::connection_rpc::grantable_connection(
+                &openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()?,
+                &connection_id,
+            )?;
+            let agent_type = store
+                .records()
+                .await?
+                .into_iter()
+                .filter_map(|record| record.agent)
+                .find(|agent| agent.id == id)
+                .map(|agent| agent.agent_type);
+            if let Some(notice) = agent_type
+                .as_deref()
+                .and_then(ExternalAgentUsageNotice::for_agent_type)
+            {
+                if !accept_usage {
+                    println!(
+                        "{} ({} of another account) would run it.",
+                        usage_notice_text(notice),
+                        escape_terminal_text(&connection.peer_display_name)
+                    );
+                    bail!("run again with --accept-usage to grant this external agent");
+                }
+            }
+            store
+                .grant_connection(&id, &connection_id, accept_usage)
+                .await?;
+            println!(
+                "Granted {} to {} ({}), device {}",
+                escape_terminal_text(&id),
+                escape_terminal_text(&connection.peer_display_name),
+                escape_terminal_text(&connection.peer_user_id),
+                escape_terminal_text(&connection.peer_device_name)
+            );
+        }
+        DelegationAction::RevokeConnection { id, connection_id } => {
+            if store.revoke_connection(&id, &connection_id).await? {
+                println!(
+                    "Withdrew {} from connection {}",
+                    escape_terminal_text(&id),
+                    escape_terminal_text(&connection_id)
+                );
+            } else {
+                bail!(
+                    "{} is not granted to connection {}",
+                    escape_terminal_text(&id),
+                    escape_terminal_text(&connection_id)
+                );
+            }
         }
         DelegationAction::Close { id } => {
             if store.close(&id).await? {
@@ -190,6 +265,12 @@ fn print_records(records: &[OpenAgentRecord]) {
                 );
                 if let Some(workspace) = &agent.message_workspace {
                     println!("  message workspace: {}", escape_terminal_text(workspace));
+                }
+                for grant in &agent.connections {
+                    println!(
+                        "  granted to connection: {}",
+                        escape_terminal_text(&grant.connection_id)
+                    );
                 }
             }
             (None, problem) => {

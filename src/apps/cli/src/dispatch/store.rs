@@ -2260,6 +2260,7 @@ mod tests {
             setup_audit: Vec::new(),
             delegation: None,
             source_device_id: None,
+            source_connection_id: None,
         }
     }
 
@@ -2376,6 +2377,7 @@ mod tests {
             approval_policy: None,
             kind: DispatchTurnKind::Prompt,
             attachments: Vec::new(),
+            source_connection_id: None,
         }
     }
 
@@ -2821,6 +2823,7 @@ mod tests {
             content: "Continue with tests".to_string(),
             display_content: None,
             attachments: Vec::new(),
+            source_connection_id: None,
         };
 
         assert!(store

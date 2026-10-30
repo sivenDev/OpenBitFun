@@ -4749,7 +4749,9 @@
           "evidence": [
             "command:delegation_list_open_agents",
             "command:delegation_open_agent",
-            "command:delegation_close_agent"
+            "command:delegation_close_agent",
+            "command:delegation_grant_connection",
+            "command:delegation_revoke_connection"
           ]
         },
         {

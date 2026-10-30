@@ -413,3 +413,23 @@ async fn a_target_that_revoked_locally_refuses_without_a_key() {
         .unwrap_err();
     assert_eq!(refusal_reason(&error), Some("connection_revoked"));
 }
+
+#[test]
+fn only_stored_unrevoked_connections_can_be_granted() {
+    let target = device("2002", "device-b", secret(2));
+    let requester = device("1001", "device-a", secret(1));
+    assert!(grantable_connection(&target.store, CONNECTION).is_err());
+
+    pin(&target, &requester, ConnectionRole::Inviter);
+    let record = grantable_connection(&target.store, CONNECTION).unwrap();
+    assert_eq!(record.peer_user_id, "1001");
+    assert!(grantable_connection(&target.store, "conn-other").is_err());
+
+    let mut stored = target.store.load().unwrap();
+    stored.records[0].status = "revoked".into();
+    target.store.save(&stored).unwrap();
+    assert!(grantable_connection(&target.store, CONNECTION)
+        .unwrap_err()
+        .to_string()
+        .contains("revoked"));
+}

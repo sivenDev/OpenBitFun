@@ -16,6 +16,14 @@ pub(crate) const MAX_DISPATCH_TEXT_BYTES: usize = 32 * 1024;
 pub(crate) struct DispatchProbeRequest {
     #[serde(default)]
     pub(crate) workspace_path: Option<String>,
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -119,6 +127,14 @@ pub(crate) struct DispatchSubmitRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) source_device_id: Option<String>,
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
 }
 
 /// A job delegated to one of this device's open agents.
@@ -193,6 +209,14 @@ pub(crate) struct DispatchStatusRequest {
     pub(crate) job_id: String,
     #[serde(default)]
     pub(crate) cursor: u64,
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -250,6 +274,14 @@ pub(crate) struct DispatchAppendRequest {
     /// controller omits the field entirely, which decodes to an empty list.
     #[serde(default)]
     pub(crate) attachments: Vec<DispatchAttachment>,
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -469,6 +501,14 @@ pub(crate) struct DispatchContinueRequest {
     pub(crate) kind: DispatchTurnKind,
     #[serde(default)]
     pub(crate) attachments: Vec<DispatchAttachment>,
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -485,6 +525,14 @@ pub(crate) struct DispatchContinueResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DispatchCancelRequest {
     pub(crate) job_id: String,
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
 }
 
 /// Read-only question about a job's persisted session state.
@@ -502,6 +550,14 @@ pub(crate) struct DispatchQueryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) file_chunk:
         Option<openbitfun_services_core::dispatch_contract::DispatchFileChunkRequest>,
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -514,7 +570,16 @@ pub(crate) enum DispatchQueryKind {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DispatchListRequest {}
+pub(crate) struct DispatchListRequest {
+    /// The cross-account connection the call arrived over, bound by the
+    /// receiving host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_connection_id: Option<String>,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]

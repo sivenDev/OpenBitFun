@@ -73,6 +73,19 @@ pub struct OpenAgent {
     /// allows every device of this account.
     #[serde(default)]
     pub same_account_devices: Vec<String>,
+    /// Cross-account connections allowed to delegate, granted one by one.
+    /// Managed only through [`OpenAgentStore::grant_connection`] and
+    /// [`OpenAgentStore::revoke_connection`]; reopening the same agent keeps
+    /// them, opening a different agent under the id drops them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<ConnectionGrant>,
+}
+
+/// One cross-account connection an open agent is granted to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionGrant {
+    pub connection_id: String,
 }
 
 impl OpenAgent {
@@ -86,6 +99,14 @@ impl OpenAgent {
                 .same_account_devices
                 .iter()
                 .any(|device| device == ALL_SAME_ACCOUNT_DEVICES || device == device_id)
+    }
+
+    pub fn is_granted_to_connection(&self, connection_id: &str) -> bool {
+        !connection_id.trim().is_empty()
+            && self
+                .connections
+                .iter()
+                .any(|grant| grant.connection_id == connection_id)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -136,6 +157,20 @@ impl OpenAgent {
             .any(|device| device.trim().is_empty())
         {
             return Err("granted device ids must not be empty".to_string());
+        }
+        for (index, grant) in self.connections.iter().enumerate() {
+            if grant.connection_id.trim().is_empty() {
+                return Err("granted connection ids must not be empty".to_string());
+            }
+            if self.connections[..index]
+                .iter()
+                .any(|earlier| earlier.connection_id == grant.connection_id)
+            {
+                return Err(format!(
+                    "connection '{}' is granted more than once",
+                    grant.connection_id
+                ));
+            }
         }
         Ok(())
     }
@@ -247,6 +282,8 @@ pub enum DelegationRefusal {
     },
     #[error("the requesting device is unknown")]
     MissingRequester,
+    #[error("open agent '{0}' is not granted to this connection")]
+    NotGrantedToConnection(String),
 }
 
 #[derive(Debug, Error)]
@@ -341,6 +378,117 @@ impl OpenAgentStore {
         Ok(Ok(agent))
     }
 
+    /// Readable entries granted to the cross-account connection.
+    pub async fn granted_to_connection(
+        &self,
+        connection_id: &str,
+    ) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
+        Ok(self
+            .records()
+            .await?
+            .into_iter()
+            .filter_map(|record| record.agent)
+            .filter(|agent| agent.is_granted_to_connection(connection_id))
+            .collect())
+    }
+
+    /// The open agent a delegated job over `connection_id` may run, or why
+    /// not. Same-account device grants never apply to a connection.
+    pub async fn authorize_connection(
+        &self,
+        connection_id: &str,
+        open_agent_id: &str,
+        kind: DelegationTaskKind,
+    ) -> Result<Result<OpenAgent, DelegationRefusal>, OpenAgentStoreError> {
+        if connection_id.trim().is_empty() {
+            return Ok(Err(DelegationRefusal::MissingRequester));
+        }
+        let Some(agent) = self
+            .records()
+            .await?
+            .into_iter()
+            .filter_map(|record| record.agent)
+            .find(|agent| agent.id == open_agent_id)
+        else {
+            return Ok(Err(DelegationRefusal::UnknownOpenAgent(
+                open_agent_id.to_string(),
+            )));
+        };
+        if !agent.is_granted_to_connection(connection_id) {
+            return Ok(Err(DelegationRefusal::NotGrantedToConnection(agent.id)));
+        }
+        if !agent.allows_task_kind(kind) {
+            return Ok(Err(DelegationRefusal::TaskKindNotAllowed {
+                open_agent_id: agent.id,
+                kind,
+            }));
+        }
+        Ok(Ok(agent))
+    }
+
+    /// Grants the open agent `open_agent_id` to a cross-account connection.
+    /// An external agent is granted only after the owner confirmed its usage
+    /// notice again for this connection.
+    pub async fn grant_connection(
+        &self,
+        open_agent_id: &str,
+        connection_id: &str,
+        usage_confirmed: bool,
+    ) -> Result<OpenAgent, OpenAgentStoreError> {
+        let connection_id = connection_id.trim();
+        if connection_id.is_empty() {
+            return Err(OpenAgentStoreError::Invalid(
+                "a connection id is required".to_string(),
+            ));
+        }
+        let mut agent = self.readable(open_agent_id).await?;
+        if ExternalAgentUsageNotice::for_agent_type(&agent.agent_type).is_some() && !usage_confirmed
+        {
+            return Err(OpenAgentStoreError::Invalid(
+                "granting an external agent to another account requires confirming its usage notice"
+                    .to_string(),
+            ));
+        }
+        if !agent.is_granted_to_connection(connection_id) {
+            agent.connections.push(ConnectionGrant {
+                connection_id: connection_id.to_string(),
+            });
+            self.write_entry(agent.clone()).await?;
+        }
+        Ok(agent)
+    }
+
+    /// Withdraws the connection's grant. Returns whether one existed.
+    pub async fn revoke_connection(
+        &self,
+        open_agent_id: &str,
+        connection_id: &str,
+    ) -> Result<bool, OpenAgentStoreError> {
+        let mut agent = self.readable(open_agent_id).await?;
+        let before = agent.connections.len();
+        agent
+            .connections
+            .retain(|grant| grant.connection_id != connection_id);
+        if agent.connections.len() == before {
+            return Ok(false);
+        }
+        self.write_entry(agent).await?;
+        Ok(true)
+    }
+
+    async fn readable(&self, open_agent_id: &str) -> Result<OpenAgent, OpenAgentStoreError> {
+        self.records()
+            .await?
+            .into_iter()
+            .filter_map(|record| record.agent)
+            .find(|agent| agent.id == open_agent_id)
+            .ok_or_else(|| {
+                OpenAgentStoreError::Invalid(format!(
+                    "open agent '{open_agent_id}' does not exist on this device"
+                ))
+            })
+    }
+
     /// Opens `agent`, replacing any stored entry with the same id. External
     /// agents are opened only through [`Self::open_external_agent`].
     pub async fn open(&self, agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
@@ -398,10 +546,24 @@ impl OpenAgentStore {
         Ok(agent)
     }
 
+    /// Stores an opened agent. Connection grants are not part of opening:
+    /// the stored entry's grants carry over while it runs the same agent.
     async fn store_entry(&self, mut agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
         agent.agent_type =
             openbitfun_core_types::agent_identity::canonical_agent_id(agent.agent_type.trim())
                 .to_string();
+        agent.connections = self
+            .records()
+            .await?
+            .into_iter()
+            .filter_map(|record| record.agent)
+            .find(|stored| stored.id == agent.id && stored.agent_type == agent.agent_type)
+            .map(|stored| stored.connections)
+            .unwrap_or_default();
+        self.write_entry(agent).await
+    }
+
+    async fn write_entry(&self, mut agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
         let mut task_kinds = Vec::new();
         for kind in agent.task_kinds {
             if kind != DelegationTaskKind::Unknown && !task_kinds.contains(&kind) {
@@ -493,6 +655,7 @@ mod tests {
             task_kinds: vec![DelegationTaskKind::Message],
             message_workspace: None,
             same_account_devices: devices.iter().map(|device| device.to_string()).collect(),
+            connections: Vec::new(),
         }
     }
 
@@ -573,6 +736,120 @@ mod tests {
                 .unwrap(),
             Err(DelegationRefusal::MissingRequester)
         );
+    }
+
+    #[tokio::test]
+    async fn connections_are_granted_one_by_one_and_apart_from_devices() {
+        let (store, _dir) = store();
+        store.open(agent("helper", &["*"])).await.unwrap();
+        store.open(agent("reviewer", &[])).await.unwrap();
+
+        // Nothing is granted to a connection by default, not even "*".
+        assert!(store
+            .granted_to_connection("conn-1")
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .authorize_connection("conn-1", "helper", DelegationTaskKind::Message)
+                .await
+                .unwrap(),
+            Err(DelegationRefusal::NotGrantedToConnection(
+                "helper".to_string()
+            ))
+        );
+
+        store
+            .grant_connection("reviewer", "conn-1", false)
+            .await
+            .unwrap();
+        let granted = store.granted_to_connection("conn-1").await.unwrap();
+        assert_eq!(granted.len(), 1);
+        assert_eq!(granted[0].id, "reviewer");
+        assert!(store
+            .granted_to_connection("conn-2")
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .authorize_connection("conn-1", "reviewer", DelegationTaskKind::Message)
+            .await
+            .unwrap()
+            .is_ok());
+        assert_eq!(
+            store
+                .authorize_connection("conn-1", "reviewer", DelegationTaskKind::Coding)
+                .await
+                .unwrap(),
+            Err(DelegationRefusal::TaskKindNotAllowed {
+                open_agent_id: "reviewer".to_string(),
+                kind: DelegationTaskKind::Coding,
+            })
+        );
+        // A connection grant never admits a same-account device, and the
+        // device id "conn-1" is not the connection.
+        assert_eq!(
+            store
+                .authorize("conn-1", "reviewer", DelegationTaskKind::Message)
+                .await
+                .unwrap(),
+            Err(DelegationRefusal::NotGranted("reviewer".to_string()))
+        );
+
+        // Granting twice keeps one grant; revoking removes it.
+        store
+            .grant_connection("reviewer", "conn-1", false)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.granted_to_connection("conn-1").await.unwrap()[0]
+                .connections
+                .len(),
+            1
+        );
+        assert!(store.revoke_connection("reviewer", "conn-1").await.unwrap());
+        assert!(!store.revoke_connection("reviewer", "conn-1").await.unwrap());
+        assert!(store
+            .granted_to_connection("conn-1")
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .grant_connection("missing", "conn-1", false)
+            .await
+            .is_err());
+        assert!(store
+            .grant_connection("reviewer", " ", false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn reopening_keeps_connection_grants_unless_the_agent_changes() {
+        let (store, _dir) = store();
+        store.open(agent("helper", &[])).await.unwrap();
+        store
+            .grant_connection("helper", "conn-1", false)
+            .await
+            .unwrap();
+
+        let mut edited = agent("helper", &["laptop"]);
+        edited.display_name = "Renamed".to_string();
+        store.open(edited).await.unwrap();
+        assert_eq!(
+            store.granted_to_connection("conn-1").await.unwrap().len(),
+            1
+        );
+
+        let mut other = agent("helper", &[]);
+        other.agent_type = "Plan".to_string();
+        store.open(other).await.unwrap();
+        assert!(store
+            .granted_to_connection("conn-1")
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -741,6 +1018,26 @@ mod tests {
         let granted = store.granted_to_device("laptop").await.unwrap();
         assert_eq!(granted.len(), 1);
         assert_eq!(granted[0].agent_type, "acp:codex");
+
+        // Another account gets an external agent only after a fresh
+        // confirmation for that connection.
+        assert!(
+            refused(store.grant_connection("codex", "conn-1", false).await)
+                .contains("requires confirming its usage notice")
+        );
+        assert!(store
+            .granted_to_connection("conn-1")
+            .await
+            .unwrap()
+            .is_empty());
+        store
+            .grant_connection("codex", "conn-1", true)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.granted_to_connection("conn-1").await.unwrap().len(),
+            1
+        );
     }
 
     #[test]

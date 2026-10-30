@@ -34,6 +34,24 @@ pub struct DelegationCloseAgentRequest {
     pub id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationConnectionGrantRequest {
+    pub id: String,
+    pub connection_id: String,
+    /// The owner confirmed the external agent's usage notice again for this
+    /// connection. Ignored for local agent modes.
+    #[serde(default)]
+    pub usage_confirmed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationConnectionRevokeRequest {
+    pub id: String,
+    pub connection_id: String,
+}
+
 fn open_agent_store() -> Result<OpenAgentStore, String> {
     let path_manager =
         PathManager::new().map_err(|error| format!("resolve storage root: {error}"))?;
@@ -73,6 +91,7 @@ pub async fn delegation_open_agent(
         task_kinds: request.task_kinds,
         message_workspace,
         same_account_devices: request.same_account_devices,
+        connections: Vec::new(),
     };
     let store = open_agent_store()?;
     let opened = if ExternalAgentUsageNotice::for_agent_type(&agent.agent_type).is_some() {
@@ -91,6 +110,36 @@ pub async fn delegation_open_agent(
 pub async fn delegation_close_agent(request: DelegationCloseAgentRequest) -> Result<bool, String> {
     open_agent_store()?
         .close(&request.id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Grants an opened agent to a paired device of another account.
+#[tauri::command]
+pub async fn delegation_grant_connection(
+    request: DelegationConnectionGrantRequest,
+) -> Result<OpenAgent, String> {
+    let connections =
+        openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()
+            .map_err(|error| error.to_string())?;
+    openbitfun_core::service::remote_connect::connection_rpc::grantable_connection(
+        &connections,
+        &request.connection_id,
+    )
+    .map_err(|error| error.to_string())?;
+    open_agent_store()?
+        .grant_connection(&request.id, &request.connection_id, request.usage_confirmed)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Withdraws an opened agent from a connection.
+#[tauri::command]
+pub async fn delegation_revoke_connection(
+    request: DelegationConnectionRevokeRequest,
+) -> Result<bool, String> {
+    open_agent_store()?
+        .revoke_connection(&request.id, &request.connection_id)
         .await
         .map_err(|error| error.to_string())
 }

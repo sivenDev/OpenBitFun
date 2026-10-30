@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   open: vi.fn(),
   close: vi.fn(),
+  grant: vi.fn(),
+  revoke: vi.fn(),
+  overview: vi.fn(),
   modes: vi.fn(),
   clients: vi.fn(),
   devices: vi.fn(),
@@ -30,8 +33,12 @@ const translate = (key: string, values?: Record<string, string>) => {
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({ useI18n: () => ({ t: translate }) }));
 vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
-  delegationAPI: { listOpenAgents: mocks.list, openAgent: mocks.open, closeAgent: mocks.close },
+  delegationAPI: {
+    listOpenAgents: mocks.list, openAgent: mocks.open, closeAgent: mocks.close,
+    grantConnection: mocks.grant, revokeConnection: mocks.revoke,
+  },
 }));
+vi.mock('@/infrastructure/api/service-api/ConnectionsAPI', () => ({ connectionsAPI: { overview: mocks.overview } }));
 vi.mock('@/infrastructure/api/service-api/AgentAPI', () => ({ agentAPI: { getAvailableModes: mocks.modes } }));
 vi.mock('@/infrastructure/api/service-api/ACPClientAPI', () => ({ ACPClientAPI: { getClients: mocks.clients } }));
 vi.mock('@/infrastructure/api/service-api/RemoteConnectAPI', () => ({
@@ -75,6 +82,7 @@ describe('AgentDelegationConfig', () => {
       { device_id: 'laptop', device_name: 'Laptop', online: true, last_seen_at: null },
     ]);
     mocks.deviceInfo.mockResolvedValue({ device_id: 'this-device' });
+    mocks.overview.mockRejectedValue(new Error('not signed in'));
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -182,6 +190,78 @@ describe('AgentDelegationConfig', () => {
     expect(container.textContent).toContain('agentDelegation.summary:Standard|agentDelegation.taskKindMessage|Laptop');
     await act(async () => container.querySelector<HTMLButtonElement>('[data-row="future"] button')!.click());
     expect(mocks.close).toHaveBeenCalledWith('future');
+  });
+
+  const connection = (connectionId: string, overrides: Record<string, unknown> = {}) => ({
+    connectionId, role: 'inviter', status: 'active', usable: true, awaitingConfirmation: false,
+    peerUserId: `user-${connectionId}`, peerDisplayName: `Peer ${connectionId}`, peerDeviceId: `device-${connectionId}`,
+    peerDeviceName: `Desk ${connectionId}`, createdAt: 1, ...overrides,
+  });
+  const openAgentRecord = (agentType: string, connections: string[] = []) => ({
+    agent: {
+      id: 'helper', agentType, displayName: 'Helper', taskKinds: ['message'], sameAccountDevices: [],
+      connections: connections.map(connectionId => ({ connectionId })),
+    },
+  });
+
+  it('grants an agent to a usable connection and withdraws it', async () => {
+    mocks.overview.mockResolvedValue({
+      connections: [
+        connection('conn-1'),
+        connection('conn-2', { status: 'pending', usable: false }),
+        connection('conn-3', { status: 'revoked', usable: false }),
+      ],
+    });
+    // The list reloads after granting.
+    mocks.list
+      .mockResolvedValueOnce([openAgentRecord('Standard')])
+      .mockResolvedValue([openAgentRecord('Standard', ['conn-1', 'conn-gone'])]);
+    mocks.grant.mockResolvedValue({});
+    await render();
+    expect(container.textContent).not.toContain('agentDelegation.grantedTo');
+    await click('agentDelegation.grantConnection');
+    // Only usable connections are offered, and the first is preselected.
+    expect(Array.from(container.querySelectorAll('option')).map(option => option.value)).toEqual(['conn-1']);
+    expect(container.textContent).not.toContain('agentDelegation.grantUsageNotice');
+    await click('agentDelegation.grant');
+    expect(mocks.grant).toHaveBeenCalledWith('helper', 'conn-1', false);
+
+    mocks.revoke.mockResolvedValue(true);
+    expect(container.textContent).toContain('agentDelegation.grantedTo:agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1');
+    expect(container.textContent).toContain('agentDelegation.grantedTo:agentDelegation.connectionMissing:conn-gone');
+    await click('agentDelegation.withdraw');
+    expect(mocks.revoke).toHaveBeenCalledWith('helper', 'conn-1');
+  });
+
+  it('grants an external agent to another account only after a fresh confirmation', async () => {
+    mocks.overview.mockResolvedValue({ connections: [connection('conn-1'), connection('conn-2')] });
+    mocks.list.mockResolvedValue([openAgentRecord('acp:claude-code')]);
+    mocks.grant.mockResolvedValue({});
+    await render();
+    await click('agentDelegation.grantConnection');
+    expect(container.textContent).toContain('agentDelegation.grantUsageNotice agentDelegation.usageNoticeClaudeCode');
+    expect(button('agentDelegation.grant')!.disabled).toBe(true);
+    await check('agentDelegation.grantUsageConfirm');
+    expect(button('agentDelegation.grant')!.disabled).toBe(false);
+
+    // Choosing another account asks again.
+    const select = container.querySelector('select')!;
+    await act(async () => {
+      select.value = 'conn-2';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(button('agentDelegation.grant')!.disabled).toBe(true);
+    await check('agentDelegation.grantUsageConfirm');
+    await click('agentDelegation.grant');
+    expect(mocks.grant).toHaveBeenCalledWith('helper', 'conn-2', true);
+  });
+
+  it('explains that there is no account to grant to', async () => {
+    mocks.list.mockResolvedValue([openAgentRecord('Standard')]);
+    await render();
+    await click('agentDelegation.grantConnection');
+    expect(container.textContent).toContain('agentDelegation.noConnections');
+    expect(button('agentDelegation.grant')!.disabled).toBe(true);
   });
 
   it('refuses to manage the list for a connected peer or without the desktop host', async () => {

@@ -136,7 +136,22 @@
     "workspaceDescription": "Absolute path of an existing directory message tasks run in. Leave empty to give each requesting device its own empty directory.",
     "summary": "{{agent}} · {{tasks}} · {{devices}}",
     "save": "Open",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "otherAccounts": "Other accounts",
+    "grantConnection": "Grant to another account",
+    "grantTitle": "Grant to",
+    "grantDescription": "A paired device of another account can delegate tasks to this agent. Only you approve its actions on this device.",
+    "noConnections": "No active connection with another account. Pair a device under Connections with other accounts first.",
+    "connectionLabel": "{{name}} ({{user}}), {{device}}",
+    "connectionMissing": "Connection {{id}}, not found on this device",
+    "grantedTo": "Granted to {{peer}}",
+    "withdraw": "Withdraw",
+    "grantUsageNotice": "Tasks from the other account run this external agent with this device's own login or credentials and use your quota with its provider.",
+    "grantUsageConfirm": "I understand and want to grant this agent to the other account",
+    "grant": "Grant",
+    "granted": "Agent granted to the other account",
+    "grantFailed": "Failed to grant the agent",
+    "withdrawFailed": "Failed to withdraw the agent"
   },
   "connections": {
     "sectionTitle": "Connections with other accounts",

@@ -574,7 +574,7 @@ impl CliAccountRoutingHost {
                 nonce,
             } => {
                 use openbitfun_core::service::remote_connect::connection_rpc::{
-                    serve_connection_request, IncomingConnectionRequest, RefuseConnectionRequests,
+                    serve_connection_request, IncomingConnectionRequest,
                 };
                 let Ok(context) = runtime.connection_context().await else {
                     return;
@@ -586,8 +586,8 @@ impl CliAccountRoutingHost {
                 {
                     return;
                 }
-                // Nothing is granted to connections yet, so every call is refused
-                // inside its encrypted answer.
+                // The dispatch runner answers only for agents granted to the
+                // calling connection.
                 serve_connection_request(
                     relay_client,
                     &context,
@@ -600,7 +600,7 @@ impl CliAccountRoutingHost {
                         nonce,
                     },
                     &correlation_id,
-                    &RefuseConnectionRequests,
+                    &crate::peer_host::ConnectionDispatchHandler,
                 )
                 .await;
             }

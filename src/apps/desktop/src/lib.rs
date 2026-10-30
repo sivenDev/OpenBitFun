@@ -2077,6 +2077,8 @@ pub async fn run() {
             api::delegation_api::delegation_list_open_agents,
             api::delegation_api::delegation_open_agent,
             api::delegation_api::delegation_close_agent,
+            api::delegation_api::delegation_grant_connection,
+            api::delegation_api::delegation_revoke_connection,
             api::dispatch_api::dispatch_list_targets,
             api::dispatch_api::dispatch_probe_target,
             api::dispatch_api::dispatch_install_cli_start,

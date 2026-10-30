@@ -131,6 +131,74 @@ pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";
 /// open agents only when the target advertises this.
 pub const DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY: &str = "external_agent_executor_v1";
 
+/// Optional: the target answers dispatch calls from paired devices of other
+/// accounts, for agents its owner granted to that connection. A requester
+/// queries a connection's catalog only when the target advertises this.
+pub const DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY: &str = "cross_account_delegation_v1";
+
+/// Reserved argument carrying the cross-account connection a call arrived
+/// over. Only the receiving host sets it, from the connection it authenticated;
+/// the two reserved source arguments are never both set.
+pub const DISPATCH_SOURCE_CONNECTION_ARG: &str = "__sourceConnectionId";
+
+/// Target commands a cross-account connection may send. Each is bound to the
+/// connection, and job commands act only on that connection's jobs. `answer`
+/// is absent: only the target's owner approves its jobs.
+pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
+    "dispatch_target_probe",
+    "dispatch_target_catalog",
+    "dispatch_target_submit",
+    "dispatch_target_status",
+    "dispatch_target_cancel",
+    "dispatch_target_query",
+    "dispatch_target_list",
+    "dispatch_target_continue",
+    "dispatch_target_append",
+];
+
+/// Why a call over a connection is refused before the target runs it.
+pub const DISPATCH_CONNECTION_ANSWER_REFUSED: &str =
+    "approvals of cross-account jobs come only from the owner of the target device";
+
+/// Binds a target command from a cross-account connection: removes both
+/// caller-supplied sources and sets the connection. Commands a connection may
+/// not send are refused here, so no handler sees them.
+pub fn bind_dispatch_source_connection(
+    command: &str,
+    args: serde_json::Value,
+    connection_id: &str,
+) -> Result<serde_json::Value, String> {
+    if command == "dispatch_target_answer" {
+        return Err(DISPATCH_CONNECTION_ANSWER_REFUSED.to_string());
+    }
+    if !DISPATCH_CONNECTION_COMMANDS.contains(&command) {
+        return Err(format!(
+            "command '{command}' is not accepted over a cross-account connection"
+        ));
+    }
+    if connection_id.trim().is_empty() {
+        return Err("the connection is unknown".to_string());
+    }
+    let mut args = match args {
+        serde_json::Value::Object(map) => map,
+        serde_json::Value::Null => serde_json::Map::new(),
+        _ => return Err("dispatch arguments must be an object".to_string()),
+    };
+    args.remove(DISPATCH_SOURCE_DEVICE_ARG);
+    args.remove(DISPATCH_SOURCE_CONNECTION_ARG);
+    if command == "dispatch_target_submit" && !args.contains_key(DISPATCH_DELEGATION_FIELD) {
+        return Err("a connection submits only jobs delegated to an open agent".to_string());
+    }
+    if command == "dispatch_target_probe" && args.contains_key("workspacePath") {
+        return Err("a connection cannot inspect paths on this device".to_string());
+    }
+    args.insert(
+        DISPATCH_SOURCE_CONNECTION_ARG.to_string(),
+        serde_json::Value::String(connection_id.to_string()),
+    );
+    Ok(serde_json::Value::Object(args))
+}
+
 /// Reserved argument carrying the device that sent a device RPC. Only the
 /// receiving host sets it, from the relay-authenticated sender; any value in
 /// the incoming payload is discarded so a requester cannot claim another device.
@@ -159,6 +227,8 @@ pub fn bind_dispatch_source_device(
         other => return other,
     };
     args.remove(DISPATCH_SOURCE_DEVICE_ARG);
+    // A same-account device never speaks for a connection.
+    args.remove(DISPATCH_SOURCE_CONNECTION_ARG);
     let bound = match command {
         "dispatch_target_submit" => args.contains_key(DISPATCH_DELEGATION_FIELD),
         _ => DISPATCH_SOURCE_BOUND_COMMANDS.contains(&command),
@@ -181,6 +251,12 @@ pub struct DispatchCatalogRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub source_device_id: Option<String>,
+    #[serde(
+        rename = "__sourceConnectionId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_connection_id: Option<String>,
 }
 
 /// Agents the target opens to the requesting device. Target paths and the
@@ -373,6 +449,85 @@ mod tests {
             serde_json::json!({ "deviceId": "x" })
         )
         .is_err());
+    }
+
+    #[test]
+    fn connections_are_bound_and_limited_to_their_commands() {
+        // Forged sources of either kind are replaced by the connection.
+        let bound = bind_dispatch_source_connection(
+            "dispatch_target_status",
+            serde_json::json!({
+                "jobId": "j",
+                "__sourceDeviceId": "laptop",
+                "__sourceConnectionId": "conn-other",
+            }),
+            "conn-1",
+        )
+        .unwrap();
+        assert_eq!(
+            bound,
+            serde_json::json!({ "jobId": "j", "__sourceConnectionId": "conn-1" })
+        );
+        let catalog: DispatchCatalogRequest = serde_json::from_value(
+            bind_dispatch_source_connection(
+                "dispatch_target_catalog",
+                serde_json::Value::Null,
+                "conn-1",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(catalog.source_connection_id.as_deref(), Some("conn-1"));
+        assert_eq!(catalog.source_device_id, None);
+
+        assert_eq!(
+            bind_dispatch_source_connection(
+                "dispatch_target_answer",
+                serde_json::json!({ "jobId": "j" }),
+                "conn-1"
+            )
+            .unwrap_err(),
+            DISPATCH_CONNECTION_ANSWER_REFUSED
+        );
+        for refused in [
+            "dispatch_target_workspace_provision",
+            "dispatch_target_read_file",
+            "peer_mode_ping",
+        ] {
+            assert!(
+                bind_dispatch_source_connection(refused, serde_json::Value::Null, "conn-1")
+                    .is_err()
+            );
+        }
+        assert!(bind_dispatch_source_connection(
+            "dispatch_target_submit",
+            serde_json::json!({ "jobId": "j" }),
+            "conn-1"
+        )
+        .unwrap_err()
+        .contains("delegated"));
+        assert!(bind_dispatch_source_connection(
+            "dispatch_target_probe",
+            serde_json::json!({ "workspacePath": "/etc" }),
+            "conn-1"
+        )
+        .is_err());
+        assert!(bind_dispatch_source_connection(
+            "dispatch_target_list",
+            serde_json::Value::Null,
+            " "
+        )
+        .is_err());
+
+        // A same-account device cannot claim a connection.
+        assert_eq!(
+            bind_dispatch_source_device(
+                "dispatch_target_catalog",
+                serde_json::json!({ "__sourceConnectionId": "conn-1" }),
+                "laptop"
+            ),
+            serde_json::json!({ "__sourceDeviceId": "laptop" })
+        );
     }
 
     #[test]

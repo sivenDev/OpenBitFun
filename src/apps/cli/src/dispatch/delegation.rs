@@ -56,14 +56,26 @@ pub(super) async fn admit(
         if request.source_device_id.is_some() {
             bail!("__sourceDeviceId is reserved for delegated dispatch jobs");
         }
+        if request.source_connection_id.is_some() {
+            bail!("__sourceConnectionId is reserved for delegated dispatch jobs");
+        }
         return Ok(());
     };
-    let Some(device_id) = request
-        .source_device_id
-        .clone()
-        .filter(|device_id| !device_id.trim().is_empty())
-    else {
-        bail!("delegated dispatch jobs are accepted only from another device of this account");
+    let requester = match (
+        request
+            .source_device_id
+            .clone()
+            .filter(|device_id| !device_id.trim().is_empty()),
+        request
+            .source_connection_id
+            .clone()
+            .filter(|connection_id| !connection_id.trim().is_empty()),
+    ) {
+        (Some(device_id), None) => Requester::Device(device_id),
+        (None, Some(connection_id)) => Requester::Connection(connection_id),
+        _ => bail!(
+            "delegated dispatch jobs are accepted only from another device of this account or a paired connection"
+        ),
     };
     let source = &delegation.source;
     for value in [&source.session_id, &source.agent_type, &source.display_name]
@@ -81,11 +93,25 @@ pub(super) async fn admit(
         DispatchDelegationTaskKind::Message => DelegationTaskKind::Message,
         DispatchDelegationTaskKind::Coding => DelegationTaskKind::Coding,
     };
-    let agent = store
-        .authorize(&device_id, &delegation.open_agent_id, kind)
-        .await
-        .context("read agents opened to other devices")?
-        .map_err(anyhow::Error::new)?;
+    let agent = match &requester {
+        Requester::Device(device_id) => {
+            store
+                .authorize(device_id, &delegation.open_agent_id, kind)
+                .await
+        }
+        Requester::Connection(connection_id) => {
+            store
+                .authorize_connection(connection_id, &delegation.open_agent_id, kind)
+                .await
+        }
+    }
+    .context("read agents opened to other devices")?
+    .map_err(anyhow::Error::new)?;
+    if matches!(requester, Requester::Connection(_)) {
+        // This device chooses the model of jobs another account delegates.
+        request.model = None;
+        request.reasoning_preset = None;
+    }
     if request.agent_type != agent.agent_type {
         bail!(
             "open agent '{}' runs agent '{}', not '{}'",
@@ -106,7 +132,7 @@ pub(super) async fn admit(
                     let dir = roots
                         .message_workspaces
                         .join(&agent.id)
-                        .join(device_directory_name(&device_id));
+                        .join(requester.directory_name());
                     create_private_dir(&dir)?;
                     dir
                 }
@@ -128,6 +154,25 @@ pub(super) async fn admit(
         }
     };
     Ok(())
+}
+
+/// Who delegated a job: a device of this account or a cross-account
+/// connection. Each has its own grants and its own message directory.
+enum Requester {
+    Device(String),
+    Connection(String),
+}
+
+impl Requester {
+    fn directory_name(&self) -> String {
+        match self {
+            Self::Device(device_id) => device_directory_name(device_id),
+            // Device ids never start with "connection-".
+            Self::Connection(connection_id) => {
+                format!("connection-{}", device_directory_name(connection_id))
+            }
+        }
+    }
 }
 
 /// A directory name for the requester that cannot traverse or collide with
@@ -179,6 +224,7 @@ mod tests {
             task_kinds: kinds,
             message_workspace: workspace.map(|path| path.to_string_lossy().into_owned()),
             same_account_devices: vec!["laptop".to_string()],
+            connections: Vec::new(),
         };
         store
             .open(open("helper", vec![DelegationTaskKind::Message], None))
@@ -225,6 +271,7 @@ mod tests {
                 source: DispatchDelegationSource::default(),
             }),
             source_device_id: Some("laptop".to_string()),
+            source_connection_id: None,
         }
     }
 
@@ -267,6 +314,61 @@ mod tests {
         assert!(admit_error(&fixture, chosen)
             .await
             .contains("omit workspacePath"));
+    }
+
+    #[tokio::test]
+    async fn connections_use_their_own_grants_directory_and_no_model_choice() {
+        let fixture = fixture().await;
+        let over = |connection: &str| {
+            let mut request = delegated("helper", DispatchDelegationTaskKind::Message);
+            request.source_device_id = None;
+            request.source_connection_id = Some(connection.to_string());
+            request.model = Some("big-model".to_string());
+            request.reasoning_preset = Some("high".to_string());
+            request
+        };
+
+        // A grant to the device "laptop" does not admit a connection.
+        assert!(admit_error(&fixture, over("conn-1"))
+            .await
+            .contains("not granted to this connection"));
+
+        fixture
+            .store
+            .grant_connection("helper", "conn-1", false)
+            .await
+            .unwrap();
+        let mut request = over("conn-1");
+        admit(&mut request, &fixture.store, &fixture.roots)
+            .await
+            .unwrap();
+        let expected = fixture
+            .roots
+            .message_workspaces
+            .join("helper")
+            .join("connection-conn-1");
+        assert_eq!(request.workspace_path, expected.to_string_lossy());
+        assert!(expected.is_dir());
+        assert_eq!(request.model, None);
+        assert_eq!(request.reasoning_preset, None);
+
+        assert!(admit_error(&fixture, over("conn-2"))
+            .await
+            .contains("not granted to this connection"));
+
+        // A request naming both a device and a connection is refused.
+        let mut both = over("conn-1");
+        both.source_device_id = Some("laptop".to_string());
+        assert!(admit_error(&fixture, both)
+            .await
+            .contains("accepted only from"));
+
+        // An ordinary job cannot claim a connection.
+        let mut ordinary = over("conn-1");
+        ordinary.delegation = None;
+        assert!(admit_error(&fixture, ordinary)
+            .await
+            .contains("__sourceConnectionId is reserved"));
     }
 
     #[tokio::test]

@@ -136,7 +136,22 @@
     "workspaceDescription": "純訊息任務執行的既有目錄絕對路徑。留空時，為每個發起裝置單獨建立空目錄。",
     "summary": "{{agent}} · {{tasks}} · {{devices}}",
     "save": "開放",
-    "cancel": "取消"
+    "cancel": "取消",
+    "otherAccounts": "其他帳號",
+    "grantConnection": "授權給其他帳號",
+    "grantTitle": "授權給",
+    "grantDescription": "已配對的其他帳號裝置可以把任務委派給這個智慧體。它在本裝置上的操作只由你審批。",
+    "noConnections": "沒有與其他帳號的有效連線。請先在「與其他帳號的連線」中配對裝置。",
+    "connectionLabel": "{{name}}（{{user}}），{{device}}",
+    "connectionMissing": "連線 {{id}}，本裝置上已找不到",
+    "grantedTo": "已授權給 {{peer}}",
+    "withdraw": "收回",
+    "grantUsageNotice": "來自對方帳號的任務會用本裝置自己的登入或憑證執行這個外部智慧體，並消耗你在其服務商處的額度。",
+    "grantUsageConfirm": "我已了解，並要把這個智慧體授權給對方帳號",
+    "grant": "授權",
+    "granted": "已授權給對方帳號",
+    "grantFailed": "授權失敗",
+    "withdrawFailed": "收回授權失敗"
   },
   "connections": {
     "sectionTitle": "與其他帳號的連線",

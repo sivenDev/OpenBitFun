@@ -755,6 +755,7 @@ fn turn_metadata(
             DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
             serde_json::json!({
                 "sourceDeviceId": request.source_device_id,
+                "sourceConnectionId": request.source_connection_id,
                 "openAgentId": delegation.open_agent_id,
                 "taskKind": delegation.task_kind,
                 "source": delegation.source,
@@ -808,6 +809,7 @@ mod tests {
                     source: DispatchDelegationSource::default(),
                 }),
                 source_device_id: delegated.then(|| "laptop".to_string()),
+                source_connection_id: None,
             },
             created_at: String::new(),
             title: String::new(),

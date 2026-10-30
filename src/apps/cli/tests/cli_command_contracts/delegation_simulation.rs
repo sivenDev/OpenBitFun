@@ -538,6 +538,32 @@ fn connections_cli(device: &SimulatedDevice, args: &[&str]) -> (bool, String) {
     )
 }
 
+/// The agents a connection's catalog call returns.
+async fn catalog(
+    rpc: &openbitfun_core::service::remote_connect::connection_rpc::ConnectionRpc,
+    connection_id: &str,
+) -> Value {
+    rpc.invoke_connection(connection_id, "dispatch_target_catalog", json!({}))
+        .await
+        .expect("catalog over the connection")["agents"]
+        .clone()
+}
+
+fn delegation_cli(device: &SimulatedDevice, args: &[&str]) -> (bool, String) {
+    let mut command = device.environment.std_command_for(&device.binary);
+    command.arg("delegation").args(args);
+    let output =
+        support::command_output_with_timeout(command.stdin(Stdio::null()), Duration::from_secs(60));
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
 fn json_output(device: &SimulatedDevice, args: &[&str]) -> Value {
     let (ok, output) = connections_cli(device, args);
     assert!(ok, "connections {args:?} failed: {output}");
@@ -550,12 +576,15 @@ fn json_output(device: &SimulatedDevice, args: &[&str]) -> Value {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     use openbitfun_core::service::remote_connect::connection_rpc::{
-        ConnectionContext, ConnectionRpc, CROSS_ACCOUNT_NOT_ENABLED,
+        ConnectionContext, ConnectionRpc,
     };
     use openbitfun_core::service::remote_connect::connections::{
         fingerprint_of, refusal_reason, same_fingerprint, ConnectionStore, ConnectionsClient,
     };
     use openbitfun_core::service::remote_connect::RelayClient;
+    use openbitfun_services_core::dispatch_contract::{
+        DISPATCH_CONNECTION_ANSWER_REFUSED, DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY,
+    };
 
     let relay = LocalRelay::start("127.0.0.1", 0).await;
     let requester = relay
@@ -658,8 +687,8 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     assert_eq!(listed["usable"], true);
     assert_eq!(listed["peerDeviceId"], A1);
 
-    // A call reaches B1's daemon, which opens it with the connection key and
-    // refuses inside the encrypted answer: nothing is granted to connections.
+    // Calls reach B1's daemon, which opens them with the connection key and
+    // answers only for what its owner granted to this connection.
     let capabilities = AccountClient::new()
         .relay_capabilities(&relay.url)
         .await
@@ -674,11 +703,92 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         store.clone(),
         capabilities,
     );
+    assert_eq!(catalog(&rpc, &connection_id).await, json!([]));
+    // An agent open to every device of B's own account is still not granted.
+    target.open_agent(&["*"], &["message"]);
+    assert_eq!(catalog(&rpc, &connection_id).await, json!([]));
+
+    // The probe says what the target supports, not which models it has.
+    let probe = rpc
+        .invoke_connection(&connection_id, "dispatch_target_probe", json!({}))
+        .await
+        .expect("probe over the connection");
+    assert!(
+        probe["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|capability| capability == DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY),
+        "{probe}"
+    );
+    assert_eq!(probe["modelConfigured"], true, "{probe}");
+    assert_eq!(probe["availableModels"], json!([]), "{probe}");
     let error = rpc
-        .invoke_connection(&connection_id, "dispatch_target_catalog", json!({}))
+        .invoke_connection(
+            &connection_id,
+            "dispatch_target_probe",
+            json!({ "workspacePath": "/" }),
+        )
         .await
         .unwrap_err();
-    assert_eq!(error.to_string(), CROSS_ACCOUNT_NOT_ENABLED);
+    assert!(
+        error.to_string().contains("cannot inspect paths"),
+        "{error}"
+    );
+
+    // B1's owner grants the agent to this connection with the shipped command.
+    let (ok, output) = delegation_cli(
+        &target,
+        &["grant-connection", OPEN_AGENT_ID, &connection_id],
+    );
+    assert!(ok, "{output}");
+    let granted = catalog(&rpc, &connection_id).await;
+    assert_eq!(granted[0]["id"], OPEN_AGENT_ID, "{granted}");
+    let (ok, listed) = delegation_cli(&target, &["list"]);
+    assert!(ok && listed.contains(&connection_id), "{listed}");
+
+    // Approvals never come from the connection, and B1's other jobs and
+    // paths stay out of reach.
+    let error = rpc
+        .invoke_connection(
+            &connection_id,
+            "dispatch_target_answer",
+            json!({ "jobId": "j", "requestId": "r", "reply": "once" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), DISPATCH_CONNECTION_ANSWER_REFUSED);
+    let error = rpc
+        .invoke_connection(
+            &connection_id,
+            "dispatch_target_status",
+            json!({ "jobId": "delegation-someone-else" }),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("does not exist"), "{error}");
+    let error = rpc
+        .invoke_connection(
+            &connection_id,
+            "dispatch_target_workspace_provision",
+            json!({}),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("not accepted over a cross-account connection"),
+        "{error}"
+    );
+
+    // Withdrawing the grant empties the catalog again.
+    let (ok, output) = delegation_cli(
+        &target,
+        &["revoke-connection", OPEN_AGENT_ID, &connection_id],
+    );
+    assert!(ok, "{output}");
+    assert_eq!(catalog(&rpc, &connection_id).await, json!([]));
 
     // B1 revokes; both sides show it and new calls are refused by the Relay.
     let (ok, output) = connections_cli(&target, &["revoke", &connection_id]);

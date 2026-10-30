@@ -11,6 +11,10 @@ import {
   type OpenAgentRecord,
 } from '@/infrastructure/api/service-api/DelegationAPI';
 import {
+  connectionsAPI,
+  type ConnectionSummary,
+} from '@/infrastructure/api/service-api/ConnectionsAPI';
+import {
   remoteConnectAPI,
   type AccountDeviceInfo,
 } from '@/infrastructure/api/service-api/RemoteConnectAPI';
@@ -54,6 +58,16 @@ interface LoadedState {
   /** Local modes, then enabled external agents as `acp:<id>`. */
   agents: AgentChoice[];
   devices: AccountDeviceInfo[];
+  /** Connections with devices of other accounts, revoked ones excluded. */
+  connections: ConnectionSummary[];
+}
+
+/** Granting one open agent to a connection. */
+interface GrantDraft {
+  agentId: string;
+  connectionId: string;
+  /** The owner confirmed the external agent's usage notice for this grant. */
+  usageConfirmed: boolean;
 }
 
 function suggestedId(agentType: string): string {
@@ -101,12 +115,13 @@ export const AgentDelegationConfig: React.FC = () => {
   const [draft, setDraft] = useState<OpenAgentDraft | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [grantDraft, setGrantDraft] = useState<GrantDraft | null>(null);
   const activeRef = useRef(true);
 
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const [records, modes, clients, devices, currentDevice] = await Promise.all([
+      const [records, modes, clients, devices, currentDevice, connections] = await Promise.all([
         delegationAPI.listOpenAgents(),
         agentAPI.getAvailableModes(),
         // External agents are optional: a host without ACP clients opens local modes only.
@@ -114,12 +129,17 @@ export const AgentDelegationConfig: React.FC = () => {
         // Devices are optional: without an account the owner can still allow all devices.
         remoteConnectAPI.accountListDevices().catch(() => [] as AccountDeviceInfo[]),
         remoteConnectAPI.getDeviceInfo().catch(() => null),
+        // Connections are optional: without them only same-account devices are offered.
+        connectionsAPI.overview()
+          .then(overview => overview.connections.filter(connection => connection.status !== 'revoked'))
+          .catch(() => [] as ConnectionSummary[]),
       ]);
       if (!activeRef.current) return;
       setState({
         records,
         agents: agentChoices(modes, clients),
         devices: devices.filter(device => device.device_id !== currentDevice?.device_id),
+        connections,
       });
     } catch (error) {
       log.error('Failed to load open agents', { error });
@@ -149,6 +169,100 @@ export const AgentDelegationConfig: React.FC = () => {
         .map(id => state?.devices.find(device => device.device_id === id)?.device_name ?? id)
         .join(', ');
     return t('agentDelegation.summary', { agent: choice?.name ?? agent.agentType, tasks, devices });
+  };
+
+  const describeConnection = (connectionId: string): string => {
+    const connection = state?.connections.find(item => item.connectionId === connectionId);
+    return connection
+      ? t('agentDelegation.connectionLabel', {
+        name: connection.peerDisplayName,
+        user: connection.peerUserId,
+        device: connection.peerDeviceName,
+      })
+      : t('agentDelegation.connectionMissing', { id: connectionId });
+  };
+
+  const grant = async () => {
+    if (!grantDraft) return;
+    setBusy(true);
+    try {
+      await delegationAPI.grantConnection(grantDraft.agentId, grantDraft.connectionId, grantDraft.usageConfirmed);
+      if (!activeRef.current) return;
+      notificationService.success(t('agentDelegation.granted'), { duration: 2000 });
+      setGrantDraft(null);
+      await load();
+    } catch (error) {
+      log.error('Failed to grant open agent to a connection', { error });
+      notificationService.error(`${t('agentDelegation.grantFailed')}: ${errorMessage(error)}`);
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  const withdraw = async (agentId: string, connectionId: string) => {
+    setBusy(true);
+    try {
+      await delegationAPI.revokeConnection(agentId, connectionId);
+      await load();
+    } catch (error) {
+      log.error('Failed to withdraw open agent from a connection', { error });
+      notificationService.error(t('agentDelegation.withdrawFailed'));
+    } finally {
+      if (activeRef.current) setBusy(false);
+    }
+  };
+
+  /** Connections an agent can still be granted to: usable and not granted yet. */
+  const grantCandidates = (granted: string[]): ConnectionSummary[] => (state?.connections ?? [])
+    .filter(connection => connection.usable && !granted.includes(connection.connectionId));
+
+  const renderGrantPanel = (agentId: string, agentType: string, granted: string[]) => {
+    if (!state || grantDraft?.agentId !== agentId) return null;
+    const candidates = grantCandidates(granted);
+    const external = externalAgentClientId(agentType) !== null;
+    const canGrant = grantDraft.connectionId !== '' && (!external || grantDraft.usageConfirmed);
+    return <>
+      <ConfigPageRow label={t('agentDelegation.grantTitle')}
+        description={candidates.length === 0 ? t('agentDelegation.noConnections') : t('agentDelegation.grantDescription')}
+        align="center">
+        {candidates.length > 0 && (
+          <Select
+            size="sm"
+            value={grantDraft.connectionId}
+            disabled={busy}
+            options={candidates.map(connection => ({
+              value: connection.connectionId,
+              label: describeConnection(connection.connectionId),
+            }))}
+            onValueChange={value => {
+              const connectionId = String(Array.isArray(value) ? value[0] : value);
+              // A confirmation covers only the account it was given for.
+              setGrantDraft(current => current && ({ ...current, connectionId, usageConfirmed: false }));
+            }}
+          />
+        )}
+      </ConfigPageRow>
+      {external && candidates.length > 0 && (
+        <ConfigPageRow label={t('agentDelegation.usageNoticeTitle')}
+          description={externalAgentClientId(agentType) === 'claude-code'
+            ? `${t('agentDelegation.grantUsageNotice')} ${t('agentDelegation.usageNoticeClaudeCode')}`
+            : t('agentDelegation.grantUsageNotice')}>
+          <Checkbox checked={grantDraft.usageConfirmed} disabled={busy}
+            label={t('agentDelegation.grantUsageConfirm')}
+            onChange={event => setGrantDraft({ ...grantDraft, usageConfirmed: event.target.checked })} />
+        </ConfigPageRow>
+      )}
+      <ConfigPageRow label="" align="center">
+        <div>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setGrantDraft(null)}>
+            {t('agentDelegation.cancel')}
+          </Button>
+          <Button type="button" size="sm" variant="primary" disabled={busy || !canGrant} onClick={() => void grant()}>
+            {t('agentDelegation.grant')}
+          </Button>
+        </div>
+      </ConfigPageRow>
+    </>;
   };
 
   const closeRecord = async (id: string) => {
@@ -240,19 +354,44 @@ export const AgentDelegationConfig: React.FC = () => {
       )}
       {state.records.map((record, index) => {
         const id = openAgentRecordId(record);
+        const agent = record.agent;
+        const granted = agent?.connections?.map(item => item.connectionId) ?? [];
         return (
-          <ConfigPageRow
-            key={id ?? `unreadable-${index}`}
-            label={record.agent?.displayName ?? id ?? t('agentDelegation.unreadable', { problem: '' })}
-            description={describeRecord(record)}
-            align="center"
-          >
-            {id && (
-              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void closeRecord(id)}>
-                {t('agentDelegation.close')}
-              </Button>
-            )}
-          </ConfigPageRow>
+          <React.Fragment key={id ?? `unreadable-${index}`}>
+            <ConfigPageRow
+              label={agent?.displayName ?? id ?? t('agentDelegation.unreadable', { problem: '' })}
+              description={describeRecord(record)}
+              align="center"
+            >
+              <div>
+                {agent && grantDraft?.agentId !== agent.id && (
+                  <Button type="button" size="sm" variant="outline" disabled={busy}
+                    onClick={() => setGrantDraft({
+                      agentId: agent.id,
+                      connectionId: grantCandidates(granted)[0]?.connectionId ?? '',
+                      usageConfirmed: false,
+                    })}>
+                    {t('agentDelegation.grantConnection')}
+                  </Button>
+                )}
+                {id && (
+                  <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void closeRecord(id)}>
+                    {t('agentDelegation.close')}
+                  </Button>
+                )}
+              </div>
+            </ConfigPageRow>
+            {agent && granted.map(connectionId => (
+              <ConfigPageRow key={connectionId} label={t('agentDelegation.otherAccounts')}
+                description={t('agentDelegation.grantedTo', { peer: describeConnection(connectionId) })} align="center">
+                <Button type="button" size="sm" variant="outline" disabled={busy}
+                  onClick={() => void withdraw(agent.id, connectionId)}>
+                  {t('agentDelegation.withdraw')}
+                </Button>
+              </ConfigPageRow>
+            ))}
+            {agent && renderGrantPanel(agent.id, agent.agentType, granted)}
+          </React.Fragment>
         );
       })}
       {draft ? <>

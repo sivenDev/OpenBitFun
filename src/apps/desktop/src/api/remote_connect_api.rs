@@ -3024,7 +3024,6 @@ async fn connect_route_devices(route: RelayRoute) -> Result<Vec<OnlineDeviceInfo
                 } => {
                     use openbitfun_core::service::remote_connect::connection_rpc::{
                         serve_connection_request, ConnectionContext, IncomingConnectionRequest,
-                        RefuseConnectionRequests,
                     };
                     let Some(relay) = device_relay_client_with_routing_lease(&event_owner).await
                     else {
@@ -3035,8 +3034,8 @@ async fn connect_route_devices(route: RelayRoute) -> Result<Vec<OnlineDeviceInfo
                         relay_url: event_relay_url.clone(),
                         local_device_id: event_device_id.clone(),
                     };
-                    // Nothing is granted to connections yet, so every call is
-                    // refused inside its encrypted answer.
+                    // The dispatch runner answers only for agents granted to
+                    // the calling connection.
                     tokio::spawn(async move {
                         serve_connection_request(
                             &relay,
@@ -3050,7 +3049,7 @@ async fn connect_route_devices(route: RelayRoute) -> Result<Vec<OnlineDeviceInfo
                                 nonce,
                             },
                             &correlation_id,
-                            &RefuseConnectionRequests,
+                            &crate::api::dispatch_host::ConnectionDispatchHandler,
                         )
                         .await;
                     });

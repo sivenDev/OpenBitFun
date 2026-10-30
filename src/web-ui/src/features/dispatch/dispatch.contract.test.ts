@@ -140,6 +140,19 @@ describe('dispatch wire contract single source', () => {
       .toEqual(['dispatch_target_catalog', 'dispatch_target_submit']);
   });
 
+  it('keeps cross-account delegation optional and its connection bound by the host', () => {
+    expect(contractSource).toContain('pub const DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY: &str = "cross_account_delegation_v1";');
+    expect(BASE_DISPATCH_CAPABILITIES).not.toContain('cross_account_delegation_v1');
+    // Hosts overwrite this reserved argument with the authenticated connection.
+    expect(contractSource).toContain('pub const DISPATCH_SOURCE_CONNECTION_ARG: &str = "__sourceConnectionId";');
+    const commands = /DISPATCH_CONNECTION_COMMANDS: &\[&str\] = &\[([^\]]*)\]/u.exec(contractSource);
+    expect(commands).not.toBeNull();
+    const allowed = Array.from(commands![1].matchAll(/"([^"]+)"/g), match => match[1]);
+    // Only the target's owner answers approvals of cross-account jobs.
+    expect(allowed).not.toContain('dispatch_target_answer');
+    expect(allowed).toEqual(expect.arrayContaining(['dispatch_target_catalog', 'dispatch_target_submit', 'dispatch_target_status']));
+  });
+
   it('keeps the versioned feature capabilities required on both sides', () => {
     for (const capability of ['product_identity', 'per_turn_options', 'session_query', 'inline_attachments', 'reasoning_presets']) {
       expect(BASE_DISPATCH_CAPABILITIES).toContain(capability);
