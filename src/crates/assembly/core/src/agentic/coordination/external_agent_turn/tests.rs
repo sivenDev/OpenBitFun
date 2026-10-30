@@ -972,3 +972,160 @@ async fn unresolved_prompts_are_refused_under_deny_rules_and_auto_approve() {
         assert!(manager.pending_requests().is_empty());
     }
 }
+
+/// A top-level session whose own agent is `acp:claude-code`, as a Dispatch
+/// worker creates for a job delegated to an opened external agent.
+async fn external_job_session(
+    session_manager: &crate::agentic::session::SessionManager,
+) -> (String, String, tempfile::TempDir) {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let workspace_path = dunce::canonicalize(workspace.path()).expect("canonical workspace");
+    let record =
+        crate::service::workspace::legacy_compat::register_local_fixture(&workspace_path, None)
+            .await;
+    let path = workspace_path.to_string_lossy().into_owned();
+    let session = session_manager
+        .create_session(
+            "Delegated job".to_string(),
+            "acp:claude-code".to_string(),
+            SessionConfig {
+                workspace_path: Some(path.clone()),
+                workspace_id: Some(record.id),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("job session");
+    (session.session_id, path, workspace)
+}
+
+async fn start_external_job_turn(
+    coordinator: &crate::agentic::coordination::ConversationCoordinator,
+    session_id: &str,
+    workspace_path: &str,
+    turn_id: &str,
+    prompt: &str,
+) -> OpenBitFunResult<()> {
+    coordinator
+        .start_dialog_turn(
+            session_id.to_string(),
+            prompt.to_string(),
+            None,
+            Some(turn_id.to_string()),
+            "acp:claude-code".to_string(),
+            Some(workspace_path.to_string()),
+            None,
+            None,
+            openbitfun_runtime_ports::DialogSubmissionPolicy::for_source(
+                openbitfun_runtime_ports::DialogTriggerSource::Cli,
+            ),
+            None,
+        )
+        .await
+}
+
+#[tokio::test]
+async fn a_top_level_session_runs_its_external_agent_only_where_allowed() {
+    let (coordinator, session_manager) = test_coordinator();
+    let executor = Arc::new(ScriptedExecutor::default());
+    coordinator.set_external_agent_executor(executor.clone());
+    let (session_id, workspace_path, _workspace) = external_job_session(&session_manager).await;
+
+    // Hosts that did not opt in keep refusing `acp:` as a session mode.
+    let refused = start_external_job_turn(
+        &coordinator,
+        &session_id,
+        &workspace_path,
+        "turn-0",
+        "fix it",
+    )
+    .await;
+    assert!(refused.is_err());
+    assert!(executor.requests.lock().unwrap().is_empty());
+
+    coordinator.allow_primary_external_agent_turns();
+    start_external_job_turn(
+        &coordinator,
+        &session_id,
+        &workspace_path,
+        "turn-1",
+        "fix it",
+    )
+    .await
+    .expect("turn starts");
+    coordinator
+        .wait_for_turn_settlement(&session_id, "turn-1", std::time::Duration::from_secs(10))
+        .await
+        .expect("turn settles");
+
+    let settled = session_manager
+        .turn_settlement_result(&session_id, "turn-1")
+        .expect("settlement result");
+    assert_eq!(
+        settled.status,
+        openbitfun_runtime_ports::AgentTurnSettlementStatus::Completed
+    );
+    assert_eq!(settled.final_response.as_deref(), Some("done: fix it"));
+    let requests = executor.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].client_id, "claude-code");
+    assert_eq!(requests[0].context.openbitfun_session_id, session_id);
+    assert!(matches!(
+        session_manager.get_session(&session_id).unwrap().state,
+        crate::agentic::core::SessionState::Idle
+    ));
+
+    let events = drained_events(coordinator.event_queue_for_test()).await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgenticEvent::DialogTurnStarted { turn_id, .. } if turn_id == "turn-1"
+    )));
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgenticEvent::DialogTurnCompleted { turn_id, success: Some(true), .. } if turn_id == "turn-1"
+        )),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_top_level_external_turn_cancels_the_agent() {
+    let (coordinator, session_manager) = test_coordinator();
+    let executor = Arc::new(ScriptedExecutor {
+        block_until_cancel: true,
+        ..Default::default()
+    });
+    coordinator.set_external_agent_executor(executor.clone());
+    coordinator.allow_primary_external_agent_turns();
+    let (session_id, workspace_path, _workspace) = external_job_session(&session_manager).await;
+
+    start_external_job_turn(&coordinator, &session_id, &workspace_path, "turn-1", "wait")
+        .await
+        .expect("turn starts");
+    for _ in 0..100 {
+        if !executor.requests.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    coordinator
+        .cancel_dialog_turn(&session_id, "turn-1")
+        .await
+        .expect("cancel");
+    coordinator
+        .wait_for_turn_settlement(&session_id, "turn-1", std::time::Duration::from_secs(10))
+        .await
+        .expect("turn settles");
+
+    assert_eq!(
+        executor.cancels.lock().unwrap().clone(),
+        vec![("claude-code".to_string(), session_id.clone())]
+    );
+    assert_eq!(
+        session_manager
+            .turn_settlement_result(&session_id, "turn-1")
+            .map(|result| result.status),
+        Some(openbitfun_runtime_ports::AgentTurnSettlementStatus::Cancelled)
+    );
+}

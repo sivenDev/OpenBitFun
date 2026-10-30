@@ -1345,6 +1345,8 @@ pub struct ConversationCoordinator {
     terminal_port: OnceLock<Arc<dyn TerminalPort>>,
     remote_exec_port: OnceLock<Arc<dyn RemoteExecPort>>,
     external_agent_executor: OnceLock<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>>,
+    /// Top-level sessions may run `acp:` agents; see `primary_external_turn`.
+    primary_external_agent_turns: std::sync::atomic::AtomicBool,
     remote_agent_port: OnceLock<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>>,
     hook_registry: openbitfun_agent_runtime::native_hooks::RuntimeHookRegistry,
 }
@@ -2284,6 +2286,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             terminal_port: OnceLock::new(),
             remote_exec_port: OnceLock::new(),
             external_agent_executor: OnceLock::new(),
+            primary_external_agent_turns: std::sync::atomic::AtomicBool::new(false),
             remote_agent_port: OnceLock::new(),
             hook_registry: crate::native_hooks::new_runtime_hook_registry(),
         }
@@ -6868,6 +6871,22 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             "Standard".to_string()
         };
         let effective_agent_type = Self::normalize_agent_type(&provisional_agent_type);
+        if let Some(client_id) =
+            self.primary_external_agent_client_id(&session, &effective_agent_type)
+        {
+            let client_id = client_id.to_string();
+            return self
+                .start_primary_external_agent_turn(
+                    session,
+                    session_workspace,
+                    effective_agent_type,
+                    client_id,
+                    user_input,
+                    turn_id,
+                    extra_user_message_metadata,
+                )
+                .await;
+        }
         let primary_agent_binding = Self::resolve_session_agent_for_turn(
             &session,
             &effective_agent_type,
@@ -16890,6 +16909,9 @@ fn merge_prepended_messages_for_turn(
     prepended_messages.extend(scheduled_job_messages);
     prepended_messages
 }
+
+#[path = "primary_external_turn.rs"]
+mod primary_external_turn;
 
 #[cfg(test)]
 pub(crate) mod tests {

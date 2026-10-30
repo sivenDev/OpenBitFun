@@ -24,12 +24,20 @@ use super::store::{DispatchStore, WorkspaceLock};
 const TURN_SETTLEMENT_TIMEOUT_MS: u64 = 5_000;
 
 pub(crate) async fn run(job_id: String) -> Result<()> {
-    // The job has no guaranteed controller to answer an external agent's own
-    // prompts, so delegation to `acp:` agents fails with this reason.
-    crate::agent::agentic_system::disable_external_agents_for_process(
-        crate::agent::agentic_system::DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED,
-    );
     let store = DispatchStore::open_default()?;
+    // Decided once, before the runtime starts. A job delegated to an opened
+    // `acp:` agent runs that agent as its session, and the agent's prompts
+    // reach the requester through the job's approval mailbox. Any other job
+    // has no guaranteed controller to answer an external agent's own prompts,
+    // so external agents fail there with a reason.
+    let job = store.load_job(&job_id).ok();
+    if job.as_ref().is_some_and(runs_external_agent) {
+        crate::agent::agentic_system::allow_primary_external_agent_turns_for_process();
+    } else {
+        crate::agent::agentic_system::disable_external_agents_for_process(
+            crate::agent::agentic_system::DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED,
+        );
+    }
     let Some(_worker_lease) = store.try_acquire_worker_lease(&job_id)? else {
         // A retry may briefly spawn a duplicate after its controller crashes.
         // Only the lease holder may publish a PID or execute the job.
@@ -756,6 +764,13 @@ fn turn_metadata(
     metadata
 }
 
+/// Whether `job` runs an opened `acp:` external agent: only a delegated job,
+/// whose agent the target admitted against its open-agent list.
+fn runs_external_agent(job: &super::store::DispatchJobRecord) -> bool {
+    job.request.delegation.is_some()
+        && openbitfun_core::agentic::coordination::is_external_agent_type(&job.request.agent_type)
+}
+
 /// Turn context key naming the device that delegated a dispatch job. The
 /// kernel reads it to refuse delegating such a turn onward.
 pub(crate) use openbitfun_core::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
@@ -763,6 +778,50 @@ pub(crate) use openbitfun_core::service::delegation::DISPATCH_DELEGATION_CONTEXT
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn job(agent_type: &str, delegated: bool) -> super::super::store::DispatchJobRecord {
+        use super::super::protocol::{
+            DispatchDelegation, DispatchDelegationSource, DispatchDelegationTaskKind,
+            DispatchSubmitRequest,
+        };
+        super::super::store::DispatchJobRecord {
+            protocol_version:
+                openbitfun_services_core::dispatch_contract::DISPATCH_PROTOCOL_VERSION,
+            intent_sha256: String::new(),
+            request: DispatchSubmitRequest {
+                protocol_version:
+                    openbitfun_services_core::dispatch_contract::DISPATCH_PROTOCOL_VERSION,
+                job_id: "job-1".to_string(),
+                session_id: "session-1".to_string(),
+                workspace_path: "/tmp/job".to_string(),
+                agent_type: agent_type.to_string(),
+                prompt: "What changed?".to_string(),
+                approval_policy: DispatchApprovalPolicy::Remote,
+                model: None,
+                reasoning_preset: None,
+                title: None,
+                attachments: Vec::new(),
+                setup_audit: Vec::new(),
+                delegation: delegated.then(|| DispatchDelegation {
+                    open_agent_id: "codex".to_string(),
+                    task_kind: DispatchDelegationTaskKind::Message,
+                    source: DispatchDelegationSource::default(),
+                }),
+                source_device_id: delegated.then(|| "laptop".to_string()),
+            },
+            created_at: String::new(),
+            title: String::new(),
+        }
+    }
+
+    #[test]
+    fn only_jobs_delegated_to_an_external_agent_run_one() {
+        assert!(runs_external_agent(&job("acp:codex", true)));
+        // An ordinary job keeps external agents unsupported.
+        assert!(!runs_external_agent(&job("acp:codex", false)));
+        assert!(!runs_external_agent(&job("Standard", true)));
+        assert!(!runs_external_agent(&job("acp:", true)));
+    }
 
     #[test]
     fn dispatch_append_reuses_the_runtime_steering_port() {

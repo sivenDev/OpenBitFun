@@ -126,6 +126,11 @@ pub struct DispatchFileChunk {
 /// the delegation fields, so a requester must see this before using them.
 pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";
 
+/// Optional: delegated jobs may run an opened `acp:` external agent with this
+/// device's own login or credentials. A requester lists a target's `acp:`
+/// open agents only when the target advertises this.
+pub const DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY: &str = "external_agent_executor_v1";
+
 /// Reserved argument carrying the device that sent a device RPC. Only the
 /// receiving host sets it, from the relay-authenticated sender; any value in
 /// the incoming payload is discarded so a requester cannot claim another device.

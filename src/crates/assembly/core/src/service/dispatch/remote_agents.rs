@@ -19,6 +19,7 @@ use openbitfun_runtime_ports::{
 };
 use openbitfun_services_core::dispatch_contract::{
     DispatchCatalogAgent, DispatchCatalogResponse, DISPATCH_AGENT_DELEGATION_CAPABILITY,
+    DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY,
 };
 use openbitfun_services_integrations::remote_ssh::dispatch_ssh;
 use serde_json::{json, Value};
@@ -183,13 +184,27 @@ impl RemoteAgentDirectory {
             .await
             .map_err(|error| CatalogError::Unreachable(format!("{error:#}")))?;
         ensure_delegation_target(&protocol, &device.device_name)?;
+        let runs_external_agents =
+            has_capability(&protocol, DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY);
         let catalog = self
             .rpc
             .invoke(&device.device_id, "dispatch_target_catalog", json!({}))
             .await
             .map_err(|error| CatalogError::Unreachable(format!("{error:#}")))?;
         serde_json::from_value::<DispatchCatalogResponse>(catalog)
-            .map(|catalog| catalog.agents)
+            // A target that cannot run external agents never lists them.
+            .map(|catalog| {
+                catalog
+                    .agents
+                    .into_iter()
+                    .filter(|agent| {
+                        runs_external_agents
+                            || !crate::agentic::coordination::is_external_agent_type(
+                                &agent.agent_type,
+                            )
+                    })
+                    .collect()
+            })
             .map_err(|error| {
                 CatalogError::Incompatible(format!(
                     "{} returned an unreadable agent catalog: {error}",
@@ -514,20 +529,23 @@ enum CatalogError {
     Unreachable(String),
 }
 
-/// Whether a probed target can take delegated jobs from this build.
-fn ensure_delegation_target(protocol: &Value, device_name: &str) -> Result<(), CatalogError> {
-    dispatch_ssh::validate_dispatch_protocol(protocol, Some(DELEGATED_APPROVAL_POLICY)).map_err(
-        |error| CatalogError::Incompatible(format!("{device_name} needs an update: {error}")),
-    )?;
-    let delegates = protocol
+fn has_capability(protocol: &Value, wanted: &str) -> bool {
+    protocol
         .get("capabilities")
         .and_then(Value::as_array)
         .is_some_and(|capabilities| {
             capabilities
                 .iter()
-                .any(|capability| capability.as_str() == Some(DISPATCH_AGENT_DELEGATION_CAPABILITY))
-        });
-    if delegates {
+                .any(|capability| capability.as_str() == Some(wanted))
+        })
+}
+
+/// Whether a probed target can take delegated jobs from this build.
+fn ensure_delegation_target(protocol: &Value, device_name: &str) -> Result<(), CatalogError> {
+    dispatch_ssh::validate_dispatch_protocol(protocol, Some(DELEGATED_APPROVAL_POLICY)).map_err(
+        |error| CatalogError::Incompatible(format!("{device_name} needs an update: {error}")),
+    )?;
+    if has_capability(protocol, DISPATCH_AGENT_DELEGATION_CAPABILITY) {
         Ok(())
     } else {
         Err(CatalogError::Incompatible(format!(
@@ -730,6 +748,45 @@ mod tests {
         assert!(helper.availability.is_available());
         // The incompatible device is never asked for its catalog.
         assert_eq!(targets.catalog_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn external_agents_are_listed_only_from_targets_that_run_them() {
+        let both = json!({ "agents": [
+            { "id": "helper", "agentType": "Standard", "displayName": "Helper", "taskKinds": ["message"] },
+            { "id": "codex", "agentType": "acp:codex", "displayName": "Codex", "taskKinds": ["message", "coding"] },
+        ]});
+        let targets = Targets {
+            probes: HashMap::from([
+                ("old", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY])),
+                (
+                    "new",
+                    probe(&[
+                        DISPATCH_AGENT_DELEGATION_CAPABILITY,
+                        DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY,
+                    ]),
+                ),
+            ]),
+            catalogs: HashMap::from([("old", both.clone()), ("new", both)]),
+            catalog_calls: AtomicUsize::new(0),
+            job_calls: Mutex::new(Vec::new()),
+        };
+        let (directory, _, _) = directory(targets, vec![device("old", true), device("new", true)]);
+        let mut listed: Vec<String> = directory
+            .list(RemoteAgentListing::Refreshed)
+            .await
+            .iter()
+            .map(|agent| agent.address.agent_type())
+            .collect();
+        listed.sort();
+        assert_eq!(
+            listed,
+            vec![
+                "remote:new/codex".to_string(),
+                "remote:new/helper".to_string(),
+                "remote:old/helper".to_string(),
+            ]
+        );
     }
 
     #[tokio::test]

@@ -839,6 +839,34 @@ async fn wait_for_stop(marker: &Path) {
     }
 }
 
+#[test]
+fn targets_advertise_delegation_to_external_agents() {
+    let environment = CliTestEnvironment::new();
+    let mut command = environment.std_command();
+    command.args(["dispatch", "probe"]).stdin(Stdio::null());
+    let output = support::command_output_with_timeout(&mut command, Duration::from_secs(60));
+    assert!(
+        output.status.success(),
+        "dispatch probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let probe: Value = serde_json::from_slice(&output.stdout).expect("probe JSON");
+    let capabilities: Vec<&str> = probe["capabilities"]
+        .as_array()
+        .expect("capabilities")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        capabilities.contains(&"agent_delegation_v1"),
+        "{capabilities:?}"
+    );
+    assert!(
+        capabilities.contains(&"external_agent_executor_v1"),
+        "{capabilities:?}"
+    );
+}
+
 /// The edit the `coding` behavior makes: a `farewell` function next to the
 /// requester's `greet`, a test for it, and a check that it imports.
 const CODING_EDIT: &str = "printf '\\n\\ndef farewell(name: str) -> str:\\n    return f\"Goodbye, {name}!\"\\n' >> ibot/greet.py && printf '\\n\\ndef test_farewell():\\n    from ibot.greet import farewell\\n\\n    assert farewell(\"ibot\") == \"Goodbye, ibot!\"\\n' >> tests/test_greet.py && python3 -c 'from ibot.greet import farewell; print(farewell(\"ibot\"))'";

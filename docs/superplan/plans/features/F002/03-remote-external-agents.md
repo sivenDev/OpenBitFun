@@ -36,6 +36,12 @@ parent: "F002"
 - 工作进程按任务决定执行器：委派到 `acp:` 时注册 `AcpExternalAgentExecutor`，否则沿用 `UnsupportedExternalAgentExecutor`。这个决定在初始化前一次确定，不在运行中切换。
 - 权限请求复用内核的权限管理器。Dispatch 工作进程把需要询问的请求持久化为现有的安全展示 DTO，来源类型为 Extension，展示时标明来自外部智能体。
 - 跨版本：没有 `external_agent_executor_v1` 的目标不提供远程外部智能体；目录中的 `acp:` 条目只在该能力存在时下发。
+- 实施时补充的设计（Task 1）：原先外部智能体只能作为子会话运行（`AgentSpawn`/`Task`），顶层会话把 `acp:` 当作未知模式拒绝；委派任务的会话没有父会话。因此内核新增受控的“顶层外部智能体轮次”（`coordination/primary_external_turn.rs`）：
+  - 只有调用过 `allow_primary_external_agent_turns()` 的进程启用，目前只有处理委派到 `acp:` 的 Dispatch 工作进程会调用，其他宿主行为不变；
+  - 轮次沿用协调器的生命周期（轮次记录、Processing 状态、结算、`cancel_dialog_turn`、终止事件），跳过原生提示词、工具与模型准备；
+  - 权限路由与有效策略和子会话相同，策略从轮次元数据中的权限模式读取。
+  
+  发起方在过滤目录时，对没有该能力的目标丢弃 `acp:` 条目（`remote_agents.rs`）。
 
 **Baseline:**
 - `src/apps/cli/src/dispatch/worker.rs` 在初始化前调用 `disable_external_agents_for_process`，工作进程中的外部智能体一律返回 `UnsupportedContext`（F001-04）。
@@ -66,7 +72,8 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-cli --bin openbitfun agentic_system`
 - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
 
-- [ ] 只有委派到 `acp:` 的任务启用执行器，能力只在执行器可用时声明
+- [x] 只有委派到 `acp:` 的任务启用执行器，能力只在执行器可用时声明
+  - 证据：`dispatch::` 104 项、`agentic_system`、`dispatch.contract.test.ts` 11 项通过；核心 `external_agent` 35 项通过，其中包括顶层轮次未启用时拒绝、启用后完成并结算、取消传到执行器；`service::dispatch` 65 项通过，其中包括没有能力的目标不列出 `acp:` 条目；CLI 合约测试 `targets_advertise_delegation_to_external_agents` 用真实二进制确认 probe 声明了该能力。
 
 ## Task 2: 开放外部智能体与提示
 

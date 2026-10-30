@@ -129,6 +129,9 @@ describe('dispatch wire contract single source', () => {
   it('keeps agent delegation optional and its requester bound by the host', () => {
     expect(contractSource).toContain('pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";');
     expect(BASE_DISPATCH_CAPABILITIES).not.toContain('agent_delegation_v1');
+    // Running opened `acp:` agents is a separate, optional target fact.
+    expect(contractSource).toContain('pub const DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY: &str = "external_agent_executor_v1";');
+    expect(BASE_DISPATCH_CAPABILITIES).not.toContain('external_agent_executor_v1');
     // Hosts overwrite this reserved argument with the relay-authenticated sender.
     expect(contractSource).toContain('pub const DISPATCH_SOURCE_DEVICE_ARG: &str = "__sourceDeviceId";');
     const bound = /DISPATCH_SOURCE_BOUND_COMMANDS: &\[&str\] =\s*&\[([^\]]*)\]/u.exec(contractSource);

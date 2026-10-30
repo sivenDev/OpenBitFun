@@ -230,6 +230,13 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
         openbitfun_services_core::dispatch_contract::DISPATCH_AGENT_DELEGATION_CAPABILITY
             .to_string(),
     );
+    // Delegated jobs run opened `acp:` agents through this CLI's ACP client.
+    if crate::agent::agentic_system::external_agent_executor_available().await {
+        capabilities.push(
+            openbitfun_services_core::dispatch_contract::DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY
+                .to_string(),
+        );
+    }
     if runner::is_supported() {
         capabilities.push(
             openbitfun_services_core::dispatch_contract::DISPATCH_DETACHED_WORKER_CAPABILITY

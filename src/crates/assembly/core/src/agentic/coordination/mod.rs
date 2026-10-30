@@ -30,5 +30,10 @@ pub(crate) use background_outcomes::{
 pub(crate) use coordination_store::{validate_agent_id, DirectChildAgentRecord};
 pub(crate) use external_agent_turn::external_agent_client_id;
 
+/// Whether `agent_type` names an external (`acp:`) agent.
+pub fn is_external_agent_type(agent_type: &str) -> bool {
+    external_agent_client_id(agent_type).is_some()
+}
+
 pub use coordinator::get_global_coordinator;
 pub use scheduler::get_global_scheduler;
