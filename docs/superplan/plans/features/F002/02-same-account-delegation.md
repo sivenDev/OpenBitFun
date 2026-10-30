@@ -2,7 +2,7 @@
 id: "F002-02"
 title: "同账号委派给远程原生智能体"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "发起方的智能体列表显示同账号设备开放的远程智能体；助理用 AgentSpawn 后台委派纯消息或编码任务，后端观察器按游标收回结果交给 AgentWait，重启后可补收。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"
@@ -210,9 +210,9 @@ parent: "F002"
 - `pnpm run i18n:audit`
 - 手动：两台同账号设备分别实测纯消息、编码、取消、审批、发起方重启补收、目标离线；结果记录在本计划中
 
-- [ ] 界面测试通过，两台设备的实测结果已记录
+- [x] 界面测试通过，两台设备的实测结果已记录
 
-**Progress (2026-10-30):** 界面部分完成，两台设备实测未做。
+**Progress (2026-10-30):** 界面部分与两台设备实测都已完成。
 - 智能体详情显示远程条目所在设备、可用性（离线、需要更新、无响应，悬停显示原因）与可接受的任务类型；远程条目不提供本机管理入口，提示到开放它的设备上修改或关闭。
 - Task 卡片把 `remote:<device>/<id>` 显示为「<id>（远程智能体）」，模型显示「由远程设备选择」。
 - 转发到本机的目标端审批在审批栏写明「此操作在 <设备> 上执行，你的回答会发送到该设备」；为此转发时在显示元数据中加入 `remoteDeviceName`（来自缓存目录，取不到时用设备 id）。
@@ -234,8 +234,15 @@ parent: "F002"
     - 修复：恢复观察时同样转发审批（`ResumedTaskSink` 使用 `PromptForwarder`，审批归属子会话的工作区与委派上下文）。
     - 结果：重启约 3 秒后审批栏重新出现；无人操作 3 分钟以上也无人回答；点「允许一次」后目标执行完成。
     - 同时修复：刚启动时设备目录尚未拉取，审批栏显示设备 id；现改为在转发审批时再取一次设备名。
-  - 未实测：编码任务（Git 基线同步）跨两台机器尚未做；真实 GitHub 账号登录未做（使用模拟账号）。
+  - 编码任务（2026-10-30 补测）：
+    - 仓库：本机新建的模拟仓库 `sim-repo`（Python 小包，一个提交 `e3bbc1f`，没有远端）。原计划使用用户提供的 GitHub 仓库，但目标电脑访问它有权限问题，改用模拟仓库；没有远端也正好让基线只能以 Git bundle 送达。
+    - 操作：在 A1 中把 `sim-repo` 打开为工作区，新建会话，请真实模型用 `AgentSpawn(remote:…a05/helper, task_kind: coding)` 委派「新增 `farewell(name)` 并补测试」，再用 `AgentWait` 等待。目标端以 `coding` 行为运行：智能体同时开放 `message` 与 `coding`，模拟模型执行一条预设的编辑命令。
+    - 目标端：作业 worktree 位于目标设备的托管目录，分支 `openbitfun/dispatch/delegation-ee25a328-0b96`，检出在 `e3bbc1f`，没有远端（基线来自 bundle）。编辑命令触发审批，A1 审批栏显示「此操作在 Shimo Mac (x86_64) 上执行」；这条审批针对模拟中预设的编辑，由我在测试中点了「允许一次」。作业 `succeeded`。
+    - 发起方：A1 的回答给出结果分支、提交 `492150d96eb1`（共 1 个）与改动文件 `ibot/greet.py`、`tests/test_greet.py`，并说明当前工作区未被切换。本机仓库出现同名分支，比 `main` 多一个由目标端提交的 `OpenBitFun delegated task: uncommitted changes`，共 10 行新增；在该提交上 `greet` 与新增的 `farewell` 测试都通过。`main` 仍指向 `e3bbc1f`。
+    - 另见（不属本特性）：把文件夹打开为工作区时，产品会在 `.gitignore` 中追加 `.openbitfun/`，这是未提交改动，基线只取已提交的 `HEAD`，不受影响。
+  - 未实测：真实 GitHub 账号登录（使用模拟账号）；基线经远端拉取（本次仓库没有远端，走 bundle）。
   - 另见（不属本特性）：在等待中途关闭 A1 后，父会话中被打断的 AgentWait 调用没有对应的工具结果，继续在该会话发消息时模型服务返回 502「No tool output found for function call」；新开会话不受影响。
+  - 模拟扩展：`serve_external_device` 新增 `coding` 行为（开放 `message` 与 `coding`，预设一条编辑命令）；`open_agent` 改为接收任务类型。`delegation_simulation::`：2 passed。
   - Evidence：`--lib remote_agent_turn`：10 passed（新增 `a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits_on`）；`--lib agentic::coordination`：270 passed，1 failed（`remote_session_metadata_never_falls_back_to_a_local_workspace_binding`，干净 HEAD 上同样失败）。
 
 ## Task 5: 本机双账号多客户端模拟

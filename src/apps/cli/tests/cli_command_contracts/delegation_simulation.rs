@@ -179,18 +179,14 @@ impl SimulatedDevice {
         }
     }
 
-    /// Opens the Standard agent to `devices` through the shipped CLI command.
-    fn open_agent(&self, devices: &[&str]) {
+    /// Opens the Standard agent to `devices` for `task_kinds` through the
+    /// shipped CLI command.
+    fn open_agent(&self, devices: &[&str], task_kinds: &[&str]) {
         let mut command = self.environment.std_command_for(&self.binary);
-        command.args([
-            "delegation",
-            "open",
-            OPEN_AGENT_ID,
-            "--agent",
-            "Standard",
-            "--task-kind",
-            "message",
-        ]);
+        command.args(["delegation", "open", OPEN_AGENT_ID, "--agent", "Standard"]);
+        for kind in task_kinds {
+            command.args(["--task-kind", kind]);
+        }
         for device in devices {
             command.args(["--device", device]);
         }
@@ -297,7 +293,7 @@ impl Simulation {
                 &session,
                 &device.device_id,
             );
-            device.open_agent(&[A1]);
+            device.open_agent(&[A1], &["message"]);
             device.start_daemon();
         }
 
@@ -843,12 +839,16 @@ async fn wait_for_stop(marker: &Path) {
     }
 }
 
+/// The edit the `coding` behavior makes: a `farewell` function next to the
+/// requester's `greet`, a test for it, and a check that it imports.
+const CODING_EDIT: &str = "printf '\\n\\ndef farewell(name: str) -> str:\\n    return f\"Goodbye, {name}!\"\\n' >> ibot/greet.py && printf '\\n\\ndef test_farewell():\\n    from ibot.greet import farewell\\n\\n    assert farewell(\"ibot\") == \"Goodbye, ibot!\"\\n' >> tests/test_greet.py && python3 -c 'from ibot.greet import farewell; print(farewell(\"ibot\"))'";
+
 /// Runs one simulated device on another machine against a simulation
 /// started with `OPENBITFUN_SIM_RELAY_BIND=0.0.0.0` and
 /// `OPENBITFUN_SIM_EXTERNAL_DEVICE_ID`. `OPENBITFUN_SIM_EXTERNAL` names a
 /// JSON file with the manifest's `external` entry plus `relayUrl` (the
 /// simulation's address on the network) and `behavior` (`immediate`,
-/// `gated`, or `approval`); it is removed once read because it holds the
+/// `gated`, `approval`, or `coding`); it is removed once read because it holds the
 /// device secret. The session is written here, since session files are
 /// bound to the machine that writes them. `OPENBITFUN_SIM_CLI_BIN` names
 /// this machine's `openbitfun`. Stops when `<file>.running` is removed or
@@ -883,7 +883,21 @@ async fn serve_external_device() {
             )]),
             true,
         ),
+        // A coding task: one scripted edit in the delegated worktree, which
+        // the target commits when the requester syncs the result.
+        "coding" => (
+            MockOpenAiServer::tool_sequence(vec![(
+                "ExecCommand".to_string(),
+                json!({ "cmd": CODING_EDIT }),
+            )]),
+            true,
+        ),
         _ => (MockOpenAiServer::immediate(), false),
+    };
+    let task_kinds: &[&str] = if text("behavior") == "coding" {
+        &["message", "coding"]
+    } else {
+        &["message"]
     };
     let mut device =
         SimulatedDevice::configure(&text("deviceId"), &text("deviceName"), model, tool_loop);
@@ -896,7 +910,7 @@ async fn serve_external_device() {
         &session,
         &device.device_id,
     );
-    device.open_agent(&[&text("requesterDeviceId")]);
+    device.open_agent(&[&text("requesterDeviceId")], task_kinds);
     device.start_daemon();
 
     let marker = request_path.with_extension("running");
