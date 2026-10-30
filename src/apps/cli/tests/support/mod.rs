@@ -264,6 +264,24 @@ impl CliTestEnvironment {
         command
     }
 
+    /// How to run the CLI as this environment from another process: the
+    /// working directory, the variables to set, and the ones to remove.
+    pub(crate) fn command_environment(&self) -> serde_json::Value {
+        json!({
+            "cwd": self.workspace,
+            "remove": ["OPENBITFUN_USER_ROOT", "OPENBITFUN_HOME"],
+            "set": {
+                "OPENBITFUN_E2E_STORAGE_GUARD": "1",
+                "OPENBITFUN_E2E_USER_ROOT": self.user_root,
+                "OPENBITFUN_E2E_HOME": self.home_root,
+                "APPDATA": self.config_root,
+                "XDG_CONFIG_HOME": self.config_root,
+                "HOME": self.home_root,
+                "USERPROFILE": self.home_root,
+            },
+        })
+    }
+
     pub(crate) fn apply_tokio_environment(&self, command: &mut tokio::process::Command) {
         command
             .current_dir(&self.workspace)
@@ -344,6 +362,8 @@ enum MockModelResponse {
     GatedThenImmediate,
     ProductControlLoop,
     ToolSequence(Vec<(String, serde_json::Value)>),
+    /// The scripted tool calls, then a final answer to every later request.
+    ToolSequenceThenImmediate(Vec<(String, serde_json::Value)>),
     Http403 { reason: String },
     DisconnectThenHttp403,
     MalformedSseThenImmediate,
@@ -369,6 +389,10 @@ impl MockOpenAiServer {
 
     pub(crate) fn tool_sequence(calls: Vec<(String, serde_json::Value)>) -> Self {
         Self::spawn(MockModelResponse::ToolSequence(calls))
+    }
+
+    pub(crate) fn tool_sequence_then_immediate(calls: Vec<(String, serde_json::Value)>) -> Self {
+        Self::spawn(MockModelResponse::ToolSequenceThenImmediate(calls))
     }
 
     pub(crate) fn http_403(reason: impl Into<String>) -> Self {
@@ -486,7 +510,11 @@ impl MockOpenAiServer {
                             ) && attempt < 3)
                             || (matches!(response, MockModelResponse::ProductControlLoop)
                                 && attempt < 5)
-                            || matches!(response, MockModelResponse::GatedThenImmediate)
+                            || matches!(
+                                response,
+                                MockModelResponse::GatedThenImmediate
+                                    | MockModelResponse::ToolSequenceThenImmediate(_)
+                            )
                             || matches!(&response, MockModelResponse::ToolSequence(calls) if attempt <= calls.len());
                         if accepts_more_requests {
                             continue;
@@ -566,7 +594,9 @@ fn serve_model_response(
         return;
     }
 
-    if let MockModelResponse::ToolSequence(calls) = response {
+    if let MockModelResponse::ToolSequence(calls)
+    | MockModelResponse::ToolSequenceThenImmediate(calls) = response
+    {
         let (delta, finish_reason) = match calls.get(attempt) {
             Some((name, arguments)) => (
                 json!({"role":"assistant", "tool_calls":[{

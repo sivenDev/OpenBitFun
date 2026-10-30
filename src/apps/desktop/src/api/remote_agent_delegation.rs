@@ -99,6 +99,13 @@ impl ConnectionDispatchRpc for SignedInConnections {
         .invoke_connection(connection_id, command, args)
         .await
     }
+
+    fn gone_reason(
+        &self,
+        error: &anyhow::Error,
+    ) -> Option<openbitfun_core::service::dispatch::GoneConnection> {
+        openbitfun_core::service::remote_connect::connection_rpc::gone_connection(error)
+    }
 }
 
 /// The port the coordinator uses for `remote:` agents on this host. Coding

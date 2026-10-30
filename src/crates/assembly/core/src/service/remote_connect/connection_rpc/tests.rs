@@ -433,3 +433,22 @@ fn only_stored_unrevoked_connections_can_be_granted() {
         .to_string()
         .contains("revoked"));
 }
+
+#[cfg(all(feature = "dispatch-store", feature = "ssh-remote"))]
+#[test]
+fn revoked_or_rekeyed_connections_are_gone_and_others_may_pass() {
+    use crate::service::dispatch::GoneConnection;
+    assert_eq!(
+        gone_connection(&route_refusal("connection_revoked", "revoked")),
+        Some(GoneConnection::Revoked)
+    );
+    assert_eq!(
+        gone_connection(&route_refusal("key_changed", "changed")),
+        Some(GoneConnection::KeyChanged)
+    );
+    assert_eq!(
+        gone_connection(&route_refusal("peer_offline", "offline")),
+        None
+    );
+    assert_eq!(gone_connection(&anyhow::anyhow!("timed out")), None);
+}

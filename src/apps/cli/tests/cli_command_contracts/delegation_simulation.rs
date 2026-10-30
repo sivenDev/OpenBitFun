@@ -34,6 +34,7 @@ const A2: &str = "00000000000000000000000000000a02";
 const A3: &str = "00000000000000000000000000000a03";
 const A4: &str = "00000000000000000000000000000a04";
 const B1: &str = "00000000000000000000000000000b01";
+const B2: &str = "00000000000000000000000000000b02";
 const OPEN_AGENT_ID: &str = "helper";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const JOB_TIMEOUT: Duration = Duration::from_secs(90);
@@ -271,11 +272,20 @@ impl Drop for SimulatedDevice {
 
 /// Account A: requester A1 plus targets A2 (answers at once), A3 (holds its
 /// model stream until cancelled), and A4 (runs a command that needs
-/// approval). Account B: B1, which opens its agent to A1 as well.
+/// approval). Account B: B1, which opens its agent to A1 as well, and B2.
+/// Both of B's devices are also paired with A1 over a connection and grant
+/// their agent to it: B1 takes message and coding tasks, at most one at a
+/// time, and its coding edit asks its owner first; B2 holds its answer
+/// until cancelled.
 struct Simulation {
     relay: LocalRelay,
     requester: AccountSession,
     devices: Vec<SimulatedDevice>,
+    /// A1's connection records: in its home when a desktop joins as A1.
+    requester_connections: PathBuf,
+    _requester_connections_dir: Option<tempfile::TempDir>,
+    /// The connection to B1, then the one to B2.
+    connections: Vec<String>,
 }
 
 impl Simulation {
@@ -296,10 +306,21 @@ impl Simulation {
             SimulatedDevice::configure(A2, "A2 Laptop", MockOpenAiServer::immediate(), false),
             SimulatedDevice::configure(A3, "A3 Server", MockOpenAiServer::gated(), false),
             SimulatedDevice::configure(A4, "A4 Workstation", approving_model, true),
-            SimulatedDevice::configure(B1, "B1 Desktop", MockOpenAiServer::immediate(), false),
+            SimulatedDevice::configure(
+                B1,
+                "B1 Desktop",
+                MockOpenAiServer::tool_sequence_then_immediate(vec![(
+                    "ExecCommand".to_string(),
+                    json!({ "cmd": CODING_EDIT }),
+                )]),
+                true,
+            ),
+            SimulatedDevice::configure(B2, "B2 Server", MockOpenAiServer::gated(), false),
         ];
+        let mut other_account = None;
         for device in &mut devices {
-            let (account, login) = if device.device_id.as_str() == B1 {
+            let other = [B1, B2].contains(&device.device_id.as_str());
+            let (account, login) = if other {
                 (ACCOUNT_B, "sim-b")
             } else {
                 (ACCOUNT_A, "sim-a")
@@ -319,17 +340,101 @@ impl Simulation {
                 &session,
                 &device.device_id,
             );
-            device.open_agent(&[A1], &["message"]);
+            let kinds: &[&str] = if device.device_id.as_str() == B1 {
+                &["message", "coding"]
+            } else {
+                &["message"]
+            };
+            device.open_agent(&[A1], kinds);
             device.start_daemon();
+            if other {
+                other_account = Some(session);
+            }
         }
 
-        let simulation = Self {
+        let (requester_connections, requester_connections_dir) = match requester_home {
+            Some(home) => (home.join("relay-v1.0.0").join("connections.json"), None),
+            None => {
+                let dir = tempfile::tempdir().expect("A1 connection store");
+                (dir.path().join("connections.json"), Some(dir))
+            }
+        };
+        let mut simulation = Self {
             relay,
             requester,
             devices,
+            requester_connections,
+            _requester_connections_dir: requester_connections_dir,
+            connections: Vec::new(),
         };
         simulation.wait_until_online().await;
+        let other_account = other_account.expect("account B devices");
+        simulation.wait_until_online_as(&other_account, &[B1, B2]).await;
+        for (device, limits) in [(B1, &["--max-jobs", "1"][..]), (B2, &[][..])] {
+            let connection_id = simulation.pair_with_requester(device).await;
+            let mut grant = vec!["grant-connection", OPEN_AGENT_ID, connection_id.as_str()];
+            grant.extend_from_slice(limits);
+            let (ok, output) = delegation_cli(simulation.device(device), &grant);
+            assert!(ok, "{output}");
+            simulation.connections.push(connection_id);
+        }
         simulation
+    }
+
+    /// Pairs `device_id` (of account B) with A1 the way their owners do:
+    /// A1 invites, the device accepts, A1 confirms the fingerprint.
+    async fn pair_with_requester(&self, device_id: &str) -> String {
+        use openbitfun_core::service::remote_connect::connections::{
+            ConnectionStore, ConnectionsClient,
+        };
+        let store = ConnectionStore::at(&self.requester_connections);
+        let client = ConnectionsClient {
+            relay_url: &self.relay.url,
+            session: &self.requester,
+            local_device_id: A1,
+            store: &store,
+        };
+        let device = self.device(device_id);
+        let invite = client.create_invite(None).await.expect("create invite");
+        let accepted = json_output(
+            device,
+            &["accept", &invite.link.to_string(), "--yes", "--json"],
+        );
+        let connection_id = accepted["connectionId"]
+            .as_str()
+            .expect("connection id")
+            .to_owned();
+        let fingerprint = json_output(device, &["list", "--json"])["localFingerprint"]
+            .as_str()
+            .expect("device fingerprint")
+            .to_owned();
+        client
+            .confirm(&connection_id, &fingerprint)
+            .await
+            .expect("confirm connection");
+        connection_id
+    }
+
+    async fn wait_until_online_as(&self, session: &AccountSession, expected: &[&str]) {
+        let deadline = Instant::now() + STARTUP_TIMEOUT;
+        loop {
+            let listed = AccountClient::new()
+                .list_devices(&self.relay.url, session)
+                .await
+                .unwrap_or_default();
+            if expected.iter().all(|id| {
+                listed
+                    .iter()
+                    .any(|device| device.device_id == *id && device.online)
+            }) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "account B devices did not come online"
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 
     fn rpc(&self) -> RequesterRpc {
@@ -390,6 +495,20 @@ impl Simulation {
                 "asksApproval": A4,
                 "otherAccount": B1,
             },
+            "requesterConnections": self.requester_connections,
+            "connections": {
+                "coding": { "connectionId": self.connections[0], "deviceId": B1 },
+                "holds": { "connectionId": self.connections[1], "deviceId": B2 },
+            },
+            "accountB": { "userId": ACCOUNT_B },
+            // How the owner of each device runs its CLI, for owner actions
+            // such as approving or revoking on that device.
+            "deviceCli": self.devices.iter().map(|device| {
+                (device.device_id.clone(), json!({
+                    "binary": device.binary,
+                    "environment": device.environment.command_environment(),
+                }))
+            }).collect::<serde_json::Map<_, _>>(),
             "deviceHomes": self.devices.iter().map(|device| {
                 (device.device_id.clone(), json!(device.environment.home_root()))
             }).collect::<serde_json::Map<_, _>>(),

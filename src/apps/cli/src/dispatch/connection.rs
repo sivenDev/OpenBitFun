@@ -153,6 +153,13 @@ pub(super) async fn admit_call(
         }
         other => bail!("dispatch verb '{other}' is not accepted over a cross-account connection"),
     }
+    // Workspace requests have no caller field: the workspace's owner file,
+    // checked above, is what binds them to this connection.
+    if verb.starts_with("workspace-") {
+        if let Some(fields) = input.as_object_mut() {
+            fields.remove(DISPATCH_SOURCE_CONNECTION_ARG);
+        }
+    }
     Ok(input)
 }
 
@@ -570,6 +577,8 @@ mod tests {
             "jobId": job_id,
             "repoKey": "abcdef0123456789",
             "remoteUrl": "git@example.com:owner/private.git",
+            // Bound by the host, as for every call over a connection.
+            DISPATCH_SOURCE_CONNECTION_ARG: connection_id,
         });
         admit_call(
             &fixture.store,
@@ -585,6 +594,9 @@ mod tests {
     async fn a_connection_uses_only_coding_workspaces_it_provisioned() {
         let fixture = store_with_jobs().await;
         let store = &fixture.store;
+        // The workspace request reaches its parser without the caller field.
+        let parsed = provision(&fixture, "delegation-parsed", "conn-1").await.unwrap();
+        assert!(parsed.get(DISPATCH_SOURCE_CONNECTION_ARG).is_none(), "{parsed}");
         let admitted = provision(&fixture, "delegation-new", "conn-1")
             .await
             .unwrap();

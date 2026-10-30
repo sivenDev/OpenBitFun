@@ -83,6 +83,19 @@ pub trait ConnectionDispatchRpc: Send + Sync {
         command: &str,
         args: Value,
     ) -> anyhow::Result<Value>;
+
+    /// The refusal `error` carries when its connection is gone for good:
+    /// revoked, removed, or no longer trusted. Anything else may pass.
+    fn gone_reason(&self, _error: &anyhow::Error) -> Option<GoneConnection> {
+        None
+    }
+}
+
+/// Why a connection will not carry calls again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoneConnection {
+    Revoked,
+    KeyChanged,
 }
 
 /// Sends calls for `conn:` targets over their connection and every other call
@@ -144,6 +157,24 @@ impl RemoteAgentDirectory {
             connections: None,
             cache: tokio::sync::Mutex::new(HashMap::new()),
             outbound: None,
+        }
+    }
+
+    /// Why a job of another account can no longer be reached, when its
+    /// connection was revoked, removed, or stopped being trusted.
+    fn gone_connection_reason(&self, device_id: &str, error: &anyhow::Error) -> Option<String> {
+        remote_target_connection(device_id)?;
+        match self.connections.as_ref()?.gone_reason(error)? {
+            GoneConnection::Revoked => Some(
+                "Access was revoked: the connection to the other account's device was revoked, \
+                 and the task there was stopped"
+                    .to_string(),
+            ),
+            GoneConnection::KeyChanged => Some(
+                "The other account's device changed its key, so this device stopped trusting \
+                 the connection; pair again to delegate to it"
+                    .to_string(),
+            ),
         }
     }
 
@@ -388,7 +419,7 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for RemoteAgentDirector
         job: &openbitfun_runtime_ports::RemoteAgentJob,
         cursor: u64,
     ) -> PortResult<openbitfun_runtime_ports::RemoteAgentJobSnapshot> {
-        let response = self
+        let response = match self
             .rpc
             .invoke(
                 &job.device_id,
@@ -396,7 +427,24 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for RemoteAgentDirector
                 json!({ "jobId": job.job_id, "cursor": cursor }),
             )
             .await
-            .map_err(target_error)?;
+        {
+            Ok(response) => response,
+            Err(error) => {
+                // A connection that is gone never comes back, so the job ends
+                // here instead of being observed again forever.
+                if let Some(reason) = self.gone_connection_reason(&job.device_id, &error) {
+                    return Ok(openbitfun_runtime_ports::RemoteAgentJobSnapshot {
+                        state: openbitfun_runtime_ports::RemoteAgentJobState::Failed,
+                        cursor,
+                        events: Vec::new(),
+                        pending_permissions: Vec::new(),
+                        cursor_reset: false,
+                        last_error: Some(reason),
+                    });
+                }
+                return Err(target_error(error));
+            }
+        };
         serde_json::from_value(response).map_err(|error| {
             PortError::new(
                 PortErrorKind::Backend,
@@ -1119,6 +1167,67 @@ mod tests {
         assert_eq!(calls[0].1["delegation"]["openAgentId"], "helper");
         assert_eq!(calls[0].1["approvalPolicy"], "remote");
         assert!(devices.job_calls.lock().unwrap().is_empty());
+    }
+
+    /// A connection the Relay refuses with `reason`.
+    struct Refused(&'static str);
+
+    #[async_trait]
+    impl ConnectionDispatchRpc for Refused {
+        async fn usable_connections(&self) -> anyhow::Result<Vec<ConnectionPeer>> {
+            Ok(Vec::new())
+        }
+
+        async fn invoke_connection(
+            &self,
+            _connection_id: &str,
+            _command: &str,
+            _args: Value,
+        ) -> anyhow::Result<Value> {
+            anyhow::bail!("refused: {}", self.0)
+        }
+
+        fn gone_reason(&self, _error: &anyhow::Error) -> Option<GoneConnection> {
+            match self.0 {
+                "connection_revoked" => Some(GoneConnection::Revoked),
+                "key_changed" => Some(GoneConnection::KeyChanged),
+                _ => None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn jobs_end_when_their_connection_is_gone_and_retry_otherwise() {
+        let job = openbitfun_runtime_ports::RemoteAgentJob {
+            device_id: remote_connection_target("c-1"),
+            job_id: "delegation-1".to_string(),
+            session_id: "s".to_string(),
+        };
+        for (reason, gone) in [
+            ("connection_revoked", true),
+            ("key_changed", true),
+            ("relay_unavailable", false),
+        ] {
+            let (directory, _, _) = directory(
+                Targets::new(HashMap::new(), HashMap::new()),
+                Vec::new(),
+            );
+            let directory = directory.with_connections(Arc::new(Refused(reason)));
+            let port: &dyn openbitfun_runtime_ports::RemoteAgentDelegationPort = &directory;
+            let observed = port.observe(&job, 7).await;
+            if gone {
+                let snapshot = observed.expect("a gone connection ends the job");
+                assert_eq!(
+                    snapshot.state,
+                    openbitfun_runtime_ports::RemoteAgentJobState::Failed
+                );
+                assert_eq!(snapshot.cursor, 7);
+                assert!(snapshot.last_error.is_some(), "{reason}");
+            } else {
+                // Anything else may pass, so observation is retried.
+                assert!(observed.is_err(), "{reason}");
+            }
+        }
     }
 
     #[tokio::test]

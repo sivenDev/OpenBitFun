@@ -1732,12 +1732,15 @@ impl DispatchStore {
     /// job that count admits are one step.
     pub(crate) fn lock_connection_admission(&self, connection_id: &str) -> Result<WorkspaceLock> {
         use sha2::{Digest, Sha256};
-        let digest = hex::encode(Sha256::digest(connection_id.as_bytes()));
+        let digest: String = Sha256::digest(connection_id.as_bytes())[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         WorkspaceLock::acquire(
             &self
                 .root
                 .join("locks")
-                .join(format!("connection-{}.lock", &digest[..32])),
+                .join(format!("connection-{digest}.lock")),
         )
     }
 }

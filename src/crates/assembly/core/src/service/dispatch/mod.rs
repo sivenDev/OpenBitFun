@@ -52,7 +52,7 @@ pub use openbitfun_services_core::dispatch_contract::{
 };
 #[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
 pub use remote_agents::{
-    AccountDevice, AccountDeviceDirectory, ConnectionDispatchRpc, ConnectionPeer,
+    AccountDevice, AccountDeviceDirectory, ConnectionDispatchRpc, ConnectionPeer, GoneConnection,
     RemoteAgentDirectory,
 };
 pub use target::{DispatchTarget, DispatchTargetRequest, DispatchWorkspaceDelivery};

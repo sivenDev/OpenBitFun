@@ -508,7 +508,13 @@ async fn connection_guard_for(
     });
     let guarded = match stores {
         Ok((grants, connections)) => {
-            connection_guard::ConnectionGuard::for_job(job, grants, connections).await
+            connection_guard::ConnectionGuard::for_job(
+                job,
+                grants,
+                connections,
+                connection_guard::RelayRefresh::signed_in(),
+            )
+            .await
         }
         Err(error) => Err(error),
     };

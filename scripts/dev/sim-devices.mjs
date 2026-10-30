@@ -10,7 +10,9 @@
 // directory that is removed on exit.
 //
 //   node scripts/dev/sim-devices.mjs             start a desktop signed in as A1
-//   node scripts/dev/sim-devices.mjs --check     run the desktop requester check
+//   node scripts/dev/sim-devices.mjs --check     run the desktop requester checks,
+//                                                including delegation to account B
+//                                                over its connections
 //
 // Options:
 //   --copy-models   give A1 the `ai` section of your own config so it can run a
@@ -128,7 +130,9 @@ function describe(manifest) {
   log(`A2 Laptop, answers at once:    remote:${devices.answers}/${manifest.openAgentId}`);
   log(`A3 Server, runs until cancelled: remote:${devices.holds}/${manifest.openAgentId}`);
   log(`A4 Workstation, asks approval: remote:${devices.asksApproval}/${manifest.openAgentId}`);
-  log(`B1 Desktop, account B (must not be reachable): ${devices.otherAccount}`);
+  log(`B1 Desktop, account B (not as a device of A): ${devices.otherAccount}`);
+  log(`B1 over its connection, coding with owner approval: remote:conn:${manifest.connections.coding.connectionId}/${manifest.openAgentId}`);
+  log(`B2 Server over its connection, runs until stopped: remote:conn:${manifest.connections.holds.connectionId}/${manifest.openAgentId}`);
   log('the simulated devices run mock models, so their answers are test markers such as ACTIVE_TURN_STREAM_MARKER');
 }
 
@@ -216,11 +220,24 @@ async function main() {
           'test', '--locked', '-p', 'openbitfun-desktop', '--lib',
           'api::remote_agent_delegation::simulation_tests', '--', '--ignored', '--nocapture',
         ],
-        { env: { ...process.env, OPENBITFUN_SIM_MANIFEST: manifestPath } },
+        {
+          env: {
+            ...process.env,
+            OPENBITFUN_SIM_MANIFEST: manifestPath,
+            // The check runs as A1: coding baselines and A1's records stay in
+            // A1's simulated storage, never in this user's own.
+            OPENBITFUN_E2E_STORAGE_GUARD: '1',
+            OPENBITFUN_E2E_USER_ROOT: requesterUserRoot,
+            OPENBITFUN_E2E_HOME: requesterHome,
+            NO_PROXY: withLoopback(process.env.NO_PROXY),
+            no_proxy: withLoopback(process.env.no_proxy),
+          },
+        },
       );
       log(exitCode === 0 ? 'desktop requester check passed' : 'desktop requester check failed');
-      return;
     }
+
+    if (checkMode) return;
 
     const binary = await ensureDesktopBuilt();
     log(`starting the desktop as A1 with storage under ${root}`);
@@ -266,8 +283,10 @@ async function main() {
     exitCode = 1;
   } finally {
     await stop();
+    // Also reached by the early return of --check, so its result is the
+    // exit status.
+    process.exit(exitCode);
   }
-  process.exit(exitCode);
 }
 
 main();

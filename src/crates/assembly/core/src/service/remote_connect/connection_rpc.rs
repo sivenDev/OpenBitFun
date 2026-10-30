@@ -225,6 +225,18 @@ pub fn usable_connection_peers(
         .collect())
 }
 
+/// Whether `error` says its connection is gone for good: the Relay or this
+/// device refused it as revoked or removed, or its peer key changed.
+#[cfg(all(feature = "dispatch-store", feature = "ssh-remote"))]
+pub fn gone_connection(error: &anyhow::Error) -> Option<crate::service::dispatch::GoneConnection> {
+    use crate::service::dispatch::GoneConnection;
+    match super::connections::refusal_reason(error)? {
+        "connection_revoked" | "connection_not_found" => Some(GoneConnection::Revoked),
+        "key_changed" => Some(GoneConnection::KeyChanged),
+        _ => None,
+    }
+}
+
 #[cfg(all(feature = "dispatch-store", feature = "ssh-remote"))]
 #[async_trait]
 impl crate::service::dispatch::ConnectionDispatchRpc for ConnectionRpc {
@@ -239,6 +251,10 @@ impl crate::service::dispatch::ConnectionDispatchRpc for ConnectionRpc {
         args: Value,
     ) -> Result<Value> {
         ConnectionRpc::invoke_connection(self, connection_id, command, args).await
+    }
+
+    fn gone_reason(&self, error: &anyhow::Error) -> Option<crate::service::dispatch::GoneConnection> {
+        gone_connection(error)
     }
 }
 
@@ -401,6 +417,35 @@ pub async fn answer_connection_request(
     }
 }
 
+/// The Relay routes calls only on active connections, so a call on one this
+/// device still records as pending means the other device confirmed it since
+/// this device last looked. Its records are refreshed from the Relay once;
+/// the confirmation itself still has to come from the Relay's state.
+async fn refresh_if_confirmed_elsewhere(
+    context: &ConnectionContext,
+    store: &ConnectionStore,
+    connection_id: &str,
+) {
+    let pending = store
+        .usable(connection_id, &context.relay_url, &context.local_device_id)
+        .err()
+        .is_some_and(|error| connections::refusal_reason(&error) == Some("connection_pending"));
+    if !pending {
+        return;
+    }
+    let client = connections::ConnectionsClient {
+        relay_url: &context.relay_url,
+        session: &context.session,
+        local_device_id: &context.local_device_id,
+        store,
+    };
+    if let Err(error) = client.list().await {
+        log::warn!(
+            "Failed to refresh a pending connection: connection={connection_id} error={error}"
+        );
+    }
+}
+
 /// Answer one delivered call on `relay` with the default (refusing) handler
 /// or the one given. Errors are logged; the caller sees a refusal or timeout.
 pub async fn serve_connection_request(
@@ -424,6 +469,7 @@ pub async fn serve_connection_request(
             return;
         }
     };
+    refresh_if_confirmed_elsewhere(context, &store, &request.connection_id).await;
     let answer = answer_connection_request(context, &store, &request, handler).await;
     if let Err(error) = relay
         .respond_connection(&request.source_device_id, correlation_id, answer)
