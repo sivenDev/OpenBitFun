@@ -24,7 +24,7 @@ use openbitfun_relay_service::{build_relay_router, db, MemoryAssetStore};
 use openbitfun_services_core::dispatch_contract::DISPATCH_PROTOCOL_VERSION;
 use openbitfun_services_integrations::remote_connect::device_crypto;
 use serde_json::{json, Value};
-use support::{CliTestEnvironment, MockOpenAiServer, STREAM_START_MARKER};
+use support::{CliTestEnvironment, MockOpenAiServer, STREAM_COMPLETED_MARKER, STREAM_START_MARKER};
 
 const ACCOUNT_A: &str = "1001";
 const ACCOUNT_B: &str = "2002";
@@ -822,7 +822,11 @@ async fn delegate_message_over_connection(
         );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    assert!(mentions(&events, STREAM_START_MARKER), "{events:?}");
+    // The target's model answered, whether it streamed or replied at once.
+    assert!(
+        mentions(&events, STREAM_START_MARKER) || mentions(&events, STREAM_COMPLETED_MARKER),
+        "{events:?}"
+    );
 
     // The connection lists only its own job.
     let listed = rpc
@@ -868,10 +872,15 @@ fn delegation_cli(device: &SimulatedDevice, args: &[&str]) -> (bool, String) {
 
 /// The jobs on a device as its owner lists them, with no source bound.
 fn owner_job_list(device: &SimulatedDevice) -> Value {
+    owner_dispatch(device, "list", &json!({}))
+}
+
+/// `openbitfun dispatch <verb>` run by a device's owner, with no source bound.
+fn owner_dispatch(device: &SimulatedDevice, verb: &str, request: &Value) -> Value {
     use std::io::Write;
     let mut command = device.environment.std_command_for(&device.binary);
     command
-        .args(["dispatch", "list"])
+        .args(["dispatch", verb])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -880,15 +889,15 @@ fn owner_job_list(device: &SimulatedDevice) -> Value {
         .stdin
         .take()
         .expect("stdin")
-        .write_all(b"{}")
-        .expect("write list request");
-    let output = child.wait_with_output().expect("dispatch list");
+        .write_all(request.to_string().as_bytes())
+        .expect("write dispatch request");
+    let output = child.wait_with_output().expect("dispatch");
     assert!(
         output.status.success(),
-        "dispatch list failed: {}",
+        "dispatch {verb} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_slice(&output.stdout).expect("dispatch list JSON")
+    serde_json::from_slice(&output.stdout).expect("dispatch JSON")
 }
 
 fn json_output(device: &SimulatedDevice, args: &[&str]) -> Value {
@@ -917,13 +926,16 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     let requester = relay
         .seed_device(ACCOUNT_A, "sim-a", A1, "A1 Desktop", "desktop")
         .await;
-    // B1's model holds its first answer, so the first task stays running.
-    let mut target = SimulatedDevice::configure(
-        B1,
-        "B1 Desktop",
-        MockOpenAiServer::gated_then_immediate(),
-        false,
-    );
+    // B1's first task tries to read its owner's profile, which a normally
+    // trusted connection must ask for, so that task stays running.
+    let mut target = SimulatedDevice::configure_for_home(B1, "B1 Desktop", true, |home| {
+        MockOpenAiServer::tool_sequence_then_immediate(vec![(
+            "Read".to_string(),
+            json!({
+                "file_path": SimulatedDevice::assistant_root_in(home).join("USER.md"),
+            }),
+        )])
+    });
     let target_session = relay
         .seed_device(ACCOUNT_B, "sim-b", B1, "B1 Desktop", "cli")
         .await;
@@ -1100,6 +1112,30 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         .expect("first task");
     let page = wait_over_connection(&rpc, &connection_id, &held, true).await;
     assert_eq!(page["state"], "running", "{page}");
+    // The task waits for B1's owner before reading the owner's profile. The
+    // other account learns only that it waits, B1's owner sees the file.
+    let deadline = Instant::now() + JOB_TIMEOUT;
+    let asked = loop {
+        let page = rpc
+            .invoke_connection(
+                &connection_id,
+                "dispatch_target_status",
+                json!({ "jobId": held }),
+            )
+            .await
+            .expect("observe over the connection");
+        if let Some(prompt) = page["pendingPermissions"].get(0) {
+            break prompt.clone();
+        }
+        assert!(!terminal(&page), "the task ended without asking: {page}");
+        assert!(Instant::now() < deadline, "the task never asked: {page}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    assert_eq!(asked["action"], "read", "{asked}");
+    assert_eq!(asked["resources"], json!([]), "{asked}");
+    let owner_view = owner_dispatch(&target, "status", &json!({ "jobId": held }));
+    let resources = owner_view["pendingPermissions"][0]["resources"].to_string();
+    assert!(resources.contains("USER.md"), "{owner_view}");
     let error = submit_message_over_connection(&rpc, &connection_id)
         .await
         .unwrap_err();
