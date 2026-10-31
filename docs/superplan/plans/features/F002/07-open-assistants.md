@@ -244,7 +244,28 @@ parent: "F002"
 - 在模拟客户端中查看 AI协作页与助理名下的外部任务、处理一次审批（截图记录）
 - 模拟环境中没有真实的 ACP 智能体：助理调用外部智能体由内核测试与模拟 ACP 客户端覆盖，结果中注明
 
-- [ ] RFC 批准条件 1–11 逐项实测并记录
+- [x] RFC 批准条件 1–11 逐项实测并记录（自动化模拟）
+- [ ] 在模拟客户端中查看 AI协作页与助理名下的外部任务、处理一次审批（待人工体验，见偏差）
+
+**Evidence (2026-10-31, Task 5):**
+- `node scripts/dev/sim-devices.mjs --check`（需 `SDKROOT`，见下）：桌面发起方两个场景 `desktop_requester_delegates_to_simulated_devices`、`desktop_requester_delegates_to_other_accounts_over_connections` 通过；模拟设备 `serve_simulated_devices` 通过。
+- `cargo test -p openbitfun-cli --test cli_command_contracts delegation` 4 通过（含两账号与同账号模拟）。
+- 逐项：
+  1. 未开放、未授权不可见；同账号开放后可见；跨账号配对并授权后可见、收回授权后目录为空 —— CLI 两账号与同账号模拟（目录断言）、桌面发起方场景。
+  2. 后台委派、结果回到发起会话、重启后补收 —— 桌面发起方场景（F002-06 起覆盖，本次重跑通过）。
+  3. 任务以助理身份运行（模型请求含 `SOUL.md` 人设标记，`agentType` 为 `assistant:workspace`），主人列表中位于该助理下并标明来源连接；审批只由目标端回答，连接方回答被拒绝 —— CLI 模拟（`owner_job_list`、`DISPATCH_CONNECTION_ANSWER_REFUSED`）；界面由 Task 4 组件测试覆盖。
+  4. 工具与子智能体可用、外部智能体需确认额度后才能开放 —— CLI 模拟中任务执行 `ExecCommand`；`only_assistants_open_and_only_after_confirming_external_agent_use`；外部智能体运行由内核测试覆盖（模拟环境没有真实 ACP 智能体）。
+  5. 普通信任：模型请求中没有 `USER.md` 内容与 `PagePublish`；任务读取 `USER.md` 时停下等待主人审批，对方只看到脱敏的 `read` 提示，主人看到文件 —— CLI 两账号模拟（本任务新增）；禁用工具与子智能体的继承由内核单元测试覆盖。
+  6. 完全信任后下一个任务含资料与 `PagePublish`、审计记 `full`；改回普通有提示；同账号设备两者都有 —— CLI 模拟。
+  7. 写入 `SOUL.md` 即使获批也不生效 —— CLI 同账号模拟；记忆整理跳过任务目录 —— 内核 `memories::startup` 测试。
+  8. 只能开放助理、模式与外部智能体开放被拒、旧版编码任务按名拒绝、连接上的工作区准备被拒 —— CLI 模拟与 Task 4 组件测试（旧记录显示已不支持）。
+  9. 撤销授权取消进行中的任务、超出并发额度被拒、撤销连接后调用被 Relay 拒绝 —— CLI 两账号模拟；离线与能力缺失由桌面发起方场景覆盖。
+  10. 委派回合中再委派被拒（「delegation does not chain across devices」）—— 内核 task 测试。
+  11. 审计记录每次跨账号委派及信任级别（`normal`/`full`）；外部智能体字段由 worker 单元测试覆盖 —— CLI 模拟。
+- 偏差与问题：
+  - 计划中的界面实测未完成：模拟客户端已用最新构建启动，但本机屏幕处于锁定状态，cua-driver 无法操作窗口（macOS 锁屏时隐藏辅助功能树）。界面行为由组件测试覆盖，人工体验留给用户。
+  - 重新构建桌面时外观契约审计发现 Task 4 的导航外部任务使用了未声明的外观部件，已修复（提交 `9273ca326`）。
+  - 本机 Xcode 更新后 xcrun 缓存指向已删除的 SDK，构建与模拟需要 `SDKROOT=.../MacOSX.sdk`；可运行 `xcrun --kill-cache` 修复。
 
 ## References
 - `docs/superplan/rfcs/F002.md`
