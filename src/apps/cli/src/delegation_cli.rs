@@ -6,9 +6,11 @@ use anyhow::{anyhow, bail, Result};
 use clap::Subcommand;
 use openbitfun_core::service::delegation::{
     assistant_agent_type, assistant_directory, local_assistants, ConnectionLimits,
-    DelegationTaskKind, OpenAgent, OpenAgentRecord, OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
+    ConnectionTrustStore, DelegationTaskKind, DelegationTrust, OpenAgent, OpenAgentRecord,
+    OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
 };
 use openbitfun_core::service::delegation_audit::{DelegationAuditEvent, DelegationAuditLog};
+use std::collections::BTreeMap;
 
 use crate::plugin_diagnostics::escape_terminal_text;
 
@@ -80,6 +82,19 @@ pub(crate) enum DelegationAction {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
+    /// Choose how far tasks from a paired device of another account are
+    /// trusted. Normal (the default) keeps them away from your desktop,
+    /// other sessions, schedules, publishing, profile and memory; full lets
+    /// them run like your own
+    TrustConnection {
+        /// The connection (see `openbitfun connections list`)
+        connection_id: String,
+        #[arg(long, value_enum)]
+        level: CliTrustLevel,
+        /// Confirm the risk of full trust
+        #[arg(long)]
+        accept_risk: bool,
+    },
     /// Withdraw an opened assistant from a connection
     RevokeConnection {
         /// The opened assistant
@@ -89,17 +104,70 @@ pub(crate) enum DelegationAction {
     },
 }
 
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub(crate) enum CliTrustLevel {
+    Normal,
+    Full,
+}
+
+const FULL_TRUST_NOTICE: &str = "Full trust lets tasks from this connection run like your own. \
+They can read your profile (USER.md) and memory, which every assistant on this device shares, \
+and use your other sessions, this desktop, schedules and publishing. \
+Trust an account fully only if you trust it as much as yourself.";
+
+const NORMAL_TRUST_NOTICE: &str =
+    "At normal trust, tasks cannot use your desktop, other sessions, \
+schedules or publishing, get no profile or memory in their prompt, and need your approval to read \
+them. Commands and external agents they start are protected only by your approval.";
+
 pub(crate) async fn run(action: DelegationAction) -> Result<()> {
     let path_manager = openbitfun_core::infrastructure::PathManager::new()
         .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
     let store = OpenAgentStore::for_product_home(&path_manager);
+    let trust = ConnectionTrustStore::for_product_home(&path_manager);
     match action {
         DelegationAction::List { json } => {
             let records = store.records().await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&records)?);
             } else {
-                print_records(&records);
+                print_records(&records, &trust.levels().await.unwrap_or_default());
+            }
+        }
+        DelegationAction::TrustConnection {
+            connection_id,
+            level,
+            accept_risk,
+        } => {
+            let known = openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()
+                .and_then(|store| store.load())
+                .map_err(|error| anyhow!("read this device's connections: {error}"))?
+                .find(&connection_id)
+                .is_some();
+            if !known {
+                bail!(
+                    "connection {} does not exist on this device",
+                    escape_terminal_text(&connection_id)
+                );
+            }
+            let level = match level {
+                CliTrustLevel::Normal => DelegationTrust::Normal,
+                CliTrustLevel::Full => {
+                    if !accept_risk {
+                        println!("{FULL_TRUST_NOTICE}");
+                        bail!("run again with --accept-risk to trust this connection fully");
+                    }
+                    DelegationTrust::Full
+                }
+            };
+            trust.set(&connection_id, level).await?;
+            println!(
+                "Connection {} is trusted {}; this applies from each task's next turn.",
+                escape_terminal_text(&connection_id),
+                level.as_str()
+            );
+            if level == DelegationTrust::Normal {
+                println!("{NORMAL_TRUST_NOTICE}");
             }
         }
         DelegationAction::Assistants { json } => {
@@ -244,6 +312,15 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                     escape_terminal_text(&entry.connection_id),
                     escape_terminal_text(&entry.open_agent_id),
                 );
+                if let Some(trust) = &entry.trust {
+                    println!("  trust: {}", escape_terminal_text(trust));
+                }
+                if !entry.external_agents.is_empty() {
+                    println!(
+                        "  external agents: {}",
+                        escape_terminal_text(&entry.external_agents.join(", "))
+                    );
+                }
                 if let Some(detail) = &entry.detail {
                     println!("  {}", escape_terminal_text(detail));
                 }
@@ -283,7 +360,7 @@ const ASSISTANT_USAGE_NOTICE: &str = "Delegated tasks run this assistant on this
      that uses your quota with their providers, so check that their terms of service allow this use. \
      A Claude subscription login is for your own everyday use; an API key is recommended for delegated tasks.";
 
-fn print_records(records: &[OpenAgentRecord]) {
+fn print_records(records: &[OpenAgentRecord], trust: &BTreeMap<String, DelegationTrust>) {
     if records.is_empty() {
         println!("No assistants are open to other devices.");
         return;
@@ -302,9 +379,14 @@ fn print_records(records: &[OpenAgentRecord]) {
                 );
                 for grant in &agent.connections {
                     println!(
-                        "  granted to connection: {} ({})",
+                        "  granted to connection: {} ({}, trust: {})",
                         escape_terminal_text(&grant.connection_id),
-                        describe_limits(grant.limits)
+                        describe_limits(grant.limits),
+                        trust
+                            .get(&grant.connection_id)
+                            .copied()
+                            .unwrap_or_default()
+                            .as_str()
                     );
                 }
             }

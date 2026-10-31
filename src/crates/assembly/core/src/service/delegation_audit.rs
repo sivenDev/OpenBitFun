@@ -45,6 +45,13 @@ pub struct DelegationAuditEntry {
     pub open_agent_id: String,
     /// Always written: earlier builds require it when they read the log.
     pub task_kind: String,
+    /// How far the owner trusted the connection when the event happened:
+    /// `normal` or `full`. Absent in entries an earlier build wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust: Option<String>,
+    /// External agents (`acp:<client>`) the task started, on `finished`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_agents: Vec<String>,
     /// The job state a `finished` entry ended in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
@@ -151,9 +158,35 @@ mod tests {
             peer_device_name: "B1 Desktop".to_string(),
             open_agent_id: "helper".to_string(),
             task_kind: "message".to_string(),
+            trust: Some("normal".to_string()),
+            external_agents: Vec::new(),
             state: state.map(str::to_string),
             detail: None,
         }
+    }
+
+    #[test]
+    fn entries_an_earlier_build_wrote_read_without_trust() {
+        let earlier: DelegationAuditEntry = serde_json::from_value(serde_json::json!({
+            "at": "2026-10-30T10:00:00Z",
+            "event": "finished",
+            "jobId": "delegation-1",
+            "connectionId": "conn-1",
+            "openAgentId": "helper",
+            "taskKind": "coding",
+            "state": "succeeded",
+        }))
+        .unwrap();
+        assert_eq!(earlier.trust, None);
+        assert!(earlier.external_agents.is_empty());
+
+        let mut current = entry(DelegationAuditEvent::Finished, Some("succeeded"));
+        current.external_agents = vec!["acp:codex".to_string()];
+        let written = serde_json::to_value(&current).unwrap();
+        assert_eq!(written["trust"], "normal");
+        assert_eq!(written["externalAgents"], serde_json::json!(["acp:codex"]));
+        // Earlier builds require the task kind.
+        assert_eq!(written["taskKind"], "message");
     }
 
     #[test]

@@ -384,7 +384,9 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
                 openbitfun_core::service::delegation_audit::DelegationAuditEvent::Submitted,
                 None,
                 None,
-            );
+                Vec::new(),
+            )
+            .await;
             ensure_worker_spawned(&store, &request.job_id, state.state)?;
             state
         }

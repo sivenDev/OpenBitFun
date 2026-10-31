@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "digest": "fnv1a64:386c543bfda26bd4",
+  "digest": "fnv1a64:7e54671abb31ebc8",
   "retiredCommandPrefixes": [
     {
       "prefix": "lsp_",
@@ -1621,6 +1621,18 @@
       }
     },
     {
+      "id": "delegation_list_connection_trust",
+      "surface": "tauri_command",
+      "remoteWorkspace": "WorkspaceAgnostic",
+      "peer": {
+        "kind": "controller_local"
+      },
+      "cliPeer": {
+        "kind": "unsupported",
+        "reason": "the controller keeps this command; peer hosts refuse it before dispatch"
+      }
+    },
+    {
       "id": "delegation_list_open_agents",
       "surface": "tauri_command",
       "remoteWorkspace": "WorkspaceAgnostic",
@@ -1658,6 +1670,18 @@
     },
     {
       "id": "delegation_set_connection_limits",
+      "surface": "tauri_command",
+      "remoteWorkspace": "WorkspaceAgnostic",
+      "peer": {
+        "kind": "controller_local"
+      },
+      "cliPeer": {
+        "kind": "unsupported",
+        "reason": "the controller keeps this command; peer hosts refuse it before dispatch"
+      }
+    },
+    {
+      "id": "delegation_set_connection_trust",
       "surface": "tauri_command",
       "remoteWorkspace": "WorkspaceAgnostic",
       "peer": {

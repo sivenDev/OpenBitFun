@@ -5,10 +5,12 @@
 
 use openbitfun_core::infrastructure::PathManager;
 use openbitfun_core::service::delegation::{
-    ConnectionLimits, DelegationTaskKind, OpenAgent, OpenAgentRecord, OpenAgentStore,
+    ConnectionLimits, ConnectionTrustStore, DelegationTaskKind, DelegationTrust, OpenAgent,
+    OpenAgentRecord, OpenAgentStore,
 };
 use openbitfun_core::service::delegation_audit::{DelegationAuditLog, DelegationAuditRecord};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +155,60 @@ pub async fn delegation_set_connection_limits(
 ) -> Result<OpenAgent, String> {
     open_agent_store()?
         .set_connection_limits(&request.id, &request.connection_id, request.limits)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationConnectionTrustRequest {
+    pub connection_id: String,
+    pub level: DelegationTrust,
+    /// The owner confirmed the risk of full trust; required for `full`.
+    #[serde(default)]
+    pub risk_confirmed: bool,
+}
+
+fn connection_trust_store() -> Result<ConnectionTrustStore, String> {
+    let path_manager =
+        PathManager::new().map_err(|error| format!("resolve storage root: {error}"))?;
+    Ok(ConnectionTrustStore::for_product_home(&path_manager))
+}
+
+/// The connections trusted beyond normal; any other connection is normal.
+#[tauri::command]
+pub async fn delegation_list_connection_trust() -> Result<BTreeMap<String, DelegationTrust>, String>
+{
+    connection_trust_store()?
+        .levels()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Sets how far tasks over a cross-account connection are trusted. Full
+/// trust needs the owner's confirmation; it applies from each task's next
+/// turn.
+#[tauri::command]
+pub async fn delegation_set_connection_trust(
+    request: DelegationConnectionTrustRequest,
+) -> Result<(), String> {
+    if request.level == DelegationTrust::Full && !request.risk_confirmed {
+        return Err("trusting a connection fully requires confirming its risk".to_string());
+    }
+    let known =
+        openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()
+            .and_then(|store| store.load())
+            .map_err(|error| format!("read this device's connections: {error}"))?
+            .find(&request.connection_id)
+            .is_some();
+    if !known {
+        return Err(format!(
+            "connection '{}' does not exist on this device",
+            request.connection_id
+        ));
+    }
+    connection_trust_store()?
+        .set(&request.connection_id, request.level)
         .await
         .map_err(|error| error.to_string())
 }

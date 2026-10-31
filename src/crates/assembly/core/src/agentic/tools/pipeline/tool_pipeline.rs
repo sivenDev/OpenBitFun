@@ -608,6 +608,86 @@ enum PermissionPlanDraft {
     Requests(Vec<PermissionRequest>),
 }
 
+/// Marks a permission request for the owner's private files in a task
+/// another account delegated here; it always asks, even in bypass mode.
+const OWNER_PRIVATE_CONTEXT_METADATA_KEY: &str = "ownerPrivateContext";
+
+fn is_owner_private_request(request: &PermissionRequest) -> bool {
+    request
+        .display_metadata
+        .get(OWNER_PRIVATE_CONTEXT_METADATA_KEY)
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+/// The extra approval a normal-trust delegated task needs before a file
+/// tool reads the owner's `USER.md` or memory: when the target is inside
+/// one of them, or a search would walk into one.
+fn owner_private_read_intents(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    context: &ToolUseContext,
+) -> Vec<PermissionIntent> {
+    use crate::agentic::tools::restrictions::canonicalize_local_path_best_effort;
+    use std::path::{Path, PathBuf};
+
+    let Some(facts) =
+        crate::service::delegation::DelegatedTurnFacts::from_tool_data(&context.custom_data)
+    else {
+        return Vec::new();
+    };
+    let protected = facts.owner_private_paths();
+    if protected.is_empty() {
+        return Vec::new();
+    }
+    let (field, searches) = match tool_name {
+        "Read" => ("file_path", false),
+        "Grep" | "Glob" | "LS" => ("path", true),
+        _ => return Vec::new(),
+    };
+    let requested = arguments
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(".");
+    let Ok(resolved) = context.resolve_tool_path(requested) else {
+        return Vec::new();
+    };
+    if resolved.uses_remote_workspace_backend() {
+        return Vec::new();
+    }
+    let canonical = |path: &Path| {
+        canonicalize_local_path_best_effort(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    let target = canonical(&PathBuf::from(&resolved.resolved_path));
+    let touched: Vec<String> = protected
+        .iter()
+        .map(|path| canonical(path))
+        .filter(|path| target.starts_with(path) || (searches && path.starts_with(&target)))
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    if touched.is_empty() {
+        return Vec::new();
+    }
+    let mut intent = PermissionIntent::new("read", touched);
+    for (key, value) in [
+        ("requiresFreshApproval", serde_json::Value::Bool(true)),
+        (
+            OWNER_PRIVATE_CONTEXT_METADATA_KEY,
+            serde_json::Value::Bool(true),
+        ),
+        (
+            "riskDescription",
+            serde_json::Value::String(
+                "A task another account delegated here wants to read your profile or memory."
+                    .to_string(),
+            ),
+        ),
+    ] {
+        intent.display_metadata.insert(key.to_string(), value);
+    }
+    vec![intent]
+}
+
 pub fn permission_project_id_for_workspace_identity(
     identity: &openbitfun_services_core::workspace_identity::WorkspaceSessionIdentity,
     is_remote: bool,
@@ -957,6 +1037,10 @@ impl ToolPipeline {
             .get(&task.tool_call.tool_id)
             .cloned();
         let mut intents = intents;
+        let owner_private =
+            owner_private_read_intents(&tool_name, &task.invocation.effective_arguments, &context);
+        let must_ask = hook_ask.is_some() || !owner_private.is_empty();
+        intents.extend(owner_private);
         if intents.is_empty() {
             if hook_ask.is_none() {
                 return Ok(PermissionPlanDraft::Allowed);
@@ -1010,7 +1094,7 @@ impl ToolPipeline {
         // A PreToolUse hook already approved this call. The approval reaches
         // here — after policy evaluation — precisely so that it waives only
         // the interactive prompt: a policy Deny above has already returned.
-        if hook_ask.is_none() && self.hook_preapprovals.lock().await.contains(&tool_call_id) {
+        if !must_ask && self.hook_preapprovals.lock().await.contains(&tool_call_id) {
             return Ok(PermissionPlanDraft::Allowed);
         }
 
@@ -1024,7 +1108,7 @@ impl ToolPipeline {
         .await
         {
             if hook_decision.allow {
-                if hook_ask.is_none() {
+                if !must_ask {
                     return Ok(PermissionPlanDraft::Allowed);
                 }
             } else {
@@ -1531,6 +1615,7 @@ impl ToolPipeline {
             let mut groups: Vec<(bool, Vec<PermissionRequest>)> = Vec::new();
             for request in batch_requests {
                 let approve = auto_approve
+                    && !is_owner_private_request(&request)
                     && !request
                         .tool_call_id
                         .as_ref()
@@ -1780,19 +1865,21 @@ impl ToolPipeline {
             PermissionPlanDraft::Rejected { reason } => {
                 PermissionExecutionPlan::Rejected { reason }
             }
-            PermissionPlanDraft::Requests(requests) => PermissionExecutionPlan::Awaiting(
+            PermissionPlanDraft::Requests(requests) => PermissionExecutionPlan::Awaiting({
+                let owner_private = requests.iter().any(is_owner_private_request);
                 self.register_permission_requests(
                     requests,
                     &task.context.dialog_turn_id,
                     task.options.auto_approve_ask
+                        && !owner_private
                         && !self
                             .hook_asks
                             .lock()
                             .await
                             .contains_key(&task.tool_call.tool_id),
                 )
-                .await?,
-            ),
+                .await?
+            }),
         };
 
         self.await_permission_execution_plan(plan, cancellation_token)
@@ -3576,6 +3663,87 @@ mod tests {
             &json!({ "payload": "+++ C:/workspace/main.rs\npartial content" }),
             Default::default(),
             true,
+        ));
+    }
+
+    #[test]
+    fn a_normal_trust_task_asks_before_reading_the_owners_profile() {
+        use crate::service::delegation::{
+            DELEGATION_ASSISTANT_CONTEXT_KEY, DELEGATION_TASK_DIR_CONTEXT_KEY,
+            DELEGATION_TRUST_CONTEXT_KEY, DISPATCH_DELEGATION_CONTEXT_KEY,
+        };
+        let home = tempfile::tempdir().unwrap();
+        let assistant = home.path().join("personal_assistant").join("workspace");
+        let task_dir = home.path().join("delegation").join("job");
+        std::fs::create_dir_all(&assistant).unwrap();
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(assistant.join("USER.md"), "owner").unwrap();
+        std::fs::write(assistant.join("SOUL.md"), "persona").unwrap();
+        let profile = assistant.join("USER.md");
+
+        let context_for = |trust: Option<&str>| {
+            let mut context = ToolUseContext::for_tool_listing(None, None);
+            context.workspace = Some(WorkspaceBinding::new(None, task_dir.clone()));
+            if let Some(trust) = trust {
+                for (key, value) in [
+                    (DISPATCH_DELEGATION_CONTEXT_KEY, json!(true)),
+                    (DELEGATION_ASSISTANT_CONTEXT_KEY, json!(assistant)),
+                    (DELEGATION_TASK_DIR_CONTEXT_KEY, json!(task_dir)),
+                    (DELEGATION_TRUST_CONTEXT_KEY, json!(trust)),
+                ] {
+                    context.custom_data.insert(key.to_string(), value);
+                }
+            }
+            context
+        };
+        let normal = context_for(Some("normal"));
+        let asks = owner_private_read_intents("Read", &json!({ "file_path": profile }), &normal);
+        assert_eq!(asks.len(), 1, "{asks:?}");
+        assert_eq!(asks[0].action, "read");
+        assert_eq!(asks[0].display_metadata["requiresFreshApproval"], true);
+        assert_eq!(
+            asks[0].display_metadata[OWNER_PRIVATE_CONTEXT_METADATA_KEY],
+            true
+        );
+        // A search that would walk into the profile asks too; the persona
+        // and other files do not.
+        assert_eq!(
+            owner_private_read_intents("Grep", &json!({ "path": assistant }), &normal).len(),
+            1
+        );
+        assert!(owner_private_read_intents(
+            "Read",
+            &json!({ "file_path": assistant.join("SOUL.md") }),
+            &normal
+        )
+        .is_empty());
+        assert!(
+            owner_private_read_intents("Write", &json!({ "file_path": profile }), &normal)
+                .is_empty()
+        );
+        // Full trust, and turns nobody delegated, read as before.
+        for context in [context_for(Some("full")), context_for(None)] {
+            assert!(
+                owner_private_read_intents("Read", &json!({ "file_path": profile }), &context)
+                    .is_empty()
+            );
+        }
+        // Even approved once and remembered, the next read asks again.
+        let policy = ResolvedPermissionPolicy::default();
+        let grants = vec![PermissionGrant {
+            project_id: "project".to_string(),
+            action: "read".to_string(),
+            resource: "*".to_string(),
+            created_at_ms: 0,
+        }];
+        assert!(matches!(
+            plan_permission_intents(
+                asks,
+                &policy,
+                &grants,
+                PermissionResourceCaseSensitivity::Sensitive
+            ),
+            PermissionIntentPlan::RequiresApproval(_)
         ));
     }
 

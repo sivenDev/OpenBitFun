@@ -2080,6 +2080,8 @@ pub async fn run() {
             api::delegation_api::delegation_grant_connection,
             api::delegation_api::delegation_revoke_connection,
             api::delegation_api::delegation_set_connection_limits,
+            api::delegation_api::delegation_list_connection_trust,
+            api::delegation_api::delegation_set_connection_trust,
             api::delegation_api::delegation_audit_list,
             api::dispatch_api::dispatch_list_targets,
             api::dispatch_api::dispatch_probe_target,

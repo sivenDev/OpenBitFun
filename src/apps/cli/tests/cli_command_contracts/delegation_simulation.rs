@@ -44,6 +44,8 @@ const PERSONA_MARKER: &str = "SIM_ASSISTANT_PERSONA_7F3A";
 /// Written into each simulated assistant's `USER.md`, which only tasks with
 /// full trust read.
 const PROFILE_MARKER: &str = "SIM_OWNER_PROFILE_91C2";
+/// A tool of the assistant a normal-trust task does not get.
+const TRUSTED_ONLY_TOOL: &str = "\"name\":\"PagePublish\"";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const JOB_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -251,12 +253,22 @@ impl SimulatedDevice {
 
     /// Every model request body this device sent, as one string.
     fn model_prompts(&self) -> String {
+        self.model_prompts_since(0)
+    }
+
+    /// The model request bodies after the first `skip`, as one string.
+    fn model_prompts_since(&self, skip: usize) -> String {
         self.model
             .chat_completion_request_bodies()
             .iter()
+            .skip(skip)
             .map(|body| body.to_string())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn model_request_count(&self) -> usize {
+        self.model.chat_completion_request_bodies().len()
     }
 
     /// Enables a built-in external agent that asks before acting, through the
@@ -1090,6 +1102,11 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     );
     assert!(ok, "{output}");
     let delivered = delegate_message_over_connection(rpc.clone(), &connection_id).await;
+    // At normal trust the task gets neither the owner's profile nor the
+    // tools that reach the owner's sessions and desktop.
+    let prompts = target.model_prompts();
+    assert!(!prompts.contains(PROFILE_MARKER), "{prompts}");
+    assert!(!prompts.contains(TRUSTED_ONLY_TOOL), "{prompts}");
 
     // B1's owner sees both tasks, who sent them, and how they ended.
     let (ok, audit) = delegation_cli(&target, &["audit", "--json"]);
@@ -1120,6 +1137,75 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             (delivered, "finished".into(), "succeeded".into()),
         ],
         "{audit}"
+    );
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|record| record["entry"]["trust"] == "normal"),
+        "{audit}"
+    );
+
+    // B1's owner trusts the connection fully, after confirming the risk;
+    // the next task runs like the owner's own.
+    let (ok, output) = delegation_cli(
+        &target,
+        &["trust-connection", &connection_id, "--level", "full"],
+    );
+    assert!(!ok && output.contains("--accept-risk"), "{output}");
+    let (ok, output) = delegation_cli(
+        &target,
+        &[
+            "trust-connection",
+            "unknown",
+            "--level",
+            "full",
+            "--accept-risk",
+        ],
+    );
+    assert!(!ok && output.contains("does not exist"), "{output}");
+    let (ok, output) = delegation_cli(
+        &target,
+        &[
+            "trust-connection",
+            &connection_id,
+            "--level",
+            "full",
+            "--accept-risk",
+        ],
+    );
+    assert!(ok, "{output}");
+    let (ok, listed) = delegation_cli(&target, &["list"]);
+    assert!(ok && listed.contains("trust: full"), "{listed}");
+    let before = target.model_request_count();
+    let trusted = delegate_message_over_connection(rpc.clone(), &connection_id).await;
+    let prompts = target.model_prompts_since(before);
+    assert!(prompts.contains(PROFILE_MARKER), "{prompts}");
+    assert!(prompts.contains(TRUSTED_ONLY_TOOL), "{prompts}");
+    let (ok, audit) = delegation_cli(&target, &["audit", "--json"]);
+    assert!(ok, "{audit}");
+    let audit: Value = serde_json::from_str(audit.trim()).expect("audit json");
+    let trusted_entries: Vec<&Value> = audit
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|record| record["entry"]["jobId"] == trusted.as_str())
+        .collect();
+    assert_eq!(trusted_entries.len(), 2, "{audit}");
+    assert!(
+        trusted_entries
+            .iter()
+            .all(|record| record["entry"]["trust"] == "full"),
+        "{audit}"
+    );
+    let (ok, output) = delegation_cli(
+        &target,
+        &["trust-connection", &connection_id, "--level", "normal"],
+    );
+    assert!(
+        ok && output.contains("protected only by your approval"),
+        "{output}"
     );
 
     // Approvals never come from the connection, and B1's other jobs and
@@ -1253,9 +1339,12 @@ async fn same_account_devices_take_delegated_jobs_and_other_accounts_cannot_reac
     let (finished, events) = rpc.observe_until(A2, &job, terminal).await;
     assert_eq!(finished["state"], "succeeded", "{finished}");
     assert!(mentions(&events, STREAM_START_MARKER), "{events:?}");
-    // It ran as A2's assistant.
+    // It ran as A2's assistant, trusted fully as the owner's own device:
+    // the owner's profile and every tool of the assistant are there.
     let prompts = simulation.device(A2).model_prompts();
     assert!(prompts.contains(PERSONA_MARKER), "{prompts}");
+    assert!(prompts.contains(PROFILE_MARKER), "{prompts}");
+    assert!(prompts.contains(TRUSTED_ONLY_TOOL), "{prompts}");
 
     // Cancel: a running job stops on its device. The target daemon is the
     // worker's parent here, unlike a one-shot SSH dispatch command.

@@ -492,12 +492,20 @@ impl AgentExecutionTool {
         };
         let parent_is_swarm =
             context.delegation_policy().scope == openbitfun_runtime_ports::DelegationScope::Swarm;
+        let delegated_turn =
+            crate::service::delegation::DelegatedTurnFacts::from_tool_data(&context.custom_data);
         if let Some(requested_type) = invocation.subagent_type.as_deref() {
             let requested_is_swarm = is_swarm_delegate_agent_type(requested_type);
             if !parent_is_swarm && requested_is_swarm {
                 return Err(OpenBitFunError::tool(format!(
                     "agent_type {requested_type} is available only inside an Ultra Swarm"
                 )));
+            }
+            if let Some(refusal) = delegated_turn
+                .as_ref()
+                .and_then(|facts| facts.subagent_refusal(requested_type))
+            {
+                return Err(OpenBitFunError::tool(refusal));
             }
         }
         if let Some(target_session_id) = target_session_id.as_deref() {
@@ -522,6 +530,12 @@ impl AgentExecutionTool {
                 return Err(OpenBitFunError::tool(
                     "The target agent is outside the current delegation scope".to_string(),
                 ));
+            }
+            if let Some(refusal) = delegated_turn
+                .as_ref()
+                .and_then(|facts| facts.subagent_refusal(&target_agent_type))
+            {
+                return Err(OpenBitFunError::tool(refusal));
             }
             // Follow-up input re-checks admission: the parent may have moved
             // to a restricted mode since the external agent was spawned.

@@ -2150,6 +2150,8 @@
         "command:delegation_grant_connection",
         "command:delegation_revoke_connection",
         "command:delegation_set_connection_limits",
+        "command:delegation_list_connection_trust",
+        "command:delegation_set_connection_trust",
         "command:delegation_audit_list"
       ]
     },

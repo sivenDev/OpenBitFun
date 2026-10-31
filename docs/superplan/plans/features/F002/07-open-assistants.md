@@ -175,7 +175,20 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-cli --test cli_command_contracts delegation`（普通连接的被禁工具与子智能体被拒绝、提示中没有记忆；改为完全信任后可用；同账号不受影响）
 - `pnpm run capabilities:check`；`cargo test --locked -p openbitfun-product-domains remote_surface`
 
-- [ ] 普通级别的限制在工具层生效且子智能体继承，完全信任与同账号一致，审计记录信任级别，均有测试
+- [x] 普通级别的限制在工具层生效且子智能体继承，完全信任与同账号一致，审计记录信任级别，均有测试
+
+**Evidence (2026-10-31, Task 3):**
+- 存储：信任级别存放在单独的 `delegation/connection-trust.json`（只记录非普通级别）；旧版重写开放清单时不会丢失它。没有记录、未知级别或文件无法读取时按普通处理；无法解析的文件不会被覆盖。
+- 单一来源：`NORMAL_TRUST_DENIED_TOOLS`（13 个工具）与 `NORMAL_TRUST_DENIED_SUBAGENTS`（`ComputerUse`、`OpenBitFun`）。普通级别下 `restrict_tools` 把它们加入 `denied_tool_names` 并附拒绝原因；工具清单里看不到它们；子智能体经同一函数继承。`Task` 工具在新建或继续子智能体时拒绝被禁类型。
+- 私密文件：普通级别下，`Read` 读取助理的 `USER.md` 或记忆目录（`memories/` 与记忆数据库目录）、或者 `Grep`/`Glob`/`LS` 的搜索范围包含它们时，追加带 `requiresFreshApproval` 的 `read` 审批。记住的授权、Hook 预批准与自动批准都不能跳过它。
+- 工作进程在每个回合开始时读取连接的信任级别（同账号设备按完全信任），修改从下一个回合生效。审计条目新增 `trust` 与 `externalAgents`（任务启动的 `acp:` 子智能体），旧条目照常读取。
+- 管理入口：CLI `delegation trust-connection <connection> --level normal|full`（完全信任需 `--accept-risk`，并说明记忆对所有助理共享；改回普通时说明命令与外部智能体只靠审批保护），`delegation list` 显示每个连接的信任级别；桌面命令 `delegation_list_connection_trust`、`delegation_set_connection_trust`（完全信任需 `riskConfirmed`），注册表行为 `ControllerLocal`。
+- 外部智能体：在任务目录中运行（子会话继承任务的工作区），提示经主人的审批邮箱处理。
+- 测试：core `-- delegation remote_agent tools::implementations::task tool_pipeline external_agent_turn memories::startup bootstrap prompt_builder child_context` 278 通过（含信任存储、拒绝名单、私密文件审批与记住授权仍需审批）；CLI `dispatch::` 等 118 + 1 通过（含按连接读取信任）；`cli_command_contracts delegation` 4 通过：普通连接的模型请求里没有 `USER.md` 内容与 `PagePublish`，`trust-connection --level full --accept-risk` 后下一个任务两者都有，审计分别记录 `normal` 与 `full`；同账号任务两者都有。`cargo test -p openbitfun-product-domains remote_surface` 20 通过；桌面 `remote_workspace_policy` 9 通过；`capabilities:check`、`check:core-boundaries` 通过。
+- 偏差：
+  - 生成能力目录时发现提交 `09fbba2ef` 新增的 `ai-collaboration` 场景缺少语义归属，导致 `capabilities:generate` 失败；本任务把它归到 `feature.detached-dispatch`（与开放智能体子能力同属）。
+  - 本机 Xcode 更新后 xcrun 缓存指向已删除的 SDK；桌面构建脚本需要 `SDKROOT=.../MacOSX.sdk` 才能编译，与本任务无关。
+  - 界面中的信任级别设置在任务 4 实现。
 
 ## Task 4: AI协作页与助理名下的外部任务
 

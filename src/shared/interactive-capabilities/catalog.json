@@ -4753,6 +4753,8 @@
             "command:delegation_grant_connection",
             "command:delegation_revoke_connection",
             "command:delegation_set_connection_limits",
+            "command:delegation_list_connection_trust",
+            "command:delegation_set_connection_trust",
             "command:delegation_audit_list"
           ]
         },
@@ -9954,7 +9956,8 @@
     "assistant": "feature.personal-assistants",
     "todos": "feature.tasks-automation",
     "insights": "feature.insights",
-    "shell": "feature.terminal"
+    "shell": "feature.terminal",
+    "ai-collaboration": "feature.detached-dispatch"
   },
   "implementationOwners": {
     "commands": {

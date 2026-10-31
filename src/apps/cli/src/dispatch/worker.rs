@@ -61,7 +61,9 @@ pub(crate) async fn run(job_id: String) -> Result<()> {
                 openbitfun_core::service::delegation_audit::DelegationAuditEvent::Finished,
                 Some(state.state),
                 state.last_error.as_deref(),
-            );
+                external_agents_used(),
+            )
+            .await;
         }
     }
     store.clear_pending_permissions(&job_id);
@@ -294,7 +296,11 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
                     reply_route: None,
                     prepended_reminders: Vec::new(),
                     attachments: turn_attachments,
-                    metadata: turn_metadata(effective_policy, &job.request),
+                    metadata: turn_metadata(
+                        effective_policy,
+                        &job.request,
+                        delegation_trust(&job.request).await,
+                    ),
                 })
                 .await
                 .map_err(|error| anyhow!(error.into_message()))
@@ -703,10 +709,12 @@ impl JobEventScope {
         if let AgenticEvent::SubagentSessionLinked {
             session_id: child_session,
             parent_session_id,
+            agent_type,
             ..
         } = event
         {
             if parent_session_id == &self.session_id || self.children.contains(parent_session_id) {
+                note_external_agent(agent_type.as_deref());
                 self.children.insert(child_session.clone());
                 return true;
             }
@@ -803,6 +811,7 @@ fn terminal_outcome(
 fn turn_metadata(
     policy: super::protocol::DispatchApprovalPolicy,
     request: &super::protocol::DispatchSubmitRequest,
+    trust: DelegationTrust,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut metadata = permissions::metadata(policy);
     if let Some(delegation) = &request.delegation {
@@ -817,7 +826,7 @@ fn turn_metadata(
             object.extend(DelegatedTurnFacts::metadata_fields(
                 request.assistant_workspace.as_deref(),
                 &request.workspace_path,
-                delegation_trust(request),
+                trust,
             ));
         }
         metadata.insert(DISPATCH_DELEGATION_CONTEXT_KEY.to_string(), facts);
@@ -825,14 +834,47 @@ fn turn_metadata(
     metadata
 }
 
-/// How far the owner trusts who delegated `request`: the owner's own devices
-/// fully, another account's connection normally.
-fn delegation_trust(request: &super::protocol::DispatchSubmitRequest) -> DelegationTrust {
-    if request.source_connection_id.is_some() {
-        DelegationTrust::Normal
-    } else {
-        DelegationTrust::Full
+/// How far the owner trusts who delegated `request`, read when each turn
+/// starts so a change applies from the next turn: the owner's own devices
+/// fully, another account's connection at the level its owner chose.
+pub(super) async fn delegation_trust(
+    request: &super::protocol::DispatchSubmitRequest,
+) -> DelegationTrust {
+    let trust = openbitfun_core::infrastructure::PathManager::new()
+        .ok()
+        .map(|path_manager| ConnectionTrustStore::for_product_home(&path_manager));
+    delegation_trust_in(request, trust.as_ref()).await
+}
+
+async fn delegation_trust_in(
+    request: &super::protocol::DispatchSubmitRequest,
+    trust: Option<&ConnectionTrustStore>,
+) -> DelegationTrust {
+    match (request.source_connection_id.as_deref(), trust) {
+        (None, _) => DelegationTrust::Full,
+        (Some(connection_id), Some(trust)) => trust.level(connection_id).await,
+        (Some(_), None) => DelegationTrust::Normal,
     }
+}
+
+/// External agents this worker's job started, for its audit entry. One
+/// worker process runs one job.
+static EXTERNAL_AGENTS_USED: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+fn note_external_agent(agent_type: Option<&str>) {
+    if let Some(agent_type) = agent_type.filter(|agent_type| agent_type.starts_with("acp:")) {
+        if let Ok(mut used) = EXTERNAL_AGENTS_USED.lock() {
+            used.insert(agent_type.to_string());
+        }
+    }
+}
+
+fn external_agents_used() -> Vec<String> {
+    EXTERNAL_AGENTS_USED
+        .lock()
+        .map(|used| used.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// Whether `job` runs as an opened assistant, which this device admitted.
@@ -854,7 +896,7 @@ fn session_agent_type(request: &super::protocol::DispatchSubmitRequest) -> &str 
 /// kernel reads it to refuse delegating such a turn onward.
 pub(crate) use openbitfun_core::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
 use openbitfun_core::service::delegation::{
-    DelegatedTurnFacts, DelegationTrust, ASSISTANT_RUN_AGENT_TYPE,
+    ConnectionTrustStore, DelegatedTurnFacts, DelegationTrust, ASSISTANT_RUN_AGENT_TYPE,
 };
 
 #[cfg(test)]
@@ -898,6 +940,35 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn trust_follows_the_owners_choice_for_each_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let trust = ConnectionTrustStore::new(dir.path().join("connection-trust.json"));
+        let mut request = job("assistant:workspace", true).request;
+        // The owner's own devices are trusted fully.
+        assert_eq!(
+            delegation_trust_in(&request, Some(&trust)).await,
+            DelegationTrust::Full
+        );
+        // Another account's connection normally, until its owner chooses.
+        request.source_device_id = None;
+        request.source_connection_id = Some("conn-1".to_string());
+        assert_eq!(
+            delegation_trust_in(&request, Some(&trust)).await,
+            DelegationTrust::Normal
+        );
+        trust.set("conn-1", DelegationTrust::Full).await.unwrap();
+        assert_eq!(
+            delegation_trust_in(&request, Some(&trust)).await,
+            DelegationTrust::Full
+        );
+        // Without a readable store, normally.
+        assert_eq!(
+            delegation_trust_in(&request, None).await,
+            DelegationTrust::Normal
+        );
+    }
+
     #[test]
     fn assistant_jobs_run_as_the_assistant_with_their_facts() {
         let mut assistant = job("assistant:workspace-ann", true);
@@ -908,7 +979,11 @@ mod tests {
             session_agent_type(&assistant.request),
             ASSISTANT_RUN_AGENT_TYPE
         );
-        let metadata = turn_metadata(DispatchApprovalPolicy::Remote, &assistant.request);
+        let metadata = turn_metadata(
+            DispatchApprovalPolicy::Remote,
+            &assistant.request,
+            DelegationTrust::Full,
+        );
         let mut context = std::collections::HashMap::new();
         DelegatedTurnFacts::copy_metadata_to_context(
             Some(&serde_json::Value::Object(metadata)),
@@ -925,14 +1000,7 @@ mod tests {
             facts.task_dir.as_deref(),
             Some(std::path::Path::new("/tmp/job"))
         );
-        // The owner's own device is trusted fully, another account normally.
         assert_eq!(facts.trust, DelegationTrust::Full);
-        assistant.request.source_device_id = None;
-        assistant.request.source_connection_id = Some("conn-1".to_string());
-        assert_eq!(
-            delegation_trust(&assistant.request),
-            DelegationTrust::Normal
-        );
 
         // Other jobs keep their agent and have no assistant.
         let plain = job("Standard", true);

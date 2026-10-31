@@ -22,6 +22,8 @@ use crate::infrastructure::PathManager;
 
 const DELEGATION_DIR: &str = "delegation";
 const OPEN_AGENTS_FILE: &str = "open-agents.json";
+const CONNECTION_TRUST_FILE: &str = "connection-trust.json";
+const CONNECTION_TRUST_SCHEMA_VERSION: u32 = 1;
 const OPEN_AGENTS_SCHEMA_VERSION: u32 = 1;
 /// Grants every device of this account.
 pub const ALL_SAME_ACCOUNT_DEVICES: &str = "*";
@@ -159,6 +161,32 @@ impl DelegationTrust {
     }
 }
 
+/// Tools a task another account delegated at normal trust cannot use: they
+/// reach the owner's desktop, other sessions, schedules, goals, publishing
+/// or this app's own controls. The single list every check reads.
+pub const NORMAL_TRUST_DENIED_TOOLS: [&str; 13] = [
+    "SessionHistory",
+    "SessionMessage",
+    "SessionControl",
+    "ListWorkspaces",
+    "ComputerUse",
+    "ControlHub",
+    "Cron",
+    "create_goal",
+    "update_goal",
+    "PageDeploy",
+    "PagePublish",
+    "PublishAppearance",
+    "OpenBitFunControl",
+];
+
+/// Subagent types built around the tools above; a normal-trust task cannot
+/// start them.
+pub const NORMAL_TRUST_DENIED_SUBAGENTS: [&str; 2] = ["ComputerUse", "OpenBitFun"];
+
+const NORMAL_TRUST_REFUSAL: &str = "is not available to a task another account delegated here: \
+     the owner of this device has not trusted this connection fully";
+
 /// Turn context keys that carry the facts of a delegated turn. The target's
 /// worker writes them into the `dispatchDelegation` turn metadata; the kernel
 /// copies them into the turn and every subagent it starts.
@@ -261,6 +289,23 @@ impl DelegatedTurnFacts {
         })
     }
 
+    /// The facts of a delegated turn from a tool context's custom data, or
+    /// `None` for any other turn.
+    pub fn from_tool_data(data: &std::collections::HashMap<String, Value>) -> Option<Self> {
+        let mut context = std::collections::HashMap::new();
+        for key in
+            std::iter::once(DISPATCH_DELEGATION_CONTEXT_KEY).chain(Self::INHERITED_CONTEXT_KEYS)
+        {
+            let value = match data.get(key) {
+                Some(Value::Bool(value)) => value.to_string(),
+                Some(Value::String(value)) => value.clone(),
+                _ => continue,
+            };
+            context.insert(key.to_string(), value);
+        }
+        Self::from_context(&context)
+    }
+
     /// Context keys a subagent inherits from its delegated parent turn.
     pub const INHERITED_CONTEXT_KEYS: [&'static str; 3] = [
         DELEGATION_ASSISTANT_CONTEXT_KEY,
@@ -274,9 +319,37 @@ impl DelegatedTurnFacts {
         self.trust == DelegationTrust::Full
     }
 
+    /// Why this task cannot start a subagent of `agent_type`, if it cannot.
+    pub fn subagent_refusal(&self, agent_type: &str) -> Option<String> {
+        (self.trust == DelegationTrust::Normal
+            && NORMAL_TRUST_DENIED_SUBAGENTS.contains(&agent_type))
+        .then(|| format!("agent_type {agent_type} {NORMAL_TRUST_REFUSAL}"))
+    }
+
+    /// What a normal-trust task reads only with the owner's approval each
+    /// time: the assistant's `USER.md` and the memory directories. Empty at
+    /// full trust.
+    pub fn owner_private_paths(&self) -> Vec<PathBuf> {
+        if self.includes_private_context() {
+            return Vec::new();
+        }
+        let mut paths = Vec::new();
+        if let Some(assistant) = &self.assistant_workspace {
+            paths.push(assistant.join("USER.md"));
+        }
+        if let Ok(path_manager) = crate::infrastructure::try_get_path_manager_arc() {
+            paths.push(path_manager.memories_root_dir());
+            if let Some(database_dir) = path_manager.memories_database_file().parent() {
+                paths.push(database_dir.to_path_buf());
+            }
+        }
+        paths
+    }
+
     /// Narrows `restrictions` for this turn: a task that runs as an
     /// assistant writes only in its own directory, so it can never change
-    /// the assistant's persona, instructions or memory.
+    /// the assistant's persona, instructions or memory. At normal trust the
+    /// tools in [`NORMAL_TRUST_DENIED_TOOLS`] are refused as well.
     #[cfg(feature = "agent-runtime")]
     pub fn restrict_tools(
         &self,
@@ -298,6 +371,14 @@ impl DelegatedTurnFacts {
                         roots.push(root.clone());
                     }
                 }
+            }
+        }
+        if self.trust == DelegationTrust::Normal {
+            for tool in NORMAL_TRUST_DENIED_TOOLS {
+                restrictions.denied_tool_names.insert(tool.to_string());
+                restrictions
+                    .denied_tool_messages
+                    .insert(tool.to_string(), format!("{tool} {NORMAL_TRUST_REFUSAL}"));
             }
         }
         restrictions
@@ -898,6 +979,110 @@ impl OpenAgentStore {
     }
 }
 
+/// How far this device's owner trusts each cross-account connection.
+///
+/// Kept in its own file so an earlier build that rewrites the open list
+/// never drops it. A connection without an entry, or with a level this build
+/// does not know, is trusted normally.
+#[derive(Debug, Clone)]
+pub struct ConnectionTrustStore {
+    path: PathBuf,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConnectionTrustDocument {
+    #[serde(default)]
+    schema_version: u32,
+    /// Connection id to level; only levels other than normal are stored.
+    #[serde(default)]
+    connections: serde_json::Map<String, Value>,
+}
+
+impl ConnectionTrustStore {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    pub fn for_product_home(path_manager: &PathManager) -> Self {
+        Self::new(
+            path_manager
+                .product_home_dir()
+                .join(DELEGATION_DIR)
+                .join(CONNECTION_TRUST_FILE),
+        )
+    }
+
+    /// Every connection trusted beyond normal.
+    pub async fn levels(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, DelegationTrust>, OpenAgentStoreError> {
+        let document: ConnectionTrustDocument = JsonFileStore
+            .read_locked_optional(&self.path)
+            .await?
+            .unwrap_or_default();
+        Ok(document
+            .connections
+            .into_iter()
+            .filter_map(|(connection_id, level)| {
+                let level = level.as_str().and_then(DelegationTrust::parse)?;
+                (level != DelegationTrust::Normal).then_some((connection_id, level))
+            })
+            .collect())
+    }
+
+    /// The level of `connection_id`. A store that cannot be read trusts
+    /// normally, the safer side, and says why in the log.
+    pub async fn level(&self, connection_id: &str) -> DelegationTrust {
+        match self.levels().await {
+            Ok(levels) => levels.get(connection_id).copied().unwrap_or_default(),
+            Err(error) => {
+                log::warn!(
+                    "Connection trust store unreadable, trusting connection normally: path={}, error={}",
+                    self.path.display(),
+                    error
+                );
+                DelegationTrust::Normal
+            }
+        }
+    }
+
+    /// Sets the level of `connection_id`; normal removes its entry.
+    pub async fn set(
+        &self,
+        connection_id: &str,
+        level: DelegationTrust,
+    ) -> Result<(), OpenAgentStoreError> {
+        let connection_id = connection_id.trim();
+        if connection_id.is_empty() {
+            return Err(OpenAgentStoreError::Invalid(
+                "a connection id is required".to_string(),
+            ));
+        }
+        JsonFileStore
+            .update_locked(
+                &self.path,
+                ConnectionTrustDocument::default(),
+                |document: &mut ConnectionTrustDocument| {
+                    document.schema_version = CONNECTION_TRUST_SCHEMA_VERSION;
+                    match level {
+                        DelegationTrust::Normal => {
+                            document.connections.remove(connection_id);
+                        }
+                        level => {
+                            document.connections.insert(
+                                connection_id.to_string(),
+                                Value::String(level.as_str().to_string()),
+                            );
+                        }
+                    }
+                },
+            )
+            .await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1495,5 +1680,113 @@ mod tests {
             .await
             .is_err());
         assert_eq!(tokio::fs::read(store.path()).await.unwrap(), b"{ not json");
+    }
+
+    #[tokio::test]
+    async fn connections_are_trusted_normally_until_the_owner_trusts_them_fully() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConnectionTrustStore::new(dir.path().join("connection-trust.json"));
+        assert_eq!(store.level("conn-1").await, DelegationTrust::Normal);
+
+        store.set("conn-1", DelegationTrust::Full).await.unwrap();
+        assert_eq!(store.level("conn-1").await, DelegationTrust::Full);
+        assert_eq!(store.level("conn-2").await, DelegationTrust::Normal);
+
+        store.set("conn-1", DelegationTrust::Normal).await.unwrap();
+        assert_eq!(store.level("conn-1").await, DelegationTrust::Normal);
+        assert!(store.levels().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_or_unreadable_trust_reads_as_normal_and_is_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connection-trust.json");
+        let store = ConnectionTrustStore::new(path.clone());
+        // A level a newer build wrote is kept and read as normal.
+        tokio::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 2,
+                "connections": { "conn-1": "partial", "conn-2": "full" },
+                "futureField": true
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(store.level("conn-1").await, DelegationTrust::Normal);
+        assert_eq!(store.level("conn-2").await, DelegationTrust::Full);
+        store.set("conn-3", DelegationTrust::Full).await.unwrap();
+        let written: Value =
+            serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+        assert_eq!(written["connections"]["conn-1"], "partial");
+
+        tokio::fs::write(&path, b"{ not json").await.unwrap();
+        assert_eq!(store.level("conn-2").await, DelegationTrust::Normal);
+        assert!(store.set("conn-2", DelegationTrust::Full).await.is_err());
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"{ not json");
+    }
+
+    fn delegated_facts(trust: DelegationTrust) -> DelegatedTurnFacts {
+        DelegatedTurnFacts {
+            assistant_workspace: Some(PathBuf::from("/home/me/personal_assistant/workspace")),
+            task_dir: Some(PathBuf::from("/home/me/delegation/workspaces/job")),
+            trust,
+        }
+    }
+
+    #[cfg(feature = "agent-runtime")]
+    #[test]
+    fn normal_trust_refuses_the_owners_desktop_sessions_and_publishing() {
+        let normal = delegated_facts(DelegationTrust::Normal).restrict_tools(Default::default());
+        for tool in NORMAL_TRUST_DENIED_TOOLS {
+            assert!(normal.denied_tool_names.contains(tool), "{tool}");
+            assert!(normal.denied_tool_messages[tool].contains("not trusted this connection fully"));
+        }
+        let full = delegated_facts(DelegationTrust::Full).restrict_tools(Default::default());
+        assert!(full.denied_tool_names.is_empty());
+        // Either way the task writes only in its own directory.
+        for restrictions in [&normal, &full] {
+            assert_eq!(
+                restrictions.path_policy.write_roots,
+                vec!["/home/me/delegation/workspaces/job".to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn normal_trust_refuses_desktop_subagents_and_guards_private_files() {
+        let normal = delegated_facts(DelegationTrust::Normal);
+        assert!(normal.subagent_refusal("ComputerUse").is_some());
+        assert!(normal.subagent_refusal("OpenBitFun").is_some());
+        assert!(normal.subagent_refusal("Explore").is_none());
+        assert!(normal.owner_private_paths().contains(&PathBuf::from(
+            "/home/me/personal_assistant/workspace/USER.md"
+        )));
+
+        let full = delegated_facts(DelegationTrust::Full);
+        assert!(full.subagent_refusal("ComputerUse").is_none());
+        assert!(full.owner_private_paths().is_empty());
+    }
+
+    #[test]
+    fn tool_data_carries_the_delegated_turn_facts() {
+        let mut data = std::collections::HashMap::new();
+        assert!(DelegatedTurnFacts::from_tool_data(&data).is_none());
+        data.insert(
+            DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
+            Value::Bool(true),
+        );
+        data.insert(
+            DELEGATION_TRUST_CONTEXT_KEY.to_string(),
+            Value::String("full".to_string()),
+        );
+        let facts = DelegatedTurnFacts::from_tool_data(&data).unwrap();
+        assert_eq!(facts.trust, DelegationTrust::Full);
+        data.remove(DELEGATION_TRUST_CONTEXT_KEY);
+        assert_eq!(
+            DelegatedTurnFacts::from_tool_data(&data).unwrap().trust,
+            DelegationTrust::Normal
+        );
     }
 }

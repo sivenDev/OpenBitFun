@@ -8,6 +8,8 @@ use openbitfun_core::service::delegation_audit::{
 };
 use openbitfun_core::service::remote_connect::connections::ConnectionStore;
 
+use openbitfun_core::service::delegation::DelegationTrust;
+
 use super::protocol::{DispatchDelegationTaskKind, DispatchJobState, DispatchSubmitRequest};
 
 fn default_log() -> Option<DelegationAuditLog> {
@@ -21,6 +23,8 @@ pub(super) fn entry(
     request: &DispatchSubmitRequest,
     connections: Option<&ConnectionStore>,
     event: DelegationAuditEvent,
+    trust: DelegationTrust,
+    external_agents: Vec<String>,
     state: Option<DispatchJobState>,
     detail: Option<&str>,
 ) -> Option<DelegationAuditEntry> {
@@ -56,6 +60,8 @@ pub(super) fn entry(
             DispatchDelegationTaskKind::Coding => "coding",
         }
         .to_string(),
+        trust: Some(trust.as_str().to_string()),
+        external_agents,
         state: state.map(|state| {
             match state {
                 DispatchJobState::Queued => "queued",
@@ -70,15 +76,29 @@ pub(super) fn entry(
     })
 }
 
-/// Appends one event for a cross-account task to this device's log.
-pub(super) fn record(
+/// Appends one event for a cross-account task to this device's log, with
+/// the connection's trust level now and the external agents the task started.
+pub(super) async fn record(
     request: &DispatchSubmitRequest,
     event: DelegationAuditEvent,
     state: Option<DispatchJobState>,
     detail: Option<&str>,
+    external_agents: Vec<String>,
 ) {
+    if request.source_connection_id.is_none() {
+        return;
+    }
+    let trust = super::worker::delegation_trust(request).await;
     let connections = ConnectionStore::open_default().ok();
-    let Some(entry) = entry(request, connections.as_ref(), event, state, detail) else {
+    let Some(entry) = entry(
+        request,
+        connections.as_ref(),
+        event,
+        trust,
+        external_agents,
+        state,
+        detail,
+    ) else {
         return;
     };
     let Some(log) = default_log() else {
