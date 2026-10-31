@@ -171,29 +171,15 @@
       "state": {
         "queued": "Queued"
       },
-      "assistantFolder": "The assistant's folder"
+      "assistantFolder": "The assistant's folder",
+      "trustNormal": "normal trust",
+      "trustFull": "full trust",
+      "externalAgents": "external agents: {{agents}}",
+      "showEarlier": "Show {{count}} earlier tasks"
     },
     "openedToAccounts": "Open",
     "closeConfirmTitle": "Stop opening {{name}}?",
     "closeConfirmDescription": "Devices and accounts it was granted to can no longer give it tasks."
-  },
-  "delegationAudit": {
-    "sectionTitle": "Outside task record",
-    "sectionDescription": "Tasks other accounts gave this device. Kept only on this device.",
-    "empty": "No records yet.",
-    "loading": "Loading the record…",
-    "loadFailed": "Failed to load the record of delegated tasks",
-    "unsupported": "The record of delegated tasks is kept on the device that ran them; open it there.",
-    "unreadable": "Unreadable entry, kept unchanged",
-    "submitted": "Received",
-    "failed": "Failed or stopped",
-    "otherEvent": "Other event",
-    "entry": "{{time}} · {{name}} · {{device}} → {{agent}}",
-    "refresh": "Refresh",
-    "trustNormal": "normal trust",
-    "trustFull": "full trust",
-    "externalAgents": "external agents: {{agents}}",
-    "showAll": "Show all {{count}}"
   },
   "connections": {
     "sectionTitle": "Connections with other accounts",

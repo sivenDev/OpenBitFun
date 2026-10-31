@@ -7,12 +7,11 @@ import {
 } from '@/infrastructure/config/components/common';
 import { AgentDelegationConfig } from '@/infrastructure/config/components/AgentDelegationConfig';
 import { ConnectionsConfig } from '@/infrastructure/config/components/ConnectionsConfig';
-import { DelegationAuditView } from '@/infrastructure/config/components/DelegationAuditView';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import './AiCollaborationScene.scss';
 
-/** Agent collaboration: what this device opens to others, its connections to
- *  other accounts, and the tasks other accounts sent here. */
+/** Agent collaboration: the assistants this device opens to others, with the
+ *  tasks they run for them, and its connections to other accounts. */
 const AiCollaborationScene: React.FC = () => {
   const { t } = useI18n('common');
   return (
@@ -29,7 +28,6 @@ const AiCollaborationScene: React.FC = () => {
         <ConfigPageContent>
           <AgentDelegationConfig />
           <ConnectionsConfig />
-          <DelegationAuditView />
         </ConfigPageContent>
       </ConfigPageLayout>
     </div>

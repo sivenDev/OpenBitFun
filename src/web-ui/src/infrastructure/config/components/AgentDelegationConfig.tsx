@@ -12,6 +12,8 @@ import {
   type ConnectionLimits,
   type DelegatedTask,
   type DelegatedTaskStatus,
+  type DelegationAuditRecord,
+  type DelegationTrust,
   type LocalAssistant,
   type OpenAgent,
   type OpenAgentRecord,
@@ -60,6 +62,34 @@ interface LoadedState {
   /** Connections with devices of other accounts, revoked ones excluded. */
   connections: ConnectionSummary[];
   tasks: DelegatedTask[];
+  /** What the record kept about tasks from other accounts, by job. */
+  recorded: Record<string, RecordedTask>;
+}
+
+/** Facts the record keeps about a task from another account. */
+interface RecordedTask {
+  trust?: DelegationTrust;
+  externalAgents: string[];
+  /** Why the task failed or stopped, when it did. */
+  problem?: string;
+}
+
+/** Recorded tasks read; older ones stay in the record file. */
+const RECORD_LIMIT = 500;
+
+/** What the record says about each task: the last entry with a fact wins. */
+function recordedTasks(records: DelegationAuditRecord[]): Record<string, RecordedTask> {
+  const byJob: Record<string, RecordedTask> = {};
+  for (const { entry } of records) {
+    if (!entry) continue;
+    const task = byJob[entry.jobId] ?? (byJob[entry.jobId] = { externalAgents: [] });
+    if (entry.trust) task.trust = entry.trust;
+    for (const agent of entry.externalAgents ?? []) {
+      if (!task.externalAgents.includes(agent)) task.externalAgents.push(agent);
+    }
+    if (entry.event === 'finished' && entry.state !== 'succeeded' && entry.detail) task.problem = entry.detail;
+  }
+  return byJob;
 }
 
 /** Limits as typed; empty means no limit. */
@@ -160,6 +190,8 @@ export const AgentDelegationConfig: React.FC = () => {
   const [statuses, setStatuses] = useState<Record<string, DelegatedTaskStatus>>({});
   /** Prompts answered here (`jobId:requestId`); the runner may list them until it consumes the answer. */
   const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set());
+  /** Assistants whose earlier finished tasks the owner asked to see. */
+  const [showEarlier, setShowEarlier] = useState<ReadonlySet<string>>(new Set());
   /** The opened assistant whose closing the owner is confirming. */
   const [closing, setClosing] = useState<string | null>(null);
   const activeRef = useRef(true);
@@ -167,7 +199,7 @@ export const AgentDelegationConfig: React.FC = () => {
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const [assistants, records, devices, currentDevice, connections, tasks] = await Promise.all([
+      const [assistants, records, devices, currentDevice, connections, tasks, audit] = await Promise.all([
         delegationAPI.listAssistants(),
         delegationAPI.listOpenAgents(),
         // Devices are optional: without an account the owner can still allow all devices.
@@ -179,6 +211,11 @@ export const AgentDelegationConfig: React.FC = () => {
           .catch(() => [] as ConnectionSummary[]),
         // Tasks are optional: without the dispatch runner nothing could have been delegated.
         readDelegatedTasks({ fresh: true }),
+        // The record is optional: without it tasks show what the runner lists.
+        delegationAPI.listAudit(RECORD_LIMIT).catch((error: unknown) => {
+          log.warn('Failed to read the delegation record', { error });
+          return [] as DelegationAuditRecord[];
+        }),
       ]);
       if (!activeRef.current) return;
       setState({
@@ -187,6 +224,7 @@ export const AgentDelegationConfig: React.FC = () => {
         devices: devices.filter(device => device.device_id !== currentDevice?.device_id),
         connections,
         tasks,
+        recorded: recordedTasks(audit),
       });
     } catch (error) {
       log.error('Failed to load opened assistants', { error });
@@ -502,31 +540,62 @@ export const AgentDelegationConfig: React.FC = () => {
     </ConfigPageRow>
   ));
 
-  /** Tasks still running or waiting, then the few that finished last. */
-  const shownTasks = (assistant: LocalAssistant): DelegatedTask[] => {
+  /** Tasks still running or waiting, then those that finished, the last few unless asked for all. */
+  const splitTasks = (assistant: LocalAssistant) => {
     const own = (state?.tasks ?? []).filter(task => task.agentType === assistant.agentType);
     const active = own.filter(task => !FINISHED_TASK_STATES.has(task.state) || task.pendingPermissionCount > 0);
-    const finished = own.filter(task => !active.includes(task)).slice(0, RECENT_FINISHED_TASKS);
-    return [...active, ...finished];
+    const finished = own.filter(task => !active.includes(task));
+    const shown = showEarlier.has(assistant.agentType) ? finished : finished.slice(0, RECENT_FINISHED_TASKS);
+    return { shown: [...active, ...shown], hidden: finished.length - shown.length };
   };
 
-  const renderTasks = (assistant: LocalAssistant) => shownTasks(assistant).map(task => {
-    const waitingCount = statuses[task.jobId] ? openPrompts(task).length : task.pendingPermissionCount;
-    const waiting = waitingCount > 0
-      ? t('agentDelegation.tasks.waiting', { count: String(waitingCount) })
-      : null;
-    return (
-      <React.Fragment key={task.jobId}>
-        <ConfigPageRow
-          label={task.title || t('agentDelegation.tasks.untitled')}
-          description={[describeSource(task), describeState(task.state), waiting].filter(Boolean).join(' · ')}
-          align="center">
-          <span />
+  /** Trust, external agents and any failure the record kept for a task from another account. */
+  const describeRecorded = (task: DelegatedTask): string[] => {
+    const recorded = state?.recorded[task.jobId];
+    if (!recorded) return [];
+    return [
+      recorded.trust === 'full' ? t('agentDelegation.tasks.trustFull')
+        : recorded.trust === 'normal' ? t('agentDelegation.tasks.trustNormal') : null,
+      recorded.externalAgents.length
+        ? t('agentDelegation.tasks.externalAgents', { agents: recorded.externalAgents.join(', ') })
+        : null,
+      recorded.problem ?? null,
+    ].filter((item): item is string => item !== null);
+  };
+
+  const renderTasks = (assistant: LocalAssistant) => {
+    const { shown, hidden } = splitTasks(assistant);
+    return <>
+      {shown.map(task => {
+        const waitingCount = statuses[task.jobId] ? openPrompts(task).length : task.pendingPermissionCount;
+        const waiting = waitingCount > 0
+          ? t('agentDelegation.tasks.waiting', { count: String(waitingCount) })
+          : null;
+        return (
+          <React.Fragment key={task.jobId}>
+            <ConfigPageRow
+              label={task.title || t('agentDelegation.tasks.untitled')}
+              description={[describeSource(task), describeState(task.state), ...describeRecorded(task), waiting]
+                .filter(Boolean).join(' · ')}
+              align="center">
+              <span />
+            </ConfigPageRow>
+            {renderPrompts(task, assistant.rootPath)}
+          </React.Fragment>
+        );
+      })}
+      {hidden > 0 && (
+        <ConfigPageRow label="" align="center" wide>
+          <div className="openbitfun-runtime-settings__status-actions">
+            <Button type="button" size="sm" variant="outline"
+              onClick={() => setShowEarlier(current => new Set(current).add(assistant.agentType))}>
+              {t('agentDelegation.tasks.showEarlier', { count: String(hidden) })}
+            </Button>
+          </div>
         </ConfigPageRow>
-        {renderPrompts(task, assistant.rootPath)}
-      </React.Fragment>
-    );
-  });
+      )}
+    </>;
+  };
 
   const renderOpenForm = (assistant: LocalAssistant) => {
     if (!state || draft?.agentType !== assistant.agentType) return null;

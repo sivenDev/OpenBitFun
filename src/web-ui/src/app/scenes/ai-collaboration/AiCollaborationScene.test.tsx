@@ -18,9 +18,6 @@ vi.mock('@/infrastructure/config/components/AgentDelegationConfig', () => ({
 vi.mock('@/infrastructure/config/components/ConnectionsConfig', () => ({
   ConnectionsConfig: () => <section>connections</section>,
 }));
-vi.mock('@/infrastructure/config/components/DelegationAuditView', () => ({
-  DelegationAuditView: () => <section>delegation-audit</section>,
-}));
 
 describe('AiCollaborationScene', () => {
   let container: HTMLDivElement;
@@ -38,11 +35,11 @@ describe('AiCollaborationScene', () => {
     container.remove();
   });
 
-  it('holds the agent delegation, connection and audit settings', async () => {
+  it('holds the opened assistants and the connections', async () => {
     await act(async () => { root.render(<AiCollaborationScene />); });
     expect(container.querySelector('[data-openbitfun-scene="ai-collaboration"]')).not.toBeNull();
     expect(container.textContent).toContain('aiCollaboration.title|aiCollaboration.subtitle');
     const sections = [...container.querySelectorAll('section')].map(section => section.textContent);
-    expect(sections).toEqual(['agent-delegation', 'connections', 'delegation-audit']);
+    expect(sections).toEqual(['agent-delegation', 'connections']);
   });
 });

@@ -171,29 +171,15 @@
       "state": {
         "queued": "排隊中"
       },
-      "assistantFolder": "助理資料夾"
+      "assistantFolder": "助理資料夾",
+      "trustNormal": "一般信任",
+      "trustFull": "完全信任",
+      "externalAgents": "外部智慧體：{{agents}}",
+      "showEarlier": "顯示更早的 {{count}} 個任務"
     },
     "openedToAccounts": "已開放",
     "closeConfirmTitle": "停止開放「{{name}}」？",
     "closeConfirmDescription": "已授權的裝置和帳號將不能再把任務交給它。"
-  },
-  "delegationAudit": {
-    "sectionTitle": "外部任務記錄",
-    "sectionDescription": "其他帳號交給本機的任務，只保存在本機。",
-    "empty": "還沒有記錄。",
-    "loading": "正在載入紀錄…",
-    "loadFailed": "載入委託任務紀錄失敗",
-    "unsupported": "委託任務紀錄保存在執行任務的裝置上，請在那台裝置上查看。",
-    "unreadable": "無法讀取的紀錄，已原樣保留",
-    "submitted": "已接收",
-    "failed": "失敗或已停止",
-    "otherEvent": "其他事件",
-    "entry": "{{time}} · {{name}} · {{device}} → {{agent}}",
-    "refresh": "重新整理",
-    "trustNormal": "一般信任",
-    "trustFull": "完全信任",
-    "externalAgents": "外部智慧體：{{agents}}",
-    "showAll": "顯示全部 {{count}} 筆"
   },
   "connections": {
     "sectionTitle": "與其他帳號的連線",

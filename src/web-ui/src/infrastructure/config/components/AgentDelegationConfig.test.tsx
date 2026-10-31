@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   tasks: vi.fn(),
   status: vi.fn(),
   answer: vi.fn(),
+  audit: vi.fn(),
   devices: vi.fn(),
   deviceInfo: vi.fn(),
   tauri: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal)
     listOpenAgents: mocks.list, openAgent: mocks.open, closeAgent: mocks.close,
     grantConnection: mocks.grant, revokeConnection: mocks.revoke, setConnectionLimits: mocks.limits,
     listAssistants: mocks.assistants, listTasks: mocks.tasks, taskStatus: mocks.status, answerTask: mocks.answer,
+    listAudit: mocks.audit,
   },
 }));
 vi.mock('@/infrastructure/api/service-api/ConnectionsAPI', () => ({ connectionsAPI: { overview: mocks.overview } }));
@@ -94,6 +96,7 @@ describe('AgentDelegationConfig', () => {
     ]);
     mocks.tasks.mockResolvedValue([]);
     mocks.status.mockResolvedValue({ state: 'running', cursor: 0, pendingPermissions: [] });
+    mocks.audit.mockResolvedValue([]);
     mocks.devices.mockResolvedValue([
       { device_id: 'this-device', device_name: 'This Mac', online: true, last_seen_at: null },
       { device_id: 'laptop', device_name: 'Laptop', online: true, last_seen_at: null },
@@ -272,9 +275,33 @@ describe('AgentDelegationConfig', () => {
         agentType: 'assistant:workspace', pendingPermissionCount: 0, source: { kind: 'device', deviceId: 'laptop' } })),
     ]);
     await render();
-    const rows = Array.from(container.querySelectorAll('[data-row]')).map(node => node.getAttribute('data-row'));
-    expect(rows.filter(row => row?.startsWith('Done') || row === 'Running'))
-      .toEqual(['Running', 'Done a', 'Done b', 'Done c']);
+    const shown = () => Array.from(container.querySelectorAll('[data-row]')).map(node => node.getAttribute('data-row'))
+      .filter(row => row?.startsWith('Done') || row === 'Running');
+    expect(shown()).toEqual(['Running', 'Done a', 'Done b', 'Done c']);
+    await click('agentDelegation.tasks.showEarlier:1');
+    expect(shown()).toEqual(['Running', 'Done a', 'Done b', 'Done c', 'Done d']);
+  });
+
+  it('shows what the record kept about a task from another account', async () => {
+    const at = '2026-10-30T10:00:00Z';
+    const recorded = (event: string, extra: Record<string, unknown>) => ({ entry: {
+      at, event, jobId: 'job-1', connectionId: 'conn-1', peerUserId: '2002', peerDisplayName: 'Bea',
+      peerDeviceId: 'b1', peerDeviceName: 'B1', openAgentId: 'workspace', taskKind: 'message', ...extra,
+    } });
+    mocks.audit.mockResolvedValue([
+      recorded('submitted', { trust: 'full' }),
+      { problem: 'unreadable line' },
+      recorded('finished', { state: 'failed', externalAgents: ['acp:claude-code'], detail: 'Ran past 5 minutes' }),
+    ]);
+    mocks.tasks.mockResolvedValue([{
+      jobId: 'job-1', state: 'failed', title: 'Draft the plan', agentType: 'assistant:workspace',
+      pendingPermissionCount: 0, source: { kind: 'connection', connectionId: 'conn-1', accountName: 'Bea', deviceName: 'B1' },
+    }]);
+    await render();
+    expect(mocks.audit).toHaveBeenCalledWith(500);
+    expect(container.querySelector('[data-row="Draft the plan"]')!.textContent).toContain(
+      'agentDelegation.tasks.fromAccount:Bea|B1 · shared:statuses.failed · agentDelegation.tasks.trustFull'
+      + ' · agentDelegation.tasks.externalAgents:acp:claude-code · Ran past 5 minutes');
   });
 
   it('asks before it stops opening an assistant', async () => {

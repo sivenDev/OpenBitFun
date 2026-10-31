@@ -171,29 +171,15 @@
       "state": {
         "queued": "排队中"
       },
-      "assistantFolder": "助理目录"
+      "assistantFolder": "助理目录",
+      "trustNormal": "普通信任",
+      "trustFull": "完全信任",
+      "externalAgents": "外部智能体：{{agents}}",
+      "showEarlier": "显示更早的 {{count}} 个任务"
     },
     "openedToAccounts": "已开放",
     "closeConfirmTitle": "停止开放「{{name}}」？",
     "closeConfirmDescription": "已授权的设备和账号将不能再把任务交给它。"
-  },
-  "delegationAudit": {
-    "sectionTitle": "外部任务记录",
-    "sectionDescription": "其他账号交给本机的任务，只保存在本机。",
-    "empty": "还没有记录。",
-    "loading": "正在加载记录…",
-    "loadFailed": "加载委托任务记录失败",
-    "unsupported": "委托任务记录保存在执行任务的设备上，请在那台设备上查看。",
-    "unreadable": "无法读取的记录，已原样保留",
-    "submitted": "已接收",
-    "failed": "失败或已停止",
-    "otherEvent": "其他事件",
-    "entry": "{{time}} · {{name}} · {{device}} → {{agent}}",
-    "refresh": "刷新",
-    "trustNormal": "普通信任",
-    "trustFull": "完全信任",
-    "externalAgents": "外部智能体：{{agents}}",
-    "showAll": "显示全部 {{count}} 条"
   },
   "connections": {
     "sectionTitle": "与其他账号的连接",
