@@ -138,7 +138,7 @@ export const ConnectionsConfig: React.FC = () => {
         description={details}
         align="center"
       >
-        <div>
+        <div className="openbitfun-runtime-settings__status-actions">
           {connection.awaitingConfirmation && (
             <Button type="button" size="sm" variant="primary" disabled={busy}
               onClick={() => { setConfirming(connection); setActionError(null); }}>
@@ -159,13 +159,14 @@ export const ConnectionsConfig: React.FC = () => {
   const renderConfirm = (connection: ConnectionSummary) => (
     <>
       <ConfigPageRow
+        balanced
         label={t('connections.confirm.title', { name: connection.peerDisplayName })}
         description={t('connections.confirm.description', { name: connection.peerDisplayName })}
       >
-        <code data-testid="confirm-fingerprint">{connection.peerFingerprint ?? ''}</code>
+        <code className="openbitfun-runtime-settings__mono-value" data-testid="confirm-fingerprint">{connection.peerFingerprint ?? ''}</code>
       </ConfigPageRow>
-      <ConfigPageRow label="" align="center">
-        <div>
+      <ConfigPageRow label="" align="center" wide>
+        <div className="openbitfun-runtime-settings__status-actions">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setConfirming(null)}>
             {t('connections.cancel')}
           </Button>
@@ -190,6 +191,7 @@ export const ConnectionsConfig: React.FC = () => {
       </ConfigPageRow>
       {draft.preview && (
         <ConfigPageRow
+          balanced
           label={t('connections.peer', {
             name: draft.preview.inviterDisplayName,
             account: draft.preview.inviterUserId,
@@ -199,11 +201,11 @@ export const ConnectionsConfig: React.FC = () => {
             time: formatTime(draft.preview.expiresAt),
           })}
         >
-          <code data-testid="preview-fingerprint">{draft.preview.fingerprint}</code>
+          <code className="openbitfun-runtime-settings__mono-value" data-testid="preview-fingerprint">{draft.preview.fingerprint}</code>
         </ConfigPageRow>
       )}
-      <ConfigPageRow label="" align="center">
-        <div>
+      <ConfigPageRow label="" align="center" wide>
+        <div className="openbitfun-runtime-settings__status-actions">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setAccept(null)}>
             {t('connections.cancel')}
           </Button>
@@ -260,12 +262,12 @@ export const ConnectionsConfig: React.FC = () => {
           <span />
         </ConfigPageRow>
       )}
-      <ConfigPageRow label={t('connections.localFingerprint')} description={t('connections.localFingerprintDescription')}>
-        <code data-testid="local-fingerprint">{overview.localFingerprint}</code>
+      <ConfigPageRow balanced label={t('connections.localFingerprint')} description={t('connections.localFingerprintDescription')}>
+        <code className="openbitfun-runtime-settings__mono-value" data-testid="local-fingerprint">{overview.localFingerprint}</code>
       </ConfigPageRow>
       {acceptedFingerprint && (
-        <ConfigPageRow label={t('connections.accept.done')} description={t('connections.accept.doneDescription')}>
-          <code>{acceptedFingerprint}</code>
+        <ConfigPageRow balanced label={t('connections.accept.done')} description={t('connections.accept.doneDescription')}>
+          <code className="openbitfun-runtime-settings__mono-value">{acceptedFingerprint}</code>
         </ConfigPageRow>
       )}
       {overview.connections.length === 0 && overview.unreadable.length === 0 && (
@@ -302,11 +304,12 @@ export const ConnectionsConfig: React.FC = () => {
       ))}
       {invite && (
         <ConfigPageRow
+          balanced
           label={t('connections.invite.created')}
           description={t('connections.invite.createdDescription', { time: formatTime(invite.expiresAt) })}
         >
-          <div>
-            <code data-testid="invite-link">{invite.link}</code>
+          <div className="openbitfun-runtime-settings__status-actions">
+            <code className="openbitfun-runtime-settings__mono-value" data-testid="invite-link">{invite.link}</code>
             <Button type="button" size="sm" variant="outline" onClick={() => void copyLink(invite.link)}>
               {t('connections.invite.copy')}
             </Button>
@@ -316,8 +319,8 @@ export const ConnectionsConfig: React.FC = () => {
       {accept && renderAccept(accept)}
       {actionError && <div role="alert">{actionError}</div>}
       {!accept && (
-        <ConfigPageRow label="" align="center">
-          <div>
+        <ConfigPageRow label="" align="center" wide>
+          <div className="openbitfun-runtime-settings__status-actions">
             <Button type="button" size="sm" variant="outline" disabled={busy || !overview.supported}
               onClick={() => void run(async () => {
                 const created = await connectionsAPI.createInvite();

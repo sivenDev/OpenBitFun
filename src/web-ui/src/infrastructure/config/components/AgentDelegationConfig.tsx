@@ -275,10 +275,10 @@ export const AgentDelegationConfig: React.FC = () => {
   const renderLimitInputs = (value: LimitsDraft, onChange: (next: LimitsDraft) => void) => {
     const invalid = draftLimits(value) === null;
     return (
-      <ConfigPageRow label={t('agentDelegation.limits.title')}
+      <ConfigPageRow balanced label={t('agentDelegation.limits.title')}
         description={invalid ? t('agentDelegation.limits.invalid') : t('agentDelegation.limits.description')}
         align="center">
-        <div>
+        <div className="openbitfun-runtime-settings__status-actions">
           <Input size="sm" inputMode="numeric" disabled={busy} value={value.maxJobs}
             aria-label={t('agentDelegation.limits.jobsLabel')}
             placeholder={t('agentDelegation.limits.jobsLabel')}
@@ -348,8 +348,8 @@ export const AgentDelegationConfig: React.FC = () => {
       )}
       {candidates.length > 0 && renderLimitInputs(grantDraft,
         next => setGrantDraft(current => current && ({ ...current, ...next })))}
-      <ConfigPageRow label="" align="center">
-        <div>
+      <ConfigPageRow label="" align="center" wide>
+        <div className="openbitfun-runtime-settings__status-actions">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setGrantDraft(null)}>
             {t('agentDelegation.cancel')}
           </Button>
@@ -456,11 +456,12 @@ export const AgentDelegationConfig: React.FC = () => {
         return (
           <React.Fragment key={id ?? `unreadable-${index}`}>
             <ConfigPageRow
+              balanced
               label={agent?.displayName ?? id ?? t('agentDelegation.unreadable', { problem: '' })}
               description={describeRecord(record)}
               align="center"
             >
-              <div>
+              <div className="openbitfun-runtime-settings__status-actions">
                 {agent && grantDraft?.agentId !== agent.id && (
                   <Button type="button" size="sm" variant="outline" disabled={busy}
                     onClick={() => setGrantDraft({
@@ -483,10 +484,10 @@ export const AgentDelegationConfig: React.FC = () => {
               const editing = limitsDraft?.agentId === agent.id && limitsDraft.connectionId === item.connectionId;
               return (
                 <React.Fragment key={item.connectionId}>
-                  <ConfigPageRow label={t('agentDelegation.otherAccounts')}
+                  <ConfigPageRow balanced label={t('agentDelegation.otherAccounts')}
                     description={`${t('agentDelegation.grantedTo', { peer: describeConnection(item.connectionId) })} · ${describeLimits(item)}`}
                     align="center">
-                    <div>
+                    <div className="openbitfun-runtime-settings__status-actions">
                       {!editing && (
                         <Button type="button" size="sm" variant="outline" disabled={busy}
                           onClick={() => setLimitsDraft({
@@ -507,8 +508,8 @@ export const AgentDelegationConfig: React.FC = () => {
                   {editing && limitsDraft && <>
                     {renderLimitInputs(limitsDraft,
                       next => setLimitsDraft(current => current && ({ ...current, ...next })))}
-                    <ConfigPageRow label="" align="center">
-                      <div>
+                    <ConfigPageRow label="" align="center" wide>
+                      <div className="openbitfun-runtime-settings__status-actions">
                         <Button type="button" size="sm" variant="outline" disabled={busy}
                           onClick={() => setLimitsDraft(null)}>
                           {t('agentDelegation.cancel')}
@@ -578,8 +579,8 @@ export const AgentDelegationConfig: React.FC = () => {
           <Input size="sm" value={draft.description} disabled={busy}
             onChange={event => setDraft({ ...draft, description: event.target.value })} />
         </ConfigPageRow>
-        <ConfigPageRow label={t('agentDelegation.taskKinds')} description={t('agentDelegation.taskKindsDescription')}>
-          <div>
+        <ConfigPageRow balanced label={t('agentDelegation.taskKinds')} description={t('agentDelegation.taskKindsDescription')}>
+          <div className="openbitfun-runtime-settings__status-actions">
             <Checkbox checked={draft.taskKinds.includes('message')} disabled={busy}
               label={t('agentDelegation.taskKindMessage')}
               onChange={event => toggleTaskKind('message', event.target.checked)} />
@@ -609,8 +610,8 @@ export const AgentDelegationConfig: React.FC = () => {
             onChange={event => setDraft({ ...draft, messageWorkspace: event.target.value })} />
         </ConfigPageRow>
         {draftError && <div role="alert">{draftError}</div>}
-        <ConfigPageRow label="" align="center">
-          <div>
+        <ConfigPageRow label="" align="center" wide>
+          <div className="openbitfun-runtime-settings__status-actions">
             <Button type="button" size="sm" variant="outline" disabled={busy}
               onClick={() => { setDraft(null); setDraftError(null); }}>
               {t('agentDelegation.cancel')}
@@ -621,7 +622,7 @@ export const AgentDelegationConfig: React.FC = () => {
           </div>
         </ConfigPageRow>
       </> : (
-        <ConfigPageRow label="" align="center">
+        <ConfigPageRow label="" align="center" wide>
           <Button type="button" size="sm" variant="outline" disabled={busy || state.agents.length === 0}
             onClick={() => setDraft(newDraft(state.agents))}>
             {t('agentDelegation.open')}
