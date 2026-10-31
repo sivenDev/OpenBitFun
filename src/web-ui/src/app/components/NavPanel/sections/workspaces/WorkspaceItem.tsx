@@ -69,6 +69,7 @@ import {
   WORKSPACE_GIT_PENDING_CANCEL_REASONS,
   WORKSPACE_GIT_PENDING_CANCEL_SOURCES,
 } from './workspaceGitRefreshOptions';
+import DelegatedTaskList from './DelegatedTaskList';
 
 const WorkspaceRelatedPathsDialog = lazyWithRecovery(() => import('./WorkspaceRelatedPathsDialog'));
 const WorkspaceProjectPermissionsDialog = lazyWithRecovery(() => import('./WorkspaceProjectPermissionsDialog'));
@@ -1023,6 +1024,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
             </Suspense>
           )}
         </div>
+        {!assistantHistoryOpen && <DelegatedTaskList workspace={workspace} waitingOnly />}
 
         <ConfirmDialog
           open={deleteDialogOpen}

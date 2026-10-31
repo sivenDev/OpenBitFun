@@ -3,6 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentDelegationConfig } from './AgentDelegationConfig';
+import { DELEGATED_TASKS_REFRESH_MS } from '@/infrastructure/api/service-api/delegatedTaskReads';
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -242,6 +243,23 @@ describe('AgentDelegationConfig', () => {
     expect(button('agentDelegation.tasks.allowOnce')).toBeDefined();
     await click('agentDelegation.tasks.allowOnce');
     expect(mocks.answer).toHaveBeenCalledWith('delegation-1', 'req-1', 'once');
+  });
+
+  it('reads tasks again while the page stays open', async () => {
+    vi.useFakeTimers();
+    try {
+      await render();
+      expect(container.textContent).not.toContain('Plan the week');
+      mocks.tasks.mockResolvedValue([{
+        jobId: 'delegation-1', sessionId: 's1', state: 'running', title: 'Plan the week', openAgentId: 'workspace',
+        agentType: 'assistant:workspace', assistantWorkspace: '/home/me/personal_assistant/workspace',
+        pendingPermissionCount: 1, source: { kind: 'device', deviceId: 'laptop', deviceName: 'Laptop' },
+      }]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(DELEGATED_TASKS_REFRESH_MS); });
+      expect(container.textContent).toContain('Plan the week');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('still manages assistants when the task list cannot be read', async () => {

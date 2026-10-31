@@ -245,7 +245,7 @@ parent: "F002"
 - 模拟环境中没有真实的 ACP 智能体：助理调用外部智能体由内核测试与模拟 ACP 客户端覆盖，结果中注明
 
 - [x] RFC 批准条件 1–11 逐项实测并记录（自动化模拟）
-- [ ] 在模拟客户端中查看 AI协作页与助理名下的外部任务、处理一次审批（待人工体验，见偏差）
+- [x] 在模拟客户端中查看 AI协作页与助理名下的外部任务、处理一次审批
 
 **Evidence (2026-10-31, Task 5):**
 - `node scripts/dev/sim-devices.mjs --check`（需 `SDKROOT`，见下）：桌面发起方两个场景 `desktop_requester_delegates_to_simulated_devices`、`desktop_requester_delegates_to_other_accounts_over_connections` 通过；模拟设备 `serve_simulated_devices` 通过。
@@ -263,7 +263,12 @@ parent: "F002"
   10. 委派回合中再委派被拒（「delegation does not chain across devices」）—— 内核 task 测试。
   11. 审计记录每次跨账号委派及信任级别（`normal`/`full`）；外部智能体字段由 worker 单元测试覆盖 —— CLI 模拟。
 - 偏差与问题：
-  - 计划中的界面实测未完成：模拟客户端已用最新构建启动，但本机屏幕处于锁定状态，cua-driver 无法操作窗口（macOS 锁屏时隐藏辅助功能树）。界面行为由组件测试覆盖，人工体验留给用户。
+  - 界面实测（解锁后用 cua-driver 操作 A1 桌面补做）：开放「助理」给 A2 并确认外部智能体；授权给 B1，设为完全信任（确认面板、`connection-trust.json` 写入 `full`）后改回普通；以 B1 连接提交一个任务，助理读取 `USER.md` 停下，AI协作页显示来源「sim-b，B1 Desktop」与两项待审批，逐项「允许一次」后任务完成；再开放「助理 2」只授权给 B2，两个助理各自显示开放范围与授权。实测发现并修复了四个问题（随后的提交）：
+    - AI协作页只在首次挂载时读取任务，场景标签保持挂载后新任务不出现 —— 改为与侧栏共用的定时读取（读取模块移到 `infrastructure/api/service-api/delegatedTaskReads.ts`）。
+    - 侧栏的外部任务只在助理历史展开后出现，而展开按钮只在悬停时可见 —— 历史收起时在助理下方仍列出等待审批的任务。
+    - 侧栏按路径匹配任务所属助理，运行器记录的 `/var/...` 与应用的 `/private/var/...` 不相等导致不显示 —— 改为按 `assistant:<目录名>` 匹配。
+    - 外部任务行沿用 26px 固定行高被截断、未缩进；完全信任确认说明被挤在窄列 —— 修正样式与行布局。
+  - 遗留：提示中的操作名直接显示为 `read`、`external_directory`；侧栏在主人审批后最多 30 秒才刷新等待数。
   - 重新构建桌面时外观契约审计发现 Task 4 的导航外部任务使用了未声明的外观部件，已修复（提交 `9273ca326`）。
   - 本机 Xcode 更新后 xcrun 缓存指向已删除的 SDK，构建与模拟需要 `SDKROOT=.../MacOSX.sdk`；可运行 `xcrun --kill-cache` 修复。
 

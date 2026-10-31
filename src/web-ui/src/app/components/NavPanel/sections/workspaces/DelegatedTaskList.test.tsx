@@ -3,7 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DelegatedTaskList from './DelegatedTaskList';
-import { resetDelegatedTaskReads } from './delegatedTaskReads';
+import { resetDelegatedTaskReads } from '@/infrastructure/api/service-api/delegatedTaskReads';
 import type { WorkspaceInfo } from '@/shared/types';
 
 const mocks = vi.hoisted(() => ({
@@ -13,7 +13,10 @@ const mocks = vi.hoisted(() => ({
   peer: vi.fn(),
 }));
 
-vi.mock('@/infrastructure/api/service-api/DelegationAPI', () => ({ delegationAPI: { listTasks: mocks.listTasks } }));
+vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
+  delegationAPI: { listTasks: mocks.listTasks },
+}));
 vi.mock('@/app/stores/sceneStore', () => ({ useSceneStore: { getState: () => ({ openScene: mocks.openScene }) } }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
@@ -58,11 +61,13 @@ describe('DelegatedTaskList', () => {
     mocks.listTasks.mockResolvedValue([
       task('a', { pendingPermissionCount: 2, source: { kind: 'connection', connectionId: 'c1', accountName: 'Bea' } }),
       task('b'),
-      task('other', { assistantWorkspace: `${ROOT}-work` }),
+      // The runner may spell the directory differently; the assistant type decides.
+      task('c', { assistantWorkspace: `/private${ROOT}` }),
+      task('other', { agentType: 'assistant:workspace-work', assistantWorkspace: `${ROOT}-work` }),
     ]);
     await render();
     expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
-      .toEqual(['Task a', 'Task b']);
+      .toEqual(['Task a', 'Task b', 'Task c']);
     expect(rows()[0].textContent).toContain('nav.sessions.delegated.fromAccount:Bea');
     expect(rows()[0].textContent).toContain('nav.sessions.delegated.waiting:2');
     expect(rows()[0].classList.contains('is-waiting')).toBe(true);
@@ -72,6 +77,13 @@ describe('DelegatedTaskList', () => {
     // Review and approval happen on the AI collaboration page.
     await act(async () => (rows()[0] as HTMLButtonElement).click());
     expect(mocks.openScene).toHaveBeenCalledWith('ai-collaboration');
+  });
+
+  it('lists only tasks waiting for the owner while the history is collapsed', async () => {
+    mocks.listTasks.mockResolvedValue([task('a', { pendingPermissionCount: 1 }), task('b')]);
+    await act(async () => root.render(<DelegatedTaskList workspace={workspace} waitingOnly />));
+    expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
+      .toEqual(['Task a']);
   });
 
   it('shows nothing when there are no tasks or the list cannot be read', async () => {

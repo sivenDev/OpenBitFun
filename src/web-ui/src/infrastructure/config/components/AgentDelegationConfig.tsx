@@ -25,6 +25,10 @@ import {
   type AccountDeviceInfo,
 } from '@/infrastructure/api/service-api/RemoteConnectAPI';
 import { getWorkspaceDisplayName, useOptionalWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
+import {
+  DELEGATED_TASKS_REFRESH_MS,
+  readDelegatedTasks,
+} from '@/infrastructure/api/service-api/delegatedTaskReads';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
@@ -145,10 +149,7 @@ export const AgentDelegationConfig: React.FC = () => {
           .then(overview => overview.connections.filter(connection => connection.status !== 'revoked'))
           .catch(() => [] as ConnectionSummary[]),
         // Tasks are optional: without the dispatch runner nothing could have been delegated.
-        delegationAPI.listTasks().catch((error: unknown) => {
-          log.warn('Failed to list delegated tasks', { error });
-          return [] as DelegatedTask[];
-        }),
+        readDelegatedTasks({ fresh: true }),
       ]);
       if (!activeRef.current) return;
       setState({
@@ -169,6 +170,17 @@ export const AgentDelegationConfig: React.FC = () => {
     if (supported) void load();
     return () => { activeRef.current = false; };
   }, [load, supported]);
+
+  // Tasks arrive while the page stays open, so they are read again on a timer.
+  useEffect(() => {
+    if (!supported) return undefined;
+    const timer = setInterval(() => {
+      void readDelegatedTasks().then(tasks => {
+        if (activeRef.current) setState(current => (current ? { ...current, tasks } : current));
+      });
+    }, DELEGATED_TASKS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [supported]);
 
   const assistantName = (assistant: LocalAssistant): string => {
     const workspace = workspaces?.assistantWorkspacesList.find(item =>

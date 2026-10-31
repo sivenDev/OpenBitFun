@@ -143,7 +143,7 @@ export const ConnectionsConfig: React.FC = () => {
 
   const renderTrustConfirm = (connection: ConnectionSummary) => (
     <>
-      <ConfigPageRow balanced label={t('connections.trust.confirmTitle', { name: connection.peerDisplayName })}
+      <ConfigPageRow label={t('connections.trust.confirmTitle', { name: connection.peerDisplayName })}
         description={t('connections.trust.confirmDescription')}>
         <span />
       </ConfigPageRow>
