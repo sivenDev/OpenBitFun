@@ -360,41 +360,6 @@ impl AgentExecutionTool {
         }
     }
 
-    /// A remote agent takes only the task kinds its device opened it for, and
-    /// a coding task branches from this session's workspace with local Git.
-    pub(super) fn ensure_remote_task_kind(
-        context: &ToolUseContext,
-        descriptor: &openbitfun_runtime_ports::RemoteAgentDescriptor,
-        task_kind: openbitfun_runtime_ports::RemoteAgentTaskKind,
-    ) -> OpenBitFunResult<()> {
-        use openbitfun_runtime_ports::RemoteAgentTaskKind;
-        let agent_type = descriptor.address.agent_type();
-        let name = |kind: &RemoteAgentTaskKind| match kind {
-            RemoteAgentTaskKind::Message => "message",
-            RemoteAgentTaskKind::Coding => "coding",
-        };
-        if !descriptor.task_kinds.contains(&task_kind) {
-            let accepted: Vec<&str> = descriptor.task_kinds.iter().map(name).collect();
-            return Err(OpenBitFunError::tool(format!(
-                "remote agent {agent_type} does not accept {} tasks; it accepts: {}",
-                name(&task_kind),
-                if accepted.is_empty() {
-                    "none".to_string()
-                } else {
-                    accepted.join(", ")
-                }
-            )));
-        }
-        if task_kind == RemoteAgentTaskKind::Coding
-            && (context.is_remote() || context.workspace.is_none())
-        {
-            return Err(OpenBitFunError::tool(format!(
-                "remote agent {agent_type} coding tasks need this session in a Git workspace on this device; a remote workspace cannot provide the baseline"
-            )));
-        }
-        Ok(())
-    }
-
     pub(super) async fn derive_parent_permission_runtime_ceiling(
         context: &ToolUseContext,
     ) -> OpenBitFunResult<PermissionRuntimeCeiling> {
@@ -630,7 +595,7 @@ impl AgentExecutionTool {
                 } else if let Some(address) = requested_remote_agent.as_ref() {
                     let parent_ceiling =
                         Self::derive_parent_permission_runtime_ceiling(context).await?;
-                    let descriptor = Self::ensure_remote_agent_available(
+                    Self::ensure_remote_agent_available(
                         &coordinator,
                         context,
                         address,
@@ -645,11 +610,6 @@ impl AgentExecutionTool {
                         },
                     )
                     .await?;
-                    Self::ensure_remote_task_kind(
-                        context,
-                        &descriptor,
-                        invocation.remote_task_kind.unwrap_or_default(),
-                    )?;
                     let subagent_type = address.agent_type();
                     logical_subagent_type = Some(subagent_type.clone());
                     Some(subagent_type)
@@ -1121,14 +1081,6 @@ impl AgentExecutionTool {
             })
             .unwrap_or_default();
         forward_subagent_invocation_context(context, &mut subagent_context);
-        if invocation.remote_task_kind
-            == Some(openbitfun_runtime_ports::RemoteAgentTaskKind::Coding)
-        {
-            subagent_context.insert(
-                crate::agentic::coordination::REMOTE_TASK_KIND_CONTEXT_KEY.to_string(),
-                "coding".to_string(),
-            );
-        }
         let subagent_context = (!subagent_context.is_empty()).then_some(subagent_context);
         let permission_runtime_ceiling =
             Self::derive_parent_permission_runtime_ceiling(context).await?;

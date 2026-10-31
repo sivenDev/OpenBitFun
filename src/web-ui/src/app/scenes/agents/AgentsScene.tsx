@@ -67,7 +67,6 @@ import {
 import type {
   ExternalAgentAvailability,
   RemoteAgentAvailability,
-  RemoteAgentTaskKind,
   SubagentInfo,
 } from '@/infrastructure/api/service-api/SubagentAPI';
 import { useSceneStore } from '@/app/stores/sceneStore';
@@ -192,17 +191,6 @@ function remoteAvailabilityLabel(
       return t('agentsOverview.remote.agentUnavailable');
     default:
       return t('agentsOverview.remote.unavailable');
-  }
-}
-
-function remoteTaskKindLabel(kind: RemoteAgentTaskKind | string, t: TFunction<'scenes/agents'>): string {
-  switch (kind) {
-    case 'message':
-      return t('agentsOverview.remote.taskKind.message');
-    case 'coding':
-      return t('agentsOverview.remote.taskKind.coding');
-    default:
-      return kind;
   }
 }
 
@@ -1209,15 +1197,6 @@ const AgentsHomeView: React.FC = () => {
                             {remoteAvailabilityLabel(selectedRemoteAgent.availability, t)}
                           </StatusPill>
                         </Tooltip>
-                        {selectedRemoteAgent.taskKinds.length > 0 ? (
-                          <StatusPill tone="neutral" data-testid="agent-detail-remote-task-kinds">
-                            {t('agentsOverview.remote.taskKinds', {
-                              kinds: selectedRemoteAgent.taskKinds
-                                .map((kind) => remoteTaskKindLabel(kind, t))
-                                .join(' / '),
-                            })}
-                          </StatusPill>
-                        ) : null}
                       </>
                     ) : selectedAgent.externalProviderLabel ? (
                       <StatusPill tone="neutral">

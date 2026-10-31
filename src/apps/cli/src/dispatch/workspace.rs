@@ -1759,22 +1759,6 @@ fn ensure_provision_binding(
     Ok(())
 }
 
-/// The checkout directory provisioned for `job_id`, once provisioning
-/// published it.
-pub(super) fn provisioned_workspace_path(
-    store: &DispatchStore,
-    job_id: &str,
-) -> Result<Option<PathBuf>> {
-    let record = read_optional_json::<ProvisionRecord>(
-        &store
-            .workspace_upload_dir(job_id)?
-            .join(PROVISION_RECORD_FILE),
-    )?;
-    Ok(record
-        .and_then(|record| record.workspace_path)
-        .map(PathBuf::from))
-}
-
 fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {

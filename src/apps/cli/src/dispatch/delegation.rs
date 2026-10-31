@@ -1,10 +1,11 @@
 //! Target-side admission of delegated dispatch jobs.
 //!
-//! A delegated job names one of this device's open agents. The open agent, not
-//! the requester, decides the agent, the allowed task kinds, and where message
-//! tasks run; the requesting device is the host-bound sender of the device RPC.
+//! A delegated job names one of this device's opened assistants. Every task
+//! is a message task that runs as the assistant in a directory of its own,
+//! which this device chooses; the requesting device is the host-bound sender
+//! of the device RPC.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use openbitfun_core::service::delegation::{
@@ -19,21 +20,18 @@ const MAX_SOURCE_FIELD_CHARS: usize = 256;
 
 /// Where admitted jobs may run on this device.
 pub(super) struct DelegationRoots {
-    /// Parent of the per-requester directories for unbound message tasks.
+    /// Parent of the per-task directories of delegated tasks.
     pub(super) message_workspaces: PathBuf,
-    /// Parent of the Git worktrees this target provisions for coding tasks.
-    pub(super) worktrees: PathBuf,
     /// Parent of this device's assistant workspaces.
     pub(super) assistants: PathBuf,
 }
 
 impl DelegationRoots {
-    pub(super) fn for_store(store: &super::store::DispatchStore) -> Result<Self> {
+    pub(super) fn for_device() -> Result<Self> {
         let path_manager = openbitfun_core::infrastructure::PathManager::new()
             .map_err(|error| anyhow::anyhow!("resolve OpenBitFun storage root: {error}"))?;
         Ok(Self {
             message_workspaces: delegation_workspaces_root(&path_manager),
-            worktrees: store.worktrees_root(),
             assistants: path_manager.assistant_workspace_base_dir(None),
         })
     }
@@ -47,8 +45,8 @@ pub(super) fn open_agent_store() -> Result<OpenAgentStore> {
 }
 
 /// Admits `request` before a job is created. Ordinary jobs pass unchanged; a
-/// delegated job is checked against the open agent and gets its workspace
-/// path from this device.
+/// delegated job is checked against the opened assistant and gets its task
+/// directory and the assistant's workspace from this device.
 pub(super) async fn admit(
     request: &mut DispatchSubmitRequest,
     store: &OpenAgentStore,
@@ -97,10 +95,11 @@ pub(super) async fn admit(
     if request.approval_policy != DispatchApprovalPolicy::Remote {
         bail!("delegated dispatch jobs require the remote approval policy");
     }
-    let kind = match delegation.task_kind {
-        DispatchDelegationTaskKind::Message => DelegationTaskKind::Message,
-        DispatchDelegationTaskKind::Coding => DelegationTaskKind::Coding,
-    };
+    // An earlier requester build could also send coding tasks.
+    if delegation.task_kind != DispatchDelegationTaskKind::Message {
+        bail!("this device accepts only message tasks");
+    }
+    let kind = DelegationTaskKind::Message;
     let agent = match &requester {
         Requester::Device(device_id) => {
             store
@@ -129,74 +128,34 @@ pub(super) async fn admit(
         );
     }
 
-    if let Some(directory) = assistant_directory(&agent.agent_type) {
-        // An opened assistant answers each task in a directory of its own,
-        // and reads its persona from its workspace without writing there.
-        if !request.workspace_path.trim().is_empty() {
-            bail!("assistant tasks run in a directory chosen by this device; omit workspacePath");
-        }
-        let assistant_root = roots.assistants.join(directory);
-        if !assistant_root.is_dir() {
-            bail!(
-                "open agent '{}' names an assistant that no longer exists on this device",
-                agent.id
-            );
-        }
-        let dir = roots
-            .message_workspaces
-            .join(&agent.id)
-            .join(requester.directory_name())
-            .join(device_directory_name(&request.job_id));
-        create_private_dir(&dir)?;
-        request.workspace_path = dir.to_string_lossy().into_owned();
-        request.assistant_workspace = Some(assistant_root.to_string_lossy().into_owned());
-        return Ok(());
-    }
-
-    request.workspace_path = match delegation.task_kind {
-        DispatchDelegationTaskKind::Message => {
-            if !request.workspace_path.trim().is_empty() {
-                bail!("message tasks run in a directory chosen by this device; omit workspacePath");
-            }
-            // Another account's tasks never share a directory, or its
-            // sessions, with anyone else: a bound directory serves only this
-            // account's devices.
-            let bound = match &requester {
-                Requester::Device(_) => agent.message_workspace.as_ref(),
-                Requester::Connection(_) => None,
-            };
-            let workspace = match bound {
-                Some(bound) => PathBuf::from(bound),
-                None => {
-                    let dir = roots
-                        .message_workspaces
-                        .join(&agent.id)
-                        .join(requester.directory_name());
-                    create_private_dir(&dir)?;
-                    dir
-                }
-            };
-            workspace.to_string_lossy().into_owned()
-        }
-        DispatchDelegationTaskKind::Coding => {
-            let workspace = Path::new(request.workspace_path.trim())
-                .canonicalize()
-                .context("resolve the provisioned coding workspace")?;
-            let worktrees = roots
-                .worktrees
-                .canonicalize()
-                .context("resolve this device's dispatch worktrees")?;
-            if !workspace.starts_with(&worktrees) {
-                bail!("coding tasks run only in a worktree this device provisioned");
-            }
-            workspace.to_string_lossy().into_owned()
-        }
+    let Some(directory) = assistant_directory(&agent.agent_type) else {
+        bail!("open agent '{}' is not an assistant", agent.id);
     };
+    // An opened assistant answers each task in a directory of its own, and
+    // reads its persona from its workspace without writing there.
+    if !request.workspace_path.trim().is_empty() {
+        bail!("assistant tasks run in a directory chosen by this device; omit workspacePath");
+    }
+    let assistant_root = roots.assistants.join(directory);
+    if !assistant_root.is_dir() {
+        bail!(
+            "open agent '{}' names an assistant that no longer exists on this device",
+            agent.id
+        );
+    }
+    let dir = roots
+        .message_workspaces
+        .join(&agent.id)
+        .join(requester.directory_name())
+        .join(device_directory_name(&request.job_id));
+    create_private_dir(&dir)?;
+    request.workspace_path = dir.to_string_lossy().into_owned();
+    request.assistant_workspace = Some(assistant_root.to_string_lossy().into_owned());
     Ok(())
 }
 
 /// Who delegated a job: a device of this account or a cross-account
-/// connection. Each has its own grants and its own message directory.
+/// connection. Each has its own grants and its own task directories.
 enum Requester {
     Device(String),
     Connection(String),
@@ -232,62 +191,82 @@ fn device_directory_name(device_id: &str) -> String {
     }
 }
 
+/// Opens assistants for tests of the dispatch target.
+#[cfg(test)]
+pub(super) mod test_support {
+    use openbitfun_core::service::delegation::{DelegationTaskKind, OpenAgent, OpenAgentStore};
+    use std::path::Path;
+
+    /// Opens the assistant `directory` under `assistants` as `id`, creating
+    /// its directory, to the same-account `devices`.
+    pub(crate) async fn open_assistant(
+        store: &OpenAgentStore,
+        assistants: &Path,
+        id: &str,
+        directory: &str,
+        devices: &[&str],
+    ) {
+        std::fs::create_dir_all(assistants.join(directory)).unwrap();
+        store
+            .open_assistant(
+                assistants,
+                OpenAgent {
+                    id: id.to_string(),
+                    agent_type: format!("assistant:{directory}"),
+                    display_name: id.to_string(),
+                    description: None,
+                    task_kinds: vec![DelegationTaskKind::Message],
+                    same_account_devices: devices.iter().map(|d| d.to_string()).collect(),
+                    connections: Vec::new(),
+                },
+                true,
+            )
+            .await
+            .unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dispatch::protocol::{DispatchDelegation, DispatchDelegationSource};
-    use openbitfun_core::service::delegation::OpenAgent;
+    use std::path::Path;
 
     struct Fixture {
         _dir: tempfile::TempDir,
         store: OpenAgentStore,
         roots: DelegationRoots,
-        bound_workspace: PathBuf,
+        elsewhere: PathBuf,
+    }
+
+    const HELPER_TYPE: &str = "assistant:workspace";
+
+    async fn open_assistant(fixture: &Fixture, id: &str, directory: &str) {
+        super::test_support::open_assistant(
+            &fixture.store,
+            &fixture.roots.assistants,
+            id,
+            directory,
+            &["laptop"],
+        )
+        .await;
     }
 
     async fn fixture() -> Fixture {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = OpenAgentStore::new(dir.path().join("open-agents.json"));
-        let roots = DelegationRoots {
-            message_workspaces: dir.path().join("message-workspaces"),
-            worktrees: dir.path().join("worktrees"),
-            assistants: dir.path().join("personal_assistant"),
-        };
-        std::fs::create_dir_all(roots.worktrees.join("repo").join("job-1")).unwrap();
-        let bound_workspace = dir.path().join("notes");
-        std::fs::create_dir_all(&bound_workspace).unwrap();
-        let open = |id: &str, kinds: Vec<DelegationTaskKind>, workspace: Option<&Path>| OpenAgent {
-            id: id.to_string(),
-            agent_type: "Standard".to_string(),
-            display_name: id.to_string(),
-            description: None,
-            task_kinds: kinds,
-            message_workspace: workspace.map(|path| path.to_string_lossy().into_owned()),
-            same_account_devices: vec!["laptop".to_string()],
-            connections: Vec::new(),
-        };
-        store
-            .open(open("helper", vec![DelegationTaskKind::Message], None))
-            .await
-            .unwrap();
-        store
-            .open(open(
-                "notes",
-                vec![DelegationTaskKind::Message],
-                Some(&bound_workspace),
-            ))
-            .await
-            .unwrap();
-        store
-            .open(open("coder", vec![DelegationTaskKind::Coding], None))
-            .await
-            .unwrap();
-        Fixture {
+        let elsewhere = dir.path().join("notes");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let fixture = Fixture {
+            store: OpenAgentStore::new(dir.path().join("open-agents.json")),
+            roots: DelegationRoots {
+                message_workspaces: dir.path().join("message-workspaces"),
+                assistants: dir.path().join("personal_assistant"),
+            },
+            elsewhere,
             _dir: dir,
-            store,
-            roots,
-            bound_workspace,
-        }
+        };
+        open_assistant(&fixture, "helper", "workspace").await;
+        fixture
     }
 
     fn delegated(open_agent_id: &str, kind: DispatchDelegationTaskKind) -> DispatchSubmitRequest {
@@ -297,7 +276,7 @@ mod tests {
             job_id: "job-1".to_string(),
             session_id: "session-1".to_string(),
             workspace_path: String::new(),
-            agent_type: "Standard".to_string(),
+            agent_type: HELPER_TYPE.to_string(),
             prompt: "What changed?".to_string(),
             approval_policy: DispatchApprovalPolicy::Remote,
             model: None,
@@ -328,26 +307,8 @@ mod tests {
     #[tokio::test]
     async fn assistant_tasks_get_a_directory_each_and_the_assistant_this_device_holds() {
         let fixture = fixture().await;
+        open_assistant(&fixture, "ann", "workspace-ann").await;
         let assistant_root = fixture.roots.assistants.join("workspace-ann");
-        std::fs::create_dir_all(&assistant_root).unwrap();
-        fixture
-            .store
-            .open_assistant(
-                &fixture.roots.assistants,
-                OpenAgent {
-                    id: "ann".to_string(),
-                    agent_type: "assistant:workspace-ann".to_string(),
-                    display_name: "Ann".to_string(),
-                    description: None,
-                    task_kinds: vec![DelegationTaskKind::Message],
-                    message_workspace: None,
-                    same_account_devices: vec!["laptop".to_string()],
-                    connections: Vec::new(),
-                },
-                true,
-            )
-            .await
-            .unwrap();
         let ask = |job_id: &str| {
             let mut request = delegated("ann", DispatchDelegationTaskKind::Message);
             request.job_id = job_id.to_string();
@@ -383,7 +344,7 @@ mod tests {
 
         // The requester never chooses the directory or the assistant.
         let mut chosen = ask("job-3");
-        chosen.workspace_path = fixture.bound_workspace.to_string_lossy().into_owned();
+        chosen.workspace_path = fixture.elsewhere.to_string_lossy().into_owned();
         assert!(admit_error(&fixture, chosen)
             .await
             .contains("omit workspacePath"));
@@ -392,53 +353,12 @@ mod tests {
         assert!(admit_error(&fixture, injected)
             .await
             .contains("chosen by this device"));
-        assert!(admit_error(
-            &fixture,
-            DispatchSubmitRequest {
-                agent_type: "assistant:workspace-ann".to_string(),
-                ..delegated("ann", DispatchDelegationTaskKind::Coding)
-            }
-        )
-        .await
-        .contains("does not accept"));
 
         // An assistant removed after it was opened refuses new tasks.
         std::fs::remove_dir_all(&assistant_root).unwrap();
         assert!(admit_error(&fixture, ask("job-4"))
             .await
             .contains("no longer exists"));
-    }
-
-    #[tokio::test]
-    async fn message_tasks_run_in_a_directory_this_device_chooses() {
-        let fixture = fixture().await;
-        let mut request = delegated("helper", DispatchDelegationTaskKind::Message);
-        admit(&mut request, &fixture.store, &fixture.roots)
-            .await
-            .unwrap();
-        let expected = fixture
-            .roots
-            .message_workspaces
-            .join("helper")
-            .join("laptop");
-        assert_eq!(request.workspace_path, expected.to_string_lossy());
-        assert!(expected.is_dir());
-
-        let mut bound = delegated("notes", DispatchDelegationTaskKind::Message);
-        admit(&mut bound, &fixture.store, &fixture.roots)
-            .await
-            .unwrap();
-        assert_eq!(
-            bound.workspace_path,
-            fixture.bound_workspace.to_string_lossy()
-        );
-
-        // A requester cannot choose a path on this device.
-        let mut chosen = delegated("helper", DispatchDelegationTaskKind::Message);
-        chosen.workspace_path = fixture.bound_workspace.to_string_lossy().into_owned();
-        assert!(admit_error(&fixture, chosen)
-            .await
-            .contains("omit workspacePath"));
     }
 
     #[tokio::test]
@@ -460,7 +380,7 @@ mod tests {
 
         fixture
             .store
-            .grant_connection("helper", "conn-1", false)
+            .grant_connection("helper", "conn-1")
             .await
             .unwrap();
         let mut request = over("conn-1");
@@ -471,7 +391,8 @@ mod tests {
             .roots
             .message_workspaces
             .join("helper")
-            .join("connection-conn-1");
+            .join("connection-conn-1")
+            .join("job-1");
         assert_eq!(request.workspace_path, expected.to_string_lossy());
         assert!(expected.is_dir());
         assert_eq!(request.model, None);
@@ -480,29 +401,6 @@ mod tests {
         assert!(admit_error(&fixture, over("conn-2"))
             .await
             .contains("not granted to this connection"));
-
-        // Another account never shares the owner's bound directory, or the
-        // sessions in it.
-        fixture
-            .store
-            .grant_connection("notes", "conn-1", false)
-            .await
-            .unwrap();
-        let mut notes = over("conn-1");
-        notes.delegation.as_mut().unwrap().open_agent_id = "notes".to_string();
-        admit(&mut notes, &fixture.store, &fixture.roots)
-            .await
-            .unwrap();
-        let own = fixture
-            .roots
-            .message_workspaces
-            .join("notes")
-            .join("connection-conn-1");
-        assert_eq!(notes.workspace_path, own.to_string_lossy());
-        assert_ne!(
-            notes.workspace_path,
-            fixture.bound_workspace.to_string_lossy()
-        );
 
         // A request naming both a device and a connection is refused.
         let mut both = over("conn-1");
@@ -520,28 +418,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn coding_tasks_run_only_in_provisioned_worktrees() {
-        let fixture = fixture().await;
-        let mut request = delegated("coder", DispatchDelegationTaskKind::Coding);
-        request.workspace_path = fixture
-            .roots
-            .worktrees
-            .join("repo")
-            .join("job-1")
-            .to_string_lossy()
-            .into_owned();
-        admit(&mut request, &fixture.store, &fixture.roots)
-            .await
-            .unwrap();
-
-        let mut elsewhere = delegated("coder", DispatchDelegationTaskKind::Coding);
-        elsewhere.workspace_path = fixture.bound_workspace.to_string_lossy().into_owned();
-        assert!(admit_error(&fixture, elsewhere)
-            .await
-            .contains("worktree this device provisioned"));
-    }
-
-    #[tokio::test]
     async fn refusals_name_the_reason_and_create_nothing() {
         let fixture = fixture().await;
 
@@ -556,16 +432,17 @@ mod tests {
             .await
             .contains("does not exist"));
 
-        let wrong_kind = delegated("helper", DispatchDelegationTaskKind::Coding);
-        assert!(admit_error(&fixture, wrong_kind)
+        // An earlier requester build could send coding tasks.
+        let coding = delegated("helper", DispatchDelegationTaskKind::Coding);
+        assert!(admit_error(&fixture, coding)
             .await
-            .contains("does not accept"));
+            .contains("accepts only message tasks"));
 
         let mut wrong_agent = delegated("helper", DispatchDelegationTaskKind::Message);
-        wrong_agent.agent_type = "Ultimate".to_string();
+        wrong_agent.agent_type = "Standard".to_string();
         assert!(admit_error(&fixture, wrong_agent)
             .await
-            .contains("runs agent 'Standard'"));
+            .contains("runs agent 'assistant:workspace'"));
 
         let mut unattended = delegated("helper", DispatchDelegationTaskKind::Message);
         unattended.approval_policy = DispatchApprovalPolicy::Auto;
@@ -579,7 +456,24 @@ mod tests {
             .await
             .contains("another device"));
 
-        // None of the refusals created a message workspace.
+        // None of the refusals created a task directory.
+        assert!(!fixture.roots.message_workspaces.exists());
+    }
+
+    #[tokio::test]
+    async fn modes_an_earlier_build_opened_are_no_longer_open() {
+        let fixture = fixture().await;
+        let raw = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [{ "id": "mode", "agentType": "Standard", "displayName": "Mode",
+                          "taskKinds": ["message"], "sameAccountDevices": ["laptop"] }]
+        });
+        std::fs::write(fixture.store.path(), serde_json::to_vec(&raw).unwrap()).unwrap();
+        let mut request = delegated("mode", DispatchDelegationTaskKind::Message);
+        request.agent_type = "Standard".to_string();
+        assert!(admit_error(&fixture, request)
+            .await
+            .contains("no longer open"));
         assert!(!fixture.roots.message_workspaces.exists());
     }
 

@@ -1,15 +1,12 @@
-//! `openbitfun delegation`: manage the agents this device opens to other
-//! devices for delegated dispatch jobs. Headless hosts (CLI Peer Host, the
-//! account daemon) have no settings page, so this is their management entry.
+//! `openbitfun delegation`: manage the assistants this device opens to other
+//! devices and accounts. Headless hosts (CLI Peer Host, the account daemon)
+//! have no settings page, so this is their management entry.
 
-use std::path::PathBuf;
-
-use anyhow::{anyhow, bail, Context, Result};
-use clap::{Subcommand, ValueEnum};
+use anyhow::{anyhow, bail, Result};
+use clap::Subcommand;
 use openbitfun_core::service::delegation::{
     assistant_agent_type, assistant_directory, local_assistants, ConnectionLimits,
-    DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord, OpenAgentStore,
-    ALL_SAME_ACCOUNT_DEVICES,
+    DelegationTaskKind, OpenAgent, OpenAgentRecord, OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
 };
 use openbitfun_core::service::delegation_audit::{DelegationAuditEvent, DelegationAuditLog};
 
@@ -17,7 +14,7 @@ use crate::plugin_diagnostics::escape_terminal_text;
 
 #[derive(Subcommand)]
 pub(crate) enum DelegationAction {
-    /// List agents opened to other devices, including unreadable entries
+    /// List opened assistants, including entries this build no longer accepts
     List {
         /// Print the stored entries as JSON
         #[arg(long)]
@@ -35,49 +32,34 @@ pub(crate) enum DelegationAction {
         /// The assistant that answers delegated tasks: its directory as
         /// `openbitfun delegation assistants` lists it (`workspace` is the
         /// default assistant)
-        #[arg(long, conflicts_with = "agent_type")]
-        assistant: Option<String>,
-        /// Local agent mode or external agent that runs delegated jobs
-        #[arg(long = "agent", required_unless_present = "assistant")]
-        agent_type: Option<String>,
-        /// Name shown to other devices; defaults to the agent's name
+        #[arg(long)]
+        assistant: String,
+        /// Name shown to other devices; defaults to the assistant's directory
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
-        /// Task kinds other devices may delegate (repeatable); an assistant
-        /// takes message tasks only
-        #[arg(long = "task-kind", value_enum, required_unless_present = "assistant")]
-        task_kinds: Vec<CliDelegationTaskKind>,
-        /// Existing directory message tasks run in. Without one, each
-        /// requesting device gets its own empty directory.
-        #[arg(long)]
-        workspace: Option<PathBuf>,
         /// Same-account device id allowed to delegate (repeatable)
         #[arg(long = "device", required_unless_present = "all_devices")]
         devices: Vec<String>,
         /// Allow every device of this account
         #[arg(long, conflicts_with = "devices")]
         all_devices: bool,
-        /// Confirm the usage notice of an external agent: delegated jobs run
-        /// it with this device's own login or credentials
+        /// Confirm that delegated tasks may call external agents with this
+        /// device's own login or credentials
         #[arg(long)]
         accept_usage: bool,
     },
-    /// Close an opened agent
+    /// Close an opened assistant, or remove an entry no longer supported
     Close { id: String },
-    /// Grant an opened agent to a paired device of another account
+    /// Grant an opened assistant to a paired device of another account
     /// (see `openbitfun connections list`)
     GrantConnection {
-        /// The opened agent
+        /// The opened assistant
         id: String,
         /// The connection to grant it to
         connection_id: String,
-        /// Confirm the usage notice of an external agent again for this
-        /// connection: its jobs run on this device's own login or credentials
-        #[arg(long)]
-        accept_usage: bool,
-        /// Most tasks this connection may run at once with the agent
+        /// Most tasks this connection may run at once with the assistant
         /// (1-100). Setting either limit replaces both; granting again
         /// without limits keeps the current ones.
         #[arg(long)]
@@ -98,35 +80,16 @@ pub(crate) enum DelegationAction {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
-    /// Withdraw an opened agent from a connection
+    /// Withdraw an opened assistant from a connection
     RevokeConnection {
-        /// The opened agent
+        /// The opened assistant
         id: String,
         /// The connection to withdraw it from
         connection_id: String,
     },
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub(crate) enum CliDelegationTaskKind {
-    Message,
-    Coding,
-}
-
-impl From<CliDelegationTaskKind> for DelegationTaskKind {
-    fn from(kind: CliDelegationTaskKind) -> Self {
-        match kind {
-            CliDelegationTaskKind::Message => Self::Message,
-            CliDelegationTaskKind::Coding => Self::Coding,
-        }
-    }
-}
-
 pub(crate) async fn run(action: DelegationAction) -> Result<()> {
-    // The agent registry resolves modes for the active delivery profile.
-    crate::agent::agentic_system::select_agentic_system_profile(
-        openbitfun_core::product_assembly::DeliveryProfile::Cli,
-    )?;
     let path_manager = openbitfun_core::infrastructure::PathManager::new()
         .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
     let store = OpenAgentStore::for_product_home(&path_manager);
@@ -159,13 +122,12 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
         }
         DelegationAction::Open {
             id,
-            assistant: Some(directory),
+            assistant: directory,
             name,
             description,
             devices,
             all_devices,
             accept_usage,
-            ..
         } => {
             if !accept_usage {
                 println!("{ASSISTANT_USAGE_NOTICE}");
@@ -177,7 +139,6 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 display_name: name.unwrap_or_default(),
                 description,
                 task_kinds: vec![DelegationTaskKind::Message],
-                message_workspace: None,
                 same_account_devices: if all_devices {
                     vec![ALL_SAME_ACCOUNT_DEVICES.to_string()]
                 } else {
@@ -199,66 +160,9 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 describe_devices(&agent.same_account_devices)
             );
         }
-        DelegationAction::Open {
-            id,
-            assistant: None,
-            agent_type,
-            name,
-            description,
-            task_kinds,
-            workspace,
-            devices,
-            all_devices,
-            accept_usage,
-        } => {
-            let message_workspace = workspace
-                .map(|path| {
-                    let path = std::fs::canonicalize(&path)
-                        .with_context(|| format!("resolve workspace {}", path.display()))?;
-                    if !path.is_dir() {
-                        bail!("workspace {} is not a directory", path.display());
-                    }
-                    Ok(path.to_string_lossy().into_owned())
-                })
-                .transpose()?;
-            let entry = OpenAgent {
-                id,
-                agent_type: agent_type.unwrap_or_default(),
-                display_name: name.unwrap_or_default(),
-                description,
-                task_kinds: task_kinds.into_iter().map(Into::into).collect(),
-                message_workspace,
-                same_account_devices: if all_devices {
-                    vec![ALL_SAME_ACCOUNT_DEVICES.to_string()]
-                } else {
-                    devices
-                },
-                connections: Vec::new(),
-            };
-            let agent = match ExternalAgentUsageNotice::for_agent_type(&entry.agent_type) {
-                Some(notice) if !accept_usage => {
-                    println!("{}", usage_notice_text(notice));
-                    bail!("run again with --accept-usage to open this external agent");
-                }
-                Some(_) => {
-                    let executor = crate::agent::agentic_system::external_agent_executor().await;
-                    store
-                        .open_external_agent(entry, true, executor.as_deref())
-                        .await?
-                }
-                None => store.open_local_agent(entry).await?,
-            };
-            println!(
-                "Opened {} ({}) to {}",
-                escape_terminal_text(&agent.id),
-                escape_terminal_text(&agent.agent_type),
-                describe_devices(&agent.same_account_devices)
-            );
-        }
         DelegationAction::GrantConnection {
             id,
             connection_id,
-            accept_usage,
             max_jobs,
             max_minutes,
             no_limits,
@@ -267,29 +171,7 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 &openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()?,
                 &connection_id,
             )?;
-            let agent_type = store
-                .records()
-                .await?
-                .into_iter()
-                .filter_map(|record| record.agent)
-                .find(|agent| agent.id == id)
-                .map(|agent| agent.agent_type);
-            if let Some(notice) = agent_type
-                .as_deref()
-                .and_then(ExternalAgentUsageNotice::for_agent_type)
-            {
-                if !accept_usage {
-                    println!(
-                        "{} ({} of another account) would run it.",
-                        usage_notice_text(notice),
-                        escape_terminal_text(&connection.peer_display_name)
-                    );
-                    bail!("run again with --accept-usage to grant this external agent");
-                }
-            }
-            let mut agent = store
-                .grant_connection(&id, &connection_id, accept_usage)
-                .await?;
+            let mut agent = store.grant_connection(&id, &connection_id).await?;
             if no_limits || max_jobs.is_some() || max_minutes.is_some() {
                 let limits = ConnectionLimits {
                     max_concurrent_jobs: max_jobs,
@@ -371,7 +253,10 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
             if store.close(&id).await? {
                 println!("Closed {}", escape_terminal_text(&id));
             } else {
-                bail!("no opened agent with id '{}'", escape_terminal_text(&id));
+                bail!(
+                    "no opened assistant with id '{}'",
+                    escape_terminal_text(&id)
+                );
             }
         }
     }
@@ -398,44 +283,23 @@ const ASSISTANT_USAGE_NOTICE: &str = "Delegated tasks run this assistant on this
      that uses your quota with their providers, so check that their terms of service allow this use. \
      A Claude subscription login is for your own everyday use; an API key is recommended for delegated tasks.";
 
-fn usage_notice_text(notice: ExternalAgentUsageNotice) -> &'static str {
-    match notice {
-        ExternalAgentUsageNotice::ProviderQuota => {
-            "Delegated jobs run this external agent with this device's own login or credentials. \
-             They use your quota with the agent's provider; check that its terms of service allow this use."
-        }
-        ExternalAgentUsageNotice::ClaudeCodeSubscription => {
-            "Delegated jobs run Claude Code with this device's own login or credentials. \
-             They use your quota with Anthropic; check that its terms of service allow this use. \
-             A Claude subscription login is for your own everyday use; an API key is recommended for delegated jobs."
-        }
-    }
-}
-
 fn print_records(records: &[OpenAgentRecord]) {
     if records.is_empty() {
-        println!("No agents are open to other devices.");
+        println!("No assistants are open to other devices.");
         return;
     }
     for record in records {
         match (&record.agent, &record.problem) {
             (Some(agent), _) => {
-                let kinds: Vec<&str> = agent
-                    .task_kinds
-                    .iter()
-                    .filter_map(|kind| kind.wire_name())
-                    .collect();
                 println!(
-                    "- {}: {} (agent: {}, tasks: {}, devices: {})",
+                    "- {}: {} (assistant: {}, devices: {})",
                     escape_terminal_text(&agent.id),
                     escape_terminal_text(&agent.display_name),
-                    escape_terminal_text(&agent.agent_type),
-                    kinds.join(", "),
+                    escape_terminal_text(
+                        assistant_directory(&agent.agent_type).unwrap_or_default()
+                    ),
                     describe_devices(&agent.same_account_devices)
                 );
-                if let Some(workspace) = &agent.message_workspace {
-                    println!("  message workspace: {}", escape_terminal_text(workspace));
-                }
                 for grant in &agent.connections {
                     println!(
                         "  granted to connection: {} ({})",

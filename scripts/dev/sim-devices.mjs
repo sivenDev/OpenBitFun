@@ -131,7 +131,7 @@ function describe(manifest) {
   log(`A3 Server, runs until cancelled: remote:${devices.holds}/${manifest.openAgentId}`);
   log(`A4 Workstation, asks approval: remote:${devices.asksApproval}/${manifest.openAgentId}`);
   log(`B1 Desktop, account B (not as a device of A): ${devices.otherAccount}`);
-  log(`B1 over its connection, coding with owner approval: remote:conn:${manifest.connections.coding.connectionId}/${manifest.openAgentId}`);
+  log(`B1 over its connection, its owner approves: remote:conn:${manifest.connections.asksApproval.connectionId}/${manifest.openAgentId}`);
   log(`B2 Server over its connection, runs until stopped: remote:conn:${manifest.connections.holds.connectionId}/${manifest.openAgentId}`);
   log('the simulated devices run mock models, so their answers are test markers such as ACTIVE_TURN_STREAM_MARKER');
 }
@@ -224,7 +224,7 @@ async function main() {
           env: {
             ...process.env,
             OPENBITFUN_SIM_MANIFEST: manifestPath,
-            // The check runs as A1: coding baselines and A1's records stay in
+            // The check runs as A1: A1's records stay in
             // A1's simulated storage, never in this user's own.
             OPENBITFUN_E2E_STORAGE_GUARD: '1',
             OPENBITFUN_E2E_USER_ROOT: requesterUserRoot,

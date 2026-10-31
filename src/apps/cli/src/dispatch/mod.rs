@@ -161,18 +161,18 @@ pub(crate) fn run_workspace_sync(job_id: String) -> Result<()> {
     workspace::run_sync(job_id)
 }
 
-/// Agents this device opens to the requesting device. The requester is the
-/// host-bound source device of a device RPC; there is no requester-less answer.
+/// Assistants this device opens to the requester. The requester is the
+/// host-bound source device or connection of the call; there is no
+/// requester-less answer.
 async fn catalog(
     request: openbitfun_services_core::dispatch_contract::DispatchCatalogRequest,
 ) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
     let path_manager = openbitfun_core::infrastructure::PathManager::new()
         .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
-    let executor = crate::agent::agentic_system::external_agent_executor().await;
     catalog_from(
         &openbitfun_core::service::delegation::OpenAgentStore::for_product_home(&path_manager),
         request,
-        executor.as_deref(),
+        &path_manager.assistant_workspace_base_dir(None),
     )
     .await
 }
@@ -180,7 +180,7 @@ async fn catalog(
 async fn catalog_from(
     store: &openbitfun_core::service::delegation::OpenAgentStore,
     request: openbitfun_services_core::dispatch_contract::DispatchCatalogRequest,
-    executor: Option<&dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
+    assistants: &std::path::Path,
 ) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
     use openbitfun_services_core::dispatch_contract::{
         DispatchCatalogAgent, DispatchCatalogResponse,
@@ -199,7 +199,12 @@ async fn catalog_from(
     .context("read agents opened to other devices")?;
     let mut entries = Vec::with_capacity(agents.len());
     for agent in agents {
-        let unavailable = external_agent_unavailable(&agent.agent_type, executor).await;
+        // An assistant removed after it was opened stays listed with why.
+        let unavailable =
+            openbitfun_core::service::delegation::assistant_directory(&agent.agent_type)
+                .filter(|directory| assistants.join(directory).is_dir())
+                .is_none()
+                .then(|| "the assistant no longer exists on this device".to_string());
         entries.push(DispatchCatalogAgent {
             id: agent.id,
             agent_type: agent.agent_type,
@@ -214,30 +219,6 @@ async fn catalog_from(
         });
     }
     Ok(DispatchCatalogResponse { agents: entries })
-}
-
-/// Why an opened external agent cannot run on this device now; `None` for
-/// native agents and for external agents that can.
-async fn external_agent_unavailable(
-    agent_type: &str,
-    executor: Option<&dyn openbitfun_runtime_ports::ExternalAgentExecutor>,
-) -> Option<String> {
-    let client_id = agent_type.strip_prefix("acp:")?;
-    let Some(executor) = executor else {
-        return Some("this device cannot run external agents".to_string());
-    };
-    let context = openbitfun_runtime_ports::ExternalAgentContext {
-        openbitfun_session_id: String::new(),
-        workspace_path: None,
-        remote_connection_id: None,
-        session_storage_path: None,
-    };
-    match executor.availability(client_id, &context).await {
-        openbitfun_runtime_ports::ExternalAgentAvailability::Available => None,
-        openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable { detail, .. } => {
-            Some(detail)
-        }
-    }
 }
 
 async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
@@ -286,7 +267,7 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
         openbitfun_services_core::dispatch_contract::DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY
             .to_string(),
     );
-    // Delegated jobs run opened `acp:` agents through this CLI's ACP client.
+    // Assistant tasks may call external agents through this CLI's ACP client.
     if crate::agent::agentic_system::external_agent_executor()
         .await
         .is_some()
@@ -352,21 +333,9 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
     delegation::admit(
         &mut request,
         &delegation::open_agent_store()?,
-        &delegation::DelegationRoots::for_store(&store)?,
+        &delegation::DelegationRoots::for_device()?,
     )
     .await?;
-    if let (Some(connection_id), Some(delegation)) =
-        (&request.source_connection_id, &request.delegation)
-    {
-        if delegation.task_kind == protocol::DispatchDelegationTaskKind::Coding {
-            connection::ensure_provisioned_workspace(
-                &store,
-                &request.job_id,
-                connection_id,
-                &request.workspace_path,
-            )?;
-        }
-    }
     let mut intent = request.clone();
     // Setup audit is observational metadata. A retry after an ambiguous SSH
     // response will not repeat an installation, so including it in the intent
@@ -1302,83 +1271,34 @@ mod tests {
     use super::*;
     use crate::dispatch::protocol::{DispatchApprovalPolicy, DispatchSubmitRequest};
 
-    /// Reports the listed clients available and every other one not enabled.
-    struct Clients(&'static [&'static str]);
-
-    #[async_trait::async_trait]
-    impl openbitfun_runtime_ports::ExternalAgentExecutor for Clients {
-        async fn availability(
-            &self,
-            client_id: &str,
-            _context: &openbitfun_runtime_ports::ExternalAgentContext,
-        ) -> openbitfun_runtime_ports::ExternalAgentAvailability {
-            if self.0.contains(&client_id) {
-                openbitfun_runtime_ports::ExternalAgentAvailability::Available
-            } else {
-                openbitfun_runtime_ports::ExternalAgentAvailability::Unavailable {
-                    reason: openbitfun_runtime_ports::ExternalAgentUnavailableReason::NotEnabled,
-                    detail: format!("{client_id} is not enabled"),
-                }
-            }
-        }
-
-        async fn run_turn(
-            &self,
-            _request: openbitfun_runtime_ports::ExternalAgentTurnRequest,
-            _sink: &dyn openbitfun_runtime_ports::ExternalAgentEventSink,
-        ) -> openbitfun_runtime_ports::PortResult<openbitfun_runtime_ports::ExternalAgentTurnOutcome>
-        {
-            unreachable!("the catalog never runs an agent")
-        }
-
-        async fn cancel(
-            &self,
-            _client_id: &str,
-            _session_id: &str,
-        ) -> openbitfun_runtime_ports::PortResult<bool> {
-            Ok(false)
-        }
-
-        async fn close(
-            &self,
-            _client_id: &str,
-            _session_id: &str,
-        ) -> openbitfun_runtime_ports::PortResult<()> {
-            Ok(())
-        }
-    }
-
     #[tokio::test]
-    async fn catalog_marks_external_agents_that_cannot_run_now() {
-        use openbitfun_core::service::delegation::{DelegationTaskKind, OpenAgent, OpenAgentStore};
+    async fn catalog_marks_assistants_removed_after_they_were_opened() {
+        use openbitfun_core::service::delegation::OpenAgentStore;
         use openbitfun_services_core::dispatch_contract::DispatchCatalogRequest;
         let dir = tempfile::tempdir().expect("tempdir");
         let store = OpenAgentStore::new(dir.path().join("open-agents.json"));
-        for client in ["codex", "claude-code"] {
-            let agent = OpenAgent {
-                id: client.to_string(),
-                agent_type: format!("acp:{client}"),
-                display_name: client.to_string(),
-                description: None,
-                task_kinds: vec![DelegationTaskKind::Message],
-                message_workspace: None,
-                same_account_devices: vec!["laptop".to_string()],
-                connections: Vec::new(),
-            };
-            // Opened while it could run; the device later disabled one.
-            store
-                .open_external_agent(agent, true, Some(&Clients(&["codex", "claude-code"])))
-                .await
-                .expect("open");
+        let assistants = dir.path().join("personal_assistant");
+        for (id, directory) in [("ann", "workspace-ann"), ("bob", "workspace-bob")] {
+            delegation::test_support::open_assistant(
+                &store,
+                &assistants,
+                id,
+                directory,
+                &["laptop"],
+            )
+            .await;
         }
-        let request = DispatchCatalogRequest {
-            source_device_id: Some("laptop".to_string()),
-            source_connection_id: None,
-        };
-
-        let catalog = catalog_from(&store, request.clone(), Some(&Clients(&["codex"])))
-            .await
-            .unwrap();
+        std::fs::remove_dir_all(assistants.join("workspace-bob")).unwrap();
+        let catalog = catalog_from(
+            &store,
+            DispatchCatalogRequest {
+                source_device_id: Some("laptop".to_string()),
+                source_connection_id: None,
+            },
+            &assistants,
+        )
+        .await
+        .unwrap();
         let states: Vec<_> = catalog
             .agents
             .iter()
@@ -1387,30 +1307,21 @@ mod tests {
         assert_eq!(
             states,
             vec![
-                ("codex", None),
-                ("claude-code", Some("claude-code is not enabled")),
+                ("ann", None),
+                ("bob", Some("the assistant no longer exists on this device")),
             ]
         );
-
-        // A target that cannot run external agents marks every one.
-        let catalog = catalog_from(&store, request, None).await.unwrap();
-        assert!(catalog
-            .agents
-            .iter()
-            .all(|agent| agent.unavailable.as_deref()
-                == Some("this device cannot run external agents")));
     }
 
     #[tokio::test]
     async fn catalog_lists_only_agents_granted_to_the_bound_requester() {
-        use openbitfun_core::service::delegation::{
-            DelegationTaskKind, OpenAgent, OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
-        };
+        use openbitfun_core::service::delegation::{OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES};
         use openbitfun_services_core::dispatch_contract::{
             bind_dispatch_source_device, DispatchCatalogRequest,
         };
         let dir = tempfile::tempdir().expect("tempdir");
         let store = OpenAgentStore::new(dir.path().join("open-agents.json"));
+        let assistants = dir.path().join("personal_assistant");
         let request_from = |device: &str| -> DispatchCatalogRequest {
             serde_json::from_value(bind_dispatch_source_device(
                 "dispatch_target_catalog",
@@ -1421,28 +1332,29 @@ mod tests {
         };
 
         // Nothing is open by default.
-        let empty = catalog_from(&store, request_from("laptop"), None)
+        let empty = catalog_from(&store, request_from("laptop"), &assistants)
             .await
             .unwrap();
         assert!(empty.agents.is_empty());
 
-        let open = |id: &str, devices: &[&str]| OpenAgent {
-            id: id.to_string(),
-            agent_type: "Standard".to_string(),
-            display_name: id.to_string(),
-            description: None,
-            task_kinds: vec![DelegationTaskKind::Message],
-            message_workspace: Some("/srv/private".to_string()),
-            same_account_devices: devices.iter().map(|device| device.to_string()).collect(),
-            connections: Vec::new(),
-        };
-        store.open(open("for-laptop", &["laptop"])).await.unwrap();
-        store
-            .open(open("for-all", &[ALL_SAME_ACCOUNT_DEVICES]))
-            .await
-            .unwrap();
+        delegation::test_support::open_assistant(
+            &store,
+            &assistants,
+            "for-laptop",
+            "workspace",
+            &["laptop"],
+        )
+        .await;
+        delegation::test_support::open_assistant(
+            &store,
+            &assistants,
+            "for-all",
+            "workspace-all",
+            &[ALL_SAME_ACCOUNT_DEVICES],
+        )
+        .await;
 
-        let laptop = catalog_from(&store, request_from("laptop"), None)
+        let laptop = catalog_from(&store, request_from("laptop"), &assistants)
             .await
             .unwrap();
         let ids: Vec<_> = laptop
@@ -1452,14 +1364,15 @@ mod tests {
             .collect();
         assert_eq!(ids, vec!["for-laptop", "for-all"]);
         assert_eq!(laptop.agents[0].task_kinds, vec!["message"]);
-        assert_eq!(laptop.agents[0].agent_type, "Standard");
+        assert_eq!(laptop.agents[0].agent_type, "assistant:workspace");
+        assert_eq!(laptop.agents[0].unavailable, None);
         // Target paths never leave the target.
         assert!(!serde_json::to_string(&laptop)
             .unwrap()
-            .contains("/srv/private"));
+            .contains(assistants.to_string_lossy().as_ref()));
 
         // A forged source device in the payload is replaced by the bound sender.
-        let phone = catalog_from(&store, request_from("phone"), None)
+        let phone = catalog_from(&store, request_from("phone"), &assistants)
             .await
             .unwrap();
         let ids: Vec<_> = phone.agents.iter().map(|agent| agent.id.as_str()).collect();
@@ -1467,7 +1380,7 @@ mod tests {
 
         // Without a bound requester there is no answer.
         assert!(
-            catalog_from(&store, DispatchCatalogRequest::default(), None)
+            catalog_from(&store, DispatchCatalogRequest::default(), &assistants)
                 .await
                 .is_err()
         );
@@ -1484,13 +1397,13 @@ mod tests {
             )
             .expect("catalog request")
         };
-        assert!(catalog_from(&store, over("conn-1"), None)
+        assert!(catalog_from(&store, over("conn-1"), &assistants)
             .await
             .unwrap()
             .agents
             .is_empty());
         store
-            .grant_connection("for-laptop", "conn-1", false)
+            .grant_connection("for-laptop", "conn-1")
             .await
             .unwrap();
         let ids =
@@ -1502,10 +1415,15 @@ mod tests {
                     .collect::<Vec<_>>()
             };
         assert_eq!(
-            ids(catalog_from(&store, over("conn-1"), None).await.unwrap()),
+            ids(catalog_from(&store, over("conn-1"), &assistants)
+                .await
+                .unwrap()),
             vec!["for-laptop"]
         );
-        assert!(ids(catalog_from(&store, over("conn-2"), None).await.unwrap()).is_empty());
+        assert!(ids(catalog_from(&store, over("conn-2"), &assistants)
+            .await
+            .unwrap())
+        .is_empty());
         // Both sources at once is not a requester.
         assert!(catalog_from(
             &store,
@@ -1513,7 +1431,7 @@ mod tests {
                 source_device_id: Some("laptop".to_string()),
                 source_connection_id: Some("conn-1".to_string()),
             },
-            None
+            &assistants
         )
         .await
         .is_err());

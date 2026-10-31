@@ -11,7 +11,6 @@ mod remote_agent_turn;
 pub use control_conversation::{
     ControlConversation, CreateControlConversationRequest, VoiceExchangeRequest,
 };
-pub(crate) use remote_agent_turn::REMOTE_TASK_KIND_CONTEXT_KEY;
 pub mod coordinator;
 pub mod scheduler;
 pub mod state_manager;

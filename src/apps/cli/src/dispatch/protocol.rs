@@ -162,7 +162,7 @@ pub(crate) struct DispatchDelegation {
 pub(crate) enum DispatchDelegationTaskKind {
     /// No code is transferred; the job runs in a target-owned directory.
     Message,
-    /// The job runs in a target-provisioned Git worktree.
+    /// Sent only by earlier requesters; this device refuses it.
     Coding,
 }
 

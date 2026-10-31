@@ -764,8 +764,7 @@ describeWithJsdom('AgentsScene', () => {
         deviceId: 'laptop',
         deviceName: 'Laptop',
         openAgentId: 'helper',
-        agentType: 'Standard',
-        taskKinds: ['message', 'coding'] as const,
+        agentType: 'assistant:workspace',
         availability: {
           state: 'unavailable',
           reason: 'offline',
@@ -792,7 +791,6 @@ describeWithJsdom('AgentsScene', () => {
       .toBe('agentsOverview.remote.device');
     expect(dialog?.querySelector('[data-testid="agent-detail-remote-availability"]')?.textContent)
       .toBe('agentsOverview.remote.offline');
-    expect(dialog?.querySelector('[data-testid="agent-detail-remote-task-kinds"]')).not.toBeNull();
     // An agent of this account names no other account.
     expect(dialog?.querySelector('[data-testid="agent-detail-remote-account"]')).toBeNull();
     // The device that opened the agent manages it; nothing here edits it.
@@ -820,8 +818,7 @@ describeWithJsdom('AgentsScene', () => {
         deviceId: 'conn:c1',
         deviceName: 'B1 Desktop',
         openAgentId: 'helper',
-        agentType: 'Standard',
-        taskKinds: ['message'] as const,
+        agentType: 'assistant:workspace',
         availability: { state: 'available' },
         account: { userId: '2002', displayName: 'Bea' },
       },

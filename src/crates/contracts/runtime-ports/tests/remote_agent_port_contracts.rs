@@ -4,10 +4,9 @@ use async_trait::async_trait;
 use openbitfun_product_domains::tool_permissions::PermissionReply;
 use openbitfun_runtime_ports::{
     remote_connection_target, remote_target_connection, PortError, PortErrorKind, PortResult,
-    RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentCodingResult,
-    RemoteAgentDelegationPort, RemoteAgentDescriptor, RemoteAgentJob, RemoteAgentJobSnapshot,
-    RemoteAgentJobState, RemoteAgentListing, RemoteAgentSource, RemoteAgentSubmitRequest,
-    RemoteAgentTaskKind, RemoteAgentUnavailableReason,
+    RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentDelegationPort, RemoteAgentDescriptor,
+    RemoteAgentJob, RemoteAgentJobSnapshot, RemoteAgentJobState, RemoteAgentListing,
+    RemoteAgentSource, RemoteAgentSubmitRequest, RemoteAgentUnavailableReason,
 };
 use serde_json::json;
 use std::sync::Mutex;
@@ -49,10 +48,9 @@ fn availability_and_descriptors_use_stable_wire_names() {
             open_agent_id: "helper".to_string(),
         },
         device_name: "Laptop".to_string(),
-        agent_type: "Standard".to_string(),
+        agent_type: "assistant:workspace".to_string(),
         display_name: "Helper".to_string(),
         description: None,
-        task_kinds: vec![RemoteAgentTaskKind::Message],
         availability: RemoteAgentAvailability::Unavailable {
             reason: RemoteAgentUnavailableReason::Offline,
             detail: "Laptop is offline".to_string(),
@@ -61,7 +59,7 @@ fn availability_and_descriptors_use_stable_wire_names() {
     };
     let value = serde_json::to_value(&descriptor).unwrap();
     assert_eq!(value["address"]["openAgentId"], "helper");
-    assert_eq!(value["taskKinds"], json!(["message"]));
+    assert!(value.get("taskKinds").is_none());
     assert_eq!(value["availability"]["state"], "unavailable");
     assert_eq!(value["availability"]["reason"], "offline");
     assert!(!descriptor.availability.is_available());
@@ -217,7 +215,6 @@ fn submit_request(device_id: &str) -> RemoteAgentSubmitRequest {
         },
         job_id: "job-1".to_string(),
         session_id: "session-1".to_string(),
-        task_kind: RemoteAgentTaskKind::Message,
         prompt: "Summarize the notes".to_string(),
         title: None,
         source: RemoteAgentSource {
@@ -225,7 +222,6 @@ fn submit_request(device_id: &str) -> RemoteAgentSubmitRequest {
             agent_type: "Standard".to_string(),
             display_name: None,
         },
-        source_workspace_path: None,
     }
 }
 
@@ -265,34 +261,4 @@ async fn cancellation_and_offline_devices_are_explicit() {
         port.observe(&job, 0).await.unwrap().state,
         RemoteAgentJobState::Cancelled
     );
-}
-
-#[tokio::test]
-async fn hosts_without_coding_delegation_refuse_to_sync() {
-    let host = FakeHost::default();
-    let port: &dyn RemoteAgentDelegationPort = &host;
-    let job = port.submit(submit_request("laptop")).await.unwrap();
-    let error = port.sync_coding_result(&job).await.unwrap_err();
-    assert_eq!(error.kind, PortErrorKind::NotAvailable);
-    assert_eq!(RemoteAgentTaskKind::default(), RemoteAgentTaskKind::Message);
-}
-
-#[test]
-fn coding_results_read_the_target_sync_answer() {
-    let result: RemoteAgentCodingResult = serde_json::from_value(json!({
-        "changed": true,
-        "branch": "openbitfun/dispatch/delegation-1",
-        "baseCommit": "a",
-        "headCommit": "b",
-        "commitCount": 1,
-        "changes": [{"status": "M", "path": "src/lib.rs"}],
-        "truncatedChanges": false,
-        "bundleSize": 1
-    }))
-    .unwrap();
-    assert_eq!(result.changes[0].path, "src/lib.rs");
-    assert!(result.worktree_path.is_none());
-    let value = serde_json::to_value(&result).unwrap();
-    assert_eq!(value["headCommit"], "b");
-    assert!(value.get("worktreePath").is_none());
 }

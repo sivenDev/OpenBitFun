@@ -17,7 +17,7 @@ use openbitfun_core::service::remote_connect::{AccountClient, AccountSession};
 use openbitfun_runtime_ports::{
     PermissionReply, PortErrorKind, RemoteAgentAddress, RemoteAgentDelegationPort, RemoteAgentJob,
     RemoteAgentJobSnapshot, RemoteAgentJobState, RemoteAgentListing, RemoteAgentSource,
-    RemoteAgentSubmitRequest, RemoteAgentTaskKind,
+    RemoteAgentSubmitRequest,
 };
 use serde_json::Value;
 
@@ -132,7 +132,6 @@ fn submit_request(address: RemoteAgentAddress, prompt: &str) -> RemoteAgentSubmi
         address,
         job_id: format!("delegation-{}", uuid::Uuid::new_v4()),
         session_id: uuid::Uuid::new_v4().to_string(),
-        task_kind: RemoteAgentTaskKind::Message,
         prompt: prompt.to_string(),
         title: Some("Simulated delegation".to_string()),
         source: RemoteAgentSource {
@@ -140,7 +139,6 @@ fn submit_request(address: RemoteAgentAddress, prompt: &str) -> RemoteAgentSubmi
             agent_type: "agentic".to_string(),
             display_name: None,
         },
-        source_workspace_path: None,
     }
 }
 
@@ -238,45 +236,13 @@ impl Manifest {
     }
 }
 
-/// A Git repository with the files the simulated coding edit extends.
-fn coding_repository() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("requester repository");
-    let root = dir.path();
-    std::fs::create_dir_all(root.join("ibot")).unwrap();
-    std::fs::create_dir_all(root.join("tests")).unwrap();
-    std::fs::write(
-        root.join("ibot/greet.py"),
-        "def greet(name: str) -> str:\n    return f\"Hello, {name}!\"\n",
-    )
-    .unwrap();
-    std::fs::write(
-        root.join("tests/test_greet.py"),
-        "def test_greet():\n    from ibot.greet import greet\n\n    assert greet(\"ibot\") == \"Hello, ibot!\"\n",
-    )
-    .unwrap();
-    for args in [
-        &["init", "-q", "-b", "main"][..],
-        &["add", "."],
-        &["-c", "user.name=Sim", "-c", "user.email=sim@example.invalid", "commit", "-q", "-m", "init"],
-    ] {
-        let output = openbitfun_services_core::process_manager::create_command("git")
-            .args(args)
-            .current_dir(root)
-            .output()
-            .expect("run git");
-        assert!(output.status.success(), "git {args:?}: {output:?}");
-    }
-    dir
-}
-
-/// A1 delegates to the devices of account B it is paired with: a coding
-/// task its owner approves on B1, a second task over B1's one-task limit, a
-/// message task, and a task on B2 that ends when B2's owner revokes the
-/// connection. B's owners see each task in their audit log.
+/// A1 delegates to the assistants of account B it is paired with: a task
+/// whose command its owner approves on B1, a second task over B1's one-task
+/// limit, another task, and a task on B2 that ends when B2's owner revokes
+/// the connection. B's owners see each task in their audit log.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run by scripts/dev/sim-devices.mjs --check"]
 async fn desktop_requester_delegates_to_other_accounts_over_connections() {
-    use openbitfun_core::service::dispatch::OutboundDispatchStore;
     use openbitfun_core::service::remote_connect::connection_rpc::{
         ConnectionContext, ConnectionRpc,
     };
@@ -284,9 +250,9 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
     use openbitfun_core::service::remote_connect::RelayClient;
 
     let manifest = Manifest::read();
-    let coding_connection = manifest.text("/connections/coding/connectionId");
+    let approval_connection = manifest.text("/connections/asksApproval/connectionId");
     let holds_connection = manifest.text("/connections/holds/connectionId");
-    let b1 = manifest.text("/connections/coding/deviceId");
+    let b1 = manifest.text("/connections/asksApproval/deviceId");
     let b2 = manifest.text("/connections/holds/deviceId");
     let account_b = manifest.text("/accountB/userId");
 
@@ -324,7 +290,11 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
             .expect("A1 reads its connections");
         assert_eq!(peers.len(), 2, "{peers:?}");
         let probe = connections
-            .invoke_connection(&coding_connection, "dispatch_target_probe", serde_json::json!({}))
+            .invoke_connection(
+                &approval_connection,
+                "dispatch_target_probe",
+                serde_json::json!({}),
+            )
             .await
             .expect("probe B1 over its connection");
         assert!(
@@ -332,8 +302,6 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
             "{probe}"
         );
     }
-    let path_manager = openbitfun_core::infrastructure::PathManager::new()
-        .expect("isolated A1 storage (sim-devices.mjs --check sets it)");
     let directory = RemoteAgentDirectory::new(
         Arc::new(SimulatedAccountRpc {
             relay_url: manifest.relay_url.clone(),
@@ -345,11 +313,10 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
             own_device_id: manifest.requester_device_id.clone(),
         }),
     )
-    .with_connections(Arc::new(connections))
-    .with_outbound_store(OutboundDispatchStore::new(&path_manager));
+    .with_connections(Arc::new(connections));
     let port: &dyn RemoteAgentDelegationPort = &directory;
-    let coding_address = manifest.address(&openbitfun_runtime_ports::remote_connection_target(
-        &coding_connection,
+    let approval_address = manifest.address(&openbitfun_runtime_ports::remote_connection_target(
+        &approval_connection,
     ));
     let holds_address = manifest.address(&openbitfun_runtime_ports::remote_connection_target(
         &holds_connection,
@@ -362,46 +329,55 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
         .iter()
         .filter(|agent| agent.account.is_some())
         .map(|agent| {
-            assert_eq!(agent.account.as_ref().unwrap().user_id, account_b, "{agent:?}");
+            assert_eq!(
+                agent.account.as_ref().unwrap().user_id,
+                account_b,
+                "{agent:?}"
+            );
             assert!(agent.availability.is_available(), "{agent:?}");
             agent.address.agent_type()
         })
         .collect();
     other_account.sort();
-    let mut expected = vec![coding_address.agent_type(), holds_address.agent_type()];
+    let mut expected = vec![approval_address.agent_type(), holds_address.agent_type()];
     expected.sort();
     assert_eq!(other_account, expected, "{listed:?}");
-    let coding_agent = listed
-        .iter()
-        .find(|agent| agent.address == coding_address)
-        .unwrap();
-    assert!(coding_agent.task_kinds.contains(&RemoteAgentTaskKind::Coding), "{coding_agent:?}");
 
-    // Conditions 2 and 4: a coding task whose edit B1's owner approves.
-    let repository = coding_repository();
-    let mut coding = submit_request(coding_address.clone(), "Add a farewell function");
-    coding.task_kind = RemoteAgentTaskKind::Coding;
-    coding.source_workspace_path = Some(repository.path().display().to_string());
-    let job = port.submit(coding).await.expect("submit coding job");
+    // Conditions 2 and 4: a task whose command B1's owner approves.
+    let job = port
+        .submit(submit_request(
+            approval_address.clone(),
+            "Create the marker file",
+        ))
+        .await
+        .expect("submit approval job");
     let (waiting, _) = observe_until(port, &job, |page| !page.pending_permissions.is_empty()).await;
     let prompt = &waiting.pending_permissions[0];
     // A1 learns that the task waits, never what B1's owner is asked.
     assert!(prompt.resources.is_empty(), "{prompt:?}");
-    assert!(!format!("{prompt:?}").contains("farewell"), "{prompt:?}");
+    assert!(
+        !format!("{prompt:?}").contains("delegated.txt"),
+        "{prompt:?}"
+    );
     let refused = port
         .answer(&job, &prompt.request_id, PermissionReply::Once)
         .await
         .expect_err("A1 cannot approve on B1");
     assert!(
-        refused.message.contains("only from the owner of the target device"),
+        refused
+            .message
+            .contains("only from the owner of the target device"),
         "{refused:?}"
     );
     // Condition 6: B1 runs one task at a time for this connection.
     let over_limit = port
-        .submit(submit_request(coding_address.clone(), "One more"))
+        .submit(submit_request(approval_address.clone(), "One more"))
         .await
         .expect_err("over the owner's limit");
-    assert!(over_limit.message.contains("at most 1 task"), "{over_limit:?}");
+    assert!(
+        over_limit.message.contains("at most 1 task"),
+        "{over_limit:?}"
+    );
     // B1's owner sees the full request on B1 and approves it there.
     let status = manifest.owner_json(
         &b1,
@@ -409,7 +385,7 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
         Some(&serde_json::json!({ "jobId": job.job_id })),
     );
     let local = &status["pendingPermissions"][0];
-    assert!(local.to_string().contains("farewell"), "{status}");
+    assert!(local.to_string().contains("delegated.txt"), "{status}");
     manifest.owner_json(
         &b1,
         &["dispatch", "answer"],
@@ -420,23 +396,28 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
         })),
     );
     let (finished, _) = observe_until(port, &job, |page| page.state.is_terminal()).await;
-    assert_eq!(finished.state, RemoteAgentJobState::Succeeded, "{:?}", finished.last_error);
-    let result = port
-        .sync_coding_result(&job)
-        .await
-        .expect("bring the coding result back");
-    let changed: Vec<&str> = result.changes.iter().map(|change| change.path.as_str()).collect();
-    assert!(changed.contains(&"ibot/greet.py"), "{result:?}");
-    assert!(changed.contains(&"tests/test_greet.py"), "{result:?}");
-    assert!(result.commit_count >= 1, "{result:?}");
+    assert_eq!(
+        finished.state,
+        RemoteAgentJobState::Succeeded,
+        "{:?}",
+        finished.last_error
+    );
 
-    // A message task, now that B1 is free again.
+    // Another task, now that B1 is free again.
     let message = port
-        .submit(submit_request(coding_address.clone(), "Say hello across accounts"))
+        .submit(submit_request(
+            approval_address.clone(),
+            "Say hello across accounts",
+        ))
         .await
         .expect("submit message job");
     let (answered, events) = observe_until(port, &message, |page| page.state.is_terminal()).await;
-    assert_eq!(answered.state, RemoteAgentJobState::Succeeded, "{:?}", answered.last_error);
+    assert_eq!(
+        answered.state,
+        RemoteAgentJobState::Succeeded,
+        "{:?}",
+        answered.last_error
+    );
     assert!(!events.is_empty());
 
     // Condition 4: B2's owner revokes the connection while a task runs. The
@@ -446,7 +427,10 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
         .submit(submit_request(holds_address.clone(), "Work until stopped"))
         .await
         .expect("submit long job");
-    observe_until(port, &held, |page| mentions(&page.events, STREAM_START_MARKER)).await;
+    observe_until(port, &held, |page| {
+        mentions(&page.events, STREAM_START_MARKER)
+    })
+    .await;
     manifest.owner_cli(&b2, &["connections", "revoke", &holds_connection], None);
     let deadline = Instant::now() + JOB_TIMEOUT;
     let ended = loop {
@@ -456,7 +440,10 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
                 break page;
             }
         }
-        assert!(Instant::now() < deadline, "the revoked task did not end on A1");
+        assert!(
+            Instant::now() < deadline,
+            "the revoked task did not end on A1"
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     };
     assert_eq!(ended.state, RemoteAgentJobState::Failed);
@@ -475,10 +462,16 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
             Some(&serde_json::json!({ "jobId": held.job_id })),
         );
         if on_b2["state"] == "failed" {
-            assert!(on_b2["lastError"].to_string().contains("revoked"), "{on_b2}");
+            assert!(
+                on_b2["lastError"].to_string().contains("revoked"),
+                "{on_b2}"
+            );
             break;
         }
-        assert!(Instant::now() < deadline, "the task kept running on B2: {on_b2}");
+        assert!(
+            Instant::now() < deadline,
+            "the task kept running on B2: {on_b2}"
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     port.submit(submit_request(holds_address.clone(), "After revoking"))
@@ -494,7 +487,11 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
             .iter()
             .map(|record| {
                 let entry = &record["entry"];
-                assert_eq!(entry["peerUserId"], manifest.session.user_id.as_str(), "{record}");
+                assert_eq!(
+                    entry["peerUserId"],
+                    manifest.session.user_id.as_str(),
+                    "{record}"
+                );
                 (
                     entry["jobId"].as_str().unwrap().to_string(),
                     entry["event"].as_str().unwrap().to_string(),
@@ -509,7 +506,11 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
             (job.job_id.clone(), "submitted".into(), "".into()),
             (job.job_id.clone(), "finished".into(), "succeeded".into()),
             (message.job_id.clone(), "submitted".into(), "".into()),
-            (message.job_id.clone(), "finished".into(), "succeeded".into()),
+            (
+                message.job_id.clone(),
+                "finished".into(),
+                "succeeded".into()
+            ),
         ]
     );
     assert_eq!(
@@ -595,7 +596,9 @@ async fn desktop_requester_delegates_to_simulated_devices() {
     let (cancelled, _) = observe_until(port, &job, |page| page.state.is_terminal()).await;
     assert_eq!(cancelled.state, RemoteAgentJobState::Cancelled);
 
-    // Approval: answered from this device, carried out on the target.
+    // Approval: answered from this device, carried out on the target. The
+    // task first tries to rewrite its assistant; an approved write still
+    // never lands (the CLI simulation checks the file).
     let job = port
         .submit(submit_request(
             manifest.address(&manifest.asks_approval),
@@ -603,7 +606,21 @@ async fn desktop_requester_delegates_to_simulated_devices() {
         ))
         .await
         .expect("submit approval job");
-    let (waiting, _) = observe_until(port, &job, |page| !page.pending_permissions.is_empty()).await;
+    let waiting = loop {
+        let (waiting, _) =
+            observe_until(port, &job, |page| !page.pending_permissions.is_empty()).await;
+        if waiting.pending_permissions[0].action == "bash" {
+            break waiting;
+        }
+        port.answer(
+            &job,
+            &waiting.pending_permissions[0].request_id,
+            PermissionReply::Once,
+        )
+        .await
+        .expect("approve the write");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
     let prompt = &waiting.pending_permissions[0];
     assert_eq!(prompt.action, "bash", "{prompt:?}");
     port.answer(&job, &prompt.request_id, PermissionReply::Once)

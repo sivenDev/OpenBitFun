@@ -39,8 +39,6 @@ export type ExternalAgentAvailability =
   | { state: 'available' }
   | { state: 'unavailable'; reason: ExternalAgentUnavailableReason | string; detail: string };
 
-export type RemoteAgentTaskKind = 'message' | 'coding';
-
 export type RemoteAgentUnavailableReason = 'offline' | 'incompatible' | 'unreachable' | 'agent_unavailable';
 
 /** Whether the device that opened a remote agent can take work now. */
@@ -53,9 +51,8 @@ export interface RemoteAgentInfo {
   deviceId: string;
   deviceName: string;
   openAgentId: string;
-  /** The agent mode the open agent runs on its device. */
+  /** The assistant the open agent runs as on its device (`assistant:<directory>`). */
   agentType: string;
-  taskKinds: RemoteAgentTaskKind[];
   availability: RemoteAgentAvailability;
   /** The other account, for an agent reached over a cross-account connection. */
   account?: { userId: string; displayName: string };

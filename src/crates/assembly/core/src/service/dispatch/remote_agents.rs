@@ -11,8 +11,8 @@
 //! incompatible instead of failing later. A connection target must also
 //! advertise cross-account delegation.
 //!
-//! A connection target's id is `conn:<connectionId>`; every call to it,
-//! including coding baselines and result sync, travels over the connection.
+//! A connection target's id is `conn:<connectionId>`; every call to it
+//! travels over the connection.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,18 +21,17 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use openbitfun_runtime_ports::{
     remote_connection_target, remote_target_connection, PortError, PortErrorKind, PortResult,
-    RemoteAgentAccount, RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentCodingResult,
-    RemoteAgentDescriptor, RemoteAgentListing, RemoteAgentTaskKind, RemoteAgentUnavailableReason,
+    RemoteAgentAccount, RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentDescriptor,
+    RemoteAgentListing, RemoteAgentUnavailableReason,
 };
 use openbitfun_services_core::dispatch_contract::{
     DispatchCatalogAgent, DispatchCatalogResponse, DISPATCH_AGENT_DELEGATION_CAPABILITY,
-    DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY, DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY,
+    DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY,
 };
 use openbitfun_services_integrations::remote_ssh::dispatch_ssh;
 use serde_json::{json, Value};
 
 use super::device_controller::DeviceDispatchRpc;
-use super::OutboundDispatchStore;
 
 /// How long a listing may reuse a device's last answer.
 const CATALOG_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -41,8 +40,8 @@ const CATALOG_CACHE_TTL: Duration = Duration::from_secs(30);
 const DEVICE_QUERY_TIMEOUT: Duration = Duration::from_secs(8);
 /// Delegated jobs always ask the target owner for approval.
 const DELEGATED_APPROVAL_POLICY: &str = "remote";
-/// Commits work a coding job left uncommitted before its result is synced.
-const DELEGATED_RESULT_COMMIT_MESSAGE: &str = "OpenBitFun delegated task: uncommitted changes";
+/// The only task kind a delegated job carries; targets still read the field.
+const DELEGATED_TASK_KIND: &str = "message";
 
 /// One other device of the signed-in account.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,8 +98,8 @@ pub enum GoneConnection {
 }
 
 /// Sends calls for `conn:` targets over their connection and every other call
-/// to the account device RPC, so submit, observe, coding baselines, and result
-/// sync share one path for both kinds of target.
+/// to the account device RPC, so every job call shares one path for both
+/// kinds of target.
 struct RoutedDispatchRpc {
     devices: Arc<dyn DeviceDispatchRpc>,
     connections: Arc<dyn ConnectionDispatchRpc>,
@@ -144,9 +143,6 @@ pub struct RemoteAgentDirectory {
     devices: Arc<dyn AccountDeviceDirectory>,
     connections: Option<Arc<dyn ConnectionDispatchRpc>>,
     cache: tokio::sync::Mutex<HashMap<String, DeviceCatalog>>,
-    /// Owns the baseline of delegated coding jobs; without it this host
-    /// delegates message tasks only.
-    outbound: Option<OutboundDispatchStore>,
 }
 
 impl RemoteAgentDirectory {
@@ -156,7 +152,6 @@ impl RemoteAgentDirectory {
             devices,
             connections: None,
             cache: tokio::sync::Mutex::new(HashMap::new()),
-            outbound: None,
         }
     }
 
@@ -227,13 +222,6 @@ impl RemoteAgentDirectory {
             }
         }
         targets
-    }
-
-    /// Enables coding tasks. Their Git baseline and result sync reuse device
-    /// dispatch, which records each job in `store`.
-    pub fn with_outbound_store(mut self, store: OutboundDispatchStore) -> Self {
-        self.outbound = Some(store);
-        self
     }
 
     pub async fn list(&self, listing: RemoteAgentListing) -> Vec<RemoteAgentDescriptor> {
@@ -336,24 +324,20 @@ impl RemoteAgentDirectory {
                 device.device_name
             )));
         }
-        let runs_external_agents =
-            has_capability(&protocol, DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY);
         let catalog = self
             .rpc
             .invoke(&device.device_id, "dispatch_target_catalog", json!({}))
             .await
             .map_err(|error| CatalogError::Unreachable(format!("{error:#}")))?;
         serde_json::from_value::<DispatchCatalogResponse>(catalog)
-            // A target that cannot run external agents never lists them.
+            // Only assistants are opened; an older target may still list
+            // agent modes or external agents, which are not delegated to.
             .map(|catalog| {
                 catalog
                     .agents
                     .into_iter()
                     .filter(|agent| {
-                        runs_external_agents
-                            || !crate::agentic::coordination::is_external_agent_type(
-                                &agent.agent_type,
-                            )
+                        crate::service::delegation::assistant_directory(&agent.agent_type).is_some()
                     })
                     .collect()
             })
@@ -385,15 +369,6 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for RemoteAgentDirector
         })?;
         if let RemoteAgentAvailability::Unavailable { detail, .. } = &descriptor.availability {
             return Err(PortError::new(PortErrorKind::NotAvailable, detail.clone()));
-        }
-        if !descriptor.task_kinds.contains(&request.task_kind) {
-            return Err(PortError::new(
-                PortErrorKind::InvalidRequest,
-                format!("{agent_type} does not accept {:?} tasks", request.task_kind),
-            ));
-        }
-        if request.task_kind == RemoteAgentTaskKind::Coding {
-            return self.submit_coding(request, &descriptor).await;
         }
         let payload = delegated_submit_payload(&request, &descriptor);
         let response = self
@@ -493,33 +468,6 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for RemoteAgentDirector
             .map_err(target_error)
     }
 
-    async fn sync_coding_result(
-        &self,
-        job: &openbitfun_runtime_ports::RemoteAgentJob,
-    ) -> PortResult<RemoteAgentCodingResult> {
-        let store = self.outbound_store()?;
-        let response = super::device_controller::sync_device_result(
-            self.rpc.as_ref(),
-            store,
-            super::controller::DispatchSyncResultRequest {
-                job_id: job.job_id.clone(),
-                message: Some(DELEGATED_RESULT_COMMIT_MESSAGE.to_string()),
-            },
-        )
-        .await
-        .map_err(target_error)?;
-        let worktree_path = match response.get("baselineWorktreePath").and_then(Value::as_str) {
-            Some(path) => Some(path.to_string()),
-            None => store
-                .get(&job.job_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|record| record.baseline_worktree_path),
-        };
-        coding_result(&response, worktree_path)
-    }
-
     async fn continue_job(
         &self,
         job: &openbitfun_runtime_ports::RemoteAgentJob,
@@ -543,92 +491,9 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for RemoteAgentDirector
     }
 }
 
-impl RemoteAgentDirectory {
-    fn outbound_store(&self) -> PortResult<&OutboundDispatchStore> {
-        self.outbound.as_ref().ok_or_else(|| {
-            PortError::new(
-                PortErrorKind::NotAvailable,
-                "this host cannot delegate coding tasks to other devices",
-            )
-        })
-    }
-
-    /// A coding job branches from a managed baseline worktree of the
-    /// requesting workspace, exactly like a manual device dispatch, so its
-    /// result comes back as a branch the user can inspect or discard.
-    async fn submit_coding(
-        &self,
-        request: openbitfun_runtime_ports::RemoteAgentSubmitRequest,
-        descriptor: &RemoteAgentDescriptor,
-    ) -> PortResult<openbitfun_runtime_ports::RemoteAgentJob> {
-        let store = self.outbound_store()?;
-        let workspace = request
-            .source_workspace_path
-            .as_deref()
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .ok_or_else(|| {
-                PortError::new(
-                    PortErrorKind::InvalidRequest,
-                    "coding tasks need a session in a Git workspace on this device",
-                )
-            })?;
-        crate::service::git::GitService::resolve_worktree_repository(std::path::Path::new(
-            workspace,
-        ))
-        .await
-        .map_err(|error| {
-            PortError::new(
-                PortErrorKind::InvalidRequest,
-                format!("coding tasks need a session in a Git workspace on this device: {error}"),
-            )
-        })?;
-        let submit = super::controller::DispatchSubmitRequest {
-            target: super::DispatchTargetRequest::Device {
-                device_id: request.address.device_id.clone(),
-                workspace_path: String::new(),
-            },
-            base_ref: None,
-            include_uncommitted: false,
-            job_id: request.job_id.clone(),
-            session_id: request.session_id.clone(),
-            agent_type: descriptor.agent_type.clone(),
-            prompt: request.prompt.clone(),
-            approval_policy: DELEGATED_APPROVAL_POLICY.to_string(),
-            model: None,
-            reasoning_preset: None,
-            title: request
-                .title
-                .clone()
-                .filter(|title| !title.trim().is_empty()),
-            source_workspace_path: Some(workspace.to_string()),
-            source_workspace_id: None,
-            attachments: Vec::new(),
-        };
-        super::device_controller::submit_device_job(
-            self.rpc.as_ref(),
-            store,
-            descriptor.device_name.clone(),
-            submit,
-            Some(delegation_block(&request)),
-        )
-        .await
-        .map_err(target_error)?;
-        Ok(openbitfun_runtime_ports::RemoteAgentJob {
-            device_id: request.address.device_id,
-            job_id: request.job_id,
-            session_id: request.session_id,
-        })
-    }
-}
-
 /// Names the open agent and the requesting session for the target's
 /// admission and audit.
 fn delegation_block(request: &openbitfun_runtime_ports::RemoteAgentSubmitRequest) -> Value {
-    let task_kind = match request.task_kind {
-        RemoteAgentTaskKind::Message => "message",
-        RemoteAgentTaskKind::Coding => "coding",
-    };
     let mut source = json!({
         "sessionId": request.source.session_id,
         "agentType": request.source.agent_type,
@@ -638,28 +503,9 @@ fn delegation_block(request: &openbitfun_runtime_ports::RemoteAgentSubmitRequest
     }
     json!({
         "openAgentId": request.address.open_agent_id,
-        "taskKind": task_kind,
+        "taskKind": DELEGATED_TASK_KIND,
         "source": source,
     })
-}
-
-/// Reads the target's sync answer into the port's result.
-fn coding_result(
-    response: &Value,
-    worktree_path: Option<String>,
-) -> PortResult<RemoteAgentCodingResult> {
-    let mut result: RemoteAgentCodingResult =
-        serde_json::from_value(response.clone()).map_err(|error| {
-            PortError::new(
-                PortErrorKind::Backend,
-                format!("the device returned an unreadable sync result: {error}"),
-            )
-        })?;
-    if let Some(head) = response.get("syncedHeadCommit").and_then(Value::as_str) {
-        result.head_commit = head.to_string();
-    }
-    result.worktree_path = worktree_path;
-    Ok(result)
 }
 
 /// A delegated message job. The target chooses where it runs, which agent
@@ -735,17 +581,13 @@ fn descriptors_for(device_id: &str, catalog: &DeviceCatalog) -> Vec<RemoteAgentD
         .agents
         .iter()
         .filter_map(|agent| {
-            let task_kinds: Vec<RemoteAgentTaskKind> = agent
+            // Delegated jobs are message tasks; an entry that does not take
+            // them cannot be delegated to.
+            if !agent
                 .task_kinds
                 .iter()
-                .filter_map(|kind| match kind.as_str() {
-                    "message" => Some(RemoteAgentTaskKind::Message),
-                    "coding" => Some(RemoteAgentTaskKind::Coding),
-                    _ => None,
-                })
-                .collect();
-            // An entry only a newer build understands cannot be delegated to.
-            if task_kinds.is_empty() {
+                .any(|kind| kind == DELEGATED_TASK_KIND)
+            {
                 return None;
             }
             Some(RemoteAgentDescriptor {
@@ -761,7 +603,6 @@ fn descriptors_for(device_id: &str, catalog: &DeviceCatalog) -> Vec<RemoteAgentD
                     agent.display_name.clone()
                 },
                 description: agent.description.clone(),
-                task_kinds,
                 account: catalog.account.clone(),
                 availability: match (&availability, &agent.unavailable) {
                     (RemoteAgentAvailability::Available, Some(detail)) => {
@@ -869,7 +710,7 @@ mod tests {
 
     fn catalog(id: &str, kinds: &[&str]) -> Value {
         json!({ "agents": [{
-            "id": id, "agentType": "Standard", "displayName": "Helper", "taskKinds": kinds
+            "id": id, "agentType": "assistant:workspace", "displayName": "Helper", "taskKinds": kinds
         }]})
     }
 
@@ -921,75 +762,51 @@ mod tests {
         let helper = &listed[0];
         assert_eq!(helper.address.agent_type(), "remote:laptop/helper");
         assert_eq!(helper.device_name, "LAPTOP");
-        assert_eq!(helper.agent_type, "Standard");
-        assert_eq!(helper.task_kinds, vec![RemoteAgentTaskKind::Message]);
+        assert_eq!(helper.agent_type, "assistant:workspace");
         assert!(helper.availability.is_available());
         // The incompatible device is never asked for its catalog.
         assert_eq!(targets.catalog_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn external_agents_are_listed_only_from_targets_that_run_them() {
-        let both = json!({ "agents": [
-            { "id": "helper", "agentType": "Standard", "displayName": "Helper", "taskKinds": ["message"] },
+    async fn only_assistants_are_listed_and_unavailable_ones_say_why() {
+        let older = json!({ "agents": [
+            { "id": "helper", "agentType": "assistant:workspace", "displayName": "Helper", "taskKinds": ["message"] },
+            { "id": "coder", "agentType": "assistant:workspace-coder", "displayName": "Coder",
+              "taskKinds": ["message"], "unavailable": "the assistant was removed" },
+            { "id": "mode", "agentType": "Standard", "displayName": "Mode", "taskKinds": ["message"] },
             { "id": "codex", "agentType": "acp:codex", "displayName": "Codex", "taskKinds": ["message", "coding"] },
-            { "id": "claude", "agentType": "acp:claude-code", "displayName": "Claude Code",
-              "taskKinds": ["message"], "unavailable": "claude-code is not enabled" },
         ]});
-        let targets = Targets {
-            probes: HashMap::from([
-                ("old", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY])),
-                (
-                    "new",
-                    probe(&[
-                        DISPATCH_AGENT_DELEGATION_CAPABILITY,
-                        DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY,
-                    ]),
-                ),
-            ]),
-            catalogs: HashMap::from([("old", both.clone()), ("new", both)]),
-            catalog_calls: AtomicUsize::new(0),
-            job_calls: Mutex::new(Vec::new()),
-        };
-        let (directory, _, _) = directory(targets, vec![device("old", true), device("new", true)]);
+        let targets = Targets::new(
+            HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
+            HashMap::from([("laptop", older)]),
+        );
+        let (directory, _, _) = directory(targets, vec![device("laptop", true)]);
         let agents = directory.list(RemoteAgentListing::Refreshed).await;
         let mut listed: Vec<String> = agents
             .iter()
             .map(|agent| agent.address.agent_type())
             .collect();
         listed.sort();
-        assert_eq!(
-            listed,
-            vec![
-                "remote:new/claude".to_string(),
-                "remote:new/codex".to_string(),
-                "remote:new/helper".to_string(),
-                "remote:old/helper".to_string(),
-            ]
-        );
-        // An opened agent the target cannot run now stays listed with why.
-        let claude = agents
+        assert_eq!(listed, vec!["remote:laptop/coder", "remote:laptop/helper"]);
+        let coder = agents
             .iter()
-            .find(|agent| agent.address.open_agent_id == "claude")
+            .find(|agent| agent.address.open_agent_id == "coder")
             .unwrap();
         assert_eq!(
-            claude.availability,
+            coder.availability,
             RemoteAgentAvailability::Unavailable {
                 reason: RemoteAgentUnavailableReason::AgentUnavailable,
-                detail: "claude-code is not enabled".to_string(),
+                detail: "the assistant was removed".to_string(),
             }
         );
-        assert!(agents
-            .iter()
-            .filter(|agent| agent.address.open_agent_id != "claude")
-            .all(|agent| agent.availability.is_available()));
     }
 
     #[tokio::test]
     async fn cached_listings_reuse_answers_and_keep_offline_agents_with_a_reason() {
         let targets = Targets {
             probes: HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
-            catalogs: HashMap::from([("laptop", catalog("helper", &["message", "coding"]))]),
+            catalogs: HashMap::from([("laptop", catalog("helper", &["message"]))]),
             catalog_calls: AtomicUsize::new(0),
             job_calls: Mutex::new(Vec::new()),
         };
@@ -1035,10 +852,7 @@ mod tests {
             .is_empty());
     }
 
-    fn submit_request(
-        open_agent_id: &str,
-        task_kind: RemoteAgentTaskKind,
-    ) -> openbitfun_runtime_ports::RemoteAgentSubmitRequest {
+    fn submit_request(open_agent_id: &str) -> openbitfun_runtime_ports::RemoteAgentSubmitRequest {
         openbitfun_runtime_ports::RemoteAgentSubmitRequest {
             address: RemoteAgentAddress {
                 device_id: "laptop".to_string(),
@@ -1046,7 +860,6 @@ mod tests {
             },
             job_id: "delegation-1".to_string(),
             session_id: "job-session".to_string(),
-            task_kind,
             prompt: "Summarize the notes".to_string(),
             title: Some("Notes".to_string()),
             source: openbitfun_runtime_ports::RemoteAgentSource {
@@ -1054,7 +867,6 @@ mod tests {
                 agent_type: "Standard".to_string(),
                 display_name: None,
             },
-            source_workspace_path: Some("/local/workspace".to_string()),
         }
     }
 
@@ -1147,7 +959,7 @@ mod tests {
         assert_eq!(connections.targets.catalog_calls.load(Ordering::SeqCst), 1);
 
         // Submitting, observing, and cancelling travel over the connection.
-        let mut request = submit_request("helper", RemoteAgentTaskKind::Message);
+        let mut request = submit_request("helper");
         request.address.device_id = remote_connection_target("c-new");
         let port: &dyn openbitfun_runtime_ports::RemoteAgentDelegationPort = &directory;
         let job = port
@@ -1208,10 +1020,8 @@ mod tests {
             ("key_changed", true),
             ("relay_unavailable", false),
         ] {
-            let (directory, _, _) = directory(
-                Targets::new(HashMap::new(), HashMap::new()),
-                Vec::new(),
-            );
+            let (directory, _, _) =
+                directory(Targets::new(HashMap::new(), HashMap::new()), Vec::new());
             let directory = directory.with_connections(Arc::new(Refused(reason)));
             let port: &dyn openbitfun_runtime_ports::RemoteAgentDelegationPort = &directory;
             let observed = port.observe(&job, 7).await;
@@ -1265,7 +1075,7 @@ mod tests {
         let (directory, _, targets) = directory(targets, vec![device("laptop", true)]);
 
         let job = directory
-            .submit(submit_request("helper", RemoteAgentTaskKind::Message))
+            .submit(submit_request("helper"))
             .await
             .expect("submit");
         assert_eq!(job.job_id, "delegation-1");
@@ -1273,17 +1083,13 @@ mod tests {
         assert_eq!(calls.len(), 1);
         let (command, payload) = &calls[0];
         assert_eq!(command, "dispatch_target_submit");
-        assert_eq!(payload["agentType"], "Standard");
+        assert_eq!(payload["agentType"], "assistant:workspace");
         assert_eq!(payload["workspacePath"], "");
         assert_eq!(payload["approvalPolicy"], "remote");
         assert_eq!(payload["delegation"]["openAgentId"], "helper");
         assert_eq!(payload["delegation"]["taskKind"], "message");
         assert_eq!(payload["delegation"]["source"]["sessionId"], "parent");
         assert_eq!(payload["title"], "Notes");
-        assert!(
-            !payload.to_string().contains("/local/workspace"),
-            "a message job never carries a local path"
-        );
 
         directory
             .answer(
@@ -1305,99 +1111,16 @@ mod tests {
         use openbitfun_runtime_ports::RemoteAgentDelegationPort;
         let targets = Targets::new(
             HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
-            HashMap::from([("laptop", catalog("helper", &["message", "coding"]))]),
+            HashMap::from([("laptop", catalog("helper", &["message"]))]),
         );
         let (directory, _, targets) = directory(targets, vec![device("laptop", true)]);
 
         let unknown = directory
-            .submit(submit_request("writer", RemoteAgentTaskKind::Message))
+            .submit(submit_request("writer"))
             .await
             .unwrap_err();
         assert_eq!(unknown.kind, PortErrorKind::NotFound);
-        let coding = directory
-            .submit(submit_request("helper", RemoteAgentTaskKind::Coding))
-            .await
-            .unwrap_err();
-        assert_eq!(coding.kind, PortErrorKind::NotAvailable);
         assert!(targets.job_calls.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn coding_tasks_need_a_local_git_workspace_before_the_device_is_contacted() {
-        use openbitfun_runtime_ports::RemoteAgentDelegationPort;
-        let targets = || {
-            Targets::new(
-                HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
-                HashMap::from([("laptop", catalog("helper", &["message", "coding"]))]),
-            )
-        };
-        let (without_store, _, devices) = directory(targets(), vec![device("laptop", true)]);
-        let error = without_store
-            .submit(submit_request("helper", RemoteAgentTaskKind::Coding))
-            .await
-            .unwrap_err();
-        assert_eq!(error.kind, PortErrorKind::NotAvailable, "{}", error.message);
-        assert!(devices.job_calls.lock().unwrap().is_empty());
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let (with_store, _, devices) = directory(targets(), vec![device("laptop", true)]);
-        let directory = with_store.with_outbound_store(
-            OutboundDispatchStore::new_in_root_for_tests(temp.path().join("outbound")),
-        );
-        let not_git = temp.path().join("notes");
-        std::fs::create_dir_all(&not_git).expect("workspace");
-        let mut request = submit_request("helper", RemoteAgentTaskKind::Coding);
-        request.source_workspace_path = Some(not_git.to_string_lossy().to_string());
-        let error = directory.submit(request).await.unwrap_err();
-        assert_eq!(error.kind, PortErrorKind::InvalidRequest);
-        assert!(
-            error.message.contains("Git workspace on this device"),
-            "{}",
-            error.message
-        );
-
-        let mut request = submit_request("helper", RemoteAgentTaskKind::Coding);
-        request.source_workspace_path = None;
-        let error = directory.submit(request).await.unwrap_err();
-        assert_eq!(error.kind, PortErrorKind::InvalidRequest);
-        assert!(devices.job_calls.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn sync_answers_become_coding_results() {
-        let changed = json!({
-            "changed": true,
-            "branch": "openbitfun/dispatch/delegation-1",
-            "baseCommit": "0".repeat(40),
-            "headCommit": "1".repeat(40),
-            "syncedHeadCommit": "2".repeat(40),
-            "commitCount": 1,
-            "changes": [{ "status": "A", "path": "new.txt" }],
-            "truncatedChanges": false,
-            "bundleSize": 10,
-            "baselineWorktreePath": "/w/delegation-1",
-        });
-        let result = coding_result(&changed, Some("/w/delegation-1".to_string())).unwrap();
-        assert_eq!(result.head_commit, "2".repeat(40), "the synced head wins");
-        assert_eq!(result.changes[0].path, "new.txt");
-        assert_eq!(result.worktree_path.as_deref(), Some("/w/delegation-1"));
-
-        let unchanged = json!({
-            "changed": false,
-            "branch": "openbitfun/dispatch/delegation-1",
-            "baseCommit": "0".repeat(40),
-            "headCommit": "0".repeat(40),
-            "commitCount": 0,
-            "changes": [],
-            "truncatedChanges": false,
-            "bundleSize": 0,
-        });
-        let result = coding_result(&unchanged, None).unwrap();
-        assert_eq!(result.commit_count, 0);
-        assert!(result.changes.is_empty());
-
-        let error = coding_result(&json!({ "changed": true }), None).unwrap_err();
-        assert_eq!(error.kind, PortErrorKind::Backend);
     }
 
     #[test]

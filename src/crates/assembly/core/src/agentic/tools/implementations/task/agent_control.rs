@@ -1,6 +1,6 @@
 use super::*;
 
-const AGENT_SPAWN_FIELDS: &[&str] = &["agent_id", "prompt", "agent_type", "model_id", "task_kind"];
+const AGENT_SPAWN_FIELDS: &[&str] = &["agent_id", "prompt", "agent_type", "model_id"];
 const AGENT_SEND_INPUT_FIELDS: &[&str] = &["agent_id", "prompt", "model_id"];
 
 fn input_object<'a>(
@@ -97,7 +97,6 @@ impl AgentSpawnTool {
         let prompt = required_string(object, "prompt", "AgentSpawn")?;
         let agent_type = required_string(object, "agent_type", "AgentSpawn")?;
         let model_id = optional_string(object, "model_id")?;
-        let task_kind = optional_string(object, "task_kind")?;
         let mut task_input = json!({
             "action": "spawn",
             "agent_id": agent_id,
@@ -106,9 +105,6 @@ impl AgentSpawnTool {
             "run_in_background": true
         });
         insert_optional_model_id(&mut task_input, model_id);
-        if let Some(task_kind) = task_kind {
-            task_input["task_kind"] = Value::String(task_kind);
-        }
         Ok(task_input)
     }
 

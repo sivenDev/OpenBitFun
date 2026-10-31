@@ -21,21 +21,10 @@ static EXTERNAL_AGENTS_UNSUPPORTED: OnceLock<&'static str> = OnceLock::new();
 pub(crate) const DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED: &str =
     "External agents are not available in Detached Dispatch jobs; delegate to an OpenBitFun agent or run the task from an interactive session";
 
-/// Set once for a Dispatch worker whose job was delegated to an opened
-/// `acp:` agent: the job session itself runs that agent, and its prompts go
-/// to the job's approval mailbox.
-static PRIMARY_EXTERNAL_AGENT_TURNS: OnceLock<()> = OnceLock::new();
-
 /// Makes every external agent in this process report `reason` instead of
 /// running. Call before `init_agentic_system`.
 pub(crate) fn disable_external_agents_for_process(reason: &'static str) {
     let _ = EXTERNAL_AGENTS_UNSUPPORTED.set(reason);
-}
-
-/// Lets top-level sessions of this process run `acp:` agents. Call before
-/// `init_agentic_system`, and only for a job delegated to such an agent.
-pub(crate) fn allow_primary_external_agent_turns_for_process() {
-    let _ = PRIMARY_EXTERNAL_AGENT_TURNS.set(());
 }
 
 /// This CLI's executor for external agents, when its ACP client service
@@ -124,9 +113,6 @@ pub(crate) async fn init_agentic_system(
             "External agent executor unavailable: failed to build ACP client service: {}",
             error
         ),
-    }
-    if PRIMARY_EXTERNAL_AGENT_TURNS.get().is_some() {
-        system.coordinator.allow_primary_external_agent_turns();
     }
     Ok(system)
 }

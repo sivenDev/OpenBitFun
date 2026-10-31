@@ -299,12 +299,7 @@
       "device": "位於 {{device}}",
       "managedOnDevice": "{{device}} 向本裝置開放了這個智能體，請在 {{device}} 上修改或關閉。",
       "account": "帳號 {{name}}（{{user}}）",
-      "accountTooltip": "這個智慧體屬於其他帳號。它在對方裝置上的操作由對方審批，對方可以隨時收回。",
-      "taskKinds": "任務 · {{kinds}}",
-      "taskKind": {
-        "message": "訊息",
-        "coding": "編碼"
-      }
+      "accountTooltip": "這個智慧體屬於其他帳號。它在對方裝置上的操作由對方審批，對方可以隨時收回。"
     },
     "deleteConfirm": "確定刪除自定義智能體「{{name}}」？此操作不可恢復。",
     "deleteSuccess": "已刪除「{{name}}」",

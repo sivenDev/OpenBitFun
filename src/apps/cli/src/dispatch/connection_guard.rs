@@ -56,7 +56,8 @@ pub(super) const CONNECTION_REVOKED: &str = "The connection to the target device
 fn task_kind(kind: DispatchDelegationTaskKind) -> DelegationTaskKind {
     match kind {
         DispatchDelegationTaskKind::Message => DelegationTaskKind::Message,
-        DispatchDelegationTaskKind::Coding => DelegationTaskKind::Coding,
+        // Coding tasks of an earlier build are no longer granted.
+        DispatchDelegationTaskKind::Coding => DelegationTaskKind::Unknown,
     }
 }
 
@@ -233,7 +234,6 @@ mod tests {
         DispatchApprovalPolicy, DispatchDelegation, DispatchDelegationSource,
         DISPATCH_PROTOCOL_VERSION,
     };
-    use openbitfun_core::service::delegation::OpenAgent;
 
     fn request(job_id: &str, connection_id: &str) -> DispatchSubmitRequest {
         DispatchSubmitRequest {
@@ -241,7 +241,7 @@ mod tests {
             job_id: job_id.to_string(),
             session_id: format!("session-{job_id}"),
             workspace_path: "/tmp".to_string(),
-            agent_type: "agentic".to_string(),
+            agent_type: "assistant:workspace".to_string(),
             prompt: "hello".to_string(),
             approval_policy: DispatchApprovalPolicy::Remote,
             model: None,
@@ -262,23 +262,15 @@ mod tests {
 
     async fn grants(dir: &std::path::Path, limits: ConnectionLimits) -> OpenAgentStore {
         let grants = OpenAgentStore::new(dir.join("open-agents.json"));
-        grants
-            .open(OpenAgent {
-                id: "helper".into(),
-                agent_type: "agentic".into(),
-                display_name: "Helper".into(),
-                description: None,
-                task_kinds: vec![DelegationTaskKind::Message],
-                message_workspace: None,
-                same_account_devices: Vec::new(),
-                connections: Vec::new(),
-            })
-            .await
-            .unwrap();
-        grants
-            .grant_connection("helper", "conn-1", false)
-            .await
-            .unwrap();
+        crate::dispatch::delegation::test_support::open_assistant(
+            &grants,
+            &dir.join("personal_assistant"),
+            "helper",
+            "workspace",
+            &[],
+        )
+        .await;
+        grants.grant_connection("helper", "conn-1").await.unwrap();
         grants
             .set_connection_limits("helper", "conn-1", limits)
             .await

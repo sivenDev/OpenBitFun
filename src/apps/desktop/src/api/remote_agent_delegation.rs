@@ -9,10 +9,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use openbitfun_core::infrastructure::try_get_path_manager_arc;
 use openbitfun_core::service::dispatch::{
     AccountDevice, AccountDeviceDirectory, ConnectionDispatchRpc, ConnectionPeer,
-    DeviceDispatchRpc, OutboundDispatchStore, RemoteAgentDirectory,
+    DeviceDispatchRpc, RemoteAgentDirectory,
 };
 use openbitfun_core::service::remote_connect::connection_rpc::{
     usable_connection_peers, ConnectionRpc,
@@ -108,21 +107,13 @@ impl ConnectionDispatchRpc for SignedInConnections {
     }
 }
 
-/// The port the coordinator uses for `remote:` agents on this host. Coding
-/// tasks keep their baseline in the same outbound store as manual dispatch.
+/// The port the coordinator uses for `remote:` agents on this host.
 pub(crate) fn remote_agent_port() -> Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort> {
     let rpc: Arc<dyn DeviceDispatchRpc> = Arc::new(super::dispatch_api::AccountDeviceDispatchRpc);
-    let directory = RemoteAgentDirectory::new(rpc, Arc::new(SignedInAccountDevices))
-        .with_connections(Arc::new(SignedInConnections::default()));
-    Arc::new(match try_get_path_manager_arc() {
-        Ok(path_manager) => {
-            directory.with_outbound_store(OutboundDispatchStore::new(path_manager.as_ref()))
-        }
-        Err(error) => {
-            log::warn!("Remote agent coding tasks are unavailable without app paths: {error}");
-            directory
-        }
-    })
+    Arc::new(
+        RemoteAgentDirectory::new(rpc, Arc::new(SignedInAccountDevices))
+            .with_connections(Arc::new(SignedInConnections::default())),
+    )
 }
 
 #[cfg(test)]

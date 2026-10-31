@@ -1371,8 +1371,6 @@ pub struct ConversationCoordinator {
     terminal_port: OnceLock<Arc<dyn TerminalPort>>,
     remote_exec_port: OnceLock<Arc<dyn RemoteExecPort>>,
     external_agent_executor: OnceLock<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>>,
-    /// Top-level sessions may run `acp:` agents; see `primary_external_turn`.
-    primary_external_agent_turns: std::sync::atomic::AtomicBool,
     remote_agent_port: OnceLock<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>>,
     hook_registry: openbitfun_agent_runtime::native_hooks::RuntimeHookRegistry,
 }
@@ -2306,7 +2304,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             terminal_port: OnceLock::new(),
             remote_exec_port: OnceLock::new(),
             external_agent_executor: OnceLock::new(),
-            primary_external_agent_turns: std::sync::atomic::AtomicBool::new(false),
             remote_agent_port: OnceLock::new(),
             hook_registry: crate::native_hooks::new_runtime_hook_registry(),
         }
@@ -2791,17 +2788,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             let (end, _) =
                 super::remote_agent_turn::observe_job(&port, &link, &cancel, &mut sink).await;
             sink.finish().await;
-            let end = match end {
-                super::remote_agent_turn::RemoteJobEnd::Succeeded { final_text } => {
-                    super::remote_agent_turn::RemoteJobEnd::Succeeded {
-                        final_text: super::remote_agent_turn::delivered_text(
-                            &port, &link, final_text,
-                        )
-                        .await,
-                    }
-                }
-                other => other,
-            };
             if session_loaded.is_err() {
                 if let Err(error) = coordinator
                     .ensure_subagent_session_loaded_for_reuse(
@@ -3187,24 +3173,20 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         let external_sources_supported = workspace_binding
             .as_ref()
             .is_some_and(|workspace| !workspace.is_remote());
-        // An external agent is not a local mode: a host that runs it as the
-        // session's own agent keeps the default local route and model.
-        if !self.runs_primary_external_agent(&agent_type) {
-            let primary_agent_binding = Self::resolve_primary_agent_for_workspace(
-                &agent_type,
-                config.workspace_id.as_deref(),
-                external_sources_supported,
-                None,
-                expected_route_key.as_deref(),
-            )
-            .await?;
-            config.agent_route_owner = primary_agent_binding.route_owner;
-            config.agent_route_key = primary_agent_binding.route_key.clone();
-            apply_primary_agent_model_default(
-                &mut config,
-                primary_agent_binding.model_binding.as_ref(),
-            );
-        }
+        let primary_agent_binding = Self::resolve_primary_agent_for_workspace(
+            &agent_type,
+            config.workspace_id.as_deref(),
+            external_sources_supported,
+            None,
+            expected_route_key.as_deref(),
+        )
+        .await?;
+        config.agent_route_owner = primary_agent_binding.route_owner;
+        config.agent_route_key = primary_agent_binding.route_key.clone();
+        apply_primary_agent_model_default(
+            &mut config,
+            primary_agent_binding.model_binding.as_ref(),
+        );
         let defaults = Self::agent_model_defaults().await?;
         snapshot_normal_session_model(&mut config, &defaults)?;
         let session = if transient {
@@ -6902,22 +6884,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             "Standard".to_string()
         };
         let effective_agent_type = Self::normalize_agent_type(&provisional_agent_type);
-        if let Some(client_id) =
-            self.primary_external_agent_client_id(&session, &effective_agent_type)
-        {
-            let client_id = client_id.to_string();
-            return self
-                .start_primary_external_agent_turn(
-                    session,
-                    session_workspace,
-                    effective_agent_type,
-                    client_id,
-                    user_input,
-                    turn_id,
-                    extra_user_message_metadata,
-                )
-                .await;
-        }
         let primary_agent_binding = Self::resolve_session_agent_for_turn(
             &session,
             &effective_agent_type,
@@ -11509,15 +11475,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     execution_context.permission_delegation.clone(),
                     None,
                 );
-                let task_kind =
-                    super::remote_agent_turn::requested_task_kind(&execution_context.context);
-                // A coding task branches from this workspace with local Git, so
-                // a remote workspace offers none and the directory refuses it.
-                let source_workspace_path = execution_context
-                    .workspace
-                    .as_ref()
-                    .filter(|workspace| !workspace.is_remote())
-                    .map(|workspace| workspace.root_path_string());
                 drop((execution_engine, initial_messages, execution_context));
                 let parent_agent_type = self
                     .session_manager
@@ -11534,8 +11491,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         session_id: session_id.clone(),
                         dialog_turn_id: dialog_turn_id.clone(),
                         prompt: user_input_text.clone(),
-                        task_kind,
-                        source_workspace_path,
                         source: openbitfun_runtime_ports::RemoteAgentSource {
                             session_id: parent_session_id.to_string(),
                             agent_type: parent_agent_type,
@@ -16959,9 +16914,6 @@ fn merge_prepended_messages_for_turn(
     prepended_messages.extend(scheduled_job_messages);
     prepended_messages
 }
-
-#[path = "primary_external_turn.rs"]
-mod primary_external_turn;
 
 #[cfg(test)]
 pub(crate) mod tests {

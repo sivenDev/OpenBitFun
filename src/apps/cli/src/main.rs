@@ -2289,36 +2289,33 @@ mod dispatch_command_tests {
             Cli::try_parse_from(["openbitfun", "config", "show"]).expect("parse config");
         assert!(!is_dispatch_command(&unrelated.command));
 
-        // Opening an agent always names who may delegate; there is no implicit grant.
+        // Opening an assistant always names who may delegate; there is no
+        // implicit grant, and only assistants are opened.
         let open_args = [
             "openbitfun",
             "delegation",
             "open",
             "helper",
-            "--agent",
-            "Standard",
+            "--assistant",
+            "workspace",
         ];
-        assert!(
-            Cli::try_parse_from([&open_args[..], &["--task-kind", "message"]].concat()).is_err()
-        );
+        assert!(Cli::try_parse_from(open_args).is_err());
         assert!(Cli::try_parse_from(
-            [
-                &open_args[..],
-                &[
-                    "--task-kind",
-                    "message",
-                    "--device",
-                    "laptop",
-                    "--all-devices"
-                ]
-            ]
-            .concat()
+            [&open_args[..], &["--device", "laptop", "--all-devices"]].concat()
         )
         .is_err());
-        let open = Cli::try_parse_from(
-            [&open_args[..], &["--task-kind", "coding", "--all-devices"]].concat(),
-        )
-        .expect("parse delegation open");
+        for removed in [
+            &["--agent", "Standard"][..],
+            &["--task-kind", "coding"][..],
+            &["--workspace", "/tmp"][..],
+        ] {
+            assert!(
+                Cli::try_parse_from([&open_args[..], &["--all-devices"], removed].concat())
+                    .is_err()
+            );
+        }
+        let open = Cli::try_parse_from([&open_args[..], &["--all-devices"]].concat())
+            .expect("parse delegation open");
         assert!(matches!(
             open.command,
             Some(Commands::Delegation {

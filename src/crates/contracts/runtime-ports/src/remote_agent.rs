@@ -70,16 +70,6 @@ impl RemoteAgentAddress {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RemoteAgentTaskKind {
-    /// A conversation-only task that runs in a directory the target chooses.
-    #[default]
-    Message,
-    /// A task that works on a Git baseline the requester provides.
-    Coding,
-}
-
 /// Why a remote agent cannot take work right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -142,8 +132,6 @@ pub struct RemoteAgentDescriptor {
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default)]
-    pub task_kinds: Vec<RemoteAgentTaskKind>,
     pub availability: RemoteAgentAvailability,
     /// Set for an agent of another account, reached over a connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,14 +156,10 @@ pub struct RemoteAgentSubmitRequest {
     pub job_id: String,
     /// Caller-generated target session id.
     pub session_id: String,
-    pub task_kind: RemoteAgentTaskKind,
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub source: RemoteAgentSource,
-    /// Requester-side Git workspace that seeds a coding task's baseline.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_workspace_path: Option<String>,
 }
 
 /// A submitted job. Persisted by the kernel so a restarted requester can
@@ -227,34 +211,6 @@ pub struct RemoteAgentJobSnapshot {
     pub last_error: Option<String>,
 }
 
-/// One file a coding job changed, as `git diff --name-status` reports it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteAgentChangedFile {
-    pub status: String,
-    pub path: String,
-}
-
-/// A coding job's work after it was synced to this device's baseline
-/// worktree. The user's own working directory is never touched.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteAgentCodingResult {
-    pub branch: String,
-    pub base_commit: String,
-    pub head_commit: String,
-    #[serde(default)]
-    pub commit_count: u64,
-    #[serde(default)]
-    pub changes: Vec<RemoteAgentChangedFile>,
-    /// The device capped the change list; the synced branch is complete.
-    #[serde(default)]
-    pub truncated_changes: bool,
-    /// The managed worktree on this device that now holds `branch`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worktree_path: Option<String>,
-}
-
 #[async_trait]
 pub trait RemoteAgentDelegationPort: Send + Sync {
     /// Agents other devices of this account opened to this device, including
@@ -291,19 +247,4 @@ pub trait RemoteAgentDelegationPort: Send + Sync {
         turn_id: &str,
         prompt: String,
     ) -> PortResult<()>;
-
-    /// Syncs a finished coding job's branch into the baseline worktree it was
-    /// submitted from. Hosts without coding delegation report it unavailable.
-    async fn sync_coding_result(
-        &self,
-        job: &RemoteAgentJob,
-    ) -> PortResult<RemoteAgentCodingResult> {
-        Err(crate::PortError::new(
-            crate::PortErrorKind::NotAvailable,
-            format!(
-                "this host cannot sync the result of job {} from its device",
-                job.job_id
-            ),
-        ))
-    }
 }

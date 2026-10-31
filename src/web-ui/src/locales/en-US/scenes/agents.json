@@ -299,12 +299,7 @@
       "device": "On {{device}}",
       "managedOnDevice": "{{device}} opened this agent to this device. Change or close it on {{device}}.",
       "account": "Account {{name}} ({{user}})",
-      "accountTooltip": "This agent belongs to another account. Its owner approves its actions on their device and can withdraw it at any time.",
-      "taskKinds": "Tasks · {{kinds}}",
-      "taskKind": {
-        "message": "Message",
-        "coding": "Coding"
-      }
+      "accountTooltip": "This agent belongs to another account. Its owner approves its actions on their device and can withdraw it at any time."
     },
     "deleteConfirm": "Delete custom agent \"{{name}}\"? This cannot be undone.",
     "deleteSuccess": "Deleted \"{{name}}\"",

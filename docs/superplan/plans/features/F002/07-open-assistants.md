@@ -132,7 +132,20 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-cli --test cli_command_contracts delegation`
 - `cargo check -p openbitfun-desktop --lib`；`pnpm run check:core-boundaries`
 
-- [ ] 已删除的功能没有残留入口，旧记录与旧版发起方得到明确拒绝，均有测试
+- [x] 已删除的功能没有残留入口，旧记录与旧版发起方得到明确拒绝，均有测试
+
+**Evidence (2026-10-31, Task 2):**
+- 删除：`RemoteAgentTaskKind`、`sync_coding_result` 与编码结果类型；`Task`/`AgentSpawn` 的 `task_kind`（传入即报错）；发起方出站基线存储与编码提交；`primary_external_turn.rs` 与 `allow_primary_external_agent_turns`；`OpenAgent` 的 `message_workspace`、`open`、`open_external_agent`、`ExternalAgentUsageNotice`；CLI `delegation open --agent/--task-kind/--workspace` 与 `grant-connection --accept-usage`；目标端委派路径上的工作区准备（连接上的 `workspace_*` 动词与带 `workspacePath` 的探测被拒绝）。
+- 旧数据：模式与 `acp:` 开放记录保留在磁盘，读取为「no longer supported」，不进目录；委派到它们返回「is no longer open on this device」；旧版发起方提交 `coding` 返回「accepts only message tasks」（同账号与连接两条路径都有测试）；旧版的 `taskKind: coding` 委派链接仍可解析。
+- 模拟改为助理：每台模拟设备创建默认助理（`SOUL.md`、`IDENTITY.md`、`USER.md`）并用 `delegation open --assistant workspace --accept-usage` 开放。新增断言：模型请求包含人设；A4 的任务先尝试改写 `SOUL.md`，即使批准也不落盘；连接上的编码提交与工作区准备被拒绝。
+- 测试：`cargo test -p openbitfun-core --no-default-features --features agent-runtime,git,dispatch-store,ssh-remote --lib -- delegation remote_agent tools::implementations::task external_agent_turn` 169 通过；`cargo test -p openbitfun-runtime-ports --features remote-agent-port` 8 + 6 通过；`cargo test -p openbitfun-cli --bin openbitfun -- dispatch:: delegation tests::dispatch` 117 + 1 通过；`cargo test -p openbitfun-cli --test cli_command_contracts delegation` 4 通过（2 个由脚本启动的忽略）；`cargo check -p openbitfun-desktop --lib --tests` 通过；`pnpm run check:core-boundaries`、`type-check:web`、`i18n:audit` 通过；`AgentsScene.test.tsx` 21 通过。
+- 环境：本机 Xcode 更新后 `/usr/bin/git` 的 xcrun 缓存指向已删除的 SDK，`dispatch::workspace` 的 16 个 Git 测试因此失败；把 Homebrew git 放在 PATH 前面后全部通过，与本任务无关。
+- 偏差：
+  - 审计新记录仍写 `taskKind`（`message`，或被拒绝的旧版 `coding`）：旧版读取审计时要求该字段，去掉会让旧版读不出新记录。
+  - 保留 `external_agent_executor_v1` 能力声明，含义改为助理任务可以调用外部智能体。
+  - Relay 与连接传输的可路由命令列表不变（已部署的 Relay 与旧版设备仍使用同一列表），由目标端拒绝工作区动词。
+  - Web UI 只删除了远程智能体详情中的任务类型；开放表单（`AgentDelegationConfig.tsx`）仍是旧的模式选择，按计划在任务 4 改为只开放助理，在此之前通过它开放模式会被后端拒绝。
+  - 桌面端发起方模拟（`sim-devices.mjs --check`）已改写并通过编译，运行留到任务 5 的端到端验证。
 
 ## Task 3: 连接的信任级别
 

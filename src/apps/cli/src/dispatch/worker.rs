@@ -26,18 +26,13 @@ const TURN_SETTLEMENT_TIMEOUT_MS: u64 = 5_000;
 
 pub(crate) async fn run(job_id: String) -> Result<()> {
     let store = DispatchStore::open_default()?;
-    // Decided once, before the runtime starts. A job delegated to an opened
-    // `acp:` agent runs that agent as its session, and the agent's prompts
-    // reach the requester through the job's approval mailbox. Any other job
-    // has no guaranteed controller to answer an external agent's own prompts,
-    // so external agents fail there with a reason.
+    // Decided once, before the runtime starts. An opened assistant may hand
+    // work to external agents, whose prompts reach the owner through the
+    // job's approval mailbox. Any other job has no guaranteed controller to
+    // answer an external agent's own prompts, so external agents fail there
+    // with a reason.
     let job = store.load_job(&job_id).ok();
-    if job.as_ref().is_some_and(runs_external_agent) {
-        crate::agent::agentic_system::allow_primary_external_agent_turns_for_process();
-    } else if job.as_ref().is_some_and(runs_assistant) {
-        // An opened assistant may hand work to external agents; their
-        // prompts reach the owner through the job's approval mailbox.
-    } else {
+    if !job.as_ref().is_some_and(runs_assistant) {
         crate::agent::agentic_system::disable_external_agents_for_process(
             crate::agent::agentic_system::DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED,
         );
@@ -855,13 +850,6 @@ fn session_agent_type(request: &super::protocol::DispatchSubmitRequest) -> &str 
     }
 }
 
-/// Whether `job` runs an opened `acp:` external agent: only a delegated job,
-/// whose agent the target admitted against its open-agent list.
-fn runs_external_agent(job: &super::store::DispatchJobRecord) -> bool {
-    job.request.delegation.is_some()
-        && openbitfun_core::agentic::coordination::is_external_agent_type(&job.request.agent_type)
-}
-
 /// Turn context key naming the device that delegated a dispatch job. The
 /// kernel reads it to refuse delegating such a turn onward.
 pub(crate) use openbitfun_core::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
@@ -908,15 +896,6 @@ mod tests {
             created_at: String::new(),
             title: String::new(),
         }
-    }
-
-    #[test]
-    fn only_jobs_delegated_to_an_external_agent_run_one() {
-        assert!(runs_external_agent(&job("acp:codex", true)));
-        // An ordinary job keeps external agents unsupported.
-        assert!(!runs_external_agent(&job("acp:codex", false)));
-        assert!(!runs_external_agent(&job("Standard", true)));
-        assert!(!runs_external_agent(&job("acp:", true)));
     }
 
     #[test]

@@ -490,7 +490,6 @@ mod tests {
                 agent_type: "Standard".to_string(),
                 display_name: "Helper".to_string(),
                 description: None,
-                task_kinds: vec![openbitfun_runtime_ports::RemoteAgentTaskKind::Message],
                 availability: openbitfun_runtime_ports::RemoteAgentAvailability::Available,
                 account: None,
             }]

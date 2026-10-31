@@ -87,8 +87,6 @@ pub(super) struct TaskInvocation {
     pub(super) is_retry: bool,
     pub(super) requested_auto_retry: bool,
     pub(super) cancel_descendants: bool,
-    /// Task kind for a `remote:` agent; only valid when spawning one.
-    pub(super) remote_task_kind: Option<openbitfun_runtime_ports::RemoteAgentTaskKind>,
 }
 
 impl AgentExecutionTool {
@@ -109,7 +107,7 @@ impl AgentExecutionTool {
                     "action is not supported for DeepReview AgentSpawn calls".to_string(),
                 ));
             }
-            for field in ["fork_context", "agent_id", "run_in_background", "task_kind"] {
+            for field in ["fork_context", "agent_id", "run_in_background"] {
                 if input.get(field).is_some() {
                     return Err(OpenBitFunError::tool(format!(
                         "{field} is not allowed for DeepReview AgentSpawn calls"
@@ -145,7 +143,6 @@ impl AgentExecutionTool {
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
                 cancel_descendants: false,
-                remote_task_kind: None,
             });
         }
 
@@ -205,17 +202,6 @@ impl AgentExecutionTool {
                 }
 
                 let (model_id, inherit_parent_model) = Self::optional_model_id(input)?;
-                let remote_task_kind = Self::optional_remote_task_kind(input)?;
-                if remote_task_kind.is_some()
-                    && !subagent_type.as_deref().is_some_and(|agent_type| {
-                        agent_type.starts_with(openbitfun_runtime_ports::REMOTE_AGENT_TYPE_PREFIX)
-                    })
-                {
-                    return Err(OpenBitFunError::tool(
-                        "task_kind applies only to remote:<device_id>/<open_agent_id> agents"
-                            .to_string(),
-                    ));
-                }
 
                 Ok(TaskInvocation {
                     action,
@@ -232,7 +218,6 @@ impl AgentExecutionTool {
                     is_retry: false,
                     requested_auto_retry: false,
                     cancel_descendants: false,
-                    remote_task_kind,
                 })
             }
             TaskAction::SendInput => {
@@ -243,7 +228,6 @@ impl AgentExecutionTool {
                     &[
                         "fork_context",
                         "subagent_type",
-                        "task_kind",
                         "retry",
                         "auto_retry",
                         "retry_coverage",
@@ -268,7 +252,6 @@ impl AgentExecutionTool {
                     is_retry: false,
                     requested_auto_retry: false,
                     cancel_descendants: false,
-                    remote_task_kind: None,
                 })
             }
             TaskAction::Cancel => {
@@ -283,7 +266,6 @@ impl AgentExecutionTool {
                         "subagent_type",
                         "model_id",
                         "run_in_background",
-                        "task_kind",
                         "retry",
                         "auto_retry",
                         "retry_coverage",
@@ -306,7 +288,6 @@ impl AgentExecutionTool {
                     is_retry: false,
                     requested_auto_retry: false,
                     cancel_descendants,
-                    remote_task_kind: None,
                 })
             }
         }
@@ -392,20 +373,6 @@ impl AgentExecutionTool {
                 let value = value.trim();
                 Ok((!value.is_empty()).then(|| value.to_string()))
             }
-        }
-    }
-
-    fn optional_remote_task_kind(
-        input: &Value,
-    ) -> OpenBitFunResult<Option<openbitfun_runtime_ports::RemoteAgentTaskKind>> {
-        use openbitfun_runtime_ports::RemoteAgentTaskKind;
-        match Self::optional_trimmed_string(input, "task_kind")?.as_deref() {
-            None => Ok(None),
-            Some("message") => Ok(Some(RemoteAgentTaskKind::Message)),
-            Some("coding") => Ok(Some(RemoteAgentTaskKind::Coding)),
-            Some(other) => Err(OpenBitFunError::tool(format!(
-                "task_kind must be 'message' or 'coding', not '{other}'"
-            ))),
         }
     }
 

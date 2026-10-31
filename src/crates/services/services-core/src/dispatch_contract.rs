@@ -126,9 +126,10 @@ pub struct DispatchFileChunk {
 /// the delegation fields, so a requester must see this before using them.
 pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";
 
-/// Optional: delegated jobs may run an opened `acp:` external agent with this
-/// device's own login or credentials. A requester lists a target's `acp:`
-/// open agents only when the target advertises this.
+/// Optional: tasks delegated to this device's assistants may call external
+/// agents with its own login or credentials. Earlier requesters listed a
+/// target's `acp:` open agents only when the target advertised this; targets
+/// no longer open external agents themselves.
 pub const DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY: &str = "external_agent_executor_v1";
 
 /// Optional: the target answers dispatch calls from paired devices of other
@@ -142,8 +143,9 @@ pub const DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY: &str = "cross_account_de
 pub const DISPATCH_SOURCE_CONNECTION_ARG: &str = "__sourceConnectionId";
 
 /// Target commands a cross-account connection may send. Each is bound to the
-/// connection; job and workspace commands act only on what that connection
-/// started. `answer` is absent: only the target's owner approves its jobs.
+/// connection; job commands act only on what that connection started.
+/// `answer` is absent: only the target's owner approves its jobs. Delegated
+/// tasks are message tasks, so no workspace command reaches a connection.
 pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
     "dispatch_target_probe",
     "dispatch_target_catalog",
@@ -154,18 +156,7 @@ pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
     "dispatch_target_list",
     "dispatch_target_continue",
     "dispatch_target_append",
-    "dispatch_target_workspace_provision",
-    "dispatch_target_workspace_bundle_begin",
-    "dispatch_target_workspace_bundle_chunk",
-    "dispatch_target_workspace_bundle_commit",
-    "dispatch_target_workspace_sync",
-    "dispatch_target_workspace_sync_chunk",
 ];
-
-/// Prefix of the opaque handle a target gives a connection for a coding
-/// workspace it provisioned (`connection-workspace:<jobId>`). The connection
-/// names the workspace by this handle and never learns the target's paths.
-pub const DISPATCH_CONNECTION_WORKSPACE_PREFIX: &str = "connection-workspace:";
 
 /// Why a call over a connection is refused before the target runs it.
 pub const DISPATCH_CONNECTION_ANSWER_REFUSED: &str =
@@ -200,15 +191,8 @@ pub fn bind_dispatch_source_connection(
     if command == "dispatch_target_submit" && !args.contains_key(DISPATCH_DELEGATION_FIELD) {
         return Err("a connection submits only jobs delegated to an open agent".to_string());
     }
-    if command == "dispatch_target_probe" {
-        let path = args
-            .get("workspacePath")
-            .and_then(serde_json::Value::as_str);
-        if path.is_some_and(|path| !path.starts_with(DISPATCH_CONNECTION_WORKSPACE_PREFIX))
-            || (args.contains_key("workspacePath") && path.is_none())
-        {
-            return Err("a connection cannot inspect paths on this device".to_string());
-        }
+    if command == "dispatch_target_probe" && args.contains_key("workspacePath") {
+        return Err("a connection cannot inspect paths on this device".to_string());
     }
     args.insert(
         DISPATCH_SOURCE_CONNECTION_ARG.to_string(),
@@ -507,7 +491,11 @@ mod tests {
             .unwrap_err(),
             DISPATCH_CONNECTION_ANSWER_REFUSED
         );
-        for refused in ["dispatch_target_read_file", "peer_mode_ping"] {
+        for refused in [
+            "dispatch_target_read_file",
+            "dispatch_target_workspace_provision",
+            "peer_mode_ping",
+        ] {
             assert!(
                 bind_dispatch_source_connection(refused, serde_json::Value::Null, "conn-1")
                     .is_err()
@@ -520,7 +508,11 @@ mod tests {
         )
         .unwrap_err()
         .contains("delegated"));
-        for path in [serde_json::json!("/etc"), serde_json::json!(42)] {
+        for path in [
+            serde_json::json!("/etc"),
+            serde_json::json!(42),
+            serde_json::json!("connection-workspace:delegation-1"),
+        ] {
             assert!(bind_dispatch_source_connection(
                 "dispatch_target_probe",
                 serde_json::json!({ "workspacePath": path }),
@@ -528,13 +520,6 @@ mod tests {
             )
             .is_err());
         }
-        // The opaque handle of a workspace it provisioned passes to the target.
-        assert!(bind_dispatch_source_connection(
-            "dispatch_target_probe",
-            serde_json::json!({ "workspacePath": "connection-workspace:delegation-1" }),
-            "conn-1"
-        )
-        .is_ok());
         assert!(bind_dispatch_source_connection(
             "dispatch_target_list",
             serde_json::Value::Null,

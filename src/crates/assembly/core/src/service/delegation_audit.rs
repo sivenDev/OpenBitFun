@@ -43,6 +43,7 @@ pub struct DelegationAuditEntry {
     #[serde(default)]
     pub peer_device_name: String,
     pub open_agent_id: String,
+    /// Always written: earlier builds require it when they read the log.
     pub task_kind: String,
     /// The job state a `finished` entry ended in.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -129,7 +129,6 @@ pub struct RemoteAgentInfo {
     pub open_agent_id: String,
     /// The target-side agent the open agent runs.
     pub agent_type: String,
-    pub task_kinds: Vec<openbitfun_runtime_ports::RemoteAgentTaskKind>,
     pub availability: openbitfun_runtime_ports::RemoteAgentAvailability,
     /// The other account, for an agent reached over a connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]

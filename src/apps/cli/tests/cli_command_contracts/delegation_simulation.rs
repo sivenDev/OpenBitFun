@@ -36,6 +36,14 @@ const A4: &str = "00000000000000000000000000000a04";
 const B1: &str = "00000000000000000000000000000b01";
 const B2: &str = "00000000000000000000000000000b02";
 const OPEN_AGENT_ID: &str = "helper";
+/// The assistant every simulated device opens: its default assistant.
+const ASSISTANT_TYPE: &str = "assistant:workspace";
+/// Written into each simulated assistant's `SOUL.md`, so a model request
+/// shows the task ran as the assistant.
+const PERSONA_MARKER: &str = "SIM_ASSISTANT_PERSONA_7F3A";
+/// Written into each simulated assistant's `USER.md`, which only tasks with
+/// full trust read.
+const PROFILE_MARKER: &str = "SIM_OWNER_PROFILE_91C2";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const JOB_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -153,7 +161,7 @@ struct SimulatedDevice {
     /// names its copy.
     binary: PathBuf,
     environment: CliTestEnvironment,
-    _model: MockOpenAiServer,
+    model: MockOpenAiServer,
     daemon: Option<tokio::process::Child>,
 }
 
@@ -164,7 +172,19 @@ impl SimulatedDevice {
         model: MockOpenAiServer,
         tool_loop: bool,
     ) -> Self {
+        Self::configure_for_home(device_id, device_name, tool_loop, |_| model)
+    }
+
+    /// Like [`Self::configure`], for a model whose script names paths under
+    /// the device's product home.
+    fn configure_for_home(
+        device_id: &str,
+        device_name: &str,
+        tool_loop: bool,
+        model: impl FnOnce(&Path) -> MockOpenAiServer,
+    ) -> Self {
         let environment = CliTestEnvironment::new();
+        let model = model(environment.home_root());
         if tool_loop {
             environment.configure_tool_loop_mock_model(model.base_url());
         } else {
@@ -175,28 +195,45 @@ impl SimulatedDevice {
             device_name: device_name.to_string(),
             binary: PathBuf::from(env!("CARGO_BIN_EXE_openbitfun")),
             environment,
-            _model: model,
+            model,
             daemon: None,
         }
     }
 
-    /// Opens the Standard agent to `devices` for `task_kinds` through the
-    /// shipped CLI command.
-    fn open_agent(&self, devices: &[&str], task_kinds: &[&str]) {
-        self.open_agent_as("Standard", devices, task_kinds);
+    /// The default assistant of a device whose product home is `home`.
+    fn assistant_root_in(home: &Path) -> PathBuf {
+        home.join("personal_assistant").join("workspace")
     }
 
-    /// Opens `agent_type` as [`OPEN_AGENT_ID`]. An external agent is opened
-    /// with its usage notice confirmed, as its owner does on the device.
-    fn open_agent_as(&self, agent_type: &str, devices: &[&str], task_kinds: &[&str]) {
+    fn assistant_root(&self) -> PathBuf {
+        Self::assistant_root_in(self.environment.home_root())
+    }
+
+    /// Creates this device's default assistant and opens it to `devices` as
+    /// [`OPEN_AGENT_ID`] through the shipped CLI command, confirming that
+    /// its tasks may call external agents, as its owner does on the device.
+    fn open_agent(&self, devices: &[&str]) {
+        let root = self.assistant_root();
+        std::fs::create_dir_all(&root).expect("create the simulated assistant");
+        for (file, text) in [
+            (
+                "SOUL.md",
+                format!("You answer as the helper. {PERSONA_MARKER}\n"),
+            ),
+            ("IDENTITY.md", "Name: Helper\n".to_string()),
+            ("USER.md", format!("The owner. {PROFILE_MARKER}\n")),
+        ] {
+            std::fs::write(root.join(file), text).expect("write the simulated assistant");
+        }
         let mut command = self.environment.std_command_for(&self.binary);
-        command.args(["delegation", "open", OPEN_AGENT_ID, "--agent", agent_type]);
-        if agent_type.starts_with("acp:") {
-            command.arg("--accept-usage");
-        }
-        for kind in task_kinds {
-            command.args(["--task-kind", kind]);
-        }
+        command.args([
+            "delegation",
+            "open",
+            OPEN_AGENT_ID,
+            "--assistant",
+            "workspace",
+            "--accept-usage",
+        ]);
         for device in devices {
             command.args(["--device", device]);
         }
@@ -210,6 +247,16 @@ impl SimulatedDevice {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    /// Every model request body this device sent, as one string.
+    fn model_prompts(&self) -> String {
+        self.model
+            .chat_completion_request_bodies()
+            .iter()
+            .map(|body| body.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Enables a built-in external agent that asks before acting, through the
@@ -272,11 +319,11 @@ impl Drop for SimulatedDevice {
 
 /// Account A: requester A1 plus targets A2 (answers at once), A3 (holds its
 /// model stream until cancelled), and A4 (runs a command that needs
-/// approval). Account B: B1, which opens its agent to A1 as well, and B2.
-/// Both of B's devices are also paired with A1 over a connection and grant
-/// their agent to it: B1 takes message and coding tasks, at most one at a
-/// time, and its coding edit asks its owner first; B2 holds its answer
-/// until cancelled.
+/// approval, after trying to change its assistant). Account B: B1, which
+/// opens its assistant to A1 as well, and B2. Both of B's devices are also
+/// paired with A1 over a connection and grant their assistant to it: B1 takes
+/// at most one task at a time and runs a command its owner approves first;
+/// B2 holds its answer until cancelled.
 struct Simulation {
     relay: LocalRelay,
     requester: AccountSession,
@@ -298,20 +345,32 @@ impl Simulation {
             write_session(home, &relay.url, &requester, A1);
         }
 
-        let approving_model = MockOpenAiServer::tool_sequence(vec![(
-            "ExecCommand".to_string(),
-            json!({ "cmd": "touch delegated.txt" }),
-        )]);
         let mut devices = vec![
             SimulatedDevice::configure(A2, "A2 Laptop", MockOpenAiServer::immediate(), false),
             SimulatedDevice::configure(A3, "A3 Server", MockOpenAiServer::gated(), false),
-            SimulatedDevice::configure(A4, "A4 Workstation", approving_model, true),
+            // A task never changes the assistant it runs as, even when the
+            // owner approves the write.
+            SimulatedDevice::configure_for_home(A4, "A4 Workstation", true, |home| {
+                MockOpenAiServer::tool_sequence(vec![
+                    (
+                        "Write".to_string(),
+                        json!({
+                            "file_path": SimulatedDevice::assistant_root_in(home).join("SOUL.md"),
+                            "content": "Rewritten by a delegated task",
+                        }),
+                    ),
+                    (
+                        "ExecCommand".to_string(),
+                        json!({ "cmd": "touch delegated.txt" }),
+                    ),
+                ])
+            }),
             SimulatedDevice::configure(
                 B1,
                 "B1 Desktop",
                 MockOpenAiServer::tool_sequence_then_immediate(vec![(
                     "ExecCommand".to_string(),
-                    json!({ "cmd": CODING_EDIT }),
+                    json!({ "cmd": "touch delegated.txt" }),
                 )]),
                 true,
             ),
@@ -340,12 +399,7 @@ impl Simulation {
                 &session,
                 &device.device_id,
             );
-            let kinds: &[&str] = if device.device_id.as_str() == B1 {
-                &["message", "coding"]
-            } else {
-                &["message"]
-            };
-            device.open_agent(&[A1], kinds);
+            device.open_agent(&[A1]);
             device.start_daemon();
             if other {
                 other_account = Some(session);
@@ -369,7 +423,9 @@ impl Simulation {
         };
         simulation.wait_until_online().await;
         let other_account = other_account.expect("account B devices");
-        simulation.wait_until_online_as(&other_account, &[B1, B2]).await;
+        simulation
+            .wait_until_online_as(&other_account, &[B1, B2])
+            .await;
         for (device, limits) in [(B1, &["--max-jobs", "1"][..]), (B2, &[][..])] {
             let connection_id = simulation.pair_with_requester(device).await;
             let mut grant = vec!["grant-connection", OPEN_AGENT_ID, connection_id.as_str()];
@@ -497,7 +553,7 @@ impl Simulation {
             },
             "requesterConnections": self.requester_connections,
             "connections": {
-                "coding": { "connectionId": self.connections[0], "deviceId": B1 },
+                "asksApproval": { "connectionId": self.connections[0], "deviceId": B1 },
                 "holds": { "connectionId": self.connections[1], "deviceId": B2 },
             },
             "accountB": { "userId": ACCOUNT_B },
@@ -554,7 +610,7 @@ impl RequesterRpc {
                     "jobId": job_id,
                     "sessionId": session_id,
                     "workspacePath": "",
-                    "agentType": "Standard",
+                    "agentType": ASSISTANT_TYPE,
                     "prompt": prompt,
                     "approvalPolicy": "remote",
                     "title": "Simulated delegation",
@@ -675,7 +731,7 @@ async fn submit_message_over_connection(
                 "jobId": job_id,
                 "sessionId": session_id,
                 "workspacePath": "",
-                "agentType": "Standard",
+                "agentType": ASSISTANT_TYPE,
                 "prompt": "Say hello across accounts",
                 "approvalPolicy": "remote",
                 // The target, not the other account, chooses the model.
@@ -714,7 +770,10 @@ async fn wait_over_connection(
         if terminal(&page) || (until_running && page["state"] == "running") {
             return page;
         }
-        assert!(Instant::now() < deadline, "the cross-account job did not progress: {page}");
+        assert!(
+            Instant::now() < deadline,
+            "the cross-account job did not progress: {page}"
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
@@ -940,8 +999,8 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         capabilities,
     ));
     assert_eq!(catalog(&rpc, &connection_id).await, json!([]));
-    // An agent open to every device of B's own account is still not granted.
-    target.open_agent(&["*"], &["message"]);
+    // An assistant open to every device of B's own account is still not granted.
+    target.open_agent(&["*"]);
     assert_eq!(catalog(&rpc, &connection_id).await, json!([]));
 
     // The probe says what the target supports, not which models it has.
@@ -987,9 +1046,18 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     // first runs, and withdrawing the grant stops the running one.
     let (ok, output) = delegation_cli(
         &target,
-        &["grant-connection", OPEN_AGENT_ID, &connection_id, "--max-jobs", "1"],
+        &[
+            "grant-connection",
+            OPEN_AGENT_ID,
+            &connection_id,
+            "--max-jobs",
+            "1",
+        ],
     );
-    assert!(ok && output.contains("at most 1 task(s) at once"), "{output}");
+    assert!(
+        ok && output.contains("at most 1 task(s) at once"),
+        "{output}"
+    );
     let (held, _) = submit_message_over_connection(&rpc, &connection_id)
         .await
         .expect("first task");
@@ -1084,16 +1152,50 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         Some("command_not_routable"),
         "{error}"
     );
-    // A coding workspace another requester started is not reachable.
+    // Delegated tasks are message tasks: no workspace reaches a connection.
     let error = rpc
         .invoke_connection(
             &connection_id,
-            "dispatch_target_workspace_sync",
-            json!({ "jobId": "delegation-someone-else", "operationId": "op" }),
+            "dispatch_target_workspace_provision",
+            json!({ "jobId": "delegation-coding", "repoKey": "abcdef0123456789" }),
         )
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("does not exist"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("not accepted over a cross-account connection"),
+        "{error}"
+    );
+    // An earlier requester's coding task is refused by name.
+    let error = rpc
+        .invoke_connection(
+            &connection_id,
+            "dispatch_target_submit",
+            json!({
+                "protocolVersion": DISPATCH_PROTOCOL_VERSION,
+                "jobId": "delegation-coding",
+                "sessionId": uuid::Uuid::new_v4().to_string(),
+                "workspacePath": "",
+                "agentType": ASSISTANT_TYPE,
+                "prompt": "Change the repository",
+                "approvalPolicy": "remote",
+                "delegation": {
+                    "openAgentId": OPEN_AGENT_ID,
+                    "taskKind": "coding",
+                    "source": { "sessionId": "requester-session", "agentType": "Standard" },
+                },
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("accepts only message tasks"),
+        "{error}"
+    );
+    // The tasks ran as B1's assistant.
+    let prompts = target.model_prompts();
+    assert!(prompts.contains(PERSONA_MARKER), "{prompts}");
 
     // Withdrawing the grant empties the catalog again.
     let (ok, output) = delegation_cli(
@@ -1151,6 +1253,9 @@ async fn same_account_devices_take_delegated_jobs_and_other_accounts_cannot_reac
     let (finished, events) = rpc.observe_until(A2, &job, terminal).await;
     assert_eq!(finished["state"], "succeeded", "{finished}");
     assert!(mentions(&events, STREAM_START_MARKER), "{events:?}");
+    // It ran as A2's assistant.
+    let prompts = simulation.device(A2).model_prompts();
+    assert!(prompts.contains(PERSONA_MARKER), "{prompts}");
 
     // Cancel: a running job stops on its device. The target daemon is the
     // worker's parent here, unlike a one-shot SSH dispatch command.
@@ -1171,14 +1276,37 @@ async fn same_account_devices_take_delegated_jobs_and_other_accounts_cannot_reac
     assert_eq!(stopped["state"], "cancelled", "{stopped}");
 
     // Approval: the target asks, the requester answers, the job finishes.
+    // The task first tries to rewrite its assistant; whether or not that
+    // write asks first, it never lands.
+    let soul = simulation.device(A4).assistant_root().join("SOUL.md");
+    let persona = std::fs::read_to_string(&soul).expect("read the assistant");
     let job = rpc.submit(A4, "Create the marker file").await;
-    let (waiting, _) = rpc
-        .observe_until(A4, &job, |page| {
-            page["pendingPermissions"]
-                .as_array()
-                .is_some_and(|prompts| !prompts.is_empty())
-        })
-        .await;
+    let waiting = loop {
+        let (waiting, _) = rpc
+            .observe_until(A4, &job, |page| {
+                terminal(page)
+                    || page["pendingPermissions"]
+                        .as_array()
+                        .is_some_and(|prompts| !prompts.is_empty())
+            })
+            .await;
+        assert!(
+            !terminal(&waiting),
+            "the job ended before asking: {waiting}"
+        );
+        let prompt = &waiting["pendingPermissions"][0];
+        if prompt["action"] == "bash" {
+            break waiting;
+        }
+        rpc.invoke(
+            A4,
+            "dispatch_target_answer",
+            json!({ "jobId": job, "requestId": prompt["requestId"], "reply": "once" }),
+        )
+        .await
+        .expect("approve the write");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
     let prompt = &waiting["pendingPermissions"][0];
     assert_eq!(prompt["action"], "bash", "{prompt}");
     assert_eq!(
@@ -1205,6 +1333,11 @@ async fn same_account_devices_take_delegated_jobs_and_other_accounts_cannot_reac
             "delegated.txt"
         ),
         "the approved command ran on the target"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&soul).expect("read the assistant"),
+        persona,
+        "a delegated task changed its assistant"
     );
 }
 
@@ -1289,7 +1422,7 @@ async fn wait_for_stop(marker: &Path) {
 }
 
 #[test]
-fn targets_advertise_delegation_to_external_agents() {
+fn targets_advertise_delegation_and_external_agents_for_assistant_tasks() {
     let environment = CliTestEnvironment::new();
     let mut command = environment.std_command();
     command.args(["dispatch", "probe"]).stdin(Stdio::null());
@@ -1317,25 +1450,40 @@ fn targets_advertise_delegation_to_external_agents() {
 }
 
 #[test]
-fn external_agents_open_only_after_confirming_their_usage_notice() {
+fn only_assistants_open_and_only_after_confirming_external_agent_use() {
     let environment = CliTestEnvironment::new();
-    let open = |extra: &[&str]| {
+    let run = |args: &[&str]| {
         let mut command = environment.std_command();
-        command
-            .args([
-                "delegation",
-                "open",
-                "claude",
-                "--agent",
-                "acp:claude-code",
-                "--task-kind",
-                "message",
-                "--all-devices",
-            ])
-            .args(extra)
-            .stdin(Stdio::null());
+        command.args(args).stdin(Stdio::null());
         support::command_output_with_timeout(&mut command, Duration::from_secs(60))
     };
+    let open = |extra: &[&str]| {
+        run(&[
+            &[
+                "delegation",
+                "open",
+                "helper",
+                "--assistant",
+                "workspace",
+                "--all-devices",
+            ][..],
+            extra,
+        ]
+        .concat())
+    };
+
+    // Agent modes and external agents are not opened any more.
+    for removed in [
+        &["--agent", "Standard"][..],
+        &["--agent", "acp:claude-code"][..],
+    ] {
+        let output = run(&[
+            &["delegation", "open", "helper", "--all-devices"][..],
+            removed,
+        ]
+        .concat());
+        assert!(!output.status.success());
+    }
 
     let unconfirmed = open(&[]);
     assert!(!unconfirmed.status.success());
@@ -1343,36 +1491,40 @@ fn external_agents_open_only_after_confirming_their_usage_notice() {
     assert!(stdout.contains("API key is recommended"), "{stdout}");
     assert!(String::from_utf8_lossy(&unconfirmed.stderr).contains("--accept-usage"));
 
-    // Confirmed, it still opens only an agent this device can run now.
-    let not_enabled = open(&["--accept-usage"]);
-    assert!(!not_enabled.status.success());
+    // Confirmed, it opens only an assistant this device holds.
+    let missing = open(&["--accept-usage"]);
+    assert!(!missing.status.success());
     assert!(
-        String::from_utf8_lossy(&not_enabled.stderr).contains("cannot run on this device"),
+        String::from_utf8_lossy(&missing.stderr).contains("does not exist"),
         "{}",
-        String::from_utf8_lossy(&not_enabled.stderr)
+        String::from_utf8_lossy(&missing.stderr)
+    );
+    std::fs::create_dir_all(SimulatedDevice::assistant_root_in(environment.home_root()))
+        .expect("create the assistant");
+    let opened = open(&["--accept-usage"]);
+    assert!(
+        opened.status.success(),
+        "{}",
+        String::from_utf8_lossy(&opened.stderr)
     );
 
-    let mut list = environment.std_command();
-    list.args(["delegation", "list", "--json"])
-        .stdin(Stdio::null());
-    let listed = support::command_output_with_timeout(&mut list, Duration::from_secs(60));
+    let listed = run(&["delegation", "list", "--json"]);
     assert!(listed.status.success());
     let records: Value = serde_json::from_slice(&listed.stdout).expect("list JSON");
-    assert_eq!(records, json!([]));
+    assert_eq!(
+        records[0]["agent"]["agentType"], ASSISTANT_TYPE,
+        "{records}"
+    );
 }
-
-/// The edit the `coding` behavior makes: a `farewell` function next to the
-/// requester's `greet`, a test for it, and a check that it imports.
-const CODING_EDIT: &str = "printf '\\n\\ndef farewell(name: str) -> str:\\n    return f\"Goodbye, {name}!\"\\n' >> ibot/greet.py && printf '\\n\\ndef test_farewell():\\n    from ibot.greet import farewell\\n\\n    assert farewell(\"ibot\") == \"Goodbye, ibot!\"\\n' >> tests/test_greet.py && python3 -c 'from ibot.greet import farewell; print(farewell(\"ibot\"))'";
 
 /// Runs one simulated device on another machine against a simulation
 /// started with `OPENBITFUN_SIM_RELAY_BIND=0.0.0.0` and
 /// `OPENBITFUN_SIM_EXTERNAL_DEVICE_ID`. `OPENBITFUN_SIM_EXTERNAL` names a
 /// JSON file with the manifest's `external` entry plus `relayUrl` (the
 /// simulation's address on the network) and `behavior` (`immediate`,
-/// `gated`, `approval`, `coding`, or `codex`); it is removed once read because it holds the
-/// device secret. Behavior `codex` opens this machine's Codex (`acp:codex`)
-/// instead of a scripted model; run it with `CODEX_HOME` naming the
+/// `gated`, `approval`, or `codex`); it is removed once read because it holds the
+/// device secret. Behavior `codex` enables this machine's Codex for the
+/// assistant's tasks to call; run it with `CODEX_HOME` naming the
 /// machine's Codex home so the isolated device uses its existing login. The
 /// session is written here, since session files are bound to the machine
 /// that writes them. `OPENBITFUN_SIM_CLI_BIN` names
@@ -1408,21 +1560,7 @@ async fn serve_external_device() {
             )]),
             true,
         ),
-        // A coding task: one scripted edit in the delegated worktree, which
-        // the target commits when the requester syncs the result.
-        "coding" => (
-            MockOpenAiServer::tool_sequence(vec![(
-                "ExecCommand".to_string(),
-                json!({ "cmd": CODING_EDIT }),
-            )]),
-            true,
-        ),
         _ => (MockOpenAiServer::immediate(), false),
-    };
-    let task_kinds: &[&str] = if matches!(text("behavior").as_str(), "coding" | "codex") {
-        &["message", "coding"]
-    } else {
-        &["message"]
     };
     let mut device =
         SimulatedDevice::configure(&text("deviceId"), &text("deviceName"), model, tool_loop);
@@ -1437,10 +1575,8 @@ async fn serve_external_device() {
     );
     if text("behavior") == "codex" {
         device.enable_external_agent("codex");
-        device.open_agent_as("acp:codex", &[&text("requesterDeviceId")], task_kinds);
-    } else {
-        device.open_agent(&[&text("requesterDeviceId")], task_kinds);
     }
+    device.open_agent(&[&text("requesterDeviceId")]);
     device.start_daemon();
 
     let marker = request_path.with_extension("running");
