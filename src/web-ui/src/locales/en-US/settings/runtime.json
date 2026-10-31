@@ -134,8 +134,8 @@
     "save": "Open",
     "cancel": "Cancel",
     "grantConnection": "Grant to another account",
-    "grantTitle": "Grant to",
-    "grantDescription": "What it can do depends on the connection’s trust level.",
+    "grantTitle": "Choose accounts",
+    "grantDescription": "Pick one or more. What each can do depends on its trust level.",
     "noConnections": "No connections to other accounts yet. Pair one below first.",
     "connectionLabel": "{{name}} · {{device}}",
     "connectionMissing": "Connection {{id}}, no longer on this device",
@@ -181,11 +181,13 @@
     },
     "openedToAccounts": "Open",
     "closeConfirmTitle": "Stop opening {{name}}?",
-    "closeConfirmDescription": "Devices and accounts it was granted to can no longer give it tasks."
+    "closeConfirmDescription": "Devices and accounts it was granted to can no longer give it tasks.",
+    "grantedWith": "Can use it · {{limits}}",
+    "unsupportedTitle": "Old entries that cannot be used"
   },
   "connections": {
-    "sectionTitle": "Connections with other accounts",
-    "sectionDescription": "Pair with a device of another account before granting it an assistant.",
+    "sectionTitle": "Account access",
+    "sectionDescription": "Pair with a device of another account, then choose which assistants it can use.",
     "unsupported": "Connections with other accounts are available only in the desktop app on this device.",
     "peerUnsupported": "Manage the connections of a connected device on that device.",
     "signedOut": "Sign in to an account to connect with devices of other accounts.",
@@ -262,7 +264,14 @@
     },
     "peerDevice": "{{name}} · {{device}}",
     "revokeConfirmTitle": "Revoke the connection with {{name}}?",
-    "revokeConfirmDescription": "They can no longer use the assistants you granted. You will need to pair again."
+    "revokeConfirmDescription": "They can no longer use the assistants you granted. You will need to pair again.",
+    "assistantsLabel": "Assistants: {{names}}",
+    "noAssistants": "No assistants yet",
+    "chooseAssistants": "Choose assistants",
+    "doneChoosing": "Hide assistants",
+    "noOpenAssistants": "No assistant is open yet. Open one above first.",
+    "assistantFor": "Let {{name}} use it",
+    "grantFailed": "Could not change the assistants"
   },
   "projectPermissions": {
     "description": "Always allow decisions are saved as remembered grants for the current project; static project rules apply before a tool runs.",

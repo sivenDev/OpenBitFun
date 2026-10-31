@@ -66,7 +66,9 @@ vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerD
 vi.mock('@/shared/notification-system', () => ({ notificationService: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ error: vi.fn(), warn: vi.fn() }) }));
 vi.mock('./common', () => ({
-  ConfigPageSection: ({ title, children }: { title: string; children: React.ReactNode }) => <section><h2>{title}</h2>{children}</section>,
+  ConfigPageSection: ({ title, description, extra, children }: {
+    title: string; description?: string; extra?: React.ReactNode; children: React.ReactNode;
+  }) => <section data-section={title}><h2>{title}</h2><small>{description}</small>{extra}{children}</section>,
   ConfigPageRow: ({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) =>
     <div data-row={label}><span>{label}</span><small>{description}</small>{children}</div>,
   ConfigLoadingState: ({ label }: { label: string }) => <p>{label}</p>,
@@ -139,9 +141,10 @@ describe('AgentDelegationConfig', () => {
 
   it('lists only the assistants on this device, none of them open by default', async () => {
     await render();
-    expect(container.querySelector('[data-row="Nova"]')!.textContent).toContain('agentDelegation.notOpened');
+    // Each assistant has its own card.
+    expect(container.querySelector('[data-section="Nova"]')!.textContent).toContain('agentDelegation.notOpened');
     // An assistant the workspace list does not name is shown by its id.
-    expect(container.querySelector('[data-row="work"]')).not.toBeNull();
+    expect(container.querySelector('[data-section="work"]')).not.toBeNull();
     expect(container.textContent).not.toContain('agentDelegation.mode');
     expect(mocks.open).not.toHaveBeenCalled();
   });
@@ -177,7 +180,7 @@ describe('AgentDelegationConfig', () => {
     await render();
     expect(container.querySelector('[data-row="Coder"]')!.textContent).toContain('agentDelegation.unsupportedEntry');
     expect(container.textContent).toContain('agentDelegation.unreadable:unreadable entry: unknown variant');
-    expect(container.querySelector('[data-row="Nova"]')!.textContent).toContain('agentDelegation.openedTo:Laptop');
+    expect(container.querySelector('[data-section="Nova"]')!.textContent).toContain('agentDelegation.openedTo:Laptop');
     await act(async () => container.querySelector<HTMLButtonElement>('[data-row="Coder"] button')!.click());
     expect(mocks.close).toHaveBeenCalledWith('coder');
     await act(async () => container.querySelector<HTMLButtonElement>('[data-row="future"] button')!.click());
@@ -199,8 +202,12 @@ describe('AgentDelegationConfig', () => {
     mocks.limits.mockResolvedValue({});
     await render();
     await click('agentDelegation.grantConnection');
-    // Only usable connections are offered, and the first is preselected.
-    expect(Array.from(container.querySelectorAll('option')).map(option => option.value)).toEqual(['conn-1']);
+    // Only usable connections are offered, and nothing is chosen for the owner.
+    const offered = Array.from(container.querySelectorAll('label')).map(node => node.textContent)
+      .filter(text => text?.startsWith('agentDelegation.connectionLabel'));
+    expect(offered).toEqual(['agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1']);
+    expect(button('agentDelegation.grant')!.disabled).toBe(true);
+    await check('agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1');
     await typeInto('agentDelegation.limits.jobsLabel', '0');
     expect(button('agentDelegation.grant')!.disabled).toBe(true);
     await typeInto('agentDelegation.limits.jobsLabel', '2');
@@ -210,7 +217,7 @@ describe('AgentDelegationConfig', () => {
 
     // Each grant is named by whom it goes to.
     expect(container.querySelector('[data-row="agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1"]')!.textContent)
-      .toContain('agentDelegation.limits.anyJobs');
+      .toContain('agentDelegation.grantedWith:agentDelegation.limits.anyJobs');
     expect(container.querySelector('[data-row="agentDelegation.connectionMissing:conn-gone"]')).not.toBeNull();
     mocks.revoke.mockResolvedValue(true);
     await click('agentDelegation.withdraw');
@@ -243,9 +250,9 @@ describe('AgentDelegationConfig', () => {
     mocks.answer.mockResolvedValue(undefined);
     await render();
     const rows = Array.from(container.querySelectorAll('[data-row]')).map(node => node.getAttribute('data-row'));
-    // Each task follows the assistant that runs it.
-    expect(rows.indexOf('Plan the trip')).toBe(rows.indexOf('Nova') + 1);
-    expect(rows.indexOf('Summarize notes')).toBe(rows.indexOf('work') + 1);
+    // Each task is on the card of the assistant that runs it.
+    expect(container.querySelector('[data-section="Nova"] [data-row="Plan the trip"]')).not.toBeNull();
+    expect(container.querySelector('[data-section="work"] [data-row="Summarize notes"]')).not.toBeNull();
     const trip = container.querySelector('[data-row="Plan the trip"]')!.textContent!;
     expect(trip).toContain('agentDelegation.tasks.fromAccount:Bea|B1');
     expect(trip).toContain('agentDelegation.tasks.waiting:3');
@@ -349,7 +356,7 @@ describe('AgentDelegationConfig', () => {
   it('still manages assistants when the task list cannot be read', async () => {
     mocks.tasks.mockRejectedValue(new Error('dispatch runner is not installed'));
     await render();
-    expect(container.querySelector('[data-row="Nova"]')).not.toBeNull();
+    expect(container.querySelector('[data-section="Nova"]')).not.toBeNull();
   });
 
   it('refuses to manage the list for a connected peer or without the desktop host', async () => {

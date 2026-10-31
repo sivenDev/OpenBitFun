@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { openDelegatedTask } from '@/flow_chat/session-drivers/delegated/openDelegatedTask';
-import { Button, Checkbox, Input, Select, Switch } from '@openbitfun/ui';
+import { Button, Checkbox, Input, Switch } from '@openbitfun/ui';
 import {
   ALL_SAME_ACCOUNT_DEVICES,
   ASSISTANT_AGENT_TYPE_PREFIX,
@@ -28,6 +28,10 @@ import {
   type AccountDeviceInfo,
 } from '@/infrastructure/api/service-api/RemoteConnectAPI';
 import { getWorkspaceDisplayName, useOptionalWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
+import {
+  notifyDelegationGrantsChanged,
+  onDelegationGrantsChanged,
+} from '@/infrastructure/api/service-api/delegationGrantChanges';
 import {
   DELEGATED_TASKS_REFRESH_MS,
   readDelegatedTasks,
@@ -99,10 +103,10 @@ interface LimitsDraft {
   maxMinutes: string;
 }
 
-/** Granting one opened assistant to a connection. */
+/** Granting one opened assistant to one or more connections. */
 interface GrantDraft extends LimitsDraft {
   agentId: string;
-  connectionId: string;
+  connectionIds: string[];
 }
 
 /** Changing the limits of an existing grant. */
@@ -239,6 +243,11 @@ export const AgentDelegationConfig: React.FC = () => {
     return () => { activeRef.current = false; };
   }, [load, supported]);
 
+  // Accounts can be given assistants from their own rows too.
+  useEffect(() => onDelegationGrantsChanged(source => {
+    if (source !== activeRef && supported) void load();
+  }), [load, supported]);
+
   // Tasks arrive while the page stays open, so they are read again on a timer,
   // and promptly while one waits for the owner.
   const anyWaiting = state?.tasks.some(task => task.pendingPermissionCount > 0) ?? false;
@@ -319,6 +328,7 @@ export const AgentDelegationConfig: React.FC = () => {
     setBusy(true);
     try {
       await action();
+      notifyDelegationGrantsChanged(activeRef);
       if (activeRef.current) await load();
     } catch (error) {
       log.error(failureLog, { error });
@@ -345,6 +355,7 @@ export const AgentDelegationConfig: React.FC = () => {
       });
       if (!activeRef.current) return;
       notificationService.success(t('agentDelegation.saved'), { duration: 2000 });
+      notifyDelegationGrantsChanged(activeRef);
       setDraft(null);
       await load();
     } catch (error) {
@@ -360,9 +371,11 @@ export const AgentDelegationConfig: React.FC = () => {
     const limits = draftLimits(grantDraft);
     if (!limits) return;
     void run(async () => {
-      await delegationAPI.grantConnection(grantDraft.agentId, grantDraft.connectionId);
-      if (hasLimits(limits)) {
-        await delegationAPI.setConnectionLimits(grantDraft.agentId, grantDraft.connectionId, limits);
+      for (const connectionId of grantDraft.connectionIds) {
+        await delegationAPI.grantConnection(grantDraft.agentId, connectionId);
+        if (hasLimits(limits)) {
+          await delegationAPI.setConnectionLimits(grantDraft.agentId, connectionId, limits);
+        }
       }
       notificationService.success(t('agentDelegation.granted'), { duration: 2000 });
       if (activeRef.current) setGrantDraft(null);
@@ -434,26 +447,25 @@ export const AgentDelegationConfig: React.FC = () => {
   const renderGrantPanel = (agentId: string, granted: string[]) => {
     if (!state || grantDraft?.agentId !== agentId) return null;
     const candidates = grantCandidates(granted);
-    const canGrant = grantDraft.connectionId !== '' && draftLimits(grantDraft) !== null;
+    const canGrant = grantDraft.connectionIds.length > 0 && draftLimits(grantDraft) !== null;
     return <>
-      <ConfigPageRow label={t('agentDelegation.grantTitle')}
-        description={candidates.length === 0 ? t('agentDelegation.noConnections') : t('agentDelegation.grantDescription')}
-        align="center">
-        {candidates.length > 0 && (
-          <Select
-            size="sm"
-            value={grantDraft.connectionId}
-            disabled={busy}
-            options={candidates.map(connection => ({
-              value: connection.connectionId,
-              label: describeConnection(connection.connectionId),
-            }))}
-            onValueChange={value => {
-              const connectionId = String(Array.isArray(value) ? value[0] : value);
-              setGrantDraft(current => current && ({ ...current, connectionId }));
-            }}
-          />
-        )}
+      <ConfigPageRow balanced label={t('agentDelegation.grantTitle')}
+        description={candidates.length === 0 ? t('agentDelegation.noConnections') : t('agentDelegation.grantDescription')}>
+        {candidates.length > 0 ? (
+          <div className="openbitfun-runtime-settings__choice-list">
+            {candidates.map(connection => (
+              <Checkbox key={connection.connectionId} disabled={busy}
+                checked={grantDraft.connectionIds.includes(connection.connectionId)}
+                label={describeConnection(connection.connectionId)}
+                onChange={event => setGrantDraft(current => current && ({
+                  ...current,
+                  connectionIds: event.target.checked
+                    ? [...current.connectionIds.filter(id => id !== connection.connectionId), connection.connectionId]
+                    : current.connectionIds.filter(id => id !== connection.connectionId),
+                }))} />
+            ))}
+          </div>
+        ) : <span />}
       </ConfigPageRow>
       {candidates.length > 0 && renderLimitInputs(grantDraft,
         next => setGrantDraft(current => current && ({ ...current, ...next })))}
@@ -462,9 +474,11 @@ export const AgentDelegationConfig: React.FC = () => {
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setGrantDraft(null)}>
             {t('agentDelegation.cancel')}
           </Button>
-          <Button type="button" size="sm" variant="primary" disabled={busy || !canGrant} onClick={grant}>
-            {t('agentDelegation.grant')}
-          </Button>
+          {candidates.length > 0 && (
+            <Button type="button" size="sm" variant="primary" disabled={busy || !canGrant} onClick={grant}>
+              {t('agentDelegation.grant')}
+            </Button>
+          )}
         </div>
       </ConfigPageRow>
     </>;
@@ -475,7 +489,7 @@ export const AgentDelegationConfig: React.FC = () => {
     return (
       <React.Fragment key={item.connectionId}>
         <ConfigPageRow balanced label={describeConnection(item.connectionId)}
-          description={describeLimits(item)}
+          description={t('agentDelegation.grantedWith', { limits: describeLimits(item) })}
           align="center">
           <div className="openbitfun-runtime-settings__status-actions">
             {!editing && (
@@ -676,55 +690,58 @@ export const AgentDelegationConfig: React.FC = () => {
     </ConfigPageRow>
   );
 
+  /** One card per assistant: who can use it, then the tasks it runs for them. */
   const renderAssistant = (assistant: LocalAssistant) => {
     const agent = state?.records
       .map(record => record.agent)
       .find((item): item is OpenAgent => item?.agentType === assistant.agentType);
     const granted = agent?.connections?.map(item => item.connectionId) ?? [];
+    const name = assistantName(assistant);
     const description = !agent
       ? t('agentDelegation.notOpened')
       : agent.sameAccountDevices.length === 0
         ? t('agentDelegation.openedToAccounts')
         : t('agentDelegation.openedTo', { devices: describeDevices(agent) });
+    const actions = (
+      <div className="openbitfun-runtime-settings__status-actions">
+        {agent && grantDraft?.agentId !== agent.id && (
+          <Button type="button" size="sm" variant="outline" disabled={busy}
+            onClick={() => setGrantDraft({ agentId: agent.id, connectionIds: [], ...NO_LIMITS })}>
+            {t('agentDelegation.grantConnection')}
+          </Button>
+        )}
+        {agent && closing !== agent.id && (
+          <Button type="button" size="sm" variant="outline" disabled={busy}
+            onClick={() => setClosing(agent.id)}>
+            {t('agentDelegation.close')}
+          </Button>
+        )}
+        {!agent && draft?.agentType !== assistant.agentType && (
+          <Button type="button" size="sm" variant="outline" disabled={busy || draft !== null}
+            onClick={() => setDraft({
+              agentType: assistant.agentType,
+              allDevices: false,
+              devices: [],
+              usageConfirmed: false,
+            })}>
+            {t('agentDelegation.open')}
+          </Button>
+        )}
+      </div>
+    );
+    const body = [
+      agent && closing === agent.id ? <React.Fragment key="close">{renderCloseConfirm(agent, name)}</React.Fragment> : null,
+      draft?.agentType === assistant.agentType ? <React.Fragment key="open">{renderOpenForm(assistant)}</React.Fragment> : null,
+      agent ? <React.Fragment key="grants">{renderGrants(agent)}</React.Fragment> : null,
+      agent && grantDraft?.agentId === agent.id
+        ? <React.Fragment key="grant">{renderGrantPanel(agent.id, granted)}</React.Fragment> : null,
+      splitTasks(assistant).shown.length > 0 ? <React.Fragment key="tasks">{renderTasks(assistant)}</React.Fragment> : null,
+    ].filter(Boolean);
     return (
-      <React.Fragment key={assistant.agentType}>
-        <ConfigPageRow balanced label={assistantName(assistant)} description={description} align="center">
-          <div className="openbitfun-runtime-settings__status-actions">
-            {agent && grantDraft?.agentId !== agent.id && (
-              <Button type="button" size="sm" variant="outline" disabled={busy}
-                onClick={() => setGrantDraft({
-                  agentId: agent.id,
-                  connectionId: grantCandidates(granted)[0]?.connectionId ?? '',
-                  ...NO_LIMITS,
-                })}>
-                {t('agentDelegation.grantConnection')}
-              </Button>
-            )}
-            {agent && closing !== agent.id && (
-              <Button type="button" size="sm" variant="outline" disabled={busy}
-                onClick={() => setClosing(agent.id)}>
-                {t('agentDelegation.close')}
-              </Button>
-            )}
-            {!agent && draft?.agentType !== assistant.agentType && (
-              <Button type="button" size="sm" variant="outline" disabled={busy || draft !== null}
-                onClick={() => setDraft({
-                  agentType: assistant.agentType,
-                  allDevices: false,
-                  devices: [],
-                  usageConfirmed: false,
-                })}>
-                {t('agentDelegation.open')}
-              </Button>
-            )}
-          </div>
-        </ConfigPageRow>
-        {agent && closing === agent.id && renderCloseConfirm(agent, assistantName(assistant))}
-        {renderOpenForm(assistant)}
-        {agent && renderGrants(agent)}
-        {agent && renderGrantPanel(agent.id, granted)}
-        {renderTasks(assistant)}
-      </React.Fragment>
+      <ConfigPageSection key={assistant.agentType} title={name} description={description} extra={actions}
+        data-testid="assistant-card">
+        {body.length > 0 ? body : null}
+      </ConfigPageSection>
     );
   };
 
@@ -749,38 +766,39 @@ export const AgentDelegationConfig: React.FC = () => {
     );
   };
 
-  const renderBody = () => {
-    if (!supported) {
-      return (
-        <ConfigPageRow label={t('agentDelegation.sectionTitle')} description={peerMode?.active
-          ? t('agentDelegation.peerUnsupported')
-          : t('agentDelegation.unsupported')}>
-          <span />
-        </ConfigPageRow>
-      );
-    }
-    if (loadError) {
-      return <ConfigRetryState message={t('loading.failed')} retryLabel={t('loading.retry')} onRetry={() => void load()} />;
-    }
-    if (!state) return <ConfigLoadingState label={t('loading.text')} />;
-    const unsupported = state.records.filter(record => !record.agent || !isAssistantAgentType(record.agent.agentType));
-    return <>
-      {state.assistants.length === 0 && (
-        <ConfigPageRow label={t('agentDelegation.noAssistants')} align="center"><span /></ConfigPageRow>
-      )}
-      {state.assistants.map(renderAssistant)}
-      {unsupported.map(renderUnsupported)}
-    </>;
-  };
-
-  return (
-    <ConfigPageSection
-      title={t('agentDelegation.sectionTitle')}
-      description={t('agentDelegation.sectionDescription')}
-    >
-      {renderBody()}
+  const renderNotice = (content: React.ReactNode) => (
+    <ConfigPageSection title={t('agentDelegation.sectionTitle')} description={t('agentDelegation.sectionDescription')}>
+      {content}
     </ConfigPageSection>
   );
+
+  if (!supported) {
+    return renderNotice(
+      <ConfigPageRow label={t('agentDelegation.sectionTitle')} description={peerMode?.active
+        ? t('agentDelegation.peerUnsupported')
+        : t('agentDelegation.unsupported')}>
+        <span />
+      </ConfigPageRow>,
+    );
+  }
+  if (loadError) {
+    return renderNotice(
+      <ConfigRetryState message={t('loading.failed')} retryLabel={t('loading.retry')} onRetry={() => void load()} />,
+    );
+  }
+  if (!state) return renderNotice(<ConfigLoadingState label={t('loading.text')} />);
+  if (state.assistants.length === 0) {
+    return renderNotice(<ConfigPageRow label={t('agentDelegation.noAssistants')} align="center"><span /></ConfigPageRow>);
+  }
+  const unsupported = state.records.filter(record => !record.agent || !isAssistantAgentType(record.agent.agentType));
+  return <>
+    {state.assistants.map(renderAssistant)}
+    {unsupported.length > 0 && (
+      <ConfigPageSection title={t('agentDelegation.unsupportedTitle')}>
+        {unsupported.map(renderUnsupported)}
+      </ConfigPageSection>
+    )}
+  </>;
 };
 
 export default AgentDelegationConfig;

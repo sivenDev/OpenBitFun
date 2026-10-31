@@ -134,8 +134,8 @@
     "save": "开放",
     "cancel": "取消",
     "grantConnection": "授权给其他账号",
-    "grantTitle": "授权给",
-    "grantDescription": "能做什么由这个连接的信任级别决定。",
+    "grantTitle": "选择账号",
+    "grantDescription": "可多选。能做什么由各账号的信任级别决定。",
     "noConnections": "还没有连接其他账号，先在下方配对。",
     "connectionLabel": "{{name}} · {{device}}",
     "connectionMissing": "连接 {{id}}，本设备上已找不到",
@@ -181,11 +181,13 @@
     },
     "openedToAccounts": "已开放",
     "closeConfirmTitle": "停止开放「{{name}}」？",
-    "closeConfirmDescription": "已授权的设备和账号将不能再把任务交给它。"
+    "closeConfirmDescription": "已授权的设备和账号将不能再把任务交给它。",
+    "grantedWith": "可以使用 · {{limits}}",
+    "unsupportedTitle": "无法使用的旧条目"
   },
   "connections": {
-    "sectionTitle": "与其他账号的连接",
-    "sectionDescription": "与其他账号的设备配对后，才能把助理授权给它。",
+    "sectionTitle": "账号授权",
+    "sectionDescription": "与其他账号的设备配对，再选择它能使用哪些助理。",
     "unsupported": "与其他账号的连接只能在本设备的桌面应用中管理。",
     "peerUnsupported": "请在已连接的设备上管理它的连接。",
     "signedOut": "登录账号后才能与其他账号的设备连接。",
@@ -262,7 +264,14 @@
     },
     "peerDevice": "{{name}} · {{device}}",
     "revokeConfirmTitle": "撤销与 {{name}} 的连接？",
-    "revokeConfirmDescription": "对方将不能再使用你授权的助理，之后需要重新配对。"
+    "revokeConfirmDescription": "对方将不能再使用你授权的助理，之后需要重新配对。",
+    "assistantsLabel": "可用助理：{{names}}",
+    "noAssistants": "还没有可用的助理",
+    "chooseAssistants": "选择助理",
+    "doneChoosing": "收起助理列表",
+    "noOpenAssistants": "还没有开放的助理，先在上方开放一个。",
+    "assistantFor": "让 {{name}} 使用",
+    "grantFailed": "无法更改可用助理"
   },
   "projectPermissions": {
     "description": "“始终允许”会保存为当前项目的记忆授权；静态项目规则会在工具执行前直接应用",

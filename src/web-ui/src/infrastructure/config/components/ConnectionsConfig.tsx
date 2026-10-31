@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input, Select } from '@openbitfun/ui';
+import { Button, Input, Select, Switch } from '@openbitfun/ui';
 import {
   connectionErrorReason,
   connectionsAPI,
@@ -8,7 +8,16 @@ import {
   type ConnectionSummary,
   type CreatedConnectionInvite,
 } from '@/infrastructure/api/service-api/ConnectionsAPI';
-import { delegationAPI, type DelegationTrust } from '@/infrastructure/api/service-api/DelegationAPI';
+import {
+  delegationAPI,
+  isAssistantAgentType,
+  type DelegationTrust,
+  type OpenAgent,
+} from '@/infrastructure/api/service-api/DelegationAPI';
+import {
+  notifyDelegationGrantsChanged,
+  onDelegationGrantsChanged,
+} from '@/infrastructure/api/service-api/delegationGrantChanges';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
@@ -28,7 +37,13 @@ type LoadState =
   | { kind: 'loading' }
   | { kind: 'signedOut' }
   | { kind: 'failed' }
-  | { kind: 'ready'; overview: ConnectionsOverview; trust: Record<string, DelegationTrust> };
+  | {
+    kind: 'ready';
+    overview: ConnectionsOverview;
+    trust: Record<string, DelegationTrust>;
+    /** Opened assistants, which accounts can be given. */
+    assistants: OpenAgent[];
+  };
 
 interface AcceptDraft {
   link: string;
@@ -44,7 +59,8 @@ function isSignedOut(error: unknown): boolean {
  * Connections of this device with devices of other accounts. Pairing uses
  * this device's own account identity, so it is managed only here: hosts
  * without the desktop commands and connected peer devices show an explicit
- * state. Nothing is shared over a connection until items are granted to it.
+ * state. Nothing is shared over a connection until assistants are granted
+ * to it, which each account's row offers next to its trust level.
  */
 export const ConnectionsConfig: React.FC = () => {
   const { t, formatDate } = useI18n('settings/runtime');
@@ -60,17 +76,24 @@ export const ConnectionsConfig: React.FC = () => {
   const [trusting, setTrusting] = useState<string | null>(null);
   /** The connection whose revocation the owner is confirming. */
   const [revoking, setRevoking] = useState<string | null>(null);
+  /** The connection whose assistants the owner is choosing. */
+  const [choosing, setChoosing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const activeRef = useRef(true);
 
   const load = useCallback(async () => {
     try {
-      const [overview, trust] = await Promise.all([
+      const [overview, trust, records] = await Promise.all([
         connectionsAPI.overview(),
         // Without trust records every connection is trusted normally.
         delegationAPI.listConnectionTrust().catch(() => ({} as Record<string, DelegationTrust>)),
+        // Without opened assistants there is nothing to grant.
+        delegationAPI.listOpenAgents().catch(() => []),
       ]);
-      if (activeRef.current) setState({ kind: 'ready', overview, trust });
+      const assistants = records
+        .map(record => record.agent)
+        .filter((agent): agent is OpenAgent => !!agent && isAssistantAgentType(agent.agentType));
+      if (activeRef.current) setState({ kind: 'ready', overview, trust, assistants });
     } catch (error) {
       if (!activeRef.current) return;
       if (isSignedOut(error)) {
@@ -88,6 +111,11 @@ export const ConnectionsConfig: React.FC = () => {
     return () => { activeRef.current = false; };
   }, [load, supported]);
 
+  // Assistants are opened and granted on their own cards too.
+  useEffect(() => onDelegationGrantsChanged(source => {
+    if (source !== activeRef && supported) void load();
+  }), [load, supported]);
+
   const describeError = (error: unknown): string => {
     const reason = connectionErrorReason(error);
     if (reason) return t(`connections.errors.${reason}`);
@@ -102,6 +130,7 @@ export const ConnectionsConfig: React.FC = () => {
     setActionError(null);
     try {
       await action();
+      notifyDelegationGrantsChanged(activeRef);
       await load();
     } catch (error) {
       log.error(failureLog, { error });
@@ -163,16 +192,26 @@ export const ConnectionsConfig: React.FC = () => {
     </>
   );
 
+  const grantedAssistants = (connectionId: string): OpenAgent[] => state.kind === 'ready'
+    ? state.assistants.filter(agent => agent.connections?.some(item => item.connectionId === connectionId))
+    : [];
+
   const renderConnection = (connection: ConnectionSummary) => {
     const trust = trustOf(connection.connectionId);
     const live = connection.status !== 'revoked';
     const settled = connection.status === 'active' && connection.usable && !connection.awaitingConfirmation;
+    const assistants = grantedAssistants(connection.connectionId);
     const details = [
-      // A working connection needs no status; anything else says what is wrong.
+      // A working connection says which assistants it can use; anything else says what is wrong.
       settled ? null : statusText(connection),
       settled || !connection.peerFingerprint
         ? null
         : t('connections.fingerprintLabel', { fingerprint: connection.peerFingerprint }),
+      settled
+        ? assistants.length > 0
+          ? t('connections.assistantsLabel', { names: assistants.map(agent => agent.displayName).join('、') })
+          : t('connections.noAssistants')
+        : null,
     ].filter(Boolean).join(' · ');
     return (
       <ConfigPageRow
@@ -192,24 +231,32 @@ export const ConnectionsConfig: React.FC = () => {
               {t('connections.confirm.open')}
             </Button>
           )}
+          {settled && choosing !== connection.connectionId && (
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              onClick={() => { setChoosing(connection.connectionId); setActionError(null); }}>
+              {t('connections.chooseAssistants')}
+            </Button>
+          )}
           {live && (
-            <Select
-              size="sm"
-              value={trusting === connection.connectionId ? 'full' : trust}
-              disabled={busy}
-              aria-label={t('connections.trust.label')}
-              options={[
-                { value: 'normal', label: t('connections.trust.normal') },
-                { value: 'full', label: t('connections.trust.full') },
-              ]}
-              onValueChange={value => {
-                const level = String(Array.isArray(value) ? value[0] : value);
-                setActionError(null);
-                if (level === 'full' && trust !== 'full') setTrusting(connection.connectionId);
-                else if (level === 'normal' && trusting === connection.connectionId) setTrusting(null);
-                else if (level === 'normal' && trust === 'full') setTrust(connection.connectionId, 'normal');
-              }}
-            />
+            <div className="openbitfun-runtime-settings__compact-select">
+              <Select
+                size="sm"
+                value={trusting === connection.connectionId ? 'full' : trust}
+                disabled={busy}
+                aria-label={t('connections.trust.label')}
+                options={[
+                  { value: 'normal', label: t('connections.trust.normal') },
+                  { value: 'full', label: t('connections.trust.full') },
+                ]}
+                onValueChange={value => {
+                  const level = String(Array.isArray(value) ? value[0] : value);
+                  setActionError(null);
+                  if (level === 'full' && trust !== 'full') setTrusting(connection.connectionId);
+                  else if (level === 'normal' && trusting === connection.connectionId) setTrusting(null);
+                  else if (level === 'normal' && trust === 'full') setTrust(connection.connectionId, 'normal');
+                }}
+              />
+            </div>
           )}
           {live && revoking !== connection.connectionId && (
             <Button type="button" size="sm" variant="outline" disabled={busy}
@@ -220,6 +267,40 @@ export const ConnectionsConfig: React.FC = () => {
         </div>
       </ConfigPageRow>
     );
+  };
+
+  /** Every opened assistant with a switch: on means this account can use it. */
+  const renderAssistantChoice = (connection: ConnectionSummary) => {
+    const assistants = state.kind === 'ready' ? state.assistants : [];
+    const name = connection.peerDisplayName;
+    return <>
+      {assistants.length === 0 && (
+        <ConfigPageRow label={t('connections.noOpenAssistants')} align="center"><span /></ConfigPageRow>
+      )}
+      {assistants.map(agent => {
+        const granted = agent.connections?.some(item => item.connectionId === connection.connectionId) ?? false;
+        return (
+          <ConfigPageRow key={agent.id} label={agent.displayName}
+            description={t('connections.assistantFor', { name })} align="center">
+            <Switch checked={granted} disabled={busy} aria-label={agent.displayName}
+              onChange={event => {
+                const grant = event.target.checked;
+                void run(async () => {
+                  if (grant) await delegationAPI.grantConnection(agent.id, connection.connectionId);
+                  else await delegationAPI.revokeConnection(agent.id, connection.connectionId);
+                }, 'Failed to change the assistants of a connection');
+              }} />
+          </ConfigPageRow>
+        );
+      })}
+      <ConfigPageRow label="" align="center" wide>
+        <div className="openbitfun-runtime-settings__status-actions">
+          <Button type="button" size="sm" variant="outline" onClick={() => setChoosing(null)}>
+            {t('connections.doneChoosing')}
+          </Button>
+        </div>
+      </ConfigPageRow>
+    </>;
   };
 
   const renderRevokeConfirm = (connection: ConnectionSummary) => (
@@ -360,6 +441,7 @@ export const ConnectionsConfig: React.FC = () => {
           : (
             <React.Fragment key={connection.connectionId}>
               {renderConnection(connection)}
+              {choosing === connection.connectionId && renderAssistantChoice(connection)}
               {trusting === connection.connectionId && renderTrustConfirm(connection)}
               {revoking === connection.connectionId && renderRevokeConfirm(connection)}
             </React.Fragment>
