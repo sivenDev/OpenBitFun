@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { openDelegatedTask } from '@/flow_chat/session-drivers/delegated/openDelegatedTask';
-import { Button, Checkbox, Input, Switch } from '@openbitfun/ui';
+import { Button, Checkbox, Input } from '@openbitfun/ui';
 import {
   ALL_SAME_ACCOUNT_DEVICES,
   ASSISTANT_AGENT_TYPE_PREFIX,
@@ -12,9 +11,6 @@ import {
   type ConnectionGrant,
   type ConnectionLimits,
   type DelegatedTask,
-  type DelegatedTaskStatus,
-  type DelegationAuditRecord,
-  type DelegationTrust,
   type LocalAssistant,
   type OpenAgent,
   type OpenAgentRecord,
@@ -37,7 +33,6 @@ import {
   readDelegatedTasks,
 } from '@/infrastructure/api/service-api/delegatedTaskReads';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
-import { permissionActionLabel } from '@/shared/utils/permissionActionLabels';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
 import { notificationService } from '@/shared/notification-system';
@@ -51,11 +46,13 @@ import {
 
 const log = createLogger('AgentDelegationConfig');
 
-/** Opening one assistant to devices of this account. */
+/**
+ * Opening one assistant of this device to devices of other accounts. Each
+ * chosen device gets its own grant.
+ */
 interface OpenDraft {
   agentType: string;
-  allDevices: boolean;
-  devices: string[];
+  connectionIds: string[];
   /** The owner confirmed that tasks may use external agents with this device's login. */
   usageConfirmed: boolean;
 }
@@ -67,34 +64,6 @@ interface LoadedState {
   /** Connections with devices of other accounts, revoked ones excluded. */
   connections: ConnectionSummary[];
   tasks: DelegatedTask[];
-  /** What the record kept about tasks from other accounts, by job. */
-  recorded: Record<string, RecordedTask>;
-}
-
-/** Facts the record keeps about a task from another account. */
-interface RecordedTask {
-  trust?: DelegationTrust;
-  externalAgents: string[];
-  /** Why the task failed or stopped, when it did. */
-  problem?: string;
-}
-
-/** Recorded tasks read; older ones stay in the record file. */
-const RECORD_LIMIT = 500;
-
-/** What the record says about each task: the last entry with a fact wins. */
-function recordedTasks(records: DelegationAuditRecord[]): Record<string, RecordedTask> {
-  const byJob: Record<string, RecordedTask> = {};
-  for (const { entry } of records) {
-    if (!entry) continue;
-    const task = byJob[entry.jobId] ?? (byJob[entry.jobId] = { externalAgents: [] });
-    if (entry.trust) task.trust = entry.trust;
-    for (const agent of entry.externalAgents ?? []) {
-      if (!task.externalAgents.includes(agent)) task.externalAgents.push(agent);
-    }
-    if (entry.event === 'finished' && entry.state !== 'succeeded' && entry.detail) task.problem = entry.detail;
-  }
-  return byJob;
 }
 
 /** Limits as typed; empty means no limit. */
@@ -103,8 +72,8 @@ interface LimitsDraft {
   maxMinutes: string;
 }
 
-/** Granting one opened assistant to one or more connections. */
-interface GrantDraft extends LimitsDraft {
+/** Granting one opened assistant to more devices of other accounts, each on its own. */
+interface GrantDraft {
   agentId: string;
   connectionIds: string[];
 }
@@ -115,16 +84,9 @@ interface EditLimitsDraft extends LimitsDraft {
   connectionId: string;
 }
 
-const NO_LIMITS: LimitsDraft = { maxJobs: '', maxMinutes: '' };
-
-/** Task states after which nothing more happens. */
-const FINISHED_TASK_STATES = new Set(['succeeded', 'failed', 'cancelled']);
 
 /** How often tasks are read while one waits for the owner. */
 const WAITING_TASKS_REFRESH_MS = 5_000;
-
-/** Finished tasks still listed under an assistant; older ones are in the record. */
-const RECENT_FINISHED_TASKS = 3;
 
 function parseLimit(value: string, max: number): number | undefined | null {
   const trimmed = value.trim();
@@ -142,28 +104,10 @@ function draftLimits(draft: LimitsDraft): ConnectionLimits | null {
   return { maxConcurrentJobs, maxJobMinutes };
 }
 
-function hasLimits(limits: ConnectionLimits): boolean {
-  return limits.maxConcurrentJobs !== undefined || limits.maxJobMinutes !== undefined;
-}
-
 /** The open-agent id other devices call an assistant by, from its directory. */
 function openAgentIdFor(agentType: string): string {
   return agentType.slice(ASSISTANT_AGENT_TYPE_PREFIX.length).toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'assistant';
-}
-
-/**
- * A prompt's resource, relative to the assistant's folder when it lies inside
- * it. The runner may report the folder through a symlink-resolved path
- * (`/private/var` for `/var` on macOS), so both spellings are accepted.
- */
-function assistantRelative(resource: string, root: string): string | null {
-  const normalize = (path: string) => path.replace(/[\\/]+$/, '').replace(/^\/private(?=\/)/, '');
-  const base = normalize(root);
-  const path = normalize(resource);
-  if (path === base) return '';
-  if (path.startsWith(`${base}/`) || path.startsWith(`${base}\\`)) return path.slice(base.length + 1);
-  return null;
 }
 
 function errorMessage(error: unknown): string {
@@ -171,16 +115,15 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * The owner's assistants as other devices and accounts can use them: which
- * assistants are open, to whom, and the tasks they sent, each its own session
- * of that assistant that the owner reviews and approves here. The list is
+ * The owner's assistants as other accounts can use them: which assistants are
+ * open, to which devices, and how many tasks they sent. Each task is its own
+ * session under the assistant, where the owner reads and approves it. The list is
  * device-local, so it is managed only on the device that owns it: hosts
  * without the desktop commands and connected peer devices show an explicit
  * state.
  */
 export const AgentDelegationConfig: React.FC = () => {
   const { t } = useI18n('settings/runtime');
-  const { t: tChat } = useI18n('flow-chat');
   const peerMode = usePeerDeviceModeOptional()?.peerMode;
   const workspaces = useOptionalWorkspaceContext();
   const supported = isTauriRuntime() && peerMode?.active !== true;
@@ -191,12 +134,6 @@ export const AgentDelegationConfig: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [grantDraft, setGrantDraft] = useState<GrantDraft | null>(null);
   const [limitsDraft, setLimitsDraft] = useState<EditLimitsDraft | null>(null);
-  /** Prompts of the tasks that wait for the owner, by job. */
-  const [statuses, setStatuses] = useState<Record<string, DelegatedTaskStatus>>({});
-  /** Prompts answered here (`jobId:requestId`); the runner may list them until it consumes the answer. */
-  const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set());
-  /** Assistants whose earlier finished tasks the owner asked to see. */
-  const [showEarlier, setShowEarlier] = useState<ReadonlySet<string>>(new Set());
   /** The opened assistant whose closing the owner is confirming. */
   const [closing, setClosing] = useState<string | null>(null);
   const activeRef = useRef(true);
@@ -204,23 +141,18 @@ export const AgentDelegationConfig: React.FC = () => {
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const [assistants, records, devices, currentDevice, connections, tasks, audit] = await Promise.all([
+      const [assistants, records, devices, currentDevice, connections, tasks] = await Promise.all([
         delegationAPI.listAssistants(),
         delegationAPI.listOpenAgents(),
-        // Devices are optional: without an account the owner can still allow all devices.
+        // Devices only name what an earlier build opened to this account's devices.
         remoteConnectAPI.accountListDevices().catch(() => [] as AccountDeviceInfo[]),
         remoteConnectAPI.getDeviceInfo().catch(() => null),
-        // Connections are optional: without them only same-account devices are offered.
+        // Connections are optional: without them there is nobody to open an assistant to.
         connectionsAPI.overview()
           .then(overview => overview.connections.filter(connection => connection.status !== 'revoked'))
           .catch(() => [] as ConnectionSummary[]),
         // Tasks are optional: without the dispatch runner nothing could have been delegated.
         readDelegatedTasks({ fresh: true }),
-        // The record is optional: without it tasks show what the runner lists.
-        delegationAPI.listAudit(RECORD_LIMIT).catch((error: unknown) => {
-          log.warn('Failed to read the delegation record', { error });
-          return [] as DelegationAuditRecord[];
-        }),
       ]);
       if (!activeRef.current) return;
       setState({
@@ -229,7 +161,6 @@ export const AgentDelegationConfig: React.FC = () => {
         devices: devices.filter(device => device.device_id !== currentDevice?.device_id),
         connections,
         tasks,
-        recorded: recordedTasks(audit),
       });
     } catch (error) {
       log.error('Failed to load opened assistants', { error });
@@ -248,8 +179,8 @@ export const AgentDelegationConfig: React.FC = () => {
     if (source !== activeRef && supported) void load();
   }), [load, supported]);
 
-  // Tasks arrive while the page stays open, so they are read again on a timer,
-  // and promptly while one waits for the owner.
+  // Tasks arrive while the page stays open, so their counts are read again on
+  // a timer, and promptly while one waits for the owner.
   const anyWaiting = state?.tasks.some(task => task.pendingPermissionCount > 0) ?? false;
   useEffect(() => {
     if (!supported) return undefined;
@@ -297,32 +228,6 @@ export const AgentDelegationConfig: React.FC = () => {
     return `${jobs} · ${minutes}`;
   };
 
-  const describeSource = (task: DelegatedTask): string => {
-    const { source } = task;
-    if (source.kind === 'connection') {
-      return source.accountName
-        ? t('agentDelegation.tasks.fromAccount', {
-          name: source.accountName,
-          device: source.deviceName ?? source.deviceId ?? '',
-        })
-        : t('agentDelegation.tasks.fromConnection', { id: source.connectionId ?? '' });
-    }
-    return t('agentDelegation.tasks.fromDevice', {
-      device: source.deviceName ?? source.deviceId ?? t('agentDelegation.tasks.unknownDevice'),
-    });
-  };
-
-  const describeState = (taskState: string): string => {
-    switch (taskState) {
-      case 'queued': return t('agentDelegation.tasks.state.queued');
-      case 'running': return t('shared:statuses.running');
-      case 'succeeded': return t('shared:statuses.done');
-      case 'failed': return t('shared:statuses.failed');
-      case 'cancelled': return t('shared:statuses.cancelled');
-      default: return taskState;
-    }
-  };
-
   /** Runs an owner action, reports its failure, and reloads the page. */
   const run = async (action: () => Promise<void>, failureLog: string, failureCopy: string) => {
     setBusy(true);
@@ -350,9 +255,12 @@ export const AgentDelegationConfig: React.FC = () => {
         agentType: draft.agentType,
         displayName: assistantName(assistant),
         description: null,
-        sameAccountDevices: draft.allDevices ? [ALL_SAME_ACCOUNT_DEVICES] : draft.devices,
+        sameAccountDevices: [],
         usageConfirmed: draft.usageConfirmed,
       });
+      for (const connectionId of draft.connectionIds) {
+        await delegationAPI.grantConnection(openAgentIdFor(draft.agentType), connectionId);
+      }
       if (!activeRef.current) return;
       notificationService.success(t('agentDelegation.saved'), { duration: 2000 });
       notifyDelegationGrantsChanged(activeRef);
@@ -368,14 +276,9 @@ export const AgentDelegationConfig: React.FC = () => {
 
   const grant = () => {
     if (!grantDraft) return;
-    const limits = draftLimits(grantDraft);
-    if (!limits) return;
     void run(async () => {
       for (const connectionId of grantDraft.connectionIds) {
         await delegationAPI.grantConnection(grantDraft.agentId, connectionId);
-        if (hasLimits(limits)) {
-          await delegationAPI.setConnectionLimits(grantDraft.agentId, connectionId, limits);
-        }
       }
       notificationService.success(t('agentDelegation.granted'), { duration: 2000 });
       if (activeRef.current) setGrantDraft(null);
@@ -391,33 +294,6 @@ export const AgentDelegationConfig: React.FC = () => {
       if (activeRef.current) setLimitsDraft(null);
     }, 'Failed to set connection limits', t('agentDelegation.limits.saveFailed'));
   };
-
-  /** Reads the prompts of every task that waits for the owner. */
-  const loadStatuses = useCallback(async (tasks: DelegatedTask[]) => {
-    const waiting = tasks.filter(task => task.pendingPermissionCount > 0);
-    const loaded = await Promise.all(waiting.map(task => delegationAPI.taskStatus(task.jobId)
-      .then(status => [task.jobId, status] as const)
-      .catch((error: unknown) => {
-        log.warn('Failed to load delegated task', { error });
-        return null;
-      })));
-    if (!activeRef.current) return;
-    setStatuses(Object.fromEntries(loaded.filter(entry => entry !== null)));
-  }, []);
-
-  const tasks = state?.tasks;
-  useEffect(() => {
-    if (tasks) void loadStatuses(tasks);
-  }, [loadStatuses, tasks]);
-
-  const answer = (jobId: string, requestId: string, reply: 'once' | 'reject') => void run(async () => {
-    await delegationAPI.answerTask(jobId, requestId, reply);
-    if (activeRef.current) setAnswered(current => new Set(current).add(`${jobId}:${requestId}`));
-  }, 'Failed to answer delegated task prompt', t('agentDelegation.tasks.answerFailed'));
-
-  /** What a task still waits for: its read prompts without those answered here. */
-  const openPrompts = (task: DelegatedTask) => (statuses[task.jobId]?.pendingPermissions ?? [])
-    .filter(prompt => !answered.has(`${task.jobId}:${prompt.requestId}`));
 
   /** Inputs for the two optional limits of one grant. */
   const renderLimitInputs = (value: LimitsDraft, onChange: (next: LimitsDraft) => void) => {
@@ -444,38 +320,43 @@ export const AgentDelegationConfig: React.FC = () => {
   const grantCandidates = (granted: string[]): ConnectionSummary[] => (state?.connections ?? [])
     .filter(connection => connection.usable && !granted.includes(connection.connectionId));
 
+  /** One checkbox per device of another account; each checked device gets its own grant. */
+  const renderDeviceChoice = (
+    candidates: ConnectionSummary[],
+    chosen: string[],
+    onChange: (connectionIds: string[]) => void,
+  ) => (
+    <ConfigPageRow balanced label={t('agentDelegation.grantTitle')}
+      description={candidates.length === 0 ? t('agentDelegation.noConnections') : t('agentDelegation.grantDescription')}>
+      {candidates.length > 0 ? (
+        <div className="openbitfun-runtime-settings__choice-list">
+          {candidates.map(connection => (
+            <Checkbox key={connection.connectionId} disabled={busy}
+              checked={chosen.includes(connection.connectionId)}
+              label={describeConnection(connection.connectionId)}
+              onChange={event => onChange(event.target.checked
+                ? [...chosen.filter(id => id !== connection.connectionId), connection.connectionId]
+                : chosen.filter(id => id !== connection.connectionId))} />
+          ))}
+        </div>
+      ) : <span />}
+    </ConfigPageRow>
+  );
+
   const renderGrantPanel = (agentId: string, granted: string[]) => {
     if (!state || grantDraft?.agentId !== agentId) return null;
     const candidates = grantCandidates(granted);
-    const canGrant = grantDraft.connectionIds.length > 0 && draftLimits(grantDraft) !== null;
     return <>
-      <ConfigPageRow balanced label={t('agentDelegation.grantTitle')}
-        description={candidates.length === 0 ? t('agentDelegation.noConnections') : t('agentDelegation.grantDescription')}>
-        {candidates.length > 0 ? (
-          <div className="openbitfun-runtime-settings__choice-list">
-            {candidates.map(connection => (
-              <Checkbox key={connection.connectionId} disabled={busy}
-                checked={grantDraft.connectionIds.includes(connection.connectionId)}
-                label={describeConnection(connection.connectionId)}
-                onChange={event => setGrantDraft(current => current && ({
-                  ...current,
-                  connectionIds: event.target.checked
-                    ? [...current.connectionIds.filter(id => id !== connection.connectionId), connection.connectionId]
-                    : current.connectionIds.filter(id => id !== connection.connectionId),
-                }))} />
-            ))}
-          </div>
-        ) : <span />}
-      </ConfigPageRow>
-      {candidates.length > 0 && renderLimitInputs(grantDraft,
-        next => setGrantDraft(current => current && ({ ...current, ...next })))}
+      {renderDeviceChoice(candidates, grantDraft.connectionIds,
+        connectionIds => setGrantDraft(current => current && ({ ...current, connectionIds })))}
       <ConfigPageRow label="" align="center" wide>
         <div className="openbitfun-runtime-settings__status-actions">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setGrantDraft(null)}>
             {t('agentDelegation.cancel')}
           </Button>
           {candidates.length > 0 && (
-            <Button type="button" size="sm" variant="primary" disabled={busy || !canGrant} onClick={grant}>
+            <Button type="button" size="sm" variant="primary"
+              disabled={busy || grantDraft.connectionIds.length === 0} onClick={grant}>
               {t('agentDelegation.grant')}
             </Button>
           )}
@@ -531,132 +412,20 @@ export const AgentDelegationConfig: React.FC = () => {
     );
   });
 
-  const describeResource = (resource: string, root: string): string => {
-    const relative = assistantRelative(resource, root);
-    if (relative === null) return resource;
-    return relative === '' ? t('agentDelegation.tasks.assistantFolder') : relative;
-  };
-
-  const renderPrompts = (task: DelegatedTask, root: string) => openPrompts(task).map(prompt => (
-    <ConfigPageRow key={prompt.requestId} balanced
-      label={permissionActionLabel(prompt.action, tChat)}
-      description={prompt.resources.map(resource => describeResource(resource, root)).join('\n')}
-      align="center">
-      <div className="openbitfun-runtime-settings__status-actions">
-        <Button type="button" size="sm" variant="outline" disabled={busy}
-          onClick={() => answer(task.jobId, prompt.requestId, 'reject')}>
-          {t('agentDelegation.tasks.reject')}
-        </Button>
-        <Button type="button" size="sm" variant="primary" disabled={busy}
-          onClick={() => answer(task.jobId, prompt.requestId, 'once')}>
-          {t('agentDelegation.tasks.allowOnce')}
-        </Button>
-      </div>
-    </ConfigPageRow>
-  ));
-
-  /** Tasks still running or waiting, then those that finished, the last few unless asked for all. */
-  const splitTasks = (assistant: LocalAssistant) => {
-    const own = (state?.tasks ?? []).filter(task => task.agentType === assistant.agentType);
-    const active = own.filter(task => !FINISHED_TASK_STATES.has(task.state) || task.pendingPermissionCount > 0);
-    const finished = own.filter(task => !active.includes(task));
-    const shown = showEarlier.has(assistant.agentType) ? finished : finished.slice(0, RECENT_FINISHED_TASKS);
-    return { shown: [...active, ...shown], hidden: finished.length - shown.length };
-  };
-
-  /** Trust, external agents and any failure the record kept for a task from another account. */
-  const describeRecorded = (task: DelegatedTask): string[] => {
-    const recorded = state?.recorded[task.jobId];
-    if (!recorded) return [];
-    return [
-      recorded.trust === 'full' ? t('agentDelegation.tasks.trustFull')
-        : recorded.trust === 'normal' ? t('agentDelegation.tasks.trustNormal') : null,
-      recorded.externalAgents.length
-        ? t('agentDelegation.tasks.externalAgents', { agents: recorded.externalAgents.join(', ') })
-        : null,
-      recorded.problem ?? null,
-    ].filter((item): item is string => item !== null);
-  };
-
-  const openTask = async (task: DelegatedTask, assistantRoot: string) => {
-    try {
-      if (!await openDelegatedTask(task, assistantRoot)) notificationService.error(t('agentDelegation.tasks.openFailed'));
-    } catch (error) {
-      log.warn('Failed to open a delegated task', { jobId: task.jobId, error });
-      notificationService.error(t('agentDelegation.tasks.openFailed'));
-    }
-  };
-
-  const renderTasks = (assistant: LocalAssistant) => {
-    const { shown, hidden } = splitTasks(assistant);
-    return <>
-      {shown.map(task => {
-        const waitingCount = statuses[task.jobId] ? openPrompts(task).length : task.pendingPermissionCount;
-        const waiting = waitingCount > 0
-          ? t('agentDelegation.tasks.waiting', { count: String(waitingCount) })
-          : null;
-        return (
-          <React.Fragment key={task.jobId}>
-            <ConfigPageRow
-              label={task.title || t('agentDelegation.tasks.untitled')}
-              description={[describeSource(task), describeState(task.state), ...describeRecorded(task), waiting]
-                .filter(Boolean).join(' · ')}
-              align="center">
-              {task.sessionId ? (
-                <Button type="button" size="sm" variant="outline"
-                  onClick={() => { void openTask(task, assistant.rootPath); }}>
-                  {t('agentDelegation.tasks.open')}
-                </Button>
-              ) : <span />}
-            </ConfigPageRow>
-            {renderPrompts(task, assistant.rootPath)}
-          </React.Fragment>
-        );
-      })}
-      {hidden > 0 && (
-        <ConfigPageRow label="" align="center" wide>
-          <div className="openbitfun-runtime-settings__status-actions">
-            <Button type="button" size="sm" variant="outline"
-              onClick={() => setShowEarlier(current => new Set(current).add(assistant.agentType))}>
-              {t('agentDelegation.tasks.showEarlier', { count: String(hidden) })}
-            </Button>
-          </div>
-        </ConfigPageRow>
-      )}
-    </>;
-  };
-
   const renderOpenForm = (assistant: LocalAssistant) => {
     if (!state || draft?.agentType !== assistant.agentType) return null;
-    const canSave = (draft.allDevices || draft.devices.length > 0 || state.connections.length > 0)
-      && draft.usageConfirmed;
+    const candidates = grantCandidates([]);
+    const canSave = draft.connectionIds.length > 0 && draft.usageConfirmed;
     return <>
-      <ConfigPageRow label={t('agentDelegation.allDevices')} align="center">
-        <Switch checked={draft.allDevices} disabled={busy}
-          onChange={event => setDraft({ ...draft, allDevices: event.target.checked })} />
-      </ConfigPageRow>
-      {!draft.allDevices && (
-        <ConfigPageRow label={t('agentDelegation.devices')}
-          description={state.devices.length === 0 ? t('agentDelegation.noDevices') : undefined}>
-          <div>
-            {state.devices.map(device => (
-              <Checkbox key={device.device_id} checked={draft.devices.includes(device.device_id)} disabled={busy}
-                label={device.device_name || device.device_id}
-                onChange={event => setDraft(current => current && ({
-                  ...current,
-                  devices: event.target.checked
-                    ? [...current.devices.filter(item => item !== device.device_id), device.device_id]
-                    : current.devices.filter(item => item !== device.device_id),
-                }))} />
-            ))}
-          </div>
+      {renderDeviceChoice(candidates, draft.connectionIds,
+        connectionIds => setDraft(current => current && ({ ...current, connectionIds })))}
+      {candidates.length > 0 && (
+        <ConfigPageRow label={t('agentDelegation.usageNoticeTitle')} description={t('agentDelegation.usageNotice')}>
+          <Checkbox checked={draft.usageConfirmed} disabled={busy}
+            label={t('agentDelegation.usageConfirm')}
+            onChange={event => setDraft({ ...draft, usageConfirmed: event.target.checked })} />
         </ConfigPageRow>
       )}
-      <ConfigPageRow label={t('agentDelegation.usageNoticeTitle')} description={t('agentDelegation.usageNotice')}>
-        <Checkbox checked={draft.usageConfirmed} disabled={busy}
-          label={t('agentDelegation.usageConfirm')}
-          onChange={event => setDraft({ ...draft, usageConfirmed: event.target.checked })} />
-      </ConfigPageRow>
       {draftError && <div role="alert">{draftError}</div>}
       <ConfigPageRow label="" align="center" wide>
         <div className="openbitfun-runtime-settings__status-actions">
@@ -664,9 +433,12 @@ export const AgentDelegationConfig: React.FC = () => {
             onClick={() => { setDraft(null); setDraftError(null); }}>
             {t('agentDelegation.cancel')}
           </Button>
-          <Button type="button" size="sm" variant="primary" disabled={busy || !canSave} onClick={() => void saveDraft()}>
-            {t('agentDelegation.save')}
-          </Button>
+          {candidates.length > 0 && (
+            <Button type="button" size="sm" variant="primary" disabled={busy || !canSave}
+              onClick={() => void saveDraft()}>
+              {t('agentDelegation.save')}
+            </Button>
+          )}
         </div>
       </ConfigPageRow>
     </>;
@@ -690,23 +462,38 @@ export const AgentDelegationConfig: React.FC = () => {
     </ConfigPageRow>
   );
 
-  /** One card per assistant: who can use it, then the tasks it runs for them. */
+  /** How many tasks an assistant ran for others, and how many wait for the owner. */
+  const describeTasks = (assistant: LocalAssistant): string | null => {
+    const own = (state?.tasks ?? []).filter(task => task.agentType === assistant.agentType);
+    if (own.length === 0) return null;
+    const waiting = own.filter(task => task.pendingPermissionCount > 0).length;
+    return [
+      t('agentDelegation.taskCount', { count: String(own.length) }),
+      waiting > 0 ? t('agentDelegation.tasksWaiting', { count: String(waiting) }) : null,
+    ].filter(Boolean).join(' · ');
+  };
+
+  /** One card per assistant: which devices can use it; its tasks are sessions under it. */
   const renderAssistant = (assistant: LocalAssistant) => {
     const agent = state?.records
       .map(record => record.agent)
       .find((item): item is OpenAgent => item?.agentType === assistant.agentType);
     const granted = agent?.connections?.map(item => item.connectionId) ?? [];
     const name = assistantName(assistant);
-    const description = !agent
-      ? t('agentDelegation.notOpened')
-      : agent.sameAccountDevices.length === 0
-        ? t('agentDelegation.openedToAccounts')
-        : t('agentDelegation.openedTo', { devices: describeDevices(agent) });
+    const description = [
+      !agent
+        ? t('agentDelegation.notOpened')
+        // An earlier build could open an assistant to this account's devices.
+        : agent.sameAccountDevices.length === 0
+          ? t('agentDelegation.openedToAccounts')
+          : t('agentDelegation.openedTo', { devices: describeDevices(agent) }),
+      describeTasks(assistant),
+    ].filter(Boolean).join(' · ');
     const actions = (
       <div className="openbitfun-runtime-settings__status-actions">
         {agent && grantDraft?.agentId !== agent.id && (
           <Button type="button" size="sm" variant="outline" disabled={busy}
-            onClick={() => setGrantDraft({ agentId: agent.id, connectionIds: [], ...NO_LIMITS })}>
+            onClick={() => setGrantDraft({ agentId: agent.id, connectionIds: [] })}>
             {t('agentDelegation.grantConnection')}
           </Button>
         )}
@@ -720,8 +507,7 @@ export const AgentDelegationConfig: React.FC = () => {
           <Button type="button" size="sm" variant="outline" disabled={busy || draft !== null}
             onClick={() => setDraft({
               agentType: assistant.agentType,
-              allDevices: false,
-              devices: [],
+              connectionIds: [],
               usageConfirmed: false,
             })}>
             {t('agentDelegation.open')}
@@ -735,7 +521,6 @@ export const AgentDelegationConfig: React.FC = () => {
       agent ? <React.Fragment key="grants">{renderGrants(agent)}</React.Fragment> : null,
       agent && grantDraft?.agentId === agent.id
         ? <React.Fragment key="grant">{renderGrantPanel(agent.id, granted)}</React.Fragment> : null,
-      splitTasks(assistant).shown.length > 0 ? <React.Fragment key="tasks">{renderTasks(assistant)}</React.Fragment> : null,
     ].filter(Boolean);
     return (
       <ConfigPageSection key={assistant.agentType} title={name} description={description} extra={actions}

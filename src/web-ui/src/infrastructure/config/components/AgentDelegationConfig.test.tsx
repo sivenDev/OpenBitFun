@@ -6,7 +6,6 @@ import { AgentDelegationConfig } from './AgentDelegationConfig';
 import { DELEGATED_TASKS_REFRESH_MS } from '@/infrastructure/api/service-api/delegatedTaskReads';
 
 const mocks = vi.hoisted(() => ({
-  openTask: vi.fn(),
   list: vi.fn(),
   open: vi.fn(),
   close: vi.fn(),
@@ -16,9 +15,6 @@ const mocks = vi.hoisted(() => ({
   overview: vi.fn(),
   assistants: vi.fn(),
   tasks: vi.fn(),
-  status: vi.fn(),
-  answer: vi.fn(),
-  audit: vi.fn(),
   devices: vi.fn(),
   deviceInfo: vi.fn(),
   tauri: vi.fn(),
@@ -37,17 +33,13 @@ const translate = (key: string, values?: Record<string, string>) => {
   }
   return values ? `${key}:${Object.values(values).join('|')}` : key;
 };
-// Action labels come from the chat namespace; they are echoed as keys.
-vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
-  useI18n: (namespace: string) => ({ t: namespace === 'flow-chat' ? (key: string) => key : translate }),
-}));
+vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({ useI18n: () => ({ t: translate }) }));
 vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
   delegationAPI: {
     listOpenAgents: mocks.list, openAgent: mocks.open, closeAgent: mocks.close,
     grantConnection: mocks.grant, revokeConnection: mocks.revoke, setConnectionLimits: mocks.limits,
-    listAssistants: mocks.assistants, listTasks: mocks.tasks, taskStatus: mocks.status, answerTask: mocks.answer,
-    listAudit: mocks.audit,
+    listAssistants: mocks.assistants, listTasks: mocks.tasks,
   },
 }));
 vi.mock('@/infrastructure/api/service-api/ConnectionsAPI', () => ({ connectionsAPI: { overview: mocks.overview } }));
@@ -60,7 +52,6 @@ vi.mock('@/infrastructure/contexts/WorkspaceContext', () => ({
 vi.mock('@/infrastructure/api/service-api/RemoteConnectAPI', () => ({
   remoteConnectAPI: { accountListDevices: mocks.devices, getDeviceInfo: mocks.deviceInfo },
 }));
-vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ openDelegatedTask: mocks.openTask }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
 vi.mock('@/shared/notification-system', () => ({ notificationService: { success: vi.fn(), error: vi.fn() } }));
@@ -78,7 +69,6 @@ vi.mock('./common', () => ({
 vi.mock('@openbitfun/ui', () => ({
   Button: ({ variant: _variant, size: _size, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) => <button {...props} />,
   Input: ({ size: _size, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { size?: string }) => <input {...props} />,
-  Switch: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input type="checkbox" data-switch {...props} />,
   Checkbox: ({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) =>
     <label><input type="checkbox" {...props} />{label}</label>,
   Select: ({ value, options, onValueChange }: { value: string; options: { value: string; label: string }[]; onValueChange: (value: string) => void }) =>
@@ -99,8 +89,6 @@ describe('AgentDelegationConfig', () => {
       { agentType: 'assistant:workspace-work', assistantId: 'work', rootPath: '/home/me/personal_assistant/workspace-work' },
     ]);
     mocks.tasks.mockResolvedValue([]);
-    mocks.status.mockResolvedValue({ state: 'running', cursor: 0, pendingPermissions: [] });
-    mocks.audit.mockResolvedValue([]);
     mocks.devices.mockResolvedValue([
       { device_id: 'this-device', device_name: 'This Mac', online: true, last_seen_at: null },
       { device_id: 'laptop', device_name: 'Laptop', online: true, last_seen_at: null },
@@ -149,13 +137,25 @@ describe('AgentDelegationConfig', () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
-  it('opens an assistant only after the owner confirms external agent use', async () => {
+  it('opens an assistant to devices of other accounts, each on its own, after the owner confirms external agent use', async () => {
+    mocks.overview.mockResolvedValue({
+      connections: [connection('conn-1'), connection('conn-2'), connection('conn-3', { status: 'pending', usable: false })],
+    });
     mocks.open.mockResolvedValue({});
+    mocks.grant.mockResolvedValue({});
     await render();
     await click('agentDelegation.open');
-    // The current device is never offered as a delegation source.
-    expect(container.textContent).not.toContain('This Mac');
-    await check('Laptop');
+    // Opening goes straight to the devices of other accounts; this account's devices are not offered.
+    expect(container.textContent).not.toContain('Laptop');
+    expect(container.textContent).not.toContain('agentDelegation.allDevices');
+    const offered = Array.from(container.querySelectorAll('label')).map(node => node.textContent)
+      .filter(text => text?.startsWith('agentDelegation.connectionLabel'));
+    expect(offered).toEqual([
+      'agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1',
+      'agentDelegation.connectionLabel:Peer conn-2|user-conn-2|Desk conn-2',
+    ]);
+    await check('agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1');
+    await check('agentDelegation.connectionLabel:Peer conn-2|user-conn-2|Desk conn-2');
     expect(button('agentDelegation.save')!.disabled).toBe(true);
     await check('agentDelegation.usageConfirm');
     expect(button('agentDelegation.save')!.disabled).toBe(false);
@@ -165,9 +165,17 @@ describe('AgentDelegationConfig', () => {
       agentType: 'assistant:workspace',
       displayName: 'Nova',
       description: null,
-      sameAccountDevices: ['laptop'],
+      sameAccountDevices: [],
       usageConfirmed: true,
     });
+    expect(mocks.grant.mock.calls).toEqual([['workspace', 'conn-1'], ['workspace', 'conn-2']]);
+  });
+
+  it('cannot open an assistant before a device of another account is paired', async () => {
+    await render();
+    await click('agentDelegation.open');
+    expect(container.textContent).toContain('agentDelegation.noConnections');
+    expect(button('agentDelegation.save')).toBeUndefined();
   });
 
   it('marks entries of earlier builds as no longer supported and deletes them', async () => {
@@ -187,7 +195,7 @@ describe('AgentDelegationConfig', () => {
     expect(mocks.close).toHaveBeenCalledWith('future');
   });
 
-  it('grants an opened assistant to a usable connection, with limits, and withdraws it', async () => {
+  it('grants an opened assistant to more devices, each on its own, and withdraws it', async () => {
     mocks.overview.mockResolvedValue({
       connections: [
         connection('conn-1'),
@@ -199,7 +207,6 @@ describe('AgentDelegationConfig', () => {
       .mockResolvedValueOnce([opened()])
       .mockResolvedValue([opened(['conn-1', 'conn-gone'])]);
     mocks.grant.mockResolvedValue({});
-    mocks.limits.mockResolvedValue({});
     await render();
     await click('agentDelegation.grantConnection');
     // Only usable connections are offered, and nothing is chosen for the owner.
@@ -208,120 +215,42 @@ describe('AgentDelegationConfig', () => {
     expect(offered).toEqual(['agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1']);
     expect(button('agentDelegation.grant')!.disabled).toBe(true);
     await check('agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1');
-    await typeInto('agentDelegation.limits.jobsLabel', '0');
-    expect(button('agentDelegation.grant')!.disabled).toBe(true);
-    await typeInto('agentDelegation.limits.jobsLabel', '2');
     await click('agentDelegation.grant');
     expect(mocks.grant).toHaveBeenCalledWith('workspace', 'conn-1');
-    expect(mocks.limits).toHaveBeenCalledWith('workspace', 'conn-1', { maxConcurrentJobs: 2, maxJobMinutes: undefined });
 
     // Each grant is named by whom it goes to.
     expect(container.querySelector('[data-row="agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1"]')!.textContent)
       .toContain('agentDelegation.grantedWith:agentDelegation.limits.anyJobs');
     expect(container.querySelector('[data-row="agentDelegation.connectionMissing:conn-gone"]')).not.toBeNull();
+    // Limits are set per device, after it is granted.
+    mocks.limits.mockResolvedValue({});
+    await click('agentDelegation.limits.edit');
+    await typeInto('agentDelegation.limits.jobsLabel', '0');
+    expect(button('agentDelegation.limits.save')!.disabled).toBe(true);
+    await typeInto('agentDelegation.limits.jobsLabel', '2');
+    await click('agentDelegation.limits.save');
+    expect(mocks.limits).toHaveBeenCalledWith('workspace', 'conn-1', { maxConcurrentJobs: 2, maxJobMinutes: undefined });
     mocks.revoke.mockResolvedValue(true);
     await click('agentDelegation.withdraw');
     expect(mocks.revoke).toHaveBeenCalledWith('workspace', 'conn-1');
   });
 
-  it('lists outside tasks under their assistant with their source, and approves one action at a time', async () => {
+  it('counts outside tasks on their assistant and leaves the sessions to the assistant', async () => {
     mocks.list.mockResolvedValue([opened()]);
-    mocks.tasks.mockResolvedValue([
-      {
-        jobId: 'delegation-1', sessionId: 's1', state: 'running', title: 'Plan the trip',
-        openAgentId: 'workspace', agentType: 'assistant:workspace', pendingPermissionCount: 3,
-        source: { kind: 'connection', connectionId: 'conn-1', accountName: 'Bea', deviceName: 'B1' },
-      },
-      {
-        jobId: 'delegation-2', sessionId: 's2', state: 'succeeded', title: 'Summarize notes',
-        openAgentId: 'work', agentType: 'assistant:workspace-work', pendingPermissionCount: 0,
-        source: { kind: 'device', deviceId: 'laptop', deviceName: 'Laptop' },
-      },
-    ]);
-    mocks.status.mockResolvedValue({
-      state: 'running', cursor: 3,
-      pendingPermissions: [
-        { requestId: 'req-1', action: 'bash', resources: ['ls -la'] },
-        // Paths inside the assistant's folder are shown relative to it, however the runner spells the folder.
-        { requestId: 'req-2', action: 'read', resources: ['/private/home/me/personal_assistant/workspace/USER.md'] },
-        { requestId: 'req-3', action: 'external_directory', resources: ['/home/me/personal_assistant/workspace/'] },
-      ],
+    const task = (jobId: string, agentType: string, pendingPermissionCount = 0) => ({
+      jobId, sessionId: jobId, state: 'running', title: `Task ${jobId}`, openAgentId: 'workspace', agentType,
+      pendingPermissionCount, source: { kind: 'connection', connectionId: 'conn-1', accountName: 'Bea', deviceName: 'B1' },
     });
-    mocks.answer.mockResolvedValue(undefined);
-    await render();
-    const rows = Array.from(container.querySelectorAll('[data-row]')).map(node => node.getAttribute('data-row'));
-    // Each task is on the card of the assistant that runs it.
-    expect(container.querySelector('[data-section="Nova"] [data-row="Plan the trip"]')).not.toBeNull();
-    expect(container.querySelector('[data-section="work"] [data-row="Summarize notes"]')).not.toBeNull();
-    const trip = container.querySelector('[data-row="Plan the trip"]')!.textContent!;
-    expect(trip).toContain('agentDelegation.tasks.fromAccount:Bea|B1');
-    expect(trip).toContain('agentDelegation.tasks.waiting:3');
-    expect(container.querySelector('[data-row="Summarize notes"]')!.textContent)
-      .toContain('agentDelegation.tasks.fromDevice:Laptop');
-
-    // What a waiting task asks for is shown without opening it.
-    expect(mocks.status).toHaveBeenCalledWith('delegation-1');
-    expect(mocks.status).not.toHaveBeenCalledWith('delegation-2');
-    expect(rows).not.toContain('permission.actions.other');
-    expect(container.querySelector('[data-row="permission.actions.bash"]')!.textContent).toContain('ls -la');
-    expect(container.querySelector('[data-row="permission.actions.read"] small')!.textContent).toBe('USER.md');
-    expect(container.querySelector('[data-row="permission.actions.externalDirectory"] small')!.textContent)
-      .toBe('agentDelegation.tasks.assistantFolder');
-    // Only one-off answers: the owner approves each action of another device's task.
-    expect(button('agentDelegation.tasks.allowOnce')).toBeDefined();
-    await click('agentDelegation.tasks.allowOnce');
-    expect(mocks.answer).toHaveBeenCalledWith('delegation-1', 'req-1', 'once');
-    // The runner lists an answered prompt until it consumes the answer; it is not offered again.
-    expect(container.querySelector('[data-row="permission.actions.bash"]')).toBeNull();
-    expect(container.querySelector('[data-row="Plan the trip"]')!.textContent).toContain('agentDelegation.tasks.waiting:2');
-  });
-
-  it('lists running tasks and only the last finished ones', async () => {
     mocks.tasks.mockResolvedValue([
-      { jobId: 'run', state: 'running', title: 'Running', agentType: 'assistant:workspace', pendingPermissionCount: 0,
-        source: { kind: 'device', deviceId: 'laptop' } },
-      ...['a', 'b', 'c', 'd'].map(id => ({ jobId: id, state: 'succeeded', title: `Done ${id}`,
-        agentType: 'assistant:workspace', pendingPermissionCount: 0, source: { kind: 'device', deviceId: 'laptop' } })),
+      task('a', 'assistant:workspace', 2), task('b', 'assistant:workspace'), task('c', 'assistant:workspace-work'),
     ]);
     await render();
-    const shown = () => Array.from(container.querySelectorAll('[data-row]')).map(node => node.getAttribute('data-row'))
-      .filter(row => row?.startsWith('Done') || row === 'Running');
-    expect(shown()).toEqual(['Running', 'Done a', 'Done b', 'Done c']);
-    await click('agentDelegation.tasks.showEarlier:1');
-    expect(shown()).toEqual(['Running', 'Done a', 'Done b', 'Done c', 'Done d']);
-  });
-
-  it('opens a task as its session in the assistant', async () => {
-    mocks.tasks.mockResolvedValue([{
-      jobId: 'job-1', sessionId: 'session-1', state: 'running', title: 'Draft the plan', agentType: 'assistant:workspace',
-      pendingPermissionCount: 0, source: { kind: 'connection', connectionId: 'conn-1', accountName: 'Bea', deviceName: 'B1' },
-    }]);
-    mocks.openTask.mockResolvedValue(true);
-    await render();
-    await click('agentDelegation.tasks.open');
-    expect(mocks.openTask).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }), '/home/me/personal_assistant/workspace');
-  });
-
-  it('shows what the record kept about a task from another account', async () => {
-    const at = '2026-10-30T10:00:00Z';
-    const recorded = (event: string, extra: Record<string, unknown>) => ({ entry: {
-      at, event, jobId: 'job-1', connectionId: 'conn-1', peerUserId: '2002', peerDisplayName: 'Bea',
-      peerDeviceId: 'b1', peerDeviceName: 'B1', openAgentId: 'workspace', taskKind: 'message', ...extra,
-    } });
-    mocks.audit.mockResolvedValue([
-      recorded('submitted', { trust: 'full' }),
-      { problem: 'unreadable line' },
-      recorded('finished', { state: 'failed', externalAgents: ['acp:claude-code'], detail: 'Ran past 5 minutes' }),
-    ]);
-    mocks.tasks.mockResolvedValue([{
-      jobId: 'job-1', state: 'failed', title: 'Draft the plan', agentType: 'assistant:workspace',
-      pendingPermissionCount: 0, source: { kind: 'connection', connectionId: 'conn-1', accountName: 'Bea', deviceName: 'B1' },
-    }]);
-    await render();
-    expect(mocks.audit).toHaveBeenCalledWith(500);
-    expect(container.querySelector('[data-row="Draft the plan"]')!.textContent).toContain(
-      'agentDelegation.tasks.fromAccount:Bea|B1 · shared:statuses.failed · agentDelegation.tasks.trustFull'
-      + ' · agentDelegation.tasks.externalAgents:acp:claude-code · Ran past 5 minutes');
+    expect(container.querySelector('[data-section="Nova"] small')!.textContent)
+      .toBe('agentDelegation.openedTo:Laptop · agentDelegation.taskCount:2 · agentDelegation.tasksWaiting:1');
+    expect(container.querySelector('[data-section="work"] small')!.textContent)
+      .toBe('agentDelegation.notOpened · agentDelegation.taskCount:1');
+    // No task rows: each task is read and approved as its session under the assistant.
+    expect(container.textContent).not.toContain('Task a');
   });
 
   it('asks before it stops opening an assistant', async () => {
@@ -340,14 +269,14 @@ describe('AgentDelegationConfig', () => {
     vi.useFakeTimers();
     try {
       await render();
-      expect(container.textContent).not.toContain('Plan the week');
+      expect(container.textContent).not.toContain('agentDelegation.taskCount');
       mocks.tasks.mockResolvedValue([{
         jobId: 'delegation-1', sessionId: 's1', state: 'running', title: 'Plan the week', openAgentId: 'workspace',
         agentType: 'assistant:workspace', assistantWorkspace: '/home/me/personal_assistant/workspace',
         pendingPermissionCount: 1, source: { kind: 'device', deviceId: 'laptop', deviceName: 'Laptop' },
       }]);
       await act(async () => { await vi.advanceTimersByTimeAsync(DELEGATED_TASKS_REFRESH_MS); });
-      expect(container.textContent).toContain('Plan the week');
+      expect(container.textContent).toContain('agentDelegation.taskCount:1');
     } finally {
       vi.useRealTimers();
     }

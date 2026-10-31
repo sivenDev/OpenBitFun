@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input, Select, Switch } from '@openbitfun/ui';
+import { Button, Input, Select } from '@openbitfun/ui';
 import {
   connectionErrorReason,
   connectionsAPI,
@@ -41,7 +41,7 @@ type LoadState =
     kind: 'ready';
     overview: ConnectionsOverview;
     trust: Record<string, DelegationTrust>;
-    /** Opened assistants, which accounts can be given. */
+    /** Opened assistants, to name those each account can use. */
     assistants: OpenAgent[];
   };
 
@@ -59,8 +59,8 @@ function isSignedOut(error: unknown): boolean {
  * Connections of this device with devices of other accounts. Pairing uses
  * this device's own account identity, so it is managed only here: hosts
  * without the desktop commands and connected peer devices show an explicit
- * state. Nothing is shared over a connection until assistants are granted
- * to it, which each account's row offers next to its trust level.
+ * state. Nothing is shared over a connection until an assistant is opened
+ * to it on that assistant's card; each row names the assistants it can use.
  */
 export const ConnectionsConfig: React.FC = () => {
   const { t, formatDate } = useI18n('settings/runtime');
@@ -76,8 +76,6 @@ export const ConnectionsConfig: React.FC = () => {
   const [trusting, setTrusting] = useState<string | null>(null);
   /** The connection whose revocation the owner is confirming. */
   const [revoking, setRevoking] = useState<string | null>(null);
-  /** The connection whose assistants the owner is choosing. */
-  const [choosing, setChoosing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const activeRef = useRef(true);
 
@@ -87,7 +85,7 @@ export const ConnectionsConfig: React.FC = () => {
         connectionsAPI.overview(),
         // Without trust records every connection is trusted normally.
         delegationAPI.listConnectionTrust().catch(() => ({} as Record<string, DelegationTrust>)),
-        // Without opened assistants there is nothing to grant.
+        // Without opened assistants no account can use one.
         delegationAPI.listOpenAgents().catch(() => []),
       ]);
       const assistants = records
@@ -111,7 +109,7 @@ export const ConnectionsConfig: React.FC = () => {
     return () => { activeRef.current = false; };
   }, [load, supported]);
 
-  // Assistants are opened and granted on their own cards too.
+  // Assistants are opened to accounts on their own cards.
   useEffect(() => onDelegationGrantsChanged(source => {
     if (source !== activeRef && supported) void load();
   }), [load, supported]);
@@ -231,12 +229,6 @@ export const ConnectionsConfig: React.FC = () => {
               {t('connections.confirm.open')}
             </Button>
           )}
-          {settled && choosing !== connection.connectionId && (
-            <Button type="button" size="sm" variant="outline" disabled={busy}
-              onClick={() => { setChoosing(connection.connectionId); setActionError(null); }}>
-              {t('connections.chooseAssistants')}
-            </Button>
-          )}
           {live && (
             <div className="openbitfun-runtime-settings__compact-select">
               <Select
@@ -267,40 +259,6 @@ export const ConnectionsConfig: React.FC = () => {
         </div>
       </ConfigPageRow>
     );
-  };
-
-  /** Every opened assistant with a switch: on means this account can use it. */
-  const renderAssistantChoice = (connection: ConnectionSummary) => {
-    const assistants = state.kind === 'ready' ? state.assistants : [];
-    const name = connection.peerDisplayName;
-    return <>
-      {assistants.length === 0 && (
-        <ConfigPageRow label={t('connections.noOpenAssistants')} align="center"><span /></ConfigPageRow>
-      )}
-      {assistants.map(agent => {
-        const granted = agent.connections?.some(item => item.connectionId === connection.connectionId) ?? false;
-        return (
-          <ConfigPageRow key={agent.id} label={agent.displayName}
-            description={t('connections.assistantFor', { name })} align="center">
-            <Switch checked={granted} disabled={busy} aria-label={agent.displayName}
-              onChange={event => {
-                const grant = event.target.checked;
-                void run(async () => {
-                  if (grant) await delegationAPI.grantConnection(agent.id, connection.connectionId);
-                  else await delegationAPI.revokeConnection(agent.id, connection.connectionId);
-                }, 'Failed to change the assistants of a connection');
-              }} />
-          </ConfigPageRow>
-        );
-      })}
-      <ConfigPageRow label="" align="center" wide>
-        <div className="openbitfun-runtime-settings__status-actions">
-          <Button type="button" size="sm" variant="outline" onClick={() => setChoosing(null)}>
-            {t('connections.doneChoosing')}
-          </Button>
-        </div>
-      </ConfigPageRow>
-    </>;
   };
 
   const renderRevokeConfirm = (connection: ConnectionSummary) => (
@@ -441,7 +399,6 @@ export const ConnectionsConfig: React.FC = () => {
           : (
             <React.Fragment key={connection.connectionId}>
               {renderConnection(connection)}
-              {choosing === connection.connectionId && renderAssistantChoice(connection)}
               {trusting === connection.connectionId && renderTrustConfirm(connection)}
               {revoking === connection.connectionId && renderRevokeConfirm(connection)}
             </React.Fragment>

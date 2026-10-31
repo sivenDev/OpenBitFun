@@ -19,8 +19,6 @@ const mocks = vi.hoisted(() => ({
   listTrust: vi.fn(),
   setTrust: vi.fn(),
   listOpenAgents: vi.fn(),
-  grant: vi.fn(),
-  revokeGrant: vi.fn(),
   tauri: vi.fn(),
   peer: vi.fn(),
 }));
@@ -54,7 +52,7 @@ vi.mock('@/infrastructure/api/service-api/ConnectionsAPI', async (importOriginal
 vi.mock('@/infrastructure/api/service-api/DelegationAPI', () => ({
   delegationAPI: {
     listConnectionTrust: mocks.listTrust, setConnectionTrust: mocks.setTrust,
-    listOpenAgents: mocks.listOpenAgents, grantConnection: mocks.grant, revokeConnection: mocks.revokeGrant,
+    listOpenAgents: mocks.listOpenAgents,
   },
   isAssistantAgentType: (agentType: string) => agentType.startsWith('assistant:'),
 }));
@@ -75,7 +73,6 @@ vi.mock('./common', () => ({
 vi.mock('@openbitfun/ui', () => ({
   Button: ({ variant: _variant, size: _size, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) => <button {...props} />,
   Input: ({ size: _size, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { size?: string }) => <input {...props} />,
-  Switch: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input type="checkbox" data-switch {...props} />,
   Select: ({ value, options, onValueChange, 'aria-label': label }: {
     value: string; options: { value: string; label: string }[]; onValueChange: (value: string) => void; 'aria-label'?: string;
   }) => (
@@ -316,7 +313,7 @@ describe('ConnectionsConfig', () => {
     expect(level()).toBe('normal');
   });
 
-  it('chooses which opened assistants an account can use', async () => {
+  it('names the opened assistants each account can use, without choosing them here', async () => {
     mocks.overview.mockResolvedValue(overview({ connections: [connection()] }));
     const agent = (id: string, name: string, connections: string[]) => ({ agent: {
       id, agentType: `assistant:${id}`, displayName: name, taskKinds: ['message'], sameAccountDevices: [],
@@ -325,26 +322,15 @@ describe('ConnectionsConfig', () => {
     mocks.listOpenAgents.mockResolvedValue([
       agent('workspace', 'Nova', ['conn-1']),
       agent('workspace-work', 'Atlas', []),
-      // Entries that are not assistants are never offered.
-      { agent: { id: 'coder', agentType: 'acp:claude-code', displayName: 'Coder', taskKinds: [], sameAccountDevices: [] } },
+      // Entries that are not assistants are never named.
+      { agent: { id: 'coder', agentType: 'acp:claude-code', displayName: 'Coder', taskKinds: [], sameAccountDevices: [],
+        connections: [{ connectionId: 'conn-1' }] } },
     ]);
-    mocks.grant.mockResolvedValue({});
-    mocks.revokeGrant.mockResolvedValue(true);
     await render();
-    const row = '[data-row="connections.peerDevice:Bea|B1 Desktop"]';
-    expect(container.querySelector(`${row} small`)!.textContent).toBe('connections.assistantsLabel:Nova');
-
-    await act(async () => button('connections.chooseAssistants')!.click());
-    const toggle = (name: string) => container.querySelector<HTMLInputElement>(`[data-row="${name}"] input[data-switch]`)!;
-    expect(container.querySelector('[data-row="Coder"]')).toBeNull();
-    expect(toggle('Nova').checked).toBe(true);
-    expect(toggle('Atlas').checked).toBe(false);
-    await act(async () => toggle('Atlas').click());
-    expect(mocks.grant).toHaveBeenCalledWith('workspace-work', 'conn-1');
-    await act(async () => toggle('Nova').click());
-    expect(mocks.revokeGrant).toHaveBeenCalledWith('workspace', 'conn-1');
-    await act(async () => button('connections.doneChoosing')!.click());
-    expect(container.querySelector('[data-row="Atlas"]')).toBeNull();
+    expect(container.querySelector('[data-row="connections.peerDevice:Bea|B1 Desktop"] small')!.textContent)
+      .toBe('connections.assistantsLabel:Nova');
+    // Assistants are opened to a device on the assistant's own card.
+    expect(container.textContent).not.toContain('connections.chooseAssistants');
   });
 
   it('reads every connection as normally trusted when trust cannot be read', async () => {
