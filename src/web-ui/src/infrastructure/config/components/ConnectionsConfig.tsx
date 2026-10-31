@@ -8,6 +8,7 @@ import {
   type ConnectionSummary,
   type CreatedConnectionInvite,
 } from '@/infrastructure/api/service-api/ConnectionsAPI';
+import { delegationAPI, type DelegationTrust } from '@/infrastructure/api/service-api/DelegationAPI';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
@@ -27,7 +28,7 @@ type LoadState =
   | { kind: 'loading' }
   | { kind: 'signedOut' }
   | { kind: 'failed' }
-  | { kind: 'ready'; overview: ConnectionsOverview };
+  | { kind: 'ready'; overview: ConnectionsOverview; trust: Record<string, DelegationTrust> };
 
 interface AcceptDraft {
   link: string;
@@ -55,13 +56,19 @@ export const ConnectionsConfig: React.FC = () => {
   const [confirming, setConfirming] = useState<ConnectionSummary | null>(null);
   const [acceptedFingerprint, setAcceptedFingerprint] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** The connection whose full trust the owner is confirming. */
+  const [trusting, setTrusting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const activeRef = useRef(true);
 
   const load = useCallback(async () => {
     try {
-      const overview = await connectionsAPI.overview();
-      if (activeRef.current) setState({ kind: 'ready', overview });
+      const [overview, trust] = await Promise.all([
+        connectionsAPI.overview(),
+        // Without trust records every connection is trusted normally.
+        delegationAPI.listConnectionTrust().catch(() => ({} as Record<string, DelegationTrust>)),
+      ]);
+      if (activeRef.current) setState({ kind: 'ready', overview, trust });
     } catch (error) {
       if (!activeRef.current) return;
       if (isSignedOut(error)) {
@@ -123,10 +130,45 @@ export const ConnectionsConfig: React.FC = () => {
     else notificationService.error(t('connections.invite.copyFailed'));
   };
 
+  const trustOf = (connectionId: string): DelegationTrust =>
+    state.kind === 'ready' && state.trust[connectionId] === 'full' ? 'full' : 'normal';
+
+  const setTrust = (connectionId: string, level: 'normal' | 'full') => void run(async () => {
+    await delegationAPI.setConnectionTrust(connectionId, level, level === 'full');
+    if (activeRef.current) setTrusting(null);
+    notificationService.success(level === 'full'
+      ? t('connections.trust.fullSaved')
+      : t('connections.trust.normalSaved'), { duration: 4000 });
+  }, 'Failed to set connection trust');
+
+  const renderTrustConfirm = (connection: ConnectionSummary) => (
+    <>
+      <ConfigPageRow balanced label={t('connections.trust.confirmTitle', { name: connection.peerDisplayName })}
+        description={t('connections.trust.confirmDescription')}>
+        <span />
+      </ConfigPageRow>
+      <ConfigPageRow label="" align="center" wide>
+        <div className="openbitfun-runtime-settings__status-actions">
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setTrusting(null)}>
+            {t('connections.cancel')}
+          </Button>
+          <Button type="button" size="sm" variant="primary" disabled={busy}
+            onClick={() => setTrust(connection.connectionId, 'full')}>
+            {t('connections.trust.confirm')}
+          </Button>
+        </div>
+      </ConfigPageRow>
+    </>
+  );
+
   const renderConnection = (connection: ConnectionSummary) => {
+    const trust = trustOf(connection.connectionId);
     const details = [
       connection.peerDeviceName || connection.peerDeviceId,
       statusText(connection),
+      connection.status !== 'revoked'
+        ? (trust === 'full' ? t('connections.trust.full') : t('connections.trust.normal'))
+        : null,
       connection.peerFingerprint
         ? t('connections.fingerprintLabel', { fingerprint: connection.peerFingerprint })
         : null,
@@ -145,6 +187,19 @@ export const ConnectionsConfig: React.FC = () => {
               {t('connections.confirm.open')}
             </Button>
           )}
+          {connection.status !== 'revoked' && (trust === 'full'
+            ? (
+              <Button type="button" size="sm" variant="outline" disabled={busy}
+                onClick={() => setTrust(connection.connectionId, 'normal')}>
+                {t('connections.trust.makeNormal')}
+              </Button>
+            )
+            : (
+              <Button type="button" size="sm" variant="outline" disabled={busy || trusting !== null}
+                onClick={() => { setTrusting(connection.connectionId); setActionError(null); }}>
+                {t('connections.trust.makeFull')}
+              </Button>
+            ))}
           {connection.status !== 'revoked' && (
             <Button type="button" size="sm" variant="outline" disabled={busy}
               onClick={() => void run(() => connectionsAPI.revoke(connection.connectionId), 'Failed to revoke connection')}>
@@ -276,7 +331,12 @@ export const ConnectionsConfig: React.FC = () => {
       {overview.connections.map(connection =>
         confirming?.connectionId === connection.connectionId
           ? <React.Fragment key={connection.connectionId}>{renderConfirm(connection)}</React.Fragment>
-          : renderConnection(connection))}
+          : (
+            <React.Fragment key={connection.connectionId}>
+              {renderConnection(connection)}
+              {trusting === connection.connectionId && renderTrustConfirm(connection)}
+            </React.Fragment>
+          ))}
       {overview.unreadable.map((entry, index) => (
         <ConfigPageRow
           key={`unreadable-${entry.connectionId ?? index}`}

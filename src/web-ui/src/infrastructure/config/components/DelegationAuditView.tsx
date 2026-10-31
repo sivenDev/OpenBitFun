@@ -67,19 +67,21 @@ export const DelegationAuditView: React.FC = () => {
   };
 
   const describeEntry = (entry: DelegationAuditEntry): string => {
-    const kind = entry.taskKind === 'coding'
-      ? t('agentDelegation.taskKindCoding')
-      : t('agentDelegation.taskKindMessage');
     const at = Date.parse(entry.at);
     const summary = t('delegationAudit.entry', {
       time: Number.isNaN(at) ? entry.at : formatDate(at),
-      kind,
       agent: entry.openAgentId,
       name: entry.peerDisplayName || entry.connectionId,
       user: entry.peerUserId,
       device: entry.peerDeviceName,
     });
-    return entry.detail ? `${summary} · ${entry.detail}` : summary;
+    const trust = entry.trust === 'full'
+      ? t('delegationAudit.trustFull')
+      : entry.trust === undefined ? null : t('delegationAudit.trustNormal');
+    const external = entry.externalAgents?.length
+      ? t('delegationAudit.externalAgents', { agents: entry.externalAgents.join(', ') })
+      : null;
+    return [summary, trust, external, entry.detail].filter(Boolean).join(' · ');
   };
 
   const renderBody = () => {

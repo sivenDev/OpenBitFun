@@ -48,9 +48,75 @@ export interface DelegationAuditEntry {
   peerDeviceName: string;
   openAgentId: string;
   taskKind: DelegationTaskKind;
+  /** How far this device trusted the connection; absent in entries of earlier builds. */
+  trust?: DelegationTrust;
+  /** External agents (`acp:<id>`) the task started. */
+  externalAgents?: string[];
   /** The job state a finished entry ended in. */
   state?: string;
   detail?: string;
+}
+
+/** How far tasks from a connection are trusted; unknown levels from newer builds read as normal. */
+export type DelegationTrust = 'normal' | 'full' | (string & {});
+
+/** The `assistant:` prefix of the agent type that opens an assistant. */
+export const ASSISTANT_AGENT_TYPE_PREFIX = 'assistant:';
+
+/** An assistant on this device that can be opened. */
+export interface LocalAssistant {
+  /** `assistant:<directory>`. */
+  agentType: string;
+  /** The assistant id, or null for the default assistant. */
+  assistantId: string | null;
+  rootPath: string;
+}
+
+/** Who delegated a task to an assistant here. */
+export interface DelegatedTaskSource {
+  /** `device` for a device of this account, `connection` for another account. */
+  kind: 'device' | 'connection' | (string & {});
+  deviceId?: string;
+  deviceName?: string;
+  connectionId?: string;
+  accountName?: string;
+  accountUserId?: string;
+}
+
+/** A task another device or account delegated to an assistant here. */
+export interface DelegatedTask {
+  jobId: string;
+  sessionId: string;
+  state: string;
+  startedAt?: string;
+  title: string;
+  openAgentId: string;
+  /** The assistant the task runs as. */
+  agentType: string;
+  assistantWorkspace?: string;
+  pendingPermissionCount: number;
+  source: DelegatedTaskSource;
+}
+
+/** A prompt a delegated task waits on, as the owner sees it. */
+export interface DelegatedTaskPrompt {
+  requestId: string;
+  action: string;
+  resources: string[];
+}
+
+/** The state of a delegated task and the prompts it waits on. */
+export interface DelegatedTaskStatus {
+  state: string;
+  cursor: number;
+  pendingPermissions: DelegatedTaskPrompt[];
+  lastError?: string;
+}
+
+/** Whether an open-agent entry opens an assistant; other entries are no longer supported. */
+export function isAssistantAgentType(agentType: string): boolean {
+  return agentType.startsWith(ASSISTANT_AGENT_TYPE_PREFIX)
+    && agentType.slice(ASSISTANT_AGENT_TYPE_PREFIX.length).trim() !== '';
 }
 
 /** One line of the audit log; `entry` is absent when the line cannot be read. */
@@ -67,22 +133,15 @@ export interface OpenAgentRecord {
   raw?: Record<string, unknown>;
 }
 
+/** Opens an assistant (`assistant:<directory>`) to other devices. */
 export interface OpenAgentRequest {
   id: string;
   agentType: string;
   displayName: string;
   description?: string | null;
-  taskKinds: DelegationTaskKind[];
-  messageWorkspace?: string | null;
   sameAccountDevices: string[];
-  /** The owner confirmed an external agent's usage notice; required for `acp:` agents. */
-  usageConfirmed?: boolean;
-}
-
-/** The ACP client an external (`acp:<id>`) agent type names, if any. */
-export function externalAgentClientId(agentType: string): string | null {
-  const clientId = agentType.startsWith('acp:') ? agentType.slice(4).trim() : '';
-  return clientId === '' ? null : clientId;
+  /** The owner confirmed that the assistant's tasks may use external agents with this device's login. */
+  usageConfirmed: boolean;
 }
 
 export function openAgentRecordId(record: OpenAgentRecord): string | null {
@@ -91,7 +150,7 @@ export function openAgentRecordId(record: OpenAgentRecord): string | null {
   return typeof id === 'string' ? id : null;
 }
 
-/** Device-local list of agents opened to other devices of this account. */
+/** Device-local list of assistants opened to other devices and accounts. */
 class DelegationAPI {
   async listOpenAgents(): Promise<OpenAgentRecord[]> {
     try {
@@ -109,9 +168,9 @@ class DelegationAPI {
     }
   }
 
-  /** Grants an open agent to a paired device of another account. */
-  async grantConnection(id: string, connectionId: string, usageConfirmed: boolean): Promise<OpenAgent> {
-    const request = { id, connectionId, usageConfirmed };
+  /** Grants an opened assistant to a paired device of another account. */
+  async grantConnection(id: string, connectionId: string): Promise<OpenAgent> {
+    const request = { id, connectionId };
     try {
       return await api.invoke<OpenAgent>('delegation_grant_connection', { request });
     } catch (error) {
@@ -146,6 +205,62 @@ class DelegationAPI {
       return await api.invoke<boolean>('delegation_revoke_connection', { request });
     } catch (error) {
       throw createTauriCommandError('delegation_revoke_connection', error, request);
+    }
+  }
+
+  /** The assistants on this device. */
+  async listAssistants(): Promise<LocalAssistant[]> {
+    try {
+      return await api.invoke<LocalAssistant[]>('delegation_list_assistants');
+    } catch (error) {
+      throw createTauriCommandError('delegation_list_assistants', error);
+    }
+  }
+
+  /** Tasks other devices and accounts delegated to this device's assistants, newest first. */
+  async listTasks(): Promise<DelegatedTask[]> {
+    try {
+      return await api.invoke<DelegatedTask[]>('delegation_list_tasks');
+    } catch (error) {
+      throw createTauriCommandError('delegation_list_tasks', error);
+    }
+  }
+
+  async taskStatus(jobId: string): Promise<DelegatedTaskStatus> {
+    const request = { jobId, cursor: 0 };
+    try {
+      return await api.invoke<DelegatedTaskStatus>('delegation_task_status', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_task_status', error, request);
+    }
+  }
+
+  /** Approves one action of a delegated task, or rejects it. */
+  async answerTask(jobId: string, requestId: string, reply: 'once' | 'reject'): Promise<void> {
+    const request = { jobId, requestId, reply };
+    try {
+      await api.invoke('delegation_task_answer', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_task_answer', error, request);
+    }
+  }
+
+  /** Trust levels of connections trusted fully; others are normal. */
+  async listConnectionTrust(): Promise<Record<string, DelegationTrust>> {
+    try {
+      return await api.invoke<Record<string, DelegationTrust>>('delegation_list_connection_trust');
+    } catch (error) {
+      throw createTauriCommandError('delegation_list_connection_trust', error);
+    }
+  }
+
+  /** Sets a connection's trust; full requires the owner to have confirmed the risk. */
+  async setConnectionTrust(connectionId: string, level: 'normal' | 'full', riskConfirmed: boolean): Promise<void> {
+    const request = { connectionId, level, riskConfirmed };
+    try {
+      await api.invoke('delegation_set_connection_trust', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_set_connection_trust', error, request);
     }
   }
 

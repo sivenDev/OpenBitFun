@@ -2152,6 +2152,10 @@
         "command:delegation_set_connection_limits",
         "command:delegation_list_connection_trust",
         "command:delegation_set_connection_trust",
+        "command:delegation_list_assistants",
+        "command:delegation_list_tasks",
+        "command:delegation_task_status",
+        "command:delegation_task_answer",
         "command:delegation_audit_list"
       ]
     },

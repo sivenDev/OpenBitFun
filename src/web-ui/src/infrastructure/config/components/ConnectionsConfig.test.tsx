@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   revoke: vi.fn(),
   withdrawInvite: vi.fn(),
+  listTrust: vi.fn(),
+  setTrust: vi.fn(),
   tauri: vi.fn(),
   peer: vi.fn(),
 }));
@@ -45,6 +47,9 @@ vi.mock('@/infrastructure/api/service-api/ConnectionsAPI', async (importOriginal
     revoke: mocks.revoke,
     withdrawInvite: mocks.withdrawInvite,
   },
+}));
+vi.mock('@/infrastructure/api/service-api/DelegationAPI', () => ({
+  delegationAPI: { listConnectionTrust: mocks.listTrust, setConnectionTrust: mocks.setTrust },
 }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
@@ -109,6 +114,7 @@ describe('ConnectionsConfig', () => {
     mocks.tauri.mockReturnValue(true);
     mocks.peer.mockReturnValue({ peerMode: { active: false } });
     mocks.overview.mockResolvedValue(overview());
+    mocks.listTrust.mockResolvedValue({});
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -244,5 +250,33 @@ describe('ConnectionsConfig', () => {
     await act(async () => { revokeButtons[0].click(); });
     expect(mocks.revoke).toHaveBeenCalledWith('conn-1');
     expect(mocks.overview).toHaveBeenCalledTimes(2);
+  });
+  it('trusts a connection normally until the owner confirms full trust, and can return to normal', async () => {
+    mocks.overview.mockResolvedValue(overview({ connections: [connection()] }));
+    mocks.setTrust.mockResolvedValue(undefined);
+    await render();
+    const row = () => container.querySelector('[data-row="connections.peer:Bea|2002"]')!.textContent!;
+    expect(row()).toContain('connections.trust.normal');
+    await click('connections.trust.makeFull');
+    expect(container.textContent).toContain('connections.trust.confirmDescription');
+    expect(mocks.setTrust).not.toHaveBeenCalled();
+
+    mocks.listTrust.mockResolvedValue({ 'conn-1': 'full' });
+    await click('connections.trust.confirm');
+    expect(mocks.setTrust).toHaveBeenCalledWith('conn-1', 'full', true);
+    expect(row()).toContain('connections.trust.full');
+    expect(container.textContent).not.toContain('connections.trust.confirmDescription');
+
+    mocks.listTrust.mockResolvedValue({});
+    await click('connections.trust.makeNormal');
+    expect(mocks.setTrust).toHaveBeenLastCalledWith('conn-1', 'normal', false);
+    expect(row()).toContain('connections.trust.normal');
+  });
+
+  it('reads every connection as normally trusted when trust cannot be read', async () => {
+    mocks.overview.mockResolvedValue(overview({ connections: [connection()] }));
+    mocks.listTrust.mockRejectedValue(new Error('unavailable'));
+    await render();
+    expect(container.textContent).toContain('connections.trust.normal');
   });
 });

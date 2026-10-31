@@ -805,11 +805,14 @@ fn visible_jobs(
                 .load_job(&job.job_id)
                 .is_ok_and(|record| connection::owns(&record, connection_id))
         })
-        // Another account learns neither this device's paths nor its models.
+        // Another account learns neither this device's paths, its models,
+        // nor how its owner placed the job.
         .map(|job| DispatchJobListEntry {
             workspace_path: String::new(),
             model: None,
             reasoning_preset: None,
+            delegation: None,
+            pending_permission_count: 0,
             ..job
         })
         .collect()
@@ -1446,6 +1449,14 @@ mod tests {
         for (job_id, connection) in [("job-a", Some("conn-1")), ("job-b", None)] {
             let mut request = test_request(job_id);
             request.source_connection_id = connection.map(str::to_string);
+            if connection.is_some() {
+                request.delegation = Some(protocol::DispatchDelegation {
+                    open_agent_id: "helper".to_string(),
+                    task_kind: protocol::DispatchDelegationTaskKind::Message,
+                    source: Default::default(),
+                });
+                request.assistant_workspace = Some("/home/me/personal_assistant/workspace".into());
+            }
             store
                 .create_job_with_intent(request.clone(), request, job_id.to_string())
                 .expect("create");
@@ -1466,8 +1477,24 @@ mod tests {
         let shown = visible_jobs(&store, store.list_jobs().expect("list"), Some("conn-1"));
         assert_eq!(shown[0].workspace_path, "");
         assert_eq!(shown[0].model, None);
+        assert_eq!(shown[0].delegation, None);
         let local = visible_jobs(&store, store.list_jobs().expect("list"), None);
         assert!(local.iter().all(|job| !job.workspace_path.is_empty()));
+        // The owner sees which assistant runs it and who sent it.
+        let delegated = local.iter().find(|job| job.job_id == "job-a").unwrap();
+        let summary = delegated.delegation.as_ref().expect("delegation summary");
+        assert_eq!(summary.open_agent_id, "helper");
+        assert_eq!(summary.source_connection_id.as_deref(), Some("conn-1"));
+        assert_eq!(
+            summary.assistant_workspace.as_deref(),
+            Some("/home/me/personal_assistant/workspace")
+        );
+        assert!(local
+            .iter()
+            .find(|job| job.job_id == "job-b")
+            .unwrap()
+            .delegation
+            .is_none());
     }
 
     fn probe_failure(diagnostic: &str) -> Result<GitProbeOutput, GitProbeOutput> {

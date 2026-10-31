@@ -61,6 +61,17 @@ pub(crate) async fn dispatch_for_connection(
     invoke_cli(&executable, verb, args).await
 }
 
+/// Runs `openbitfun dispatch <verb>` as this device's owner: no source is
+/// bound, so the runner answers for every job on this device.
+pub(crate) async fn run_local(verb: &'static str, args: Value) -> anyhow::Result<Value> {
+    let executable = discover_cli().ok_or_else(|| {
+        anyhow!(
+            "OpenBitFun CLI dispatch runner is not installed on this device; install `openbitfun` in ~/.local/bin or PATH"
+        )
+    })?;
+    invoke_cli(&executable, verb, args).await
+}
+
 /// Answers dispatch calls from paired devices of other accounts. What each
 /// connection may reach is decided by the runner from this device's grants.
 pub(crate) struct ConnectionDispatchHandler;

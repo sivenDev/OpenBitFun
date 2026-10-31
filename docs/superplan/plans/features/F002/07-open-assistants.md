@@ -214,7 +214,20 @@ parent: "F002"
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`
 - 新增桌面命令时：`pnpm run capabilities:check`
 
-- [ ] AI协作页、信任级别与助理名下的外部任务在界面上可用，已删除功能无残留，均有测试
+- [x] AI协作页、信任级别与助理名下的外部任务在界面上可用，已删除功能无残留，均有测试
+
+**Evidence (2026-10-31, Task 4):**
+- 开放页（`AgentDelegationConfig.tsx`）按助理列出本机助理（`delegation_list_assistants`），未开放的显示「未开放」，开放时选择本账号设备并确认「助理可以用本设备的登录调用 Claude Code 等外部智能体」；不再有智能体、ID、任务类型与消息工作区字段。已开放的助理可以授权给其他账号（含限制）与收回。旧版的模式与外部智能体记录、无法读取的记录显示为「已不支持」并可删除。
+- 外部任务：dispatch 列表条目新增 `delegation`（开放项、助理目录、来源设备或连接、请求方自报信息）与 `pendingPermissionCount`；通过连接查询时两者都被清除。桌面新命令 `delegation_list_tasks`、`delegation_task_status`、`delegation_task_answer`（只接受 `once`/`reject`，只作用于 `delegation-` 任务）以设备主人身份调用同一个 dispatch runner，并解析来源设备名与连接账号名。AI协作页把任务列在对应助理下方，标明来源、状态与待审批数，可以展开查看待审批操作并逐项允许一次或拒绝。左侧导航中助理的会话历史下方同样列出这些外部任务（来源与待审批数），点击进入 AI协作页；多个助理共享一次读取，30 秒刷新。
+- 信任级别：连接列表显示每个连接的普通或完全信任；设为完全信任需在确认说明（资料与记忆可读、全部工具可用、记忆由所有助理共享）后再确认；改回普通信任时提示命令与外部智能体只靠审批保护。读取失败时按普通信任显示。
+- 审计记录显示信任级别与任务调用的外部智能体，不再显示任务类型；旧条目不显示信任级别。
+- Peer Device Mode：开放页、连接列表与导航中的外部任务都不读取本机数据，开放页与连接列表显示不支持。新命令登记为 `ControllerLocal`。
+- 测试：`pnpm --dir src/web-ui run test:run src/app/components/NavPanel/sections/workspaces src/infrastructure/config/components/{AgentDelegationConfig,ConnectionsConfig,DelegationAuditView}.test.tsx src/app/scenes/ai-collaboration src/app/scenes/agents` 183 + 3 通过；`type-check:web`、`i18n:audit`、`theme:color-audit:all` 通过，`lint:web` 在改动文件中没有新警告。CLI `dispatch::` 115 通过（主人列表含来源与助理、连接列表清除）；`cli_command_contracts delegation` 4 通过：两账号模拟中主人 `dispatch list` 的任务带 `assistant:workspace`、开放项与来源连接。桌面 `-- delegation_tasks remote_workspace_policy` 11 通过（只处理委托任务、拒绝 `always`）；`capabilities:check`、`check:core-boundaries` 通过。
+- 偏差：
+  - 外部任务不在 `workspaceSessionView.ts` 中投影为会话条目：它们的会话存放在 dispatch 存储中，并不在助理的会话存储里，投影进会话列表需要伪造会话。改为在助理会话历史下单独列出，点击进入 AI协作页查看与审批。
+  - 查看任务只显示状态、待审批操作与错误，不显示完整对话过程。
+  - 桌面命令放在新文件 `delegation_tasks_api.rs`，未改 `dispatch_api.rs`（后者是发起方命令）。
+  - 新 Rust 模块需要在能力目录中登记语义归属（`delegation_tasks` → `feature.detached-dispatch`）。
 
 ## Task 5: 端到端验证与记录
 

@@ -45,12 +45,12 @@ vi.mock('@openbitfun/ui', () => ({
 
 const AT = '2026-10-30T10:00:00Z';
 
-function entry(event: string, state?: string, detail?: string) {
+function entry(event: string, state?: string, detail?: string, extra: Record<string, unknown> = {}) {
   return {
     entry: {
       at: AT, event, jobId: 'delegation-1', connectionId: 'conn-1', peerUserId: '2002',
       peerDisplayName: 'Bea', peerDeviceId: 'device-b', peerDeviceName: 'B1 Desktop',
-      openAgentId: 'helper', taskKind: 'coding', state, detail,
+      openAgentId: 'helper', taskKind: 'message', state, detail, ...extra,
     },
   };
 }
@@ -97,8 +97,22 @@ describe('DelegationAuditView', () => {
     ]);
     const time = `date(${Date.parse(AT)})`;
     expect(container.textContent).toContain(
-      `delegationAudit.entry:${time}|agentDelegation.taskKindCoding|helper|Bea|2002|B1 Desktop · The task ran longer than the 5-minute limit`);
+      // An entry an earlier build wrote names no trust level.
+      `delegationAudit.entry:${time}|helper|Bea|2002|B1 Desktop · The task ran longer than the 5-minute limit`);
     expect(container.textContent).toContain('unreadable audit entry: expected value');
+  });
+
+  it('shows the trust level and the external agents a task used', async () => {
+    mocks.audit.mockResolvedValue([
+      entry('finished', 'succeeded', undefined, { trust: 'full', externalAgents: ['acp:claude-code'] }),
+      entry('submitted', undefined, undefined, { trust: 'normal' }),
+    ]);
+    await render();
+    const time = `date(${Date.parse(AT)})`;
+    expect(container.textContent).toContain(
+      `delegationAudit.entry:${time}|helper|Bea|2002|B1 Desktop · delegationAudit.trustFull · delegationAudit.externalAgents:acp:claude-code`);
+    expect(container.textContent).toContain(
+      `delegationAudit.entry:${time}|helper|Bea|2002|B1 Desktop · delegationAudit.trustNormal`);
   });
 
   it('is shown only on the device that keeps the log', async () => {

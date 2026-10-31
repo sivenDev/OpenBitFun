@@ -91,7 +91,11 @@
     "removeGlobalRule": "删除规则",
     "discardGlobalRules": "放弃更改",
     "saveGlobalRules": "保存规则",
-    "globalRulesEffects": { "allow": "允许", "ask": "询问", "deny": "拒绝" },
+    "globalRulesEffects": {
+      "allow": "允许",
+      "ask": "询问",
+      "deny": "拒绝"
+    },
     "modeDescription": "作为新会话的默认设置，可在输入框中临时切换。"
   },
   "toolPresentation": {
@@ -104,50 +108,42 @@
     "ptcTooltip": "PTC 通过 RunCode 执行 TypeScript。"
   },
   "agentDelegation": {
-    "sectionTitle": "对外开放的智能体",
-    "sectionDescription": "同账号的其他设备只能把任务委派给这里列出的智能体。默认不开放任何智能体，清单只保存在本设备。",
-    "empty": "尚未向其他设备开放智能体。",
-    "open": "开放智能体",
-    "close": "关闭",
-    "closeFailed": "关闭智能体失败",
-    "saveFailed": "开放智能体失败",
-    "saved": "已向其他设备开放智能体",
-    "unreadable": "已关闭：{{problem}}",
-    "unsupported": "只能在本设备的桌面应用中向其他设备开放智能体。",
-    "peerUnsupported": "已连接设备开放的智能体请在该设备上管理。",
-    "mode": "智能体",
-    "externalAgent": "{{name}}（外部智能体）",
-    "usageNoticeTitle": "使用提示",
-    "usageNotice": "委派的任务会用本设备自己的登录或凭据运行该外部智能体，消耗你在该智能体服务商处的额度，请确认其服务条款允许这种使用。",
-    "usageNoticeClaudeCode": "Claude 订阅登录只用于你个人的日常使用，委派任务建议使用 API Key。",
-    "usageConfirm": "我已了解，确认开放该智能体",
-    "id": "ID",
-    "idDescription": "其他设备通过此 ID 调用该智能体，只能包含字母、数字、“-”或“_”。",
-    "name": "名称",
-    "description": "说明",
-    "taskKinds": "允许的任务",
-    "taskKindMessage": "纯消息",
-    "taskKindCoding": "编码",
-    "taskKindsDescription": "纯消息任务不传输代码；编码任务基于发起设备发送的 Git 基线工作。",
-    "devices": "设备",
+    "sectionTitle": "开放我的助理",
+    "sectionDescription": "把助理开放给你的其他设备或已连接的其他账号。每个外部任务都是这个助理的一个独立会话，显示在助理下方并标明来源，由你查看和审批。默认不开放任何助理。",
+    "noAssistants": "本设备还没有助理。",
+    "defaultAssistant": "默认助理",
+    "notOpened": "未开放",
+    "openedTo": "已开放 · 本账号设备：{{devices}}",
+    "noSameAccountDevices": "无",
+    "open": "开放",
+    "close": "停止开放",
+    "closeFailed": "停止开放失败",
+    "delete": "删除",
+    "saveFailed": "开放助理失败",
+    "saved": "已开放助理",
+    "unreadable": "无法读取：{{problem}}",
+    "unreadableName": "无法读取的条目",
+    "unsupportedEntry": "已不支持：现在只能开放助理。这个条目不再接受任务，可以删除。",
+    "unsupported": "只能在本设备的桌面应用中开放助理。",
+    "peerUnsupported": "已连接设备的助理请在该设备上管理。",
+    "usageNoticeTitle": "外部智能体",
+    "usageNotice": "助理处理外部任务时拥有完整能力，可以调用 Claude Code 等外部智能体。它们使用本设备自己的登录或凭据，消耗你在服务商处的额度。",
+    "usageConfirm": "我已了解，确认开放这个助理",
+    "devices": "本账号设备",
+    "devicesDescription": "可选。也可以只授权给其他账号。",
     "allDevices": "此账号的所有设备",
-    "noDevices": "未找到此账号的其他设备。请在其他设备上登录，或允许所有设备。",
-    "workspace": "纯消息工作区",
-    "workspaceDescription": "纯消息任务运行的已有目录的绝对路径。留空时，为每个发起设备单独创建空目录。",
-    "summary": "{{agent}} · {{tasks}} · {{devices}}",
+    "noDevices": "未找到此账号的其他设备。可以允许所有设备，或开放后授权给其他账号。",
     "save": "开放",
     "cancel": "取消",
     "otherAccounts": "其他账号",
     "grantConnection": "授权给其他账号",
     "grantTitle": "授权给",
-    "grantDescription": "已配对的其他账号设备可以把任务委派给这个智能体。它的消息任务在本设备上的专属目录中运行，操作只由你审批。",
+    "grantDescription": "对方可以把任务交给这个助理。能做什么由你在「与其他账号的连接」中为该连接选择的信任级别决定。",
     "noConnections": "没有与其他账号的有效连接。请先在「与其他账号的连接」中配对设备。",
     "connectionLabel": "{{name}}（{{user}}），{{device}}",
     "connectionMissing": "连接 {{id}}，本设备上已找不到",
     "grantedTo": "已授权给 {{peer}}",
     "withdraw": "收回",
-    "grantUsageNotice": "来自对方账号的任务会用本设备自己的登录或凭据运行这个外部智能体，并消耗你在其服务商处的额度。",
-    "grantUsageConfirm": "我已了解，并要把这个智能体授权给对方账号",
     "grant": "授权",
     "granted": "已授权给对方账号",
     "grantFailed": "授权失败",
@@ -165,6 +161,27 @@
       "edit": "限制",
       "save": "保存限制",
       "saveFailed": "保存限制失败"
+    },
+    "tasks": {
+      "external": "外部任务",
+      "untitled": "未命名任务",
+      "fromAccount": "来自 {{name}}，{{device}}",
+      "fromConnection": "来自连接 {{id}}",
+      "fromDevice": "来自 {{device}}",
+      "unknownDevice": "本账号的设备",
+      "waiting": "等待你审批 {{count}} 项",
+      "review": "查看",
+      "hide": "收起",
+      "noPrompts": "没有等待审批的操作。",
+      "prompt": "请求：{{action}}",
+      "allowOnce": "允许一次",
+      "reject": "拒绝",
+      "error": "错误",
+      "loadFailed": "读取任务失败",
+      "answerFailed": "审批失败",
+      "state": {
+        "queued": "排队中"
+      }
     }
   },
   "delegationAudit": {
@@ -178,8 +195,11 @@
     "submitted": "已接收",
     "failed": "失败或已停止",
     "otherEvent": "其他事件",
-    "entry": "{{time}} · 来自 {{name}}（{{user}}）设备 {{device}} 的{{kind}}任务，由 {{agent}} 执行",
-    "refresh": "刷新"
+    "entry": "{{time}} · 来自 {{name}}（{{user}}）设备 {{device}} 的任务，由 {{agent}} 执行",
+    "refresh": "刷新",
+    "trustNormal": "普通信任",
+    "trustFull": "完全信任",
+    "externalAgents": "外部智能体：{{agents}}"
   },
   "connections": {
     "sectionTitle": "与其他账号的连接",
@@ -249,6 +269,17 @@
       "inviter_device_required": "只有创建邀请的设备可以确认。",
       "store_unreadable": "本设备的连接文件无法读取，已原样保留。修复或移走它之后才能再次配对。",
       "generic": "操作失败：{{message}}"
+    },
+    "trust": {
+      "normal": "普通信任",
+      "full": "完全信任",
+      "makeFull": "设为完全信任",
+      "makeNormal": "改为普通信任",
+      "confirmTitle": "完全信任 {{name}}？",
+      "confirmDescription": "完全信任后，对方的任务和你自己的任务一样：助理可以读取你的资料（USER.md）和记忆，使用所有工具，包括操作桌面、查看你的其他会话和发布内容。记忆由所有助理共享。普通信任下这些都不可用，读取你的资料前会先问你。",
+      "confirm": "确认完全信任",
+      "fullSaved": "已完全信任这个连接，从下一个任务轮次开始生效。",
+      "normalSaved": "已改为普通信任。助理执行命令和调用外部智能体时只靠你的审批保护。"
     }
   },
   "projectPermissions": {
@@ -285,7 +316,11 @@
     "rulesSaveFailed": "保存静态项目规则失败",
     "rulesConflict": "规则文件已在外部变更，请重新打开项目权限后再保存。",
     "cancel": "取消",
-    "effects": { "allow": "允许", "ask": "询问", "deny": "拒绝" }
+    "effects": {
+      "allow": "允许",
+      "ask": "询问",
+      "deny": "拒绝"
+    }
   },
   "deferredToolLoading": {
     "sectionTitle": "按需加载工具",

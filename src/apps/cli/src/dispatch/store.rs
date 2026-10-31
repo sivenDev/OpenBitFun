@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::protocol::{
     DispatchAppendRequest, DispatchApprovalPolicy, DispatchAttachment, DispatchContinueRequest,
-    DispatchEvent, DispatchJobListEntry, DispatchJobState, DispatchSubmitRequest, DispatchTurnKind,
-    DISPATCH_PROTOCOL_VERSION,
+    DispatchDelegatedJobSummary, DispatchEvent, DispatchJobListEntry, DispatchJobState,
+    DispatchSubmitRequest, DispatchTurnKind, DISPATCH_PROTOCOL_VERSION,
 };
 
 const JOB_RECORD_FILE: &str = "job.json";
@@ -1063,6 +1063,24 @@ impl DispatchStore {
                 .as_ref()
                 .and_then(|turn| turn.approval_policy)
                 .unwrap_or(job.request.approval_policy);
+            let delegation =
+                job.request
+                    .delegation
+                    .as_ref()
+                    .map(|delegation| DispatchDelegatedJobSummary {
+                        open_agent_id: delegation.open_agent_id.clone(),
+                        assistant_workspace: job.request.assistant_workspace.clone(),
+                        source_device_id: job.request.source_device_id.clone(),
+                        source_connection_id: job.request.source_connection_id.clone(),
+                        source: delegation.source.clone(),
+                    });
+            let pending_permission_count = if state.state.is_terminal() {
+                0
+            } else {
+                self.list_pending_permissions(&job_id)
+                    .map(|pending| pending.len())
+                    .unwrap_or(0)
+            };
             entries.push(DispatchJobListEntry {
                 job_id,
                 session_id: job.request.session_id,
@@ -1074,6 +1092,8 @@ impl DispatchStore {
                 approval_policy,
                 model,
                 reasoning_preset,
+                delegation,
+                pending_permission_count,
             });
         }
         entries.sort_by(|left, right| right.started_at.cmp(&left.started_at));

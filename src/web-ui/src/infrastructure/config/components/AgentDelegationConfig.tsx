@@ -1,17 +1,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Select, Switch } from '@openbitfun/ui';
-import { agentAPI, type ModeInfo } from '@/infrastructure/api/service-api/AgentAPI';
-import { ACPClientAPI, type AcpClientInfo } from '@/infrastructure/api/service-api/ACPClientAPI';
 import {
   ALL_SAME_ACCOUNT_DEVICES,
+  ASSISTANT_AGENT_TYPE_PREFIX,
   delegationAPI,
-  externalAgentClientId,
+  isAssistantAgentType,
   MAX_CONNECTION_CONCURRENT_JOBS,
   MAX_CONNECTION_JOB_MINUTES,
   openAgentRecordId,
   type ConnectionGrant,
   type ConnectionLimits,
-  type DelegationTaskKind,
+  type DelegatedTask,
+  type DelegatedTaskStatus,
+  type LocalAssistant,
+  type OpenAgent,
   type OpenAgentRecord,
 } from '@/infrastructure/api/service-api/DelegationAPI';
 import {
@@ -22,6 +24,7 @@ import {
   remoteConnectAPI,
   type AccountDeviceInfo,
 } from '@/infrastructure/api/service-api/RemoteConnectAPI';
+import { getWorkspaceDisplayName, useOptionalWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
@@ -36,34 +39,22 @@ import {
 
 const log = createLogger('AgentDelegationConfig');
 
-const OPEN_AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-
-interface OpenAgentDraft {
-  id: string;
+/** Opening one assistant to devices of this account. */
+interface OpenDraft {
   agentType: string;
-  displayName: string;
-  description: string;
-  taskKinds: DelegationTaskKind[];
   allDevices: boolean;
   devices: string[];
-  messageWorkspace: string;
-  /** The owner confirmed the external agent's usage notice. */
+  /** The owner confirmed that tasks may use external agents with this device's login. */
   usageConfirmed: boolean;
 }
 
-/** An agent that can be opened: a local mode or an enabled external agent. */
-interface AgentChoice {
-  id: string;
-  name: string;
-}
-
 interface LoadedState {
+  assistants: LocalAssistant[];
   records: OpenAgentRecord[];
-  /** Local modes, then enabled external agents as `acp:<id>`. */
-  agents: AgentChoice[];
   devices: AccountDeviceInfo[];
   /** Connections with devices of other accounts, revoked ones excluded. */
   connections: ConnectionSummary[];
+  tasks: DelegatedTask[];
 }
 
 /** Limits as typed; empty means no limit. */
@@ -72,12 +63,10 @@ interface LimitsDraft {
   maxMinutes: string;
 }
 
-/** Granting one open agent to a connection. */
+/** Granting one opened assistant to a connection. */
 interface GrantDraft extends LimitsDraft {
   agentId: string;
   connectionId: string;
-  /** The owner confirmed the external agent's usage notice for this grant. */
-  usageConfirmed: boolean;
 }
 
 /** Changing the limits of an existing grant. */
@@ -108,31 +97,10 @@ function hasLimits(limits: ConnectionLimits): boolean {
   return limits.maxConcurrentJobs !== undefined || limits.maxJobMinutes !== undefined;
 }
 
-function suggestedId(agentType: string): string {
-  return agentType.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-}
-
-function agentChoices(modes: ModeInfo[], clients: AcpClientInfo[]): AgentChoice[] {
-  // The device re-checks that an external agent can run before opening it.
-  const external = clients
-    .filter(client => client.enabled && client.subagent?.enabled !== false)
-    .map(client => ({ id: `acp:${client.id}`, name: client.name || client.id }));
-  return [...modes.map(mode => ({ id: mode.id, name: mode.name })), ...external];
-}
-
-function newDraft(agents: AgentChoice[]): OpenAgentDraft {
-  const agentType = agents[0]?.id ?? '';
-  return {
-    id: suggestedId(agentType),
-    agentType,
-    displayName: agents[0]?.name ?? '',
-    description: '',
-    taskKinds: ['message'],
-    allDevices: false,
-    devices: [],
-    messageWorkspace: '',
-    usageConfirmed: false,
-  };
+/** The open-agent id other devices call an assistant by, from its directory. */
+function openAgentIdFor(agentType: string): string {
+  return agentType.slice(ASSISTANT_AGENT_TYPE_PREFIX.length).toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'assistant';
 }
 
 function errorMessage(error: unknown): string {
@@ -140,31 +108,35 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Agents this device opens to other devices of the same account. The list is
- * device-local, so it is managed only on the device that owns it: hosts without
- * the desktop commands and connected peer devices show an explicit state.
+ * The owner's assistants as other devices and accounts can use them: which
+ * assistants are open, to whom, and the tasks they sent, each its own session
+ * of that assistant that the owner reviews and approves here. The list is
+ * device-local, so it is managed only on the device that owns it: hosts
+ * without the desktop commands and connected peer devices show an explicit
+ * state.
  */
 export const AgentDelegationConfig: React.FC = () => {
   const { t } = useI18n('settings/runtime');
   const peerMode = usePeerDeviceModeOptional()?.peerMode;
+  const workspaces = useOptionalWorkspaceContext();
   const supported = isTauriRuntime() && peerMode?.active !== true;
   const [state, setState] = useState<LoadedState | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [draft, setDraft] = useState<OpenAgentDraft | null>(null);
+  const [draft, setDraft] = useState<OpenDraft | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [grantDraft, setGrantDraft] = useState<GrantDraft | null>(null);
   const [limitsDraft, setLimitsDraft] = useState<EditLimitsDraft | null>(null);
+  /** The task whose prompts are shown, with its last status. */
+  const [reviewing, setReviewing] = useState<{ jobId: string; status: DelegatedTaskStatus | null } | null>(null);
   const activeRef = useRef(true);
 
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const [records, modes, clients, devices, currentDevice, connections] = await Promise.all([
+      const [assistants, records, devices, currentDevice, connections, tasks] = await Promise.all([
+        delegationAPI.listAssistants(),
         delegationAPI.listOpenAgents(),
-        agentAPI.getAvailableModes(),
-        // External agents are optional: a host without ACP clients opens local modes only.
-        ACPClientAPI.getClients().catch(() => [] as AcpClientInfo[]),
         // Devices are optional: without an account the owner can still allow all devices.
         remoteConnectAPI.accountListDevices().catch(() => [] as AccountDeviceInfo[]),
         remoteConnectAPI.getDeviceInfo().catch(() => null),
@@ -172,16 +144,22 @@ export const AgentDelegationConfig: React.FC = () => {
         connectionsAPI.overview()
           .then(overview => overview.connections.filter(connection => connection.status !== 'revoked'))
           .catch(() => [] as ConnectionSummary[]),
+        // Tasks are optional: without the dispatch runner nothing could have been delegated.
+        delegationAPI.listTasks().catch((error: unknown) => {
+          log.warn('Failed to list delegated tasks', { error });
+          return [] as DelegatedTask[];
+        }),
       ]);
       if (!activeRef.current) return;
       setState({
+        assistants,
         records,
-        agents: agentChoices(modes, clients),
         devices: devices.filter(device => device.device_id !== currentDevice?.device_id),
         connections,
+        tasks,
       });
     } catch (error) {
-      log.error('Failed to load open agents', { error });
+      log.error('Failed to load opened assistants', { error });
       if (activeRef.current) setLoadError(true);
     }
   }, []);
@@ -192,22 +170,12 @@ export const AgentDelegationConfig: React.FC = () => {
     return () => { activeRef.current = false; };
   }, [load, supported]);
 
-  const describeRecord = (record: OpenAgentRecord): string => {
-    const agent = record.agent;
-    if (!agent) return t('agentDelegation.unreadable', { problem: record.problem ?? '' });
-    const choice = state?.agents.find(item => item.id === agent.agentType);
-    const tasks = agent.taskKinds
-      .map(kind => kind === 'message'
-        ? t('agentDelegation.taskKindMessage')
-        : kind === 'coding' ? t('agentDelegation.taskKindCoding') : null)
-      .filter((label): label is string => label !== null)
-      .join(', ');
-    const devices = agent.sameAccountDevices.includes(ALL_SAME_ACCOUNT_DEVICES)
-      ? t('agentDelegation.allDevices')
-      : agent.sameAccountDevices
-        .map(id => state?.devices.find(device => device.device_id === id)?.device_name ?? id)
-        .join(', ');
-    return t('agentDelegation.summary', { agent: choice?.name ?? agent.agentType, tasks, devices });
+  const assistantName = (assistant: LocalAssistant): string => {
+    const workspace = workspaces?.assistantWorkspacesList.find(item =>
+      (item.assistantId ?? null) === assistant.assistantId);
+    const name = workspace ? getWorkspaceDisplayName(workspace) : '';
+    if (name) return name;
+    return assistant.assistantId ?? t('agentDelegation.defaultAssistant');
   };
 
   const describeConnection = (connectionId: string): string => {
@@ -221,6 +189,14 @@ export const AgentDelegationConfig: React.FC = () => {
       : t('agentDelegation.connectionMissing', { id: connectionId });
   };
 
+  const describeDevices = (agent: OpenAgent): string => {
+    if (agent.sameAccountDevices.includes(ALL_SAME_ACCOUNT_DEVICES)) return t('agentDelegation.allDevices');
+    if (agent.sameAccountDevices.length === 0) return t('agentDelegation.noSameAccountDevices');
+    return agent.sameAccountDevices
+      .map(id => state?.devices.find(device => device.device_id === id)?.device_name ?? id)
+      .join(', ');
+  };
+
   const describeLimits = (grant: ConnectionGrant): string => {
     const jobs = grant.maxConcurrentJobs !== undefined
       ? t('agentDelegation.limits.jobs', { count: String(grant.maxConcurrentJobs) })
@@ -231,45 +207,113 @@ export const AgentDelegationConfig: React.FC = () => {
     return `${jobs} · ${minutes}`;
   };
 
-  const grant = async () => {
-    if (!grantDraft) return;
-    const limits = draftLimits(grantDraft);
-    if (!limits) return;
+  const describeSource = (task: DelegatedTask): string => {
+    const { source } = task;
+    if (source.kind === 'connection') {
+      return source.accountName
+        ? t('agentDelegation.tasks.fromAccount', {
+          name: source.accountName,
+          device: source.deviceName ?? source.deviceId ?? '',
+        })
+        : t('agentDelegation.tasks.fromConnection', { id: source.connectionId ?? '' });
+    }
+    return t('agentDelegation.tasks.fromDevice', {
+      device: source.deviceName ?? source.deviceId ?? t('agentDelegation.tasks.unknownDevice'),
+    });
+  };
+
+  const describeState = (taskState: string): string => {
+    switch (taskState) {
+      case 'queued': return t('agentDelegation.tasks.state.queued');
+      case 'running': return t('shared:statuses.running');
+      case 'succeeded': return t('shared:statuses.done');
+      case 'failed': return t('shared:statuses.failed');
+      case 'cancelled': return t('shared:statuses.cancelled');
+      default: return taskState;
+    }
+  };
+
+  /** Runs an owner action, reports its failure, and reloads the page. */
+  const run = async (action: () => Promise<void>, failureLog: string, failureCopy: string) => {
     setBusy(true);
     try {
-      await delegationAPI.grantConnection(grantDraft.agentId, grantDraft.connectionId, grantDraft.usageConfirmed);
-      if (hasLimits(limits)) {
-        await delegationAPI.setConnectionLimits(grantDraft.agentId, grantDraft.connectionId, limits);
-      }
-      if (!activeRef.current) return;
-      notificationService.success(t('agentDelegation.granted'), { duration: 2000 });
-      setGrantDraft(null);
-      await load();
+      await action();
+      if (activeRef.current) await load();
     } catch (error) {
-      log.error('Failed to grant open agent to a connection', { error });
-      notificationService.error(`${t('agentDelegation.grantFailed')}: ${errorMessage(error)}`);
+      log.error(failureLog, { error });
+      notificationService.error(`${failureCopy}: ${errorMessage(error)}`);
     } finally {
       if (activeRef.current) setBusy(false);
     }
   };
 
-  const saveLimits = async () => {
-    if (!limitsDraft) return;
-    const limits = draftLimits(limitsDraft);
-    if (!limits) return;
+  const saveDraft = async () => {
+    if (!draft || !state) return;
+    const assistant = state.assistants.find(item => item.agentType === draft.agentType);
+    if (!assistant) return;
+    setDraftError(null);
     setBusy(true);
     try {
-      await delegationAPI.setConnectionLimits(limitsDraft.agentId, limitsDraft.connectionId, limits);
+      await delegationAPI.openAgent({
+        id: openAgentIdFor(draft.agentType),
+        agentType: draft.agentType,
+        displayName: assistantName(assistant),
+        description: null,
+        sameAccountDevices: draft.allDevices ? [ALL_SAME_ACCOUNT_DEVICES] : draft.devices,
+        usageConfirmed: draft.usageConfirmed,
+      });
       if (!activeRef.current) return;
-      setLimitsDraft(null);
+      notificationService.success(t('agentDelegation.saved'), { duration: 2000 });
+      setDraft(null);
       await load();
     } catch (error) {
-      log.error('Failed to set connection limits', { error });
-      notificationService.error(`${t('agentDelegation.limits.saveFailed')}: ${errorMessage(error)}`);
+      log.error('Failed to open assistant', { error });
+      if (activeRef.current) setDraftError(`${t('agentDelegation.saveFailed')}: ${errorMessage(error)}`);
     } finally {
       if (activeRef.current) setBusy(false);
     }
   };
+
+  const grant = () => {
+    if (!grantDraft) return;
+    const limits = draftLimits(grantDraft);
+    if (!limits) return;
+    void run(async () => {
+      await delegationAPI.grantConnection(grantDraft.agentId, grantDraft.connectionId);
+      if (hasLimits(limits)) {
+        await delegationAPI.setConnectionLimits(grantDraft.agentId, grantDraft.connectionId, limits);
+      }
+      notificationService.success(t('agentDelegation.granted'), { duration: 2000 });
+      if (activeRef.current) setGrantDraft(null);
+    }, 'Failed to grant assistant to a connection', t('agentDelegation.grantFailed'));
+  };
+
+  const saveLimits = () => {
+    if (!limitsDraft) return;
+    const limits = draftLimits(limitsDraft);
+    if (!limits) return;
+    void run(async () => {
+      await delegationAPI.setConnectionLimits(limitsDraft.agentId, limitsDraft.connectionId, limits);
+      if (activeRef.current) setLimitsDraft(null);
+    }, 'Failed to set connection limits', t('agentDelegation.limits.saveFailed'));
+  };
+
+  const review = async (jobId: string) => {
+    setReviewing({ jobId, status: null });
+    try {
+      const status = await delegationAPI.taskStatus(jobId);
+      if (activeRef.current) setReviewing(current => current?.jobId === jobId ? { jobId, status } : current);
+    } catch (error) {
+      log.error('Failed to load delegated task', { error });
+      notificationService.error(`${t('agentDelegation.tasks.loadFailed')}: ${errorMessage(error)}`);
+      if (activeRef.current) setReviewing(null);
+    }
+  };
+
+  const answer = (jobId: string, requestId: string, reply: 'once' | 'reject') => void run(async () => {
+    await delegationAPI.answerTask(jobId, requestId, reply);
+    await review(jobId);
+  }, 'Failed to answer delegated task prompt', t('agentDelegation.tasks.answerFailed'));
 
   /** Inputs for the two optional limits of one grant. */
   const renderLimitInputs = (value: LimitsDraft, onChange: (next: LimitsDraft) => void) => {
@@ -292,29 +336,14 @@ export const AgentDelegationConfig: React.FC = () => {
     );
   };
 
-  const withdraw = async (agentId: string, connectionId: string) => {
-    setBusy(true);
-    try {
-      await delegationAPI.revokeConnection(agentId, connectionId);
-      await load();
-    } catch (error) {
-      log.error('Failed to withdraw open agent from a connection', { error });
-      notificationService.error(t('agentDelegation.withdrawFailed'));
-    } finally {
-      if (activeRef.current) setBusy(false);
-    }
-  };
-
-  /** Connections an agent can still be granted to: usable and not granted yet. */
+  /** Connections an assistant can still be granted to: usable and not granted yet. */
   const grantCandidates = (granted: string[]): ConnectionSummary[] => (state?.connections ?? [])
     .filter(connection => connection.usable && !granted.includes(connection.connectionId));
 
-  const renderGrantPanel = (agentId: string, agentType: string, granted: string[]) => {
+  const renderGrantPanel = (agentId: string, granted: string[]) => {
     if (!state || grantDraft?.agentId !== agentId) return null;
     const candidates = grantCandidates(granted);
-    const external = externalAgentClientId(agentType) !== null;
-    const canGrant = grantDraft.connectionId !== '' && (!external || grantDraft.usageConfirmed)
-      && draftLimits(grantDraft) !== null;
+    const canGrant = grantDraft.connectionId !== '' && draftLimits(grantDraft) !== null;
     return <>
       <ConfigPageRow label={t('agentDelegation.grantTitle')}
         description={candidates.length === 0 ? t('agentDelegation.noConnections') : t('agentDelegation.grantDescription')}
@@ -330,22 +359,11 @@ export const AgentDelegationConfig: React.FC = () => {
             }))}
             onValueChange={value => {
               const connectionId = String(Array.isArray(value) ? value[0] : value);
-              // A confirmation covers only the account it was given for.
-              setGrantDraft(current => current && ({ ...current, connectionId, usageConfirmed: false }));
+              setGrantDraft(current => current && ({ ...current, connectionId }));
             }}
           />
         )}
       </ConfigPageRow>
-      {external && candidates.length > 0 && (
-        <ConfigPageRow label={t('agentDelegation.usageNoticeTitle')}
-          description={externalAgentClientId(agentType) === 'claude-code'
-            ? `${t('agentDelegation.grantUsageNotice')} ${t('agentDelegation.usageNoticeClaudeCode')}`
-            : t('agentDelegation.grantUsageNotice')}>
-          <Checkbox checked={grantDraft.usageConfirmed} disabled={busy}
-            label={t('agentDelegation.grantUsageConfirm')}
-            onChange={event => setGrantDraft({ ...grantDraft, usageConfirmed: event.target.checked })} />
-        </ConfigPageRow>
-      )}
       {candidates.length > 0 && renderLimitInputs(grantDraft,
         next => setGrantDraft(current => current && ({ ...current, ...next })))}
       <ConfigPageRow label="" align="center" wide>
@@ -353,7 +371,7 @@ export const AgentDelegationConfig: React.FC = () => {
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setGrantDraft(null)}>
             {t('agentDelegation.cancel')}
           </Button>
-          <Button type="button" size="sm" variant="primary" disabled={busy || !canGrant} onClick={() => void grant()}>
+          <Button type="button" size="sm" variant="primary" disabled={busy || !canGrant} onClick={grant}>
             {t('agentDelegation.grant')}
           </Button>
         </div>
@@ -361,67 +379,224 @@ export const AgentDelegationConfig: React.FC = () => {
     </>;
   };
 
-  const closeRecord = async (id: string) => {
-    setBusy(true);
-    try {
-      await delegationAPI.closeAgent(id);
-      await load();
-    } catch (error) {
-      log.error('Failed to close open agent', { error });
-      notificationService.error(t('agentDelegation.closeFailed'));
-    } finally {
-      if (activeRef.current) setBusy(false);
-    }
+  const renderGrants = (agent: OpenAgent) => (agent.connections ?? []).map(item => {
+    const editing = limitsDraft?.agentId === agent.id && limitsDraft.connectionId === item.connectionId;
+    return (
+      <React.Fragment key={item.connectionId}>
+        <ConfigPageRow balanced label={t('agentDelegation.otherAccounts')}
+          description={`${t('agentDelegation.grantedTo', { peer: describeConnection(item.connectionId) })} · ${describeLimits(item)}`}
+          align="center">
+          <div className="openbitfun-runtime-settings__status-actions">
+            {!editing && (
+              <Button type="button" size="sm" variant="outline" disabled={busy}
+                onClick={() => setLimitsDraft({
+                  agentId: agent.id,
+                  connectionId: item.connectionId,
+                  maxJobs: item.maxConcurrentJobs?.toString() ?? '',
+                  maxMinutes: item.maxJobMinutes?.toString() ?? '',
+                })}>
+                {t('agentDelegation.limits.edit')}
+              </Button>
+            )}
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              onClick={() => void run(async () => { await delegationAPI.revokeConnection(agent.id, item.connectionId); },
+                'Failed to withdraw assistant from a connection', t('agentDelegation.withdrawFailed'))}>
+              {t('agentDelegation.withdraw')}
+            </Button>
+          </div>
+        </ConfigPageRow>
+        {editing && limitsDraft && <>
+          {renderLimitInputs(limitsDraft,
+            next => setLimitsDraft(current => current && ({ ...current, ...next })))}
+          <ConfigPageRow label="" align="center" wide>
+            <div className="openbitfun-runtime-settings__status-actions">
+              <Button type="button" size="sm" variant="outline" disabled={busy}
+                onClick={() => setLimitsDraft(null)}>
+                {t('agentDelegation.cancel')}
+              </Button>
+              <Button type="button" size="sm" variant="primary"
+                disabled={busy || draftLimits(limitsDraft) === null}
+                onClick={saveLimits}>
+                {t('agentDelegation.limits.save')}
+              </Button>
+            </div>
+          </ConfigPageRow>
+        </>}
+      </React.Fragment>
+    );
+  });
+
+  const renderReview = (task: DelegatedTask) => {
+    if (reviewing?.jobId !== task.jobId) return null;
+    const status = reviewing.status;
+    if (!status) return <ConfigLoadingState label={t('loading.text')} />;
+    return <>
+      {status.pendingPermissions.length === 0 && (
+        <ConfigPageRow label={t('agentDelegation.tasks.noPrompts')} align="center"><span /></ConfigPageRow>
+      )}
+      {status.pendingPermissions.map(prompt => (
+        <ConfigPageRow key={prompt.requestId} balanced
+          label={t('agentDelegation.tasks.prompt', { action: prompt.action })}
+          description={prompt.resources.join('\n')}
+          align="center">
+          <div className="openbitfun-runtime-settings__status-actions">
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              onClick={() => answer(task.jobId, prompt.requestId, 'reject')}>
+              {t('agentDelegation.tasks.reject')}
+            </Button>
+            <Button type="button" size="sm" variant="primary" disabled={busy}
+              onClick={() => answer(task.jobId, prompt.requestId, 'once')}>
+              {t('agentDelegation.tasks.allowOnce')}
+            </Button>
+          </div>
+        </ConfigPageRow>
+      ))}
+      {status.lastError && (
+        <ConfigPageRow label={t('agentDelegation.tasks.error')} description={status.lastError}><span /></ConfigPageRow>
+      )}
+    </>;
   };
 
-  const saveDraft = async () => {
-    if (!draft) return;
-    const id = draft.id.trim();
-    if (!OPEN_AGENT_ID_PATTERN.test(id)) {
-      setDraftError(t('agentDelegation.idDescription'));
-      return;
-    }
-    setDraftError(null);
-    setBusy(true);
-    try {
-      await delegationAPI.openAgent({
-        id,
-        agentType: draft.agentType,
-        displayName: draft.displayName.trim(),
-        description: draft.description.trim() || null,
-        taskKinds: draft.taskKinds,
-        messageWorkspace: draft.messageWorkspace.trim() || null,
-        sameAccountDevices: draft.allDevices ? [ALL_SAME_ACCOUNT_DEVICES] : draft.devices,
-        ...(externalAgentClientId(draft.agentType) !== null ? { usageConfirmed: draft.usageConfirmed } : {}),
-      });
-      if (!activeRef.current) return;
-      notificationService.success(t('agentDelegation.saved'), { duration: 2000 });
-      setDraft(null);
-      await load();
-    } catch (error) {
-      log.error('Failed to open agent', { error });
-      if (activeRef.current) setDraftError(`${t('agentDelegation.saveFailed')}: ${errorMessage(error)}`);
-    } finally {
-      if (activeRef.current) setBusy(false);
-    }
+  const renderTasks = (assistant: LocalAssistant) => {
+    const tasks = (state?.tasks ?? []).filter(task => task.agentType === assistant.agentType);
+    if (tasks.length === 0) return null;
+    return tasks.map(task => {
+      const waiting = task.pendingPermissionCount > 0
+        ? t('agentDelegation.tasks.waiting', { count: String(task.pendingPermissionCount) })
+        : null;
+      return (
+        <React.Fragment key={task.jobId}>
+          <ConfigPageRow balanced
+            label={task.title || t('agentDelegation.tasks.untitled')}
+            description={[t('agentDelegation.tasks.external'), describeSource(task), describeState(task.state), waiting]
+              .filter(Boolean).join(' · ')}
+            align="center">
+            <Button type="button" size="sm" variant={waiting ? 'primary' : 'outline'} disabled={busy}
+              onClick={() => (reviewing?.jobId === task.jobId ? setReviewing(null) : void review(task.jobId))}>
+              {reviewing?.jobId === task.jobId ? t('agentDelegation.tasks.hide') : t('agentDelegation.tasks.review')}
+            </Button>
+          </ConfigPageRow>
+          {renderReview(task)}
+        </React.Fragment>
+      );
+    });
   };
 
-  const toggleTaskKind = (kind: DelegationTaskKind, checked: boolean) => {
-    setDraft(current => current && ({
-      ...current,
-      taskKinds: checked
-        ? [...current.taskKinds.filter(item => item !== kind), kind]
-        : current.taskKinds.filter(item => item !== kind),
-    }));
+  const renderOpenForm = (assistant: LocalAssistant) => {
+    if (!state || draft?.agentType !== assistant.agentType) return null;
+    const canSave = (draft.allDevices || draft.devices.length > 0 || state.connections.length > 0)
+      && draft.usageConfirmed;
+    return <>
+      <ConfigPageRow label={t('agentDelegation.allDevices')} align="center">
+        <Switch checked={draft.allDevices} disabled={busy}
+          onChange={event => setDraft({ ...draft, allDevices: event.target.checked })} />
+      </ConfigPageRow>
+      {!draft.allDevices && (
+        <ConfigPageRow label={t('agentDelegation.devices')}
+          description={state.devices.length === 0 ? t('agentDelegation.noDevices') : t('agentDelegation.devicesDescription')}>
+          <div>
+            {state.devices.map(device => (
+              <Checkbox key={device.device_id} checked={draft.devices.includes(device.device_id)} disabled={busy}
+                label={device.device_name || device.device_id}
+                onChange={event => setDraft(current => current && ({
+                  ...current,
+                  devices: event.target.checked
+                    ? [...current.devices.filter(item => item !== device.device_id), device.device_id]
+                    : current.devices.filter(item => item !== device.device_id),
+                }))} />
+            ))}
+          </div>
+        </ConfigPageRow>
+      )}
+      <ConfigPageRow label={t('agentDelegation.usageNoticeTitle')} description={t('agentDelegation.usageNotice')}>
+        <Checkbox checked={draft.usageConfirmed} disabled={busy}
+          label={t('agentDelegation.usageConfirm')}
+          onChange={event => setDraft({ ...draft, usageConfirmed: event.target.checked })} />
+      </ConfigPageRow>
+      {draftError && <div role="alert">{draftError}</div>}
+      <ConfigPageRow label="" align="center" wide>
+        <div className="openbitfun-runtime-settings__status-actions">
+          <Button type="button" size="sm" variant="outline" disabled={busy}
+            onClick={() => { setDraft(null); setDraftError(null); }}>
+            {t('agentDelegation.cancel')}
+          </Button>
+          <Button type="button" size="sm" variant="primary" disabled={busy || !canSave} onClick={() => void saveDraft()}>
+            {t('agentDelegation.save')}
+          </Button>
+        </div>
+      </ConfigPageRow>
+    </>;
   };
 
-  const toggleDevice = (deviceId: string, checked: boolean) => {
-    setDraft(current => current && ({
-      ...current,
-      devices: checked
-        ? [...current.devices.filter(item => item !== deviceId), deviceId]
-        : current.devices.filter(item => item !== deviceId),
-    }));
+  const renderAssistant = (assistant: LocalAssistant) => {
+    const agent = state?.records
+      .map(record => record.agent)
+      .find((item): item is OpenAgent => item?.agentType === assistant.agentType);
+    const granted = agent?.connections?.map(item => item.connectionId) ?? [];
+    const description = agent
+      ? t('agentDelegation.openedTo', { devices: describeDevices(agent) })
+      : t('agentDelegation.notOpened');
+    return (
+      <React.Fragment key={assistant.agentType}>
+        <ConfigPageRow balanced label={assistantName(assistant)} description={description} align="center">
+          <div className="openbitfun-runtime-settings__status-actions">
+            {agent && grantDraft?.agentId !== agent.id && (
+              <Button type="button" size="sm" variant="outline" disabled={busy}
+                onClick={() => setGrantDraft({
+                  agentId: agent.id,
+                  connectionId: grantCandidates(granted)[0]?.connectionId ?? '',
+                  ...NO_LIMITS,
+                })}>
+                {t('agentDelegation.grantConnection')}
+              </Button>
+            )}
+            {agent && (
+              <Button type="button" size="sm" variant="outline" disabled={busy}
+                onClick={() => void run(async () => { await delegationAPI.closeAgent(agent.id); },
+                  'Failed to close opened assistant', t('agentDelegation.closeFailed'))}>
+                {t('agentDelegation.close')}
+              </Button>
+            )}
+            {!agent && draft?.agentType !== assistant.agentType && (
+              <Button type="button" size="sm" variant="outline" disabled={busy || draft !== null}
+                onClick={() => setDraft({
+                  agentType: assistant.agentType,
+                  allDevices: false,
+                  devices: [],
+                  usageConfirmed: false,
+                })}>
+                {t('agentDelegation.open')}
+              </Button>
+            )}
+          </div>
+        </ConfigPageRow>
+        {renderOpenForm(assistant)}
+        {agent && renderGrants(agent)}
+        {agent && renderGrantPanel(agent.id, granted)}
+        {renderTasks(assistant)}
+      </React.Fragment>
+    );
+  };
+
+  /** Entries an earlier build opened that are not assistants, or cannot be read. */
+  const renderUnsupported = (record: OpenAgentRecord, index: number) => {
+    const id = openAgentRecordId(record);
+    return (
+      <ConfigPageRow key={id ?? `unreadable-${index}`} balanced
+        label={record.agent?.displayName || id || t('agentDelegation.unreadableName')}
+        description={record.agent
+          ? t('agentDelegation.unsupportedEntry')
+          : t('agentDelegation.unreadable', { problem: record.problem ?? '' })}
+        align="center">
+        {id && (
+          <Button type="button" size="sm" variant="outline" disabled={busy}
+            onClick={() => void run(async () => { await delegationAPI.closeAgent(id); },
+              'Failed to delete unsupported open-agent entry', t('agentDelegation.closeFailed'))}>
+            {t('agentDelegation.delete')}
+          </Button>
+        )}
+      </ConfigPageRow>
+    );
   };
 
   const renderBody = () => {
@@ -438,197 +613,13 @@ export const AgentDelegationConfig: React.FC = () => {
       return <ConfigRetryState message={t('loading.failed')} retryLabel={t('loading.retry')} onRetry={() => void load()} />;
     }
     if (!state) return <ConfigLoadingState label={t('loading.text')} />;
-    const externalClientId = draft ? externalAgentClientId(draft.agentType) : null;
-    const canSave = draft !== null
-      && draft.agentType !== ''
-      && draft.taskKinds.length > 0
-      && (draft.allDevices || draft.devices.length > 0)
-      && (externalClientId === null || draft.usageConfirmed);
+    const unsupported = state.records.filter(record => !record.agent || !isAssistantAgentType(record.agent.agentType));
     return <>
-      {state.records.length === 0 && !draft && (
-        <ConfigPageRow label={t('agentDelegation.empty')} align="center"><span /></ConfigPageRow>
+      {state.assistants.length === 0 && (
+        <ConfigPageRow label={t('agentDelegation.noAssistants')} align="center"><span /></ConfigPageRow>
       )}
-      {state.records.map((record, index) => {
-        const id = openAgentRecordId(record);
-        const agent = record.agent;
-        const grants = agent?.connections ?? [];
-        const granted = grants.map(item => item.connectionId);
-        return (
-          <React.Fragment key={id ?? `unreadable-${index}`}>
-            <ConfigPageRow
-              balanced
-              label={agent?.displayName ?? id ?? t('agentDelegation.unreadable', { problem: '' })}
-              description={describeRecord(record)}
-              align="center"
-            >
-              <div className="openbitfun-runtime-settings__status-actions">
-                {agent && grantDraft?.agentId !== agent.id && (
-                  <Button type="button" size="sm" variant="outline" disabled={busy}
-                    onClick={() => setGrantDraft({
-                      agentId: agent.id,
-                      connectionId: grantCandidates(granted)[0]?.connectionId ?? '',
-                      usageConfirmed: false,
-                      ...NO_LIMITS,
-                    })}>
-                    {t('agentDelegation.grantConnection')}
-                  </Button>
-                )}
-                {id && (
-                  <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void closeRecord(id)}>
-                    {t('agentDelegation.close')}
-                  </Button>
-                )}
-              </div>
-            </ConfigPageRow>
-            {agent && grants.map(item => {
-              const editing = limitsDraft?.agentId === agent.id && limitsDraft.connectionId === item.connectionId;
-              return (
-                <React.Fragment key={item.connectionId}>
-                  <ConfigPageRow balanced label={t('agentDelegation.otherAccounts')}
-                    description={`${t('agentDelegation.grantedTo', { peer: describeConnection(item.connectionId) })} · ${describeLimits(item)}`}
-                    align="center">
-                    <div className="openbitfun-runtime-settings__status-actions">
-                      {!editing && (
-                        <Button type="button" size="sm" variant="outline" disabled={busy}
-                          onClick={() => setLimitsDraft({
-                            agentId: agent.id,
-                            connectionId: item.connectionId,
-                            maxJobs: item.maxConcurrentJobs?.toString() ?? '',
-                            maxMinutes: item.maxJobMinutes?.toString() ?? '',
-                          })}>
-                          {t('agentDelegation.limits.edit')}
-                        </Button>
-                      )}
-                      <Button type="button" size="sm" variant="outline" disabled={busy}
-                        onClick={() => void withdraw(agent.id, item.connectionId)}>
-                        {t('agentDelegation.withdraw')}
-                      </Button>
-                    </div>
-                  </ConfigPageRow>
-                  {editing && limitsDraft && <>
-                    {renderLimitInputs(limitsDraft,
-                      next => setLimitsDraft(current => current && ({ ...current, ...next })))}
-                    <ConfigPageRow label="" align="center" wide>
-                      <div className="openbitfun-runtime-settings__status-actions">
-                        <Button type="button" size="sm" variant="outline" disabled={busy}
-                          onClick={() => setLimitsDraft(null)}>
-                          {t('agentDelegation.cancel')}
-                        </Button>
-                        <Button type="button" size="sm" variant="primary"
-                          disabled={busy || draftLimits(limitsDraft) === null}
-                          onClick={() => void saveLimits()}>
-                          {t('agentDelegation.limits.save')}
-                        </Button>
-                      </div>
-                    </ConfigPageRow>
-                  </>}
-                </React.Fragment>
-              );
-            })}
-            {agent && renderGrantPanel(agent.id, agent.agentType, granted)}
-          </React.Fragment>
-        );
-      })}
-      {draft ? <>
-        <ConfigPageRow label={t('agentDelegation.mode')} align="center">
-          <Select
-            size="sm"
-            value={draft.agentType}
-            disabled={busy}
-            options={state.agents.map(agent => ({
-              value: agent.id,
-              label: externalAgentClientId(agent.id) === null
-                ? agent.name
-                : t('agentDelegation.externalAgent', { name: agent.name }),
-            }))}
-            onValueChange={value => {
-              const agentType = String(Array.isArray(value) ? value[0] : value);
-              const choice = state.agents.find(item => item.id === agentType);
-              setDraft(current => current && ({
-                ...current,
-                agentType,
-                id: suggestedId(agentType),
-                displayName: choice?.name ?? current.displayName,
-                // A confirmation covers only the agent it was given for.
-                usageConfirmed: false,
-              }));
-            }}
-          />
-        </ConfigPageRow>
-        {externalClientId !== null && (
-          <ConfigPageRow
-            label={t('agentDelegation.usageNoticeTitle')}
-            description={externalClientId === 'claude-code'
-              ? `${t('agentDelegation.usageNotice')} ${t('agentDelegation.usageNoticeClaudeCode')}`
-              : t('agentDelegation.usageNotice')}
-          >
-            <Checkbox checked={draft.usageConfirmed} disabled={busy}
-              label={t('agentDelegation.usageConfirm')}
-              onChange={event => setDraft({ ...draft, usageConfirmed: event.target.checked })} />
-          </ConfigPageRow>
-        )}
-        <ConfigPageRow label={t('agentDelegation.id')} description={t('agentDelegation.idDescription')} align="center">
-          <Input size="sm" value={draft.id} disabled={busy}
-            onChange={event => setDraft({ ...draft, id: event.target.value })} />
-        </ConfigPageRow>
-        <ConfigPageRow label={t('agentDelegation.name')} align="center">
-          <Input size="sm" value={draft.displayName} disabled={busy}
-            onChange={event => setDraft({ ...draft, displayName: event.target.value })} />
-        </ConfigPageRow>
-        <ConfigPageRow label={t('agentDelegation.description')} align="center">
-          <Input size="sm" value={draft.description} disabled={busy}
-            onChange={event => setDraft({ ...draft, description: event.target.value })} />
-        </ConfigPageRow>
-        <ConfigPageRow balanced label={t('agentDelegation.taskKinds')} description={t('agentDelegation.taskKindsDescription')}>
-          <div className="openbitfun-runtime-settings__status-actions">
-            <Checkbox checked={draft.taskKinds.includes('message')} disabled={busy}
-              label={t('agentDelegation.taskKindMessage')}
-              onChange={event => toggleTaskKind('message', event.target.checked)} />
-            <Checkbox checked={draft.taskKinds.includes('coding')} disabled={busy}
-              label={t('agentDelegation.taskKindCoding')}
-              onChange={event => toggleTaskKind('coding', event.target.checked)} />
-          </div>
-        </ConfigPageRow>
-        <ConfigPageRow label={t('agentDelegation.allDevices')} align="center">
-          <Switch checked={draft.allDevices} disabled={busy}
-            onChange={event => setDraft({ ...draft, allDevices: event.target.checked })} />
-        </ConfigPageRow>
-        {!draft.allDevices && (
-          <ConfigPageRow label={t('agentDelegation.devices')}
-            description={state.devices.length === 0 ? t('agentDelegation.noDevices') : undefined}>
-            <div>
-              {state.devices.map(device => (
-                <Checkbox key={device.device_id} checked={draft.devices.includes(device.device_id)} disabled={busy}
-                  label={device.device_name || device.device_id}
-                  onChange={event => toggleDevice(device.device_id, event.target.checked)} />
-              ))}
-            </div>
-          </ConfigPageRow>
-        )}
-        <ConfigPageRow label={t('agentDelegation.workspace')} description={t('agentDelegation.workspaceDescription')} align="center">
-          <Input size="sm" value={draft.messageWorkspace} disabled={busy}
-            onChange={event => setDraft({ ...draft, messageWorkspace: event.target.value })} />
-        </ConfigPageRow>
-        {draftError && <div role="alert">{draftError}</div>}
-        <ConfigPageRow label="" align="center" wide>
-          <div className="openbitfun-runtime-settings__status-actions">
-            <Button type="button" size="sm" variant="outline" disabled={busy}
-              onClick={() => { setDraft(null); setDraftError(null); }}>
-              {t('agentDelegation.cancel')}
-            </Button>
-            <Button type="button" size="sm" variant="primary" disabled={busy || !canSave} onClick={() => void saveDraft()}>
-              {t('agentDelegation.save')}
-            </Button>
-          </div>
-        </ConfigPageRow>
-      </> : (
-        <ConfigPageRow label="" align="center" wide>
-          <Button type="button" size="sm" variant="outline" disabled={busy || state.agents.length === 0}
-            onClick={() => setDraft(newDraft(state.agents))}>
-            {t('agentDelegation.open')}
-          </Button>
-        </ConfigPageRow>
-      )}
+      {state.assistants.map(renderAssistant)}
+      {unsupported.map(renderUnsupported)}
     </>;
   };
 

@@ -93,7 +93,7 @@
     "tooltips": {
       "persona": "Smart Members — expand role- and memory-based member sessions",
       "todos": "Task Board — manage all tasks",
-      "aiCollaboration": "AI Collaboration — delegate to agents on other devices and accounts",
+      "aiCollaboration": "AI Collaboration — open your assistants to other devices and accounts",
       "longTermTracking": "Long-term Tracking — ongoing tasks and conversations",
       "agents": "Which agents it can call",
       "skills": "What it knows — specialized knowledge files",
@@ -498,7 +498,14 @@
       "discoveryWarningTitle": "External session discovery",
       "discoveryReadFailed": "Some {{source}} session records could not be read. Existing sessions remain available.",
       "discoveryWorkspaceUnresolved": "Some {{source}} sessions could not be matched to a workspace. Existing sessions remain available.",
-      "discoveringExternal": "Discovering external sessions…"
+      "discoveringExternal": "Discovering external sessions…",
+      "delegated": {
+        "external": "Outside task",
+        "fromAccount": "from {{name}}",
+        "fromDevice": "from {{device}}",
+        "waiting": "{{count}} awaiting approval",
+        "untitled": "Untitled task"
+      }
     },
     "scheduledJobs": {
       "title": "Scheduled Jobs",
@@ -2277,6 +2284,6 @@
   },
   "aiCollaboration": {
     "title": "AI Collaboration",
-    "subtitle": "Open agents to other devices, connect with other accounts, and review the tasks they sent here"
+    "subtitle": "Open your assistants to other devices and accounts, choose how far you trust each connection, and review the tasks sent to your assistants"
   }
 }

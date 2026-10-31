@@ -2,10 +2,10 @@
   "schemaVersion": 2,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
   "catalogDigest": "bdbf3f113645efbead8f3f370145a0ca2b88097369499150166d87b8a86871c4",
-  "commandCount": 722,
+  "commandCount": 726,
   "coverage": {
-    "commandCount": 722,
-    "documentedCommandCount": 662,
+    "commandCount": 726,
+    "documentedCommandCount": 666,
     "implementationCommandCount": 60,
     "implementationDigest": "5047b674e890f899e65baf9235e9df4bd912fa28f44eb10a656e079a1b89974d"
   },
@@ -2058,6 +2058,22 @@
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
+      "id": "delegation_list_assistants",
+      "moduleId": "delegation_tasks",
+      "capabilityId": "feature.detached-dispatch",
+      "capabilityIds": [
+        "feature.detached-dispatch"
+      ],
+      "documentedItemIds": [
+        "feature.detached-dispatch:open-agents"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::delegation_tasks_api::delegation_list_assistants",
+      "sourceFile": "src/apps/desktop/src/api/delegation_tasks_api.rs",
+      "signature": "fn delegation_list_assistants() -> Result<Vec<LocalAssistant>, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
       "id": "delegation_list_connection_trust",
       "moduleId": "delegation",
       "capabilityId": "feature.detached-dispatch",
@@ -2087,6 +2103,22 @@
       "rustPath": "api::delegation_api::delegation_list_open_agents",
       "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
       "signature": "fn delegation_list_open_agents() -> Result<Vec<OpenAgentRecord>, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "delegation_list_tasks",
+      "moduleId": "delegation_tasks",
+      "capabilityId": "feature.detached-dispatch",
+      "capabilityIds": [
+        "feature.detached-dispatch"
+      ],
+      "documentedItemIds": [
+        "feature.detached-dispatch:open-agents"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::delegation_tasks_api::delegation_list_tasks",
+      "sourceFile": "src/apps/desktop/src/api/delegation_tasks_api.rs",
+      "signature": "fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String>",
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
@@ -2151,6 +2183,38 @@
       "rustPath": "api::delegation_api::delegation_set_connection_trust",
       "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
       "signature": "fn delegation_set_connection_trust( request: DelegationConnectionTrustRequest, ) -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "delegation_task_answer",
+      "moduleId": "delegation_tasks",
+      "capabilityId": "feature.detached-dispatch",
+      "capabilityIds": [
+        "feature.detached-dispatch"
+      ],
+      "documentedItemIds": [
+        "feature.detached-dispatch:open-agents"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::delegation_tasks_api::delegation_task_answer",
+      "sourceFile": "src/apps/desktop/src/api/delegation_tasks_api.rs",
+      "signature": "fn delegation_task_answer(request: DelegationTaskAnswerRequest) -> Result<Value, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "delegation_task_status",
+      "moduleId": "delegation_tasks",
+      "capabilityId": "feature.detached-dispatch",
+      "capabilityIds": [
+        "feature.detached-dispatch"
+      ],
+      "documentedItemIds": [
+        "feature.detached-dispatch:open-agents"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::delegation_tasks_api::delegation_task_status",
+      "sourceFile": "src/apps/desktop/src/api/delegation_tasks_api.rs",
+      "signature": "fn delegation_task_status(request: DelegationTaskStatusRequest) -> Result<Value, String>",
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {

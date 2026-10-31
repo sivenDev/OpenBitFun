@@ -9,6 +9,7 @@ import { resolveSessionRelationship } from '@/flow_chat/utils/sessionMetadata';
 import { notificationService } from '@/shared/notification-system';
 import type { WorkspaceInfo } from '@/shared/types';
 import SessionsSection from '../sessions/SessionsSection';
+import DelegatedTaskList from './DelegatedTaskList';
 import { readAssistantDefaultSession, saveAssistantDefaultSession } from './assistantSessionPreferences';
 import './AssistantSessionHistory.scss';
 
@@ -89,6 +90,7 @@ export default function AssistantSessionHistory({ workspace, isActive }: Props) 
           onChange: sessionId => { void changeDefault(sessionId); },
         }}
       />
+      <DelegatedTaskList workspace={workspace} />
       {preference?.sessionId && (
         <Button variant="text" size="sm" disabled={saving || loading || loadFailed} onClick={() => { void changeDefault(null); }}>
           {t('nav.sessions.clearDefault')}

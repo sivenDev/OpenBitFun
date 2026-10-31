@@ -93,7 +93,7 @@
     "tooltips": {
       "persona": "智能成员 — 展开查看基于角色和记忆的成员会话",
       "todos": "任务看板 — 管理全部任务",
-      "aiCollaboration": "AI协作 — 委派任务给其他设备和账号的智能体",
+      "aiCollaboration": "AI协作 — 把我的助理开放给其他设备和账号",
       "longTermTracking": "长期跟踪 — 持续任务与长期对话",
       "agents": "它能调用哪些智能体",
       "skills": "它懂什么专项知识 — 技能知识文件",
@@ -498,7 +498,14 @@
       "discoveryWarningTitle": "外部会话发现",
       "discoveryReadFailed": "部分 {{source}} 会话记录无法读取，已有会话仍可使用。",
       "discoveryWorkspaceUnresolved": "部分 {{source}} 会话无法匹配到工作区，已有会话仍可使用。",
-      "discoveringExternal": "正在发现外部会话…"
+      "discoveringExternal": "正在发现外部会话…",
+      "delegated": {
+        "external": "外部任务",
+        "fromAccount": "来自 {{name}}",
+        "fromDevice": "来自 {{device}}",
+        "waiting": "等待审批 {{count}} 项",
+        "untitled": "未命名任务"
+      }
     },
     "scheduledJobs": {
       "title": "定时任务",
@@ -2277,6 +2284,6 @@
   },
   "aiCollaboration": {
     "title": "AI协作",
-    "subtitle": "开放本机智能体、管理与其他账号的连接，并查看对方发来的任务"
+    "subtitle": "把助理开放给其他设备和账号，为每个连接选择信任级别，并查看交给助理的外部任务"
   }
 }

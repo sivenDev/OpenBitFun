@@ -866,6 +866,31 @@ fn delegation_cli(device: &SimulatedDevice, args: &[&str]) -> (bool, String) {
     )
 }
 
+/// The jobs on a device as its owner lists them, with no source bound.
+fn owner_job_list(device: &SimulatedDevice) -> Value {
+    use std::io::Write;
+    let mut command = device.environment.std_command_for(&device.binary);
+    command
+        .args(["dispatch", "list"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("start dispatch list");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"{}")
+        .expect("write list request");
+    let output = child.wait_with_output().expect("dispatch list");
+    assert!(
+        output.status.success(),
+        "dispatch list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("dispatch list JSON")
+}
+
 fn json_output(device: &SimulatedDevice, args: &[&str]) -> Value {
     let (ok, output) = connections_cli(device, args);
     assert!(ok, "connections {args:?} failed: {output}");
@@ -1134,7 +1159,7 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             (held.clone(), "submitted".into(), "".into()),
             (held, "finished".into(), "failed".into()),
             (delivered.clone(), "submitted".into(), "".into()),
-            (delivered, "finished".into(), "succeeded".into()),
+            (delivered.clone(), "finished".into(), "succeeded".into()),
         ],
         "{audit}"
     );
@@ -1145,6 +1170,25 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             .iter()
             .all(|record| record["entry"]["trust"] == "normal"),
         "{audit}"
+    );
+    // The owner's job list places the task under the assistant that ran it
+    // and names the connection it came from.
+    let jobs = owner_job_list(&target);
+    let listed = jobs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["jobId"] == delivered.as_str())
+        .unwrap_or_else(|| panic!("{jobs}"));
+    assert_eq!(listed["agentType"], ASSISTANT_TYPE, "{listed}");
+    assert_eq!(
+        listed["delegation"]["openAgentId"], OPEN_AGENT_ID,
+        "{listed}"
+    );
+    assert_eq!(
+        listed["delegation"]["sourceConnectionId"],
+        connection_id.as_str(),
+        "{listed}"
     );
 
     // B1's owner trusts the connection fully, after confirming the risk;

@@ -760,6 +760,34 @@ pub(crate) struct DispatchJobListEntry {
     pub(crate) model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning_preset: Option<String>,
+    /// Who delegated the job to an assistant here, for this device's owner;
+    /// never listed over a connection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) delegation: Option<DispatchDelegatedJobSummary>,
+    /// Prompts the job waits on.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub(crate) pending_permission_count: usize,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DispatchDelegatedJobSummary {
+    pub(crate) open_agent_id: String,
+    /// The assistant root the job runs as, set by this device.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) assistant_workspace: Option<String>,
+    /// A device of this account that delegated the job.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_device_id: Option<String>,
+    /// The cross-account connection the job arrived over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_connection_id: Option<String>,
+    /// What the requester reported about itself; shown, never trusted.
+    pub(crate) source: DispatchDelegationSource,
 }
 
 #[cfg(test)]
@@ -844,8 +872,13 @@ mod tests {
             approval_policy: DispatchApprovalPolicy::Remote,
             model: Some("model-1".to_string()),
             reasoning_preset: Some("high".to_string()),
+            delegation: None,
+            pending_permission_count: 0,
         };
         let value = serde_json::to_value(list_entry).expect("serialize list entry");
         assert_eq!(value["reasoningPreset"], "high");
+        // Jobs nobody delegated, and jobs not waiting, list as before.
+        assert!(value.get("delegation").is_none());
+        assert!(value.get("pendingPermissionCount").is_none());
     }
 }
