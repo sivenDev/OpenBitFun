@@ -4,9 +4,9 @@
 
 ## Status
 
-| Type | Plans | Complete |
-| --- | --- | --- |
-| `feature` | 10 | 10 |
+| Type | Plans | Draft | Complete |
+| --- | --- | --- | --- |
+| `feature` | 11 | 1 | 10 |
 
 ## Plan Groups
 
@@ -24,3 +24,4 @@
 | `F002-04` | [relay 跨账号连接登记与路由授权](features/F002/04-relay-cross-account-routing.md) | `complete` | 2026-10-30 |
 | `F002-05` | [跨账号配对、连接级密钥与连接管理](features/F002/05-cross-account-pairing.md) | `complete` | 2026-10-30 |
 | `F002-06` | [跨账号委派：按连接授权、目标端审批、额度与审计](features/F002/06-cross-account-delegation.md) | `complete` | 2026-10-30 |
+| `F002-07` | [跨账号工具上限与开放助理](features/F002/07-open-assistants.md) | `draft` | 2026-10-31 |
