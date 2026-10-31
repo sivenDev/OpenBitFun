@@ -30,6 +30,7 @@ import {
   readDelegatedTasks,
 } from '@/infrastructure/api/service-api/delegatedTaskReads';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
+import { permissionActionLabel } from '@/shared/utils/permissionActionLabels';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
 import { notificationService } from '@/shared/notification-system';
@@ -81,6 +82,15 @@ interface EditLimitsDraft extends LimitsDraft {
 
 const NO_LIMITS: LimitsDraft = { maxJobs: '', maxMinutes: '' };
 
+/** Task states after which nothing more happens. */
+const FINISHED_TASK_STATES = new Set(['succeeded', 'failed', 'cancelled']);
+
+/** How often tasks are read while one waits for the owner. */
+const WAITING_TASKS_REFRESH_MS = 5_000;
+
+/** Finished tasks still listed under an assistant; older ones are in the record. */
+const RECENT_FINISHED_TASKS = 3;
+
 function parseLimit(value: string, max: number): number | undefined | null {
   const trimmed = value.trim();
   if (trimmed === '') return undefined;
@@ -107,6 +117,20 @@ function openAgentIdFor(agentType: string): string {
     .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'assistant';
 }
 
+/**
+ * A prompt's resource, relative to the assistant's folder when it lies inside
+ * it. The runner may report the folder through a symlink-resolved path
+ * (`/private/var` for `/var` on macOS), so both spellings are accepted.
+ */
+function assistantRelative(resource: string, root: string): string | null {
+  const normalize = (path: string) => path.replace(/[\\/]+$/, '').replace(/^\/private(?=\/)/, '');
+  const base = normalize(root);
+  const path = normalize(resource);
+  if (path === base) return '';
+  if (path.startsWith(`${base}/`) || path.startsWith(`${base}\\`)) return path.slice(base.length + 1);
+  return null;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -121,6 +145,7 @@ function errorMessage(error: unknown): string {
  */
 export const AgentDelegationConfig: React.FC = () => {
   const { t } = useI18n('settings/runtime');
+  const { t: tChat } = useI18n('flow-chat');
   const peerMode = usePeerDeviceModeOptional()?.peerMode;
   const workspaces = useOptionalWorkspaceContext();
   const supported = isTauriRuntime() && peerMode?.active !== true;
@@ -131,8 +156,12 @@ export const AgentDelegationConfig: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [grantDraft, setGrantDraft] = useState<GrantDraft | null>(null);
   const [limitsDraft, setLimitsDraft] = useState<EditLimitsDraft | null>(null);
-  /** The task whose prompts are shown, with its last status. */
-  const [reviewing, setReviewing] = useState<{ jobId: string; status: DelegatedTaskStatus | null } | null>(null);
+  /** Prompts of the tasks that wait for the owner, by job. */
+  const [statuses, setStatuses] = useState<Record<string, DelegatedTaskStatus>>({});
+  /** Prompts answered here (`jobId:requestId`); the runner may list them until it consumes the answer. */
+  const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set());
+  /** The opened assistant whose closing the owner is confirming. */
+  const [closing, setClosing] = useState<string | null>(null);
   const activeRef = useRef(true);
 
   const load = useCallback(async () => {
@@ -171,16 +200,18 @@ export const AgentDelegationConfig: React.FC = () => {
     return () => { activeRef.current = false; };
   }, [load, supported]);
 
-  // Tasks arrive while the page stays open, so they are read again on a timer.
+  // Tasks arrive while the page stays open, so they are read again on a timer,
+  // and promptly while one waits for the owner.
+  const anyWaiting = state?.tasks.some(task => task.pendingPermissionCount > 0) ?? false;
   useEffect(() => {
     if (!supported) return undefined;
     const timer = setInterval(() => {
-      void readDelegatedTasks().then(tasks => {
+      void readDelegatedTasks({ fresh: anyWaiting }).then(tasks => {
         if (activeRef.current) setState(current => (current ? { ...current, tasks } : current));
       });
-    }, DELEGATED_TASKS_REFRESH_MS);
+    }, anyWaiting ? WAITING_TASKS_REFRESH_MS : DELEGATED_TASKS_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [supported]);
+  }, [anyWaiting, supported]);
 
   const assistantName = (assistant: LocalAssistant): string => {
     const workspace = workspaces?.assistantWorkspacesList.find(item =>
@@ -203,7 +234,6 @@ export const AgentDelegationConfig: React.FC = () => {
 
   const describeDevices = (agent: OpenAgent): string => {
     if (agent.sameAccountDevices.includes(ALL_SAME_ACCOUNT_DEVICES)) return t('agentDelegation.allDevices');
-    if (agent.sameAccountDevices.length === 0) return t('agentDelegation.noSameAccountDevices');
     return agent.sameAccountDevices
       .map(id => state?.devices.find(device => device.device_id === id)?.device_name ?? id)
       .join(', ');
@@ -310,22 +340,32 @@ export const AgentDelegationConfig: React.FC = () => {
     }, 'Failed to set connection limits', t('agentDelegation.limits.saveFailed'));
   };
 
-  const review = async (jobId: string) => {
-    setReviewing({ jobId, status: null });
-    try {
-      const status = await delegationAPI.taskStatus(jobId);
-      if (activeRef.current) setReviewing(current => current?.jobId === jobId ? { jobId, status } : current);
-    } catch (error) {
-      log.error('Failed to load delegated task', { error });
-      notificationService.error(`${t('agentDelegation.tasks.loadFailed')}: ${errorMessage(error)}`);
-      if (activeRef.current) setReviewing(null);
-    }
-  };
+  /** Reads the prompts of every task that waits for the owner. */
+  const loadStatuses = useCallback(async (tasks: DelegatedTask[]) => {
+    const waiting = tasks.filter(task => task.pendingPermissionCount > 0);
+    const loaded = await Promise.all(waiting.map(task => delegationAPI.taskStatus(task.jobId)
+      .then(status => [task.jobId, status] as const)
+      .catch((error: unknown) => {
+        log.warn('Failed to load delegated task', { error });
+        return null;
+      })));
+    if (!activeRef.current) return;
+    setStatuses(Object.fromEntries(loaded.filter(entry => entry !== null)));
+  }, []);
+
+  const tasks = state?.tasks;
+  useEffect(() => {
+    if (tasks) void loadStatuses(tasks);
+  }, [loadStatuses, tasks]);
 
   const answer = (jobId: string, requestId: string, reply: 'once' | 'reject') => void run(async () => {
     await delegationAPI.answerTask(jobId, requestId, reply);
-    await review(jobId);
+    if (activeRef.current) setAnswered(current => new Set(current).add(`${jobId}:${requestId}`));
   }, 'Failed to answer delegated task prompt', t('agentDelegation.tasks.answerFailed'));
+
+  /** What a task still waits for: its read prompts without those answered here. */
+  const openPrompts = (task: DelegatedTask) => (statuses[task.jobId]?.pendingPermissions ?? [])
+    .filter(prompt => !answered.has(`${task.jobId}:${prompt.requestId}`));
 
   /** Inputs for the two optional limits of one grant. */
   const renderLimitInputs = (value: LimitsDraft, onChange: (next: LimitsDraft) => void) => {
@@ -395,8 +435,8 @@ export const AgentDelegationConfig: React.FC = () => {
     const editing = limitsDraft?.agentId === agent.id && limitsDraft.connectionId === item.connectionId;
     return (
       <React.Fragment key={item.connectionId}>
-        <ConfigPageRow balanced label={t('agentDelegation.otherAccounts')}
-          description={`${t('agentDelegation.grantedTo', { peer: describeConnection(item.connectionId) })} · ${describeLimits(item)}`}
+        <ConfigPageRow balanced label={describeConnection(item.connectionId)}
+          description={describeLimits(item)}
           align="center">
           <div className="openbitfun-runtime-settings__status-actions">
             {!editing && (
@@ -438,61 +478,55 @@ export const AgentDelegationConfig: React.FC = () => {
     );
   });
 
-  const renderReview = (task: DelegatedTask) => {
-    if (reviewing?.jobId !== task.jobId) return null;
-    const status = reviewing.status;
-    if (!status) return <ConfigLoadingState label={t('loading.text')} />;
-    return <>
-      {status.pendingPermissions.length === 0 && (
-        <ConfigPageRow label={t('agentDelegation.tasks.noPrompts')} align="center"><span /></ConfigPageRow>
-      )}
-      {status.pendingPermissions.map(prompt => (
-        <ConfigPageRow key={prompt.requestId} balanced
-          label={t('agentDelegation.tasks.prompt', { action: prompt.action })}
-          description={prompt.resources.join('\n')}
-          align="center">
-          <div className="openbitfun-runtime-settings__status-actions">
-            <Button type="button" size="sm" variant="outline" disabled={busy}
-              onClick={() => answer(task.jobId, prompt.requestId, 'reject')}>
-              {t('agentDelegation.tasks.reject')}
-            </Button>
-            <Button type="button" size="sm" variant="primary" disabled={busy}
-              onClick={() => answer(task.jobId, prompt.requestId, 'once')}>
-              {t('agentDelegation.tasks.allowOnce')}
-            </Button>
-          </div>
-        </ConfigPageRow>
-      ))}
-      {status.lastError && (
-        <ConfigPageRow label={t('agentDelegation.tasks.error')} description={status.lastError}><span /></ConfigPageRow>
-      )}
-    </>;
+  const describeResource = (resource: string, root: string): string => {
+    const relative = assistantRelative(resource, root);
+    if (relative === null) return resource;
+    return relative === '' ? t('agentDelegation.tasks.assistantFolder') : relative;
   };
 
-  const renderTasks = (assistant: LocalAssistant) => {
-    const tasks = (state?.tasks ?? []).filter(task => task.agentType === assistant.agentType);
-    if (tasks.length === 0) return null;
-    return tasks.map(task => {
-      const waiting = task.pendingPermissionCount > 0
-        ? t('agentDelegation.tasks.waiting', { count: String(task.pendingPermissionCount) })
-        : null;
-      return (
-        <React.Fragment key={task.jobId}>
-          <ConfigPageRow balanced
-            label={task.title || t('agentDelegation.tasks.untitled')}
-            description={[t('agentDelegation.tasks.external'), describeSource(task), describeState(task.state), waiting]
-              .filter(Boolean).join(' · ')}
-            align="center">
-            <Button type="button" size="sm" variant={waiting ? 'primary' : 'outline'} disabled={busy}
-              onClick={() => (reviewing?.jobId === task.jobId ? setReviewing(null) : void review(task.jobId))}>
-              {reviewing?.jobId === task.jobId ? t('agentDelegation.tasks.hide') : t('agentDelegation.tasks.review')}
-            </Button>
-          </ConfigPageRow>
-          {renderReview(task)}
-        </React.Fragment>
-      );
-    });
+  const renderPrompts = (task: DelegatedTask, root: string) => openPrompts(task).map(prompt => (
+    <ConfigPageRow key={prompt.requestId} balanced
+      label={permissionActionLabel(prompt.action, tChat)}
+      description={prompt.resources.map(resource => describeResource(resource, root)).join('\n')}
+      align="center">
+      <div className="openbitfun-runtime-settings__status-actions">
+        <Button type="button" size="sm" variant="outline" disabled={busy}
+          onClick={() => answer(task.jobId, prompt.requestId, 'reject')}>
+          {t('agentDelegation.tasks.reject')}
+        </Button>
+        <Button type="button" size="sm" variant="primary" disabled={busy}
+          onClick={() => answer(task.jobId, prompt.requestId, 'once')}>
+          {t('agentDelegation.tasks.allowOnce')}
+        </Button>
+      </div>
+    </ConfigPageRow>
+  ));
+
+  /** Tasks still running or waiting, then the few that finished last. */
+  const shownTasks = (assistant: LocalAssistant): DelegatedTask[] => {
+    const own = (state?.tasks ?? []).filter(task => task.agentType === assistant.agentType);
+    const active = own.filter(task => !FINISHED_TASK_STATES.has(task.state) || task.pendingPermissionCount > 0);
+    const finished = own.filter(task => !active.includes(task)).slice(0, RECENT_FINISHED_TASKS);
+    return [...active, ...finished];
   };
+
+  const renderTasks = (assistant: LocalAssistant) => shownTasks(assistant).map(task => {
+    const waitingCount = statuses[task.jobId] ? openPrompts(task).length : task.pendingPermissionCount;
+    const waiting = waitingCount > 0
+      ? t('agentDelegation.tasks.waiting', { count: String(waitingCount) })
+      : null;
+    return (
+      <React.Fragment key={task.jobId}>
+        <ConfigPageRow
+          label={task.title || t('agentDelegation.tasks.untitled')}
+          description={[describeSource(task), describeState(task.state), waiting].filter(Boolean).join(' · ')}
+          align="center">
+          <span />
+        </ConfigPageRow>
+        {renderPrompts(task, assistant.rootPath)}
+      </React.Fragment>
+    );
+  });
 
   const renderOpenForm = (assistant: LocalAssistant) => {
     if (!state || draft?.agentType !== assistant.agentType) return null;
@@ -505,7 +539,7 @@ export const AgentDelegationConfig: React.FC = () => {
       </ConfigPageRow>
       {!draft.allDevices && (
         <ConfigPageRow label={t('agentDelegation.devices')}
-          description={state.devices.length === 0 ? t('agentDelegation.noDevices') : t('agentDelegation.devicesDescription')}>
+          description={state.devices.length === 0 ? t('agentDelegation.noDevices') : undefined}>
           <div>
             {state.devices.map(device => (
               <Checkbox key={device.device_id} checked={draft.devices.includes(device.device_id)} disabled={busy}
@@ -540,14 +574,34 @@ export const AgentDelegationConfig: React.FC = () => {
     </>;
   };
 
+  const renderCloseConfirm = (agent: OpenAgent, name: string) => (
+    <ConfigPageRow label={t('agentDelegation.closeConfirmTitle', { name })}
+      description={t('agentDelegation.closeConfirmDescription')} align="center">
+      <div className="openbitfun-runtime-settings__status-actions">
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setClosing(null)}>
+          {t('agentDelegation.cancel')}
+        </Button>
+        <Button type="button" size="sm" variant="primary" disabled={busy}
+          onClick={() => void run(async () => {
+            await delegationAPI.closeAgent(agent.id);
+            if (activeRef.current) setClosing(null);
+          }, 'Failed to close opened assistant', t('agentDelegation.closeFailed'))}>
+          {t('agentDelegation.close')}
+        </Button>
+      </div>
+    </ConfigPageRow>
+  );
+
   const renderAssistant = (assistant: LocalAssistant) => {
     const agent = state?.records
       .map(record => record.agent)
       .find((item): item is OpenAgent => item?.agentType === assistant.agentType);
     const granted = agent?.connections?.map(item => item.connectionId) ?? [];
-    const description = agent
-      ? t('agentDelegation.openedTo', { devices: describeDevices(agent) })
-      : t('agentDelegation.notOpened');
+    const description = !agent
+      ? t('agentDelegation.notOpened')
+      : agent.sameAccountDevices.length === 0
+        ? t('agentDelegation.openedToAccounts')
+        : t('agentDelegation.openedTo', { devices: describeDevices(agent) });
     return (
       <React.Fragment key={assistant.agentType}>
         <ConfigPageRow balanced label={assistantName(assistant)} description={description} align="center">
@@ -562,10 +616,9 @@ export const AgentDelegationConfig: React.FC = () => {
                 {t('agentDelegation.grantConnection')}
               </Button>
             )}
-            {agent && (
+            {agent && closing !== agent.id && (
               <Button type="button" size="sm" variant="outline" disabled={busy}
-                onClick={() => void run(async () => { await delegationAPI.closeAgent(agent.id); },
-                  'Failed to close opened assistant', t('agentDelegation.closeFailed'))}>
+                onClick={() => setClosing(agent.id)}>
                 {t('agentDelegation.close')}
               </Button>
             )}
@@ -582,6 +635,7 @@ export const AgentDelegationConfig: React.FC = () => {
             )}
           </div>
         </ConfigPageRow>
+        {agent && closing === agent.id && renderCloseConfirm(agent, assistantName(assistant))}
         {renderOpenForm(assistant)}
         {agent && renderGrants(agent)}
         {agent && renderGrantPanel(agent.id, granted)}

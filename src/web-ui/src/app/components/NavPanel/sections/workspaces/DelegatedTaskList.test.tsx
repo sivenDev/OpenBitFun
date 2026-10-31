@@ -3,7 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DelegatedTaskList from './DelegatedTaskList';
-import { resetDelegatedTaskReads } from '@/infrastructure/api/service-api/delegatedTaskReads';
+import { readDelegatedTasks, resetDelegatedTaskReads } from '@/infrastructure/api/service-api/delegatedTaskReads';
 import type { WorkspaceInfo } from '@/shared/types';
 
 const mocks = vi.hoisted(() => ({
@@ -84,6 +84,15 @@ describe('DelegatedTaskList', () => {
     await act(async () => root.render(<DelegatedTaskList workspace={workspace} waitingOnly />));
     expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
       .toEqual(['Task a']);
+  });
+
+  it('follows reads other surfaces start', async () => {
+    mocks.listTasks.mockResolvedValue([task('a', { pendingPermissionCount: 1 })]);
+    await act(async () => root.render(<DelegatedTaskList workspace={workspace} waitingOnly />));
+    expect(rows()).toHaveLength(1);
+    mocks.listTasks.mockResolvedValue([task('a')]);
+    await act(async () => { await readDelegatedTasks({ fresh: true }); });
+    expect(rows()).toHaveLength(0);
   });
 
   it('shows nothing when there are no tasks or the list cannot be read', async () => {

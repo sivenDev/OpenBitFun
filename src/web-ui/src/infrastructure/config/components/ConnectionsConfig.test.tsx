@@ -66,6 +66,13 @@ vi.mock('./common', () => ({
 vi.mock('@openbitfun/ui', () => ({
   Button: ({ variant: _variant, size: _size, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) => <button {...props} />,
   Input: ({ size: _size, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { size?: string }) => <input {...props} />,
+  Select: ({ value, options, onValueChange, 'aria-label': label }: {
+    value: string; options: { value: string; label: string }[]; onValueChange: (value: string) => void; 'aria-label'?: string;
+  }) => (
+    <select aria-label={label} value={value} onChange={event => onValueChange(event.target.value)}>
+      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+  ),
 }));
 
 const FINGERPRINT_A = 'AAAA BBBB CCCC DDDD EEEE FFFF 0000 1111';
@@ -145,10 +152,18 @@ describe('ConnectionsConfig', () => {
     });
   };
 
-  it('shows this device fingerprint and an empty list', async () => {
+  const chooseTrust = async (level: string) => {
+    const select = container.querySelector('select[aria-label="connections.trust.label"]') as HTMLSelectElement;
+    await act(async () => {
+      select.value = level;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+
+  it('shows an empty list; the fingerprint appears only while pairing', async () => {
     await render();
-    expect(container.querySelector('[data-testid="local-fingerprint"]')?.textContent).toBe(FINGERPRINT_A);
     expect(container.textContent).toContain('connections.empty');
+    expect(container.textContent).not.toContain(FINGERPRINT_A);
   });
 
   it('is unavailable outside the desktop app and for a connected peer device', async () => {
@@ -181,9 +196,17 @@ describe('ConnectionsConfig', () => {
       inviteId: 'inv-1', link: 'openbitfun://connect?relay=x&code=C&fp=F', fingerprint: FINGERPRINT_A, expiresAt: 100,
     });
     await render();
+    mocks.overview.mockResolvedValue(overview({ invites: [{ inviteId: 'inv-1', createdAt: 1, expiresAt: 100 }] }));
     await click('connections.invite.create');
     expect(container.querySelector('[data-testid="invite-link"]')?.textContent)
       .toBe('openbitfun://connect?relay=x&code=C&fp=F');
+    // The new invite is listed once, with its link.
+    expect(container.textContent).not.toContain('connections.invite.open');
+    mocks.withdrawInvite.mockResolvedValue(undefined);
+    mocks.overview.mockResolvedValue(overview());
+    await click('connections.invite.withdraw');
+    expect(mocks.withdrawInvite).toHaveBeenCalledWith('inv-1');
+    expect(container.querySelector('[data-testid="invite-link"]')).toBeNull();
   });
 
   it('shows the inviter before accepting, then the fingerprint to read back', async () => {
@@ -247,7 +270,15 @@ describe('ConnectionsConfig', () => {
     const revokeButtons = [...container.querySelectorAll('button')]
       .filter(item => item.textContent === 'connections.revoke');
     expect(revokeButtons).toHaveLength(3);
+    // A working connection names no status or fingerprint.
+    expect(container.querySelector('[data-row="connections.peerDevice:Bea|B1 Desktop"] small')!.textContent).toBe('');
     await act(async () => { revokeButtons[0].click(); });
+    expect(mocks.revoke).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('connections.revokeConfirmDescription');
+    await act(async () => {
+      container.querySelector('[data-row="connections.revokeConfirmTitle:Bea"] button:last-child')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
     expect(mocks.revoke).toHaveBeenCalledWith('conn-1');
     expect(mocks.overview).toHaveBeenCalledTimes(2);
   });
@@ -255,28 +286,29 @@ describe('ConnectionsConfig', () => {
     mocks.overview.mockResolvedValue(overview({ connections: [connection()] }));
     mocks.setTrust.mockResolvedValue(undefined);
     await render();
-    const row = () => container.querySelector('[data-row="connections.peer:Bea|2002"]')!.textContent!;
-    expect(row()).toContain('connections.trust.normal');
-    await click('connections.trust.makeFull');
+    const level = () => (container.querySelector('select[aria-label="connections.trust.label"]') as HTMLSelectElement).value;
+    expect(level()).toBe('normal');
+    await chooseTrust('full');
     expect(container.textContent).toContain('connections.trust.confirmDescription');
     expect(mocks.setTrust).not.toHaveBeenCalled();
 
     mocks.listTrust.mockResolvedValue({ 'conn-1': 'full' });
     await click('connections.trust.confirm');
     expect(mocks.setTrust).toHaveBeenCalledWith('conn-1', 'full', true);
-    expect(row()).toContain('connections.trust.full');
+    expect(level()).toBe('full');
     expect(container.textContent).not.toContain('connections.trust.confirmDescription');
 
     mocks.listTrust.mockResolvedValue({});
-    await click('connections.trust.makeNormal');
+    await chooseTrust('normal');
     expect(mocks.setTrust).toHaveBeenLastCalledWith('conn-1', 'normal', false);
-    expect(row()).toContain('connections.trust.normal');
+    expect(level()).toBe('normal');
   });
 
   it('reads every connection as normally trusted when trust cannot be read', async () => {
     mocks.overview.mockResolvedValue(overview({ connections: [connection()] }));
     mocks.listTrust.mockRejectedValue(new Error('unavailable'));
     await render();
-    expect(container.textContent).toContain('connections.trust.normal');
+    expect((container.querySelector('select[aria-label="connections.trust.label"]') as HTMLSelectElement).value)
+      .toBe('normal');
   });
 });

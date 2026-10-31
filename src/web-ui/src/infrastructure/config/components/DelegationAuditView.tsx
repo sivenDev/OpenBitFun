@@ -18,8 +18,11 @@ import {
 
 const log = createLogger('DelegationAuditView');
 
-/** The newest entries shown; older ones stay in the log. */
+/** The newest entries read; older ones stay in the log. */
 const AUDIT_LIMIT = 100;
+
+/** Entries shown until the owner asks for all of them. */
+const COLLAPSED_ENTRIES = 10;
 
 /**
  * Tasks other accounts delegated to this device. The log is device-local, so
@@ -32,13 +35,23 @@ export const DelegationAuditView: React.FC = () => {
   const supported = isTauriRuntime() && peerMode?.active !== true;
   const [records, setRecords] = useState<DelegationAuditRecord[] | null>(null);
   const [loadError, setLoadError] = useState(false);
+  /** Display names of the opened assistants, by open-agent id. */
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState(false);
   const activeRef = useRef(true);
 
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const loaded = await delegationAPI.listAudit(AUDIT_LIMIT);
-      if (activeRef.current) setRecords(loaded);
+      const [loaded, opened] = await Promise.all([
+        delegationAPI.listAudit(AUDIT_LIMIT),
+        // Names are optional: without them an entry names the assistant by its id.
+        delegationAPI.listOpenAgents().catch(() => []),
+      ]);
+      if (!activeRef.current) return;
+      setRecords(loaded);
+      setNames(Object.fromEntries(opened
+        .flatMap(record => (record.agent ? [[record.agent.id, record.agent.displayName] as const] : []))));
     } catch (error) {
       log.error('Failed to load the delegation audit log', { error });
       if (activeRef.current) setLoadError(true);
@@ -70,9 +83,8 @@ export const DelegationAuditView: React.FC = () => {
     const at = Date.parse(entry.at);
     const summary = t('delegationAudit.entry', {
       time: Number.isNaN(at) ? entry.at : formatDate(at),
-      agent: entry.openAgentId,
+      agent: names[entry.openAgentId] || entry.openAgentId,
       name: entry.peerDisplayName || entry.connectionId,
-      user: entry.peerUserId,
       device: entry.peerDeviceName,
     });
     const trust = entry.trust === 'full'
@@ -96,20 +108,27 @@ export const DelegationAuditView: React.FC = () => {
       {records.length === 0 && (
         <ConfigPageRow label={t('delegationAudit.empty')} align="center"><span /></ConfigPageRow>
       )}
-      {[...records].reverse().map((record, index) => (
+      {[...records].reverse().slice(0, expanded ? undefined : COLLAPSED_ENTRIES).map((record, index) => (
         <ConfigPageRow
           key={`${record.entry?.jobId ?? 'unreadable'}-${record.entry?.event ?? ''}-${index}`}
           label={record.entry ? describeEvent(record.entry) : t('delegationAudit.unreadable')}
           description={record.entry ? describeEntry(record.entry) : record.problem ?? ''}
           align="center"
         >
-          <span data-testid="audit-job">{record.entry?.jobId ?? ''}</span>
+          <span />
         </ConfigPageRow>
       ))}
       <ConfigPageRow label="" align="center">
-        <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
-          {t('delegationAudit.refresh')}
-        </Button>
+        <div className="openbitfun-runtime-settings__status-actions">
+          {!expanded && records.length > COLLAPSED_ENTRIES && (
+            <Button type="button" size="sm" variant="outline" onClick={() => setExpanded(true)}>
+              {t('delegationAudit.showAll', { count: String(records.length) })}
+            </Button>
+          )}
+          <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
+            {t('delegationAudit.refresh')}
+          </Button>
+        </div>
       </ConfigPageRow>
     </>;
   };

@@ -6,6 +6,7 @@ import { DelegationAuditView } from './DelegationAuditView';
 
 const mocks = vi.hoisted(() => ({
   audit: vi.fn(),
+  openAgents: vi.fn(),
   tauri: vi.fn(),
   peer: vi.fn(),
 }));
@@ -27,7 +28,7 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
 }));
 vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
-  delegationAPI: { listAudit: mocks.audit },
+  delegationAPI: { listAudit: mocks.audit, listOpenAgents: mocks.openAgents },
 }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
@@ -63,6 +64,7 @@ describe('DelegationAuditView', () => {
     Object.values(mocks).forEach(mock => mock.mockReset());
     mocks.tauri.mockReturnValue(true);
     mocks.peer.mockReturnValue({ peerMode: { active: false } });
+    mocks.openAgents.mockResolvedValue([]);
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -98,8 +100,19 @@ describe('DelegationAuditView', () => {
     const time = `date(${Date.parse(AT)})`;
     expect(container.textContent).toContain(
       // An entry an earlier build wrote names no trust level.
-      `delegationAudit.entry:${time}|helper|Bea|2002|B1 Desktop · The task ran longer than the 5-minute limit`);
+      `delegationAudit.entry:${time}|helper|Bea|B1 Desktop · The task ran longer than the 5-minute limit`);
     expect(container.textContent).toContain('unreadable audit entry: expected value');
+  });
+
+  it('names the assistant that ran a task, and shows the newest ten until asked for all', async () => {
+    mocks.openAgents.mockResolvedValue([{ agent: { id: 'helper', displayName: 'Nova' } }, { problem: 'unreadable' }]);
+    mocks.audit.mockResolvedValue(Array.from({ length: 12 }, () => entry('submitted')));
+    await render();
+    expect(labels().filter(label => label === 'delegationAudit.submitted')).toHaveLength(10);
+    expect(container.textContent).toContain('|Nova|Bea|B1 Desktop');
+    await act(async () => Array.from(container.querySelectorAll('button'))
+      .find(node => node.textContent === 'delegationAudit.showAll:12')!.click());
+    expect(labels().filter(label => label === 'delegationAudit.submitted')).toHaveLength(12);
   });
 
   it('shows the trust level and the external agents a task used', async () => {
@@ -110,9 +123,9 @@ describe('DelegationAuditView', () => {
     await render();
     const time = `date(${Date.parse(AT)})`;
     expect(container.textContent).toContain(
-      `delegationAudit.entry:${time}|helper|Bea|2002|B1 Desktop · delegationAudit.trustFull · delegationAudit.externalAgents:acp:claude-code`);
+      `delegationAudit.entry:${time}|helper|Bea|B1 Desktop · delegationAudit.trustFull · delegationAudit.externalAgents:acp:claude-code`);
     expect(container.textContent).toContain(
-      `delegationAudit.entry:${time}|helper|Bea|2002|B1 Desktop · delegationAudit.trustNormal`);
+      `delegationAudit.entry:${time}|helper|Bea|B1 Desktop · delegationAudit.trustNormal`);
   });
 
   it('is shown only on the device that keeps the log', async () => {

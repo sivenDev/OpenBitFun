@@ -5,7 +5,11 @@ import { useI18n } from '@/infrastructure/i18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
 import type { WorkspaceInfo } from '@/shared/types';
-import { DELEGATED_TASKS_REFRESH_MS, readDelegatedTasks } from '@/infrastructure/api/service-api/delegatedTaskReads';
+import {
+  DELEGATED_TASKS_REFRESH_MS,
+  onDelegatedTasksRead,
+  readDelegatedTasks,
+} from '@/infrastructure/api/service-api/delegatedTaskReads';
 
 /**
  * Tasks name the assistant they run as by its directory (`assistant:<dir>`).
@@ -43,15 +47,17 @@ export default function DelegatedTaskList({
       return undefined;
     }
     let active = true;
-    const refresh = () => {
-      void readDelegatedTasks().then(all => {
-        if (active) setTasks(all.filter(task => runsAs(task, workspace.rootPath)));
-      });
+    const show = (all: DelegatedTask[]) => {
+      if (active) setTasks(all.filter(task => runsAs(task, workspace.rootPath)));
     };
+    const refresh = () => { void readDelegatedTasks().then(show); };
     refresh();
+    // Reads started elsewhere, such as the AI collaboration page after an answer, show here too.
+    const unsubscribe = onDelegatedTasksRead(show);
     const timer = setInterval(refresh, DELEGATED_TASKS_REFRESH_MS);
     return () => {
       active = false;
+      unsubscribe();
       clearInterval(timer);
     };
   }, [enabled, workspace.rootPath]);

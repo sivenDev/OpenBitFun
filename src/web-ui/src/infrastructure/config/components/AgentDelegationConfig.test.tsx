@@ -35,7 +35,10 @@ const translate = (key: string, values?: Record<string, string>) => {
   }
   return values ? `${key}:${Object.values(values).join('|')}` : key;
 };
-vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({ useI18n: () => ({ t: translate }) }));
+// Action labels come from the chat namespace; they are echoed as keys.
+vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
+  useI18n: (namespace: string) => ({ t: namespace === 'flow-chat' ? (key: string) => key : translate }),
+}));
 vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
   delegationAPI: {
@@ -90,6 +93,7 @@ describe('AgentDelegationConfig', () => {
       { agentType: 'assistant:workspace-work', assistantId: 'work', rootPath: '/home/me/personal_assistant/workspace-work' },
     ]);
     mocks.tasks.mockResolvedValue([]);
+    mocks.status.mockResolvedValue({ state: 'running', cursor: 0, pendingPermissions: [] });
     mocks.devices.mockResolvedValue([
       { device_id: 'this-device', device_name: 'This Mac', online: true, last_seen_at: null },
       { device_id: 'laptop', device_name: 'Laptop', online: true, last_seen_at: null },
@@ -199,8 +203,10 @@ describe('AgentDelegationConfig', () => {
     expect(mocks.grant).toHaveBeenCalledWith('workspace', 'conn-1');
     expect(mocks.limits).toHaveBeenCalledWith('workspace', 'conn-1', { maxConcurrentJobs: 2, maxJobMinutes: undefined });
 
-    expect(container.textContent).toContain('agentDelegation.grantedTo:agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1');
-    expect(container.textContent).toContain('agentDelegation.grantedTo:agentDelegation.connectionMissing:conn-gone');
+    // Each grant is named by whom it goes to.
+    expect(container.querySelector('[data-row="agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1"]')!.textContent)
+      .toContain('agentDelegation.limits.anyJobs');
+    expect(container.querySelector('[data-row="agentDelegation.connectionMissing:conn-gone"]')).not.toBeNull();
     mocks.revoke.mockResolvedValue(true);
     await click('agentDelegation.withdraw');
     expect(mocks.revoke).toHaveBeenCalledWith('workspace', 'conn-1');
@@ -211,7 +217,7 @@ describe('AgentDelegationConfig', () => {
     mocks.tasks.mockResolvedValue([
       {
         jobId: 'delegation-1', sessionId: 's1', state: 'running', title: 'Plan the trip',
-        openAgentId: 'workspace', agentType: 'assistant:workspace', pendingPermissionCount: 1,
+        openAgentId: 'workspace', agentType: 'assistant:workspace', pendingPermissionCount: 3,
         source: { kind: 'connection', connectionId: 'conn-1', accountName: 'Bea', deviceName: 'B1' },
       },
       {
@@ -222,7 +228,12 @@ describe('AgentDelegationConfig', () => {
     ]);
     mocks.status.mockResolvedValue({
       state: 'running', cursor: 3,
-      pendingPermissions: [{ requestId: 'req-1', action: 'execute', resources: ['ls -la'] }],
+      pendingPermissions: [
+        { requestId: 'req-1', action: 'bash', resources: ['ls -la'] },
+        // Paths inside the assistant's folder are shown relative to it, however the runner spells the folder.
+        { requestId: 'req-2', action: 'read', resources: ['/private/home/me/personal_assistant/workspace/USER.md'] },
+        { requestId: 'req-3', action: 'external_directory', resources: ['/home/me/personal_assistant/workspace/'] },
+      ],
     });
     mocks.answer.mockResolvedValue(undefined);
     await render();
@@ -232,17 +243,50 @@ describe('AgentDelegationConfig', () => {
     expect(rows.indexOf('Summarize notes')).toBe(rows.indexOf('work') + 1);
     const trip = container.querySelector('[data-row="Plan the trip"]')!.textContent!;
     expect(trip).toContain('agentDelegation.tasks.fromAccount:Bea|B1');
-    expect(trip).toContain('agentDelegation.tasks.waiting:1');
+    expect(trip).toContain('agentDelegation.tasks.waiting:3');
     expect(container.querySelector('[data-row="Summarize notes"]')!.textContent)
       .toContain('agentDelegation.tasks.fromDevice:Laptop');
 
-    await click('agentDelegation.tasks.review');
+    // What a waiting task asks for is shown without opening it.
     expect(mocks.status).toHaveBeenCalledWith('delegation-1');
-    expect(container.textContent).toContain('ls -la');
+    expect(mocks.status).not.toHaveBeenCalledWith('delegation-2');
+    expect(rows).not.toContain('permission.actions.other');
+    expect(container.querySelector('[data-row="permission.actions.bash"]')!.textContent).toContain('ls -la');
+    expect(container.querySelector('[data-row="permission.actions.read"] small')!.textContent).toBe('USER.md');
+    expect(container.querySelector('[data-row="permission.actions.externalDirectory"] small')!.textContent)
+      .toBe('agentDelegation.tasks.assistantFolder');
     // Only one-off answers: the owner approves each action of another device's task.
     expect(button('agentDelegation.tasks.allowOnce')).toBeDefined();
     await click('agentDelegation.tasks.allowOnce');
     expect(mocks.answer).toHaveBeenCalledWith('delegation-1', 'req-1', 'once');
+    // The runner lists an answered prompt until it consumes the answer; it is not offered again.
+    expect(container.querySelector('[data-row="permission.actions.bash"]')).toBeNull();
+    expect(container.querySelector('[data-row="Plan the trip"]')!.textContent).toContain('agentDelegation.tasks.waiting:2');
+  });
+
+  it('lists running tasks and only the last finished ones', async () => {
+    mocks.tasks.mockResolvedValue([
+      { jobId: 'run', state: 'running', title: 'Running', agentType: 'assistant:workspace', pendingPermissionCount: 0,
+        source: { kind: 'device', deviceId: 'laptop' } },
+      ...['a', 'b', 'c', 'd'].map(id => ({ jobId: id, state: 'succeeded', title: `Done ${id}`,
+        agentType: 'assistant:workspace', pendingPermissionCount: 0, source: { kind: 'device', deviceId: 'laptop' } })),
+    ]);
+    await render();
+    const rows = Array.from(container.querySelectorAll('[data-row]')).map(node => node.getAttribute('data-row'));
+    expect(rows.filter(row => row?.startsWith('Done') || row === 'Running'))
+      .toEqual(['Running', 'Done a', 'Done b', 'Done c']);
+  });
+
+  it('asks before it stops opening an assistant', async () => {
+    mocks.list.mockResolvedValue([opened()]);
+    mocks.close.mockResolvedValue(true);
+    await render();
+    await click('agentDelegation.close');
+    expect(mocks.close).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('agentDelegation.closeConfirmDescription');
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-row="agentDelegation.closeConfirmTitle:Nova"] button:last-child')!.click());
+    expect(mocks.close).toHaveBeenCalledWith('workspace');
   });
 
   it('reads tasks again while the page stays open', async () => {

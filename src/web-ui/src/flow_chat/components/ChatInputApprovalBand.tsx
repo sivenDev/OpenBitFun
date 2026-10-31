@@ -33,6 +33,7 @@ import type {
   PermissionReplyKind,
   PermissionRequest,
 } from '@/infrastructure/api/service-api/AgentAPI';
+import { PERMISSION_ACTION_LABEL_KEYS, permissionActionLabel } from '@/shared/utils/permissionActionLabels';
 import { useCopyTextAction } from '../hooks/useCopyTextAction';
 import { CopyableTextPreview } from './CopyableTextPreview';
 import { remoteAgentFromAgentType } from '../utils/remoteAgent';
@@ -54,32 +55,11 @@ export interface ChatInputApprovalBandProps {
   onRespondBatch: (requestId: string, reply: PermissionReplyKind, feedback?: string) => Promise<void>;
 }
 
-const PERMISSION_ACTION_LABEL_KEYS: Record<string, string> = {
-  read: 'permission.actions.read',
-  edit: 'permission.actions.edit',
-  bash: 'permission.actions.bash',
-  git: 'permission.actions.git',
-  computer_use: 'permission.actions.computerUse',
-  websearch: 'permission.actions.webSearch',
-  webfetch: 'permission.actions.webFetch',
-  mcp: 'permission.actions.mcp',
-  task: 'permission.actions.task',
-  skill: 'permission.actions.skill',
-  page_publish: 'permission.actions.pagePublish',
-  page_deploy: 'permission.actions.pageDeploy',
-  custom_tool: 'permission.actions.customTool',
-  external_directory: 'permission.actions.externalDirectory',
-};
-
 const PAGE_VISIBILITY_LABEL_KEYS: Record<string, string> = {
   private: 'permission.visibility.private',
   relay: 'permission.visibility.relay',
   public: 'permission.visibility.public',
 };
-
-function permissionActionLabel(action: string, t: (key: string) => string): string {
-  return t(PERMISSION_ACTION_LABEL_KEYS[action] ?? 'permission.actions.other');
-}
 
 function metadataString(
   metadata: Record<string, unknown> | undefined,

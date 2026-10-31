@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input } from '@openbitfun/ui';
+import { Button, Input, Select } from '@openbitfun/ui';
 import {
   connectionErrorReason,
   connectionsAPI,
@@ -58,6 +58,8 @@ export const ConnectionsConfig: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   /** The connection whose full trust the owner is confirming. */
   const [trusting, setTrusting] = useState<string | null>(null);
+  /** The connection whose revocation the owner is confirming. */
+  const [revoking, setRevoking] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const activeRef = useRef(true);
 
@@ -163,21 +165,24 @@ export const ConnectionsConfig: React.FC = () => {
 
   const renderConnection = (connection: ConnectionSummary) => {
     const trust = trustOf(connection.connectionId);
+    const live = connection.status !== 'revoked';
+    const settled = connection.status === 'active' && connection.usable && !connection.awaitingConfirmation;
     const details = [
-      connection.peerDeviceName || connection.peerDeviceId,
-      statusText(connection),
-      connection.status !== 'revoked'
-        ? (trust === 'full' ? t('connections.trust.full') : t('connections.trust.normal'))
-        : null,
-      connection.peerFingerprint
-        ? t('connections.fingerprintLabel', { fingerprint: connection.peerFingerprint })
-        : null,
+      // A working connection needs no status; anything else says what is wrong.
+      settled ? null : statusText(connection),
+      settled || !connection.peerFingerprint
+        ? null
+        : t('connections.fingerprintLabel', { fingerprint: connection.peerFingerprint }),
     ].filter(Boolean).join(' · ');
     return (
       <ConfigPageRow
         key={connection.connectionId}
-        label={t('connections.peer', { name: connection.peerDisplayName, account: connection.peerUserId })}
-        description={details}
+        balanced
+        label={t('connections.peerDevice', {
+          name: connection.peerDisplayName,
+          device: connection.peerDeviceName || connection.peerDeviceId,
+        })}
+        description={details || undefined}
         align="center"
       >
         <div className="openbitfun-runtime-settings__status-actions">
@@ -187,22 +192,28 @@ export const ConnectionsConfig: React.FC = () => {
               {t('connections.confirm.open')}
             </Button>
           )}
-          {connection.status !== 'revoked' && (trust === 'full'
-            ? (
-              <Button type="button" size="sm" variant="outline" disabled={busy}
-                onClick={() => setTrust(connection.connectionId, 'normal')}>
-                {t('connections.trust.makeNormal')}
-              </Button>
-            )
-            : (
-              <Button type="button" size="sm" variant="outline" disabled={busy || trusting !== null}
-                onClick={() => { setTrusting(connection.connectionId); setActionError(null); }}>
-                {t('connections.trust.makeFull')}
-              </Button>
-            ))}
-          {connection.status !== 'revoked' && (
+          {live && (
+            <Select
+              size="sm"
+              value={trusting === connection.connectionId ? 'full' : trust}
+              disabled={busy}
+              aria-label={t('connections.trust.label')}
+              options={[
+                { value: 'normal', label: t('connections.trust.normal') },
+                { value: 'full', label: t('connections.trust.full') },
+              ]}
+              onValueChange={value => {
+                const level = String(Array.isArray(value) ? value[0] : value);
+                setActionError(null);
+                if (level === 'full' && trust !== 'full') setTrusting(connection.connectionId);
+                else if (level === 'normal' && trusting === connection.connectionId) setTrusting(null);
+                else if (level === 'normal' && trust === 'full') setTrust(connection.connectionId, 'normal');
+              }}
+            />
+          )}
+          {live && revoking !== connection.connectionId && (
             <Button type="button" size="sm" variant="outline" disabled={busy}
-              onClick={() => void run(() => connectionsAPI.revoke(connection.connectionId), 'Failed to revoke connection')}>
+              onClick={() => { setRevoking(connection.connectionId); setActionError(null); }}>
               {t('connections.revoke')}
             </Button>
           )}
@@ -210,6 +221,24 @@ export const ConnectionsConfig: React.FC = () => {
       </ConfigPageRow>
     );
   };
+
+  const renderRevokeConfirm = (connection: ConnectionSummary) => (
+    <ConfigPageRow label={t('connections.revokeConfirmTitle', { name: connection.peerDisplayName })}
+      description={t('connections.revokeConfirmDescription')} align="center">
+      <div className="openbitfun-runtime-settings__status-actions">
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setRevoking(null)}>
+          {t('connections.cancel')}
+        </Button>
+        <Button type="button" size="sm" variant="primary" disabled={busy}
+          onClick={() => void run(async () => {
+            await connectionsAPI.revoke(connection.connectionId);
+            if (activeRef.current) setRevoking(null);
+          }, 'Failed to revoke connection')}>
+          {t('connections.revoke')}
+        </Button>
+      </div>
+    </ConfigPageRow>
+  );
 
   const renderConfirm = (connection: ConnectionSummary) => (
     <>
@@ -317,9 +346,6 @@ export const ConnectionsConfig: React.FC = () => {
           <span />
         </ConfigPageRow>
       )}
-      <ConfigPageRow balanced label={t('connections.localFingerprint')} description={t('connections.localFingerprintDescription')}>
-        <code className="openbitfun-runtime-settings__mono-value" data-testid="local-fingerprint">{overview.localFingerprint}</code>
-      </ConfigPageRow>
       {acceptedFingerprint && (
         <ConfigPageRow balanced label={t('connections.accept.done')} description={t('connections.accept.doneDescription')}>
           <code className="openbitfun-runtime-settings__mono-value">{acceptedFingerprint}</code>
@@ -335,6 +361,7 @@ export const ConnectionsConfig: React.FC = () => {
             <React.Fragment key={connection.connectionId}>
               {renderConnection(connection)}
               {trusting === connection.connectionId && renderTrustConfirm(connection)}
+              {revoking === connection.connectionId && renderRevokeConfirm(connection)}
             </React.Fragment>
           ))}
       {overview.unreadable.map((entry, index) => (
@@ -346,7 +373,7 @@ export const ConnectionsConfig: React.FC = () => {
           <span />
         </ConfigPageRow>
       ))}
-      {overview.invites.map(open => (
+      {overview.invites.filter(open => open.inviteId !== invite?.inviteId).map(open => (
         <ConfigPageRow
           key={open.inviteId}
           label={t('connections.invite.open')}
@@ -370,8 +397,15 @@ export const ConnectionsConfig: React.FC = () => {
         >
           <div className="openbitfun-runtime-settings__status-actions">
             <code className="openbitfun-runtime-settings__mono-value" data-testid="invite-link">{invite.link}</code>
-            <Button type="button" size="sm" variant="outline" onClick={() => void copyLink(invite.link)}>
+            <Button type="button" size="sm" variant="primary" onClick={() => void copyLink(invite.link)}>
               {t('connections.invite.copy')}
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              onClick={() => void run(async () => {
+                await connectionsAPI.withdrawInvite(invite.inviteId);
+                if (activeRef.current) setInvite(null);
+              }, 'Failed to withdraw invite')}>
+              {t('connections.invite.withdraw')}
             </Button>
           </div>
         </ConfigPageRow>
