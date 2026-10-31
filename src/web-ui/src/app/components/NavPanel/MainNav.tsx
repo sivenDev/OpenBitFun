@@ -20,7 +20,7 @@ import {
   NavigationPanelItem,
   Tooltip,
 } from '@openbitfun/ui';
-import { FolderPlus, House } from 'lucide-react';
+import { FolderPlus, House, Network } from 'lucide-react';
 // import { PanelsTopLeft } from 'lucide-react'; // temporarily hidden: Pages nav entry
 import { useSceneManager } from '../../hooks/useSceneManager';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
@@ -216,6 +216,8 @@ const MainNav: React.FC = () => {
   const addSessionGroupTooltip = t('nav.tooltips.addSessionGroup');
   const taskBoardLabel = t('nav.items.todos');
   const isTaskBoardActive = activeTabId === 'todos';
+  const aiCollaborationLabel = t('nav.items.aiCollaboration');
+  const isAiCollaborationActive = activeTabId === 'ai-collaboration';
   return (
     <>
     <NavigationPanel
@@ -300,6 +302,31 @@ const MainNav: React.FC = () => {
               selected={isTaskBoardActive}
             >
               {taskBoardLabel}
+            </NavigationPanelItem>
+          </Tooltip>
+
+          <Tooltip content={t('nav.tooltips.aiCollaboration')} placement="right" followCursor>
+            <NavigationPanelItem
+              className="openbitfun-nav-panel__top-action-item openbitfun-nav-panel__top-action-item--root"
+              triggerClassName={[
+                'openbitfun-nav-panel__top-action-btn',
+                isAiCollaborationActive ? 'is-active' : '',
+              ].filter(Boolean).join(' ')}
+              data-openbitfun-component="nav-panel"
+              data-openbitfun-part="topAction"
+              data-openbitfun-action="ai-collaboration"
+              data-openbitfun-state={isAiCollaborationActive ? 'active' : ''}
+              onClick={() => openScene('ai-collaboration')}
+              aria-label={aiCollaborationLabel}
+              data-testid="nav-ai-collaboration-btn"
+              leading={(
+                <span className="openbitfun-nav-panel__top-action-icon-slot">
+                  <Icon glyph={Network} size="sm" />
+                </span>
+              )}
+              selected={isAiCollaborationActive}
+            >
+              {aiCollaborationLabel}
             </NavigationPanelItem>
           </Tooltip>
         </div>

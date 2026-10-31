@@ -79,6 +79,7 @@
       "persona": "Smart Members",
       "assistant": "AI Assistant",
       "todos": "Task Board",
+      "aiCollaboration": "AI Collaboration",
       "longTermTracking": "Long-term Tracking",
       "agents": "Agents",
       "skills": "Skills",
@@ -92,6 +93,7 @@
     "tooltips": {
       "persona": "Smart Members — expand role- and memory-based member sessions",
       "todos": "Task Board — manage all tasks",
+      "aiCollaboration": "AI Collaboration — delegate to agents on other devices and accounts",
       "longTermTracking": "Long-term Tracking — ongoing tasks and conversations",
       "agents": "Which agents it can call",
       "skills": "What it knows — specialized knowledge files",
@@ -1683,6 +1685,7 @@
     "insights": "Insights",
     "assistant": "$t(shared:agents.Claw)",
     "todos": "Task Board",
+    "aiCollaboration": "AI Collaboration",
     "shell": "Shell",
     "panelView": "Panel View"
   },
@@ -2271,5 +2274,9 @@
     "createProject": "Create project",
     "assistantError": "Unable to create the assistant. Please try again.",
     "back": "Back to selection"
+  },
+  "aiCollaboration": {
+    "title": "AI Collaboration",
+    "subtitle": "Open agents to other devices, connect with other accounts, and review the tasks they sent here"
   }
 }

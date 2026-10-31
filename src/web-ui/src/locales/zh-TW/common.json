@@ -79,6 +79,7 @@
       "persona": "智能成員",
       "assistant": "智能助理",
       "todos": "任務看板",
+      "aiCollaboration": "AI協作",
       "longTermTracking": "長期跟蹤",
       "agents": "智能體",
       "skills": "技能",
@@ -92,6 +93,7 @@
     "tooltips": {
       "persona": "智能成員 — 展開查看基於角色和記憶的成員會話",
       "todos": "任務看板 — 管理全部任務",
+      "aiCollaboration": "AI協作 — 委派任務給其他裝置和帳號的智慧體",
       "longTermTracking": "長期跟蹤 — 持續任務與長期對話",
       "agents": "它能調用哪些智能體",
       "skills": "它懂什麼專項知識 — 技能知識檔案",
@@ -1683,6 +1685,7 @@
     "insights": "洞察",
     "assistant": "$t(shared:agents.Claw)",
     "todos": "任務看板",
+    "aiCollaboration": "AI協作",
     "shell": "Shell",
     "panelView": "面板視圖"
   },
@@ -2271,5 +2274,9 @@
     "createProject": "建立專案",
     "assistantError": "無法建立助理，請稍後重試。",
     "back": "返回選擇"
+  },
+  "aiCollaboration": {
+    "title": "AI協作",
+    "subtitle": "開放本機智慧體、管理與其他帳號的連線，並查看對方發來的任務"
   }
 }

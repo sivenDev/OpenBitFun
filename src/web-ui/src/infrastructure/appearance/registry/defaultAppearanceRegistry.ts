@@ -100,6 +100,7 @@ import { scheduledJobsViewAppearanceDescriptor } from '@/app/components/schedule
 import { localizedDateTimeFieldAppearanceDescriptor } from '@/app/components/scheduled-jobs/LocalizedDateTimeField.appearance';
 import { dateTimePickerAppearanceDescriptor } from '@/app/components/scheduled-jobs/DateTimePickerPopover.appearance';
 import { todosSceneAppearanceDescriptor } from '@/app/scenes/todos/appearance';
+import { aiCollaborationAppearanceDescriptor } from '@/app/scenes/ai-collaboration/appearance';
 import { flexiblePanelAppearanceDescriptor } from '@/app/components/panels/base/FlexiblePanel.appearance';
 import { btwSessionPanelAppearanceDescriptor } from '@/flow_chat/components/btw/BtwSessionPanel.appearance';
 import { conversationExcerptAppearanceDescriptor } from '@/flow_chat/selection/ConversationExcerpt.appearance';
@@ -517,6 +518,7 @@ export function createDefaultAppearanceRegistry(): AppearanceRegistry {
     .registerScene(skillsAppearanceDescriptor)
     .registerScene(terminalAppearanceDescriptor)
     .registerScene(todosSceneAppearanceDescriptor)
+    .registerScene(aiCollaborationAppearanceDescriptor)
     .registerRenderer(themeTokenAppearanceAdapter)
     .registerRenderer(monacoAppearanceAdapter)
     .registerRenderer(xtermAppearanceAdapter)

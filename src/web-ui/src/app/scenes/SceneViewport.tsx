@@ -51,6 +51,7 @@ const PagesScene      = lazyWithRecovery(() => import('./pages/PagesScene'));
 const BrowserScene    = lazyWithRecovery(() => import('./browser/BrowserScene'));
 const TodosScene      = lazyWithRecovery(() => import('./todos/TodosScene'));
 const InsightsScene   = lazyWithRecovery(() => import('./my-agent/InsightsScene'));
+const AiCollaborationScene = lazyWithRecovery(() => import('./ai-collaboration/AiCollaborationScene'));
 const ShellScene      = lazyWithRecovery(() => import('./shell/ShellScene'));
 const MiniAppScene    = lazyWithRecovery(() => import('./miniapps/MiniAppScene'));
 
@@ -361,6 +362,8 @@ function renderScene(
       return <AssistantScene />;
     case 'todos':
       return <TodosScene />;
+    case 'ai-collaboration':
+      return <AiCollaborationScene />;
     case 'insights':
       return <InsightsScene />;
     case 'shell':
