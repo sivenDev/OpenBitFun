@@ -6,6 +6,7 @@ import DelegatedTaskList from './DelegatedTaskList';
 import { readDelegatedTasks, resetDelegatedTaskReads } from '@/infrastructure/api/service-api/delegatedTaskReads';
 import type { WorkspaceInfo } from '@/shared/types';
 
+const view = vi.hoisted(() => ({ activeTabId: 'session' as string | null, activeSessionId: null as string | null }));
 const mocks = vi.hoisted(() => ({
   listTasks: vi.fn(),
   openScene: vi.fn(),
@@ -18,7 +19,15 @@ vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal)
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),
   delegationAPI: { listTasks: mocks.listTasks },
 }));
-vi.mock('@/app/stores/sceneStore', () => ({ useSceneStore: { getState: () => ({ openScene: mocks.openScene }) } }));
+vi.mock('@/app/stores/sceneStore', () => ({
+  useSceneStore: Object.assign(
+    (select: (state: { activeTabId: string | null }) => unknown) => select({ activeTabId: view.activeTabId }),
+    { getState: () => ({ openScene: mocks.openScene }) },
+  ),
+}));
+vi.mock('@/flow_chat/store/FlowChatStore', () => ({
+  flowChatStore: { subscribe: () => () => undefined, getState: () => ({ activeSessionId: view.activeSessionId }) },
+}));
 vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ openDelegatedTask: mocks.openTask }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
@@ -86,6 +95,20 @@ describe('DelegatedTaskList', () => {
     mocks.openTask.mockResolvedValue(false);
     await act(async () => (rows()[1] as HTMLButtonElement).click());
     expect(mocks.openScene).toHaveBeenCalledWith('ai-collaboration');
+  });
+
+  it('marks the task whose session is shown as selected', async () => {
+    view.activeSessionId = 's-b';
+    mocks.listTasks.mockResolvedValue([task('a'), task('b')]);
+    await render();
+    expect(rows().map(row => row.classList.contains('is-active'))).toEqual([false, true]);
+    expect(rows()[1].getAttribute('aria-current')).toBe('true');
+
+    // A collapsed history keeps the viewed task visible alongside waiting ones.
+    await act(async () => root.render(<DelegatedTaskList workspace={workspace} waitingOnly />));
+    expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
+      .toEqual(['Task b']);
+    view.activeSessionId = null;
   });
 
   it('lists only tasks waiting for the owner while the history is collapsed', async () => {
