@@ -1,8 +1,6 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState } from 'react';
 import { useSceneStore } from '@/app/stores/sceneStore';
 import { openDelegatedTask } from '@/flow_chat/session-drivers/delegated/openDelegatedTask';
-import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
-import { isSessionNavRowActive } from '@/app/components/NavPanel/sections/sessions/sessionNavSelection';
 import { createLogger } from '@/shared/utils/logger';
 import { ASSISTANT_AGENT_TYPE_PREFIX, type DelegatedTask } from '@/infrastructure/api/service-api/DelegationAPI';
 import { useI18n } from '@/infrastructure/i18n';
@@ -33,8 +31,8 @@ function runsAs(task: DelegatedTask, rootPath: string): boolean {
  * AI collaboration page or in the task's session, which opens read-only.
  * A connected peer's assistants are not this device's,
  * so nothing is listed in Peer Device Mode. With `waitingOnly`, only tasks
- * that wait for the owner, and the one being viewed, are listed, so they
- * stay visible while the assistant's history is collapsed.
+ * that wait for the owner are listed, so they stay visible while the
+ * assistant's history is collapsed.
  */
 export default function DelegatedTaskList({
   workspace,
@@ -47,11 +45,6 @@ export default function DelegatedTaskList({
   const peerActive = usePeerDeviceModeOptional()?.peerMode?.active === true;
   const enabled = isTauriRuntime() && !peerActive && !workspace.connectionId;
   const [tasks, setTasks] = useState<DelegatedTask[]>([]);
-  const activeTabId = useSceneStore(state => state.activeTabId);
-  const activeSessionId = useSyncExternalStore(
-    listener => flowChatStore.subscribe(() => listener()),
-    () => flowChatStore.getState().activeSessionId,
-  );
 
   useEffect(() => {
     if (!enabled) {
@@ -74,16 +67,7 @@ export default function DelegatedTaskList({
     };
   }, [enabled, workspace.rootPath]);
 
-  const isActive = (task: DelegatedTask) => Boolean(task.sessionId) && isSessionNavRowActive({
-    rowSessionId: task.sessionId,
-    activeTabId,
-    activeSessionId: activeSessionId ?? null,
-    activeChildHasVisibleRow: false,
-  });
-  // A collapsed history still shows what waits for the owner and the task being viewed.
-  const shown = waitingOnly
-    ? tasks.filter(task => task.pendingPermissionCount > 0 || isActive(task))
-    : tasks;
+  const shown = waitingOnly ? tasks.filter(task => task.pendingPermissionCount > 0) : tasks;
   if (shown.length === 0) return null;
 
   const source = (task: DelegatedTask): string => {
@@ -104,8 +88,6 @@ export default function DelegatedTaskList({
     >
       {shown.map(task => {
         const waiting = task.pendingPermissionCount > 0;
-        // Selected like a session row while its session is the one shown.
-        const active = isActive(task);
         const detail = [
           t('nav.sessions.delegated.external'),
           source(task),
@@ -115,13 +97,11 @@ export default function DelegatedTaskList({
           <button
             key={task.jobId}
             type="button"
-            className={['openbitfun-nav-panel__inline-item', 'assistant-session-history__delegated-item', waiting && 'is-waiting', active && 'is-active']
+            className={['openbitfun-nav-panel__inline-item', 'assistant-session-history__delegated-item', waiting && 'is-waiting']
               .filter(Boolean).join(' ')}
             data-openbitfun-component="sessions-section"
             data-openbitfun-part="row"
             data-testid="nav-delegated-task"
-            data-openbitfun-state={active ? 'active' : undefined}
-            aria-current={active ? 'true' : undefined}
             title={detail}
             onClick={() => {
               void openDelegatedTask(task, workspace.rootPath, workspace.id)

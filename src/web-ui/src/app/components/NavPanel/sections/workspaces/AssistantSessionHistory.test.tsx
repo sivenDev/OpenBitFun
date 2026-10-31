@@ -11,7 +11,7 @@ vi.mock('./assistantSessionPreferences', () => ({ readAssistantDefaultSession: m
 vi.mock('@/flow_chat/services/sessionDraftService', () => ({ prepareSessionDraftForCommand: mocks.prepare }));
 vi.mock('@/shared/notification-system', () => ({ notificationService: { error: mocks.error } }));
 vi.mock('@/flow_chat/store/FlowChatStore', () => ({
-  flowChatStore: { subscribe: () => () => undefined, getState: () => ({ activeSessionId: null, sessions: new Map([['chosen', {
+  flowChatStore: { getState: () => ({ sessions: new Map([['chosen', {
     sessionId: 'chosen', workspaceId: 'assistant', config: {},
   }]]) }) },
 }));
