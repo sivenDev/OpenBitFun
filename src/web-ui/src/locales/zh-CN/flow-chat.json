@@ -1100,7 +1100,10 @@
     "loadingMcpPrompts": "正在加载 MCP 提示词...",
     "externalCommandsLoading": "正在加载兼容命令...",
     "externalCommandsHostUnavailable": "当前主机不支持外部命令。",
-    "externalCommandsLoadFailed": "外部命令加载失败，请重新打开命令选择器重试。"
+    "externalCommandsLoadFailed": "外部命令加载失败，请重新打开命令选择器重试。",
+    "delegated": {
+      "readOnly": "这是其他设备或账号交给助理的任务，只能查看和审批。"
+    }
   },
   "planner": {
     "title": "任务规划",

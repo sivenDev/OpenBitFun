@@ -11,7 +11,7 @@ import { flowChatStore } from '../store/FlowChatStore';
 import { sessionComposerStore } from '../store/sessionComposerStore';
 import { createBtwSessionPlaceholder } from '../services/BtwThreadService';
 import { openBtwSessionInAuxPane } from '../services/btwSessionPane';
-import { resolveSessionDriverId } from '../session-drivers/resolve';
+import { isObserverSessionDriver, resolveSessionDriverId } from '../session-drivers/resolve';
 import { getSessionConversationCapability } from '../session-drivers/conversationCapability';
 import { isAcpFlowSession } from '../utils/acpSession';
 import { useConversationViewScope } from '../contexts/conversationViewScope';
@@ -47,7 +47,7 @@ export function useExcerptComposerActions({ mainSessionId, targetSessionId, acti
       if (getSessionConversationCapability(mainSessionId, parent).access !== 'available') return;
       let destination = mainSessionId;
       if (request.action === 'ask') {
-        if (!parent.workspacePath || isAcpFlowSession(parent) || resolveSessionDriverId(mainSessionId, parent) === 'dispatch'
+        if (!parent.workspacePath || isAcpFlowSession(parent) || isObserverSessionDriver(resolveSessionDriverId(mainSessionId, parent))
           || (peer?.peerMode.active ? peer.currentPeerCapabilities?.hostKind !== 'desktop' : !isTauriRuntime())) return;
         if (source.sessionId !== mainSessionId) {
           if (source.sessionKind !== 'btw') return;

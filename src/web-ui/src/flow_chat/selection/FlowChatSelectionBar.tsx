@@ -9,7 +9,7 @@ import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDevi
 import { isTauriRuntime } from '@/infrastructure/runtime';
 import type { FixedPopoverPlacement } from '@/shared/utils/fixedPopoverViewport';
 import { flowChatStore } from '../store/FlowChatStore';
-import { resolveSessionDriverId } from '../session-drivers/resolve';
+import { isObserverSessionDriver, resolveSessionDriverId } from '../session-drivers/resolve';
 import { isAcpFlowSession } from '../utils/acpSession';
 import { captureFlowChatSelection, type CapturedFlowChatSelection } from './flowChatSelection';
 import {
@@ -70,7 +70,7 @@ export function FlowChatSelectionBar({ rootRef, sessionId, parentSessionId, acti
   const sourceSession = sessionId ? flowChatStore.getState().sessions.get(sessionId) : undefined;
   const child = sourceSession?.sessionKind === 'btw';
   const canAsk = Boolean(sourceSession?.workspacePath && !isAcpFlowSession(sourceSession)
-    && resolveSessionDriverId(sourceSession.sessionId, sourceSession) !== 'dispatch'
+    && !isObserverSessionDriver(resolveSessionDriverId(sourceSession.sessionId, sourceSession))
     && (peer?.peerMode.active ? peer.currentPeerCapabilities?.hostKind === 'desktop' : isTauriRuntime())
     && (!parentSessionId || child));
 

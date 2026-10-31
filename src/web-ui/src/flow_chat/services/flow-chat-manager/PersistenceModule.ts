@@ -14,7 +14,7 @@ import {
   DEFERRED_TOOL_GATEWAY_NAME,
   effectiveToolInvocation,
 } from '../../utils/toolInvocationIdentity';
-import { resolveSessionDriverId } from '../../session-drivers/resolve';
+import { isObserverSessionDriver, resolveSessionDriverId } from '../../session-drivers/resolve';
 import { resolveStorageTurnIndex } from '../../utils/flowChatTurnIdentity';
 import { sessionActivityStore } from '../../store/sessionActivityStore';
 
@@ -35,7 +35,7 @@ function isObserverOnlyDispatchSession(
   sessionId: string,
   session: Parameters<typeof resolveSessionDriverId>[1],
 ): boolean {
-  return resolveSessionDriverId(sessionId, session) === 'dispatch';
+  return isObserverSessionDriver(resolveSessionDriverId(sessionId, session));
 }
 
 function getDialogTurn(context: FlowChatContext, sessionId: string, turnId: string): DialogTurn | undefined {

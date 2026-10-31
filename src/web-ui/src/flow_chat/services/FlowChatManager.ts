@@ -73,6 +73,7 @@ import { ensureBackendSession } from './flow-chat-manager/SessionModule';
 import { prepareSessionDraftForCommand, selectDraftWorkspace } from './sessionDraftService';
 import { installPeerSessionRefresh } from './flow-chat-manager/PeerSessionRefreshModule';
 import { installDispatchJobObserver } from '../session-drivers/dispatch/install';
+import { installDelegatedTaskFollower } from '../session-drivers/delegated/delegatedTaskFollower';
 import { driverForSession } from '../session-drivers/registry';
 import { registerDriverSessionLookup } from '../session-drivers/resolve';
 import type { SendMessageOptions } from '../session-drivers/types';
@@ -109,6 +110,7 @@ export class FlowChatManager {
   private latestInitializationRequestKey: string | null = null;
   private peerSessionRefreshCleanup: (() => void) | null = null;
   private dispatchJobObserverCleanup: (() => void) | null = null;
+  private delegatedTaskFollowerCleanup: (() => void) | null = null;
   private navStatusCleanup: (() => void) | null = null;
   private surfaceActivationCleanup: (() => void) | null = null;
   private eventListenerRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -153,6 +155,7 @@ export class FlowChatManager {
     installPendingQueueDrainListener(this.context);
     this.peerSessionRefreshCleanup = installPeerSessionRefresh(this.context);
     this.dispatchJobObserverCleanup = installDispatchJobObserver(this.context);
+    this.delegatedTaskFollowerCleanup = installDelegatedTaskFollower(this.context);
     this.navStatusCleanup = installSessionNavStatusService();
     // The agentic subscription is this window's only live view of a running
     // Turn, so its lifetime must not depend on a workspace bootstrap that a
@@ -589,6 +592,8 @@ export class FlowChatManager {
     this.peerSessionRefreshCleanup = null;
     this.dispatchJobObserverCleanup?.();
     this.dispatchJobObserverCleanup = null;
+    this.delegatedTaskFollowerCleanup?.();
+    this.delegatedTaskFollowerCleanup = null;
     this.navStatusCleanup?.();
     this.navStatusCleanup = null;
     this.context.eventBatcher.destroy();

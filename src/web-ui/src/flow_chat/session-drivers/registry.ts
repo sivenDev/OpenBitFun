@@ -14,10 +14,12 @@ import {
 import type { SessionDriver, SessionDriverNavigationStatusSource, SessionDriverOwnershipSource } from './types';
 import { localSessionDriver } from './local/LocalSessionDriver';
 import { dispatchSessionDriver } from './dispatch/DispatchSessionDriver';
+import { delegatedSessionDriver } from './delegated/DelegatedSessionDriver';
 
 const drivers: Record<SessionDriverId, SessionDriver> = {
   local: localSessionDriver,
   dispatch: dispatchSessionDriver,
+  delegated: delegatedSessionDriver,
 };
 
 const navigationStatusSources = Array.from(new Set(Object.values(drivers)

@@ -11,8 +11,18 @@
 import { isNonLocalDispatchTarget } from '@/features/dispatch/types';
 import type { DispatchTarget, DispatchTargetRequest } from '@/features/dispatch/types';
 import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
+import { delegatedSessionEntry } from './delegated/delegatedSessionStore';
 
-export type SessionDriverId = 'local' | 'dispatch';
+/**
+ * `delegated` is the owner's read-only view of a task another device or
+ * account delegated to an assistant here; the task's runner drives it.
+ */
+export type SessionDriverId = 'local' | 'dispatch' | 'delegated';
+
+/** Drivers other than `local` project sessions owned elsewhere: never persist or drive them here. */
+export function isObserverSessionDriver(id: SessionDriverId): boolean {
+  return id !== 'local';
+}
 
 /**
  * Structural view of the session fields the resolver reads. Kept minimal so
@@ -101,11 +111,28 @@ export function dispatchJobStoreObservesSession(sessionId: string): boolean {
     .some(job => job.sessionId === sessionId);
 }
 
+/** A delegated task's session, or a child of one (its subagents), followed here. */
+export function resolveDelegatedSessionId(
+  sessionId: string,
+  session: DriverResolvableSession | undefined,
+  lookupSession: SessionLookup | null = parentSessionLookup,
+): string | undefined {
+  let currentId: string | undefined = sessionId;
+  let current = session;
+  for (let depth = 0; currentId && depth <= MAX_PARENT_CHAIN_DEPTH; depth += 1) {
+    if (delegatedSessionEntry(currentId)) return currentId;
+    currentId = current?.parentSessionId?.trim();
+    current = currentId ? lookupSession?.(currentId) : undefined;
+  }
+  return undefined;
+}
+
 /** The single source of truth for "which driver owns this session". */
 export function resolveSessionDriverId(
   sessionId: string,
   session: DriverResolvableSession | undefined,
 ): SessionDriverId {
+  if (resolveDelegatedSessionId(sessionId, session)) return 'delegated';
   return resolveSessionDriverIdWith(sessionId, session, dispatchJobStoreObservesSession);
 }
 

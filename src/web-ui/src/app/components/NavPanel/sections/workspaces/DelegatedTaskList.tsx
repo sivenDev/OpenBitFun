@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSceneStore } from '@/app/stores/sceneStore';
+import { openDelegatedTask } from '@/flow_chat/session-drivers/delegated/openDelegatedTask';
+import { createLogger } from '@/shared/utils/logger';
 import { ASSISTANT_AGENT_TYPE_PREFIX, type DelegatedTask } from '@/infrastructure/api/service-api/DelegationAPI';
 import { useI18n } from '@/infrastructure/i18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
@@ -10,6 +12,8 @@ import {
   onDelegatedTasksRead,
   readDelegatedTasks,
 } from '@/infrastructure/api/service-api/delegatedTaskReads';
+
+const log = createLogger('DelegatedTaskList');
 
 /**
  * Tasks name the assistant they run as by its directory (`assistant:<dir>`).
@@ -24,7 +28,8 @@ function runsAs(task: DelegatedTask, rootPath: string): boolean {
 /**
  * Tasks other devices and accounts delegated to this assistant, listed under
  * its own sessions with their source. They are reviewed and approved on the
- * AI collaboration page. A connected peer's assistants are not this device's,
+ * AI collaboration page or in the task's session, which opens read-only.
+ * A connected peer's assistants are not this device's,
  * so nothing is listed in Peer Device Mode. With `waitingOnly`, only tasks
  * that wait for the owner are listed, so they stay visible while the
  * assistant's history is collapsed.
@@ -98,7 +103,14 @@ export default function DelegatedTaskList({
             data-openbitfun-part="row"
             data-testid="nav-delegated-task"
             title={detail}
-            onClick={() => useSceneStore.getState().openScene('ai-collaboration')}
+            onClick={() => {
+              void openDelegatedTask(task, workspace.rootPath, workspace.id)
+                .then(opened => { if (!opened) useSceneStore.getState().openScene('ai-collaboration'); })
+                .catch(error => {
+                  log.warn('Failed to open a delegated task', { jobId: task.jobId, error });
+                  useSceneStore.getState().openScene('ai-collaboration');
+                });
+            }}
           >
             <span className="assistant-session-history__delegated-title">
               {task.title || t('nav.sessions.delegated.untitled')}

@@ -1,4 +1,5 @@
 import { api } from './ApiClient';
+import type { DispatchStatusResponse } from '@/features/dispatch/types';
 import { createTauriCommandError } from '../errors/TauriCommandError';
 
 /** Task kinds a delegated job may run. Unknown kinds from newer builds are kept as strings. */
@@ -230,6 +231,16 @@ class DelegationAPI {
     const request = { jobId, cursor: 0 };
     try {
       return await api.invoke<DelegatedTaskStatus>('delegation_task_status', { request });
+    } catch (error) {
+      throw createTauriCommandError('delegation_task_status', error, request);
+    }
+  }
+
+  /** A delegated task's events after `cursor`, in the Dispatch status shape, and the prompts it waits on. */
+  async taskEvents(jobId: string, cursor: number): Promise<DispatchStatusResponse> {
+    const request = { jobId, cursor };
+    try {
+      return await api.invoke<DispatchStatusResponse>('delegation_task_status', { request });
     } catch (error) {
       throw createTauriCommandError('delegation_task_status', error, request);
     }

@@ -30,6 +30,10 @@ export function deriveSessionConversationCapability(
   if (session.isTransient && !session.agentBackedTransient) {
     return { access: 'read-only', canSubmit: false, reason: 'unsupported_route' };
   }
+  if (driverId === 'delegated') {
+    // The task belongs to whoever sent it; the owner watches and approves.
+    return { access: 'read-only', canSubmit: false, reason: 'unsupported_route' };
+  }
   if (driverId === 'dispatch') {
     const { dispatchJobId, dispatchTargetRequest, dispatchApprovalPolicy } = session.config;
     // Inheriting a parent's driver grants read ownership, not a child send route.

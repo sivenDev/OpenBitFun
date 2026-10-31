@@ -121,7 +121,7 @@ import {
   isNonLocalDispatchTarget,
 } from '@/features/dispatch/types';
 import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
-import { resolveSessionDriverId } from '../session-drivers/resolve';
+import { isObserverSessionDriver, resolveSessionDriverId } from '../session-drivers/resolve';
 import {
   isProvisionalUsageReportTurn,
   isProjectedSessionEmpty,
@@ -290,7 +290,7 @@ function dispatchObserverOwnsSession(
   sessionId: string,
   session?: Session,
 ): boolean {
-  return resolveSessionDriverId(sessionId, session) === 'dispatch';
+  return isObserverSessionDriver(resolveSessionDriverId(sessionId, session));
 }
 
 function logPersistedDispatchMetadataOverlap(

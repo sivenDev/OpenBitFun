@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceInfo } from '@/shared/types';
 
 const mocks = vi.hoisted(() => ({ read: vi.fn(), save: vi.fn(), prepare: vi.fn(), error: vi.fn() }));
+vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ openDelegatedTask: vi.fn() }));
 vi.mock('@/infrastructure/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('./assistantSessionPreferences', () => ({ readAssistantDefaultSession: mocks.read, saveAssistantDefaultSession: mocks.save }));
 vi.mock('@/flow_chat/services/sessionDraftService', () => ({ prepareSessionDraftForCommand: mocks.prepare }));

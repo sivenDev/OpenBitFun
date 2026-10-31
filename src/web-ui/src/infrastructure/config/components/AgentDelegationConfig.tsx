@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { openDelegatedTask } from '@/flow_chat/session-drivers/delegated/openDelegatedTask';
 import { Button, Checkbox, Input, Select, Switch } from '@openbitfun/ui';
 import {
   ALL_SAME_ACCOUNT_DEVICES,
@@ -563,6 +564,15 @@ export const AgentDelegationConfig: React.FC = () => {
     ].filter((item): item is string => item !== null);
   };
 
+  const openTask = async (task: DelegatedTask, assistantRoot: string) => {
+    try {
+      if (!await openDelegatedTask(task, assistantRoot)) notificationService.error(t('agentDelegation.tasks.openFailed'));
+    } catch (error) {
+      log.warn('Failed to open a delegated task', { jobId: task.jobId, error });
+      notificationService.error(t('agentDelegation.tasks.openFailed'));
+    }
+  };
+
   const renderTasks = (assistant: LocalAssistant) => {
     const { shown, hidden } = splitTasks(assistant);
     return <>
@@ -578,7 +588,12 @@ export const AgentDelegationConfig: React.FC = () => {
               description={[describeSource(task), describeState(task.state), ...describeRecorded(task), waiting]
                 .filter(Boolean).join(' · ')}
               align="center">
-              <span />
+              {task.sessionId ? (
+                <Button type="button" size="sm" variant="outline"
+                  onClick={() => { void openTask(task, assistant.rootPath); }}>
+                  {t('agentDelegation.tasks.open')}
+                </Button>
+              ) : <span />}
             </ConfigPageRow>
             {renderPrompts(task, assistant.rootPath)}
           </React.Fragment>

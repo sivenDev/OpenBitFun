@@ -55,6 +55,7 @@ import {
   requireSessionProjectWorkspacePath,
 } from '../../utils/sessionWorkspace';
 import { driverForCreation, driverForSession } from '../../session-drivers/registry';
+import { isObserverSessionDriver } from '../../session-drivers/resolve';
 import { materializeSessionDraft } from '../sessionDraftService';
 import {
   isProjectedFirstRuntimeTurn,
@@ -576,7 +577,7 @@ export async function switchChatSession(
     });
 
     const touchActiveSessionInBackground = () => {
-      if (session?.draft || session?.externalHistory?.mode === 'follow' || driverForSession(sessionId, session).id === 'dispatch') {
+      if (session?.draft || session?.externalHistory?.mode === 'follow' || isObserverSessionDriver(driverForSession(sessionId, session).id)) {
         return;
       }
       scheduleSessionActivityTouch(surfaceScope, () => {
@@ -843,7 +844,7 @@ export async function forkChatSession(
   if (!sourceSession) {
     throw new Error(`Session does not exist: ${sourceSessionId}`);
   }
-  if (driverForSession(sourceSessionId, sourceSession).id === 'dispatch') {
+  if (isObserverSessionDriver(driverForSession(sourceSessionId, sourceSession).id)) {
     throw new Error('Forking a detached dispatch session is not supported');
   }
 
@@ -929,7 +930,7 @@ export async function duplicateChatSession(
   if (!sourceSession) {
     throw new Error(`Session does not exist: ${sourceSessionId}`);
   }
-  if (driverForSession(sourceSessionId, sourceSession).id === 'dispatch') {
+  if (isObserverSessionDriver(driverForSession(sourceSessionId, sourceSession).id)) {
     throw new Error('Copying a detached dispatch session is not supported');
   }
   if (isSessionEmptyForCopy(sourceSession)) {
@@ -979,7 +980,7 @@ export async function ensureBackendSession(
   if (session.isTransient) {
     return;
   }
-  if (driverForSession(sessionId, session).id === 'dispatch') {
+  if (isObserverSessionDriver(driverForSession(sessionId, session).id)) {
     return;
   }
 

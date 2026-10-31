@@ -61,6 +61,7 @@ import { SessionTitleNumber } from '@/flow_chat/components/SessionTitleNumber';
 import { useSessionComposerStore } from '@/flow_chat/store/sessionComposerStore';
 import { getActiveSurfaceId, getActiveSurfaceScope, isSurfaceChangedError, surfaceScopedKey } from '@/infrastructure/peer-device/deviceSurface';
 import { EXTERNAL_SESSION_NAMES, isExternalSessionEcosystem } from '@/shared/types/external-session';
+import { resolveSessionDriverId } from '@/flow_chat/session-drivers/resolve';
 import { getWorkspaceSessionHierarchy } from './sessionNavHierarchy';
 import { useWorkspaceSessionCatalog } from './useWorkspaceSessionCatalog';
 import { captureWorkspaceSessionCatalogQuery, countPersistedWorkspaceCatalogSessions, workspaceSessionCatalogQuery, workspaceSessionCatalogTotal } from './workspaceSessionCatalogQuery';
@@ -779,7 +780,9 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
     // Activity timestamps can change independently of the session records.
     void orderingRevision;
     const { topLevelSessions: parents, childrenByParent: childMap } = getWorkspaceSessionHierarchy(
-      flowChatState.sessions.values(),
+      // Tasks delegated to an assistant are listed by DelegatedTaskList with their source.
+      Array.from(flowChatState.sessions.values())
+        .filter(session => resolveSessionDriverId(session.sessionId, session) !== 'delegated'),
       workspaceScopes?.length ? workspaceScopes.map(scope => scope.workspaceId) : workspaceId ? [workspaceId] : [],
     );
 

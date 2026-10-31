@@ -43,7 +43,7 @@ import type { SessionUsagePanelTab } from '../usage/sessionUsagePanelTypes';
 import { coerceSessionUsageReport } from '../usage/usageReportUtils';
 import { resolveSessionRelationship } from '../../utils/sessionMetadata';
 import { isLocalWorkspaceSession } from '../../utils/sessionWorkspace';
-import { resolveSessionDriverId } from '../../session-drivers/resolve';
+import { isObserverSessionDriver, resolveSessionDriverId } from '../../session-drivers/resolve';
 import { absoluteSessionTurnIndexForId } from '../../utils/flowChatTurnOrdinal';
 import {
   composerPresentationToAccessibleText,
@@ -237,7 +237,7 @@ export const UserMessageItem = React.memo<UserMessageItemProps>(
     const actionTurnIndex = resolvedAbsoluteTurnIndex !== undefined
       ? resolvedAbsoluteTurnIndex - 1
       : -1;
-    const isDispatchSession = resolveSessionDriverId(resolvedSessionId ?? '', currentSession ?? undefined) === 'dispatch';
+    const isDispatchSession = isObserverSessionDriver(resolveSessionDriverId(resolvedSessionId ?? '', currentSession ?? undefined));
     const isRemoteSession = !isLocalWorkspaceSession(currentSession ?? undefined, null) || isDispatchSession;
     const isFollowedSource = currentSession?.externalHistory?.mode === 'follow';
     const isSystemTriggered = Boolean(

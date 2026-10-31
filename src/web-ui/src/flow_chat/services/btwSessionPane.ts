@@ -8,7 +8,7 @@ import { createLogger } from '@/shared/utils/logger';
 import { flowChatStore } from '../store/FlowChatStore';
 import type { Session } from '../types/flow-chat';
 import { resolveSessionTitle } from '../utils/sessionTitle';
-import { resolveSessionDriverId } from '../session-drivers/resolve';
+import { isObserverSessionDriver, resolveSessionDriverId } from '../session-drivers/resolve';
 import { flowChatManager } from './FlowChatManager';
 import { openMainSession } from './sessionActivation';
 
@@ -164,7 +164,7 @@ function ensureBtwSessionMetadata(params: LoadBtwSessionHistoryParams): Promise<
   if (child?.isTransient) return Promise.resolve();
   // A dispatch observer receives these facts from its host. It must not look
   // for child metadata in the controller's local workspace store.
-  if (resolveSessionDriverId(params.childSessionId, child) === 'dispatch') return Promise.resolve();
+  if (isObserverSessionDriver(resolveSessionDriverId(params.childSessionId, child))) return Promise.resolve();
   if (!(child?.workspaceId ?? child?.config?.workspaceId)
     || (child?.sessionKind === 'subagent' && child.continuationPolicy === undefined)) {
     const scope = getActiveSurfaceScope();

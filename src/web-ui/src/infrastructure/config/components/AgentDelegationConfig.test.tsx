@@ -6,6 +6,7 @@ import { AgentDelegationConfig } from './AgentDelegationConfig';
 import { DELEGATED_TASKS_REFRESH_MS } from '@/infrastructure/api/service-api/delegatedTaskReads';
 
 const mocks = vi.hoisted(() => ({
+  openTask: vi.fn(),
   list: vi.fn(),
   open: vi.fn(),
   close: vi.fn(),
@@ -59,6 +60,7 @@ vi.mock('@/infrastructure/contexts/WorkspaceContext', () => ({
 vi.mock('@/infrastructure/api/service-api/RemoteConnectAPI', () => ({
   remoteConnectAPI: { accountListDevices: mocks.devices, getDeviceInfo: mocks.deviceInfo },
 }));
+vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ openDelegatedTask: mocks.openTask }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
 vi.mock('@/shared/notification-system', () => ({ notificationService: { success: vi.fn(), error: vi.fn() } }));
@@ -280,6 +282,17 @@ describe('AgentDelegationConfig', () => {
     expect(shown()).toEqual(['Running', 'Done a', 'Done b', 'Done c']);
     await click('agentDelegation.tasks.showEarlier:1');
     expect(shown()).toEqual(['Running', 'Done a', 'Done b', 'Done c', 'Done d']);
+  });
+
+  it('opens a task as its session in the assistant', async () => {
+    mocks.tasks.mockResolvedValue([{
+      jobId: 'job-1', sessionId: 'session-1', state: 'running', title: 'Draft the plan', agentType: 'assistant:workspace',
+      pendingPermissionCount: 0, source: { kind: 'connection', connectionId: 'conn-1', accountName: 'Bea', deviceName: 'B1' },
+    }]);
+    mocks.openTask.mockResolvedValue(true);
+    await render();
+    await click('agentDelegation.tasks.open');
+    expect(mocks.openTask).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }), '/home/me/personal_assistant/workspace');
   });
 
   it('shows what the record kept about a task from another account', async () => {

@@ -9,6 +9,7 @@ import type { WorkspaceInfo } from '@/shared/types';
 const mocks = vi.hoisted(() => ({
   listTasks: vi.fn(),
   openScene: vi.fn(),
+  openTask: vi.fn(),
   tauri: vi.fn(),
   peer: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal)
   delegationAPI: { listTasks: mocks.listTasks },
 }));
 vi.mock('@/app/stores/sceneStore', () => ({ useSceneStore: { getState: () => ({ openScene: mocks.openScene }) } }));
+vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ openDelegatedTask: mocks.openTask }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
 vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ warn: vi.fn() }) }));
@@ -74,8 +76,15 @@ describe('DelegatedTaskList', () => {
     expect(rows()[1].classList.contains('is-waiting')).toBe(false);
     expect(rows()[1].textContent).toContain('nav.sessions.delegated.fromDevice:Laptop');
 
-    // Review and approval happen on the AI collaboration page.
+    // A task opens as its own read-only session.
+    mocks.openTask.mockResolvedValue(true);
     await act(async () => (rows()[0] as HTMLButtonElement).click());
+    expect(mocks.openTask).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'a' }), ROOT, expect.any(String));
+    expect(mocks.openScene).not.toHaveBeenCalled();
+
+    // Without a session to open, the AI collaboration page shows the task.
+    mocks.openTask.mockResolvedValue(false);
+    await act(async () => (rows()[1] as HTMLButtonElement).click());
     expect(mocks.openScene).toHaveBeenCalledWith('ai-collaboration');
   });
 

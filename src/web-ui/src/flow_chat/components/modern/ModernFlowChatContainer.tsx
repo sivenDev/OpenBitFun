@@ -85,7 +85,7 @@ import { notificationService } from '@/shared/notification-system';
 import { confirmDanger } from '@/infrastructure/confirm-dialog';
 import { getActiveSurfaceScope, isSurfaceChangedError } from '@/infrastructure/peer-device/deviceSurface';
 import { deleteSessionTreeBranch } from '../../services/deleteSessionTreeBranch';
-import { resolveSessionDriverId } from '../../session-drivers/resolve';
+import { isObserverSessionDriver, resolveSessionDriverId } from '../../session-drivers/resolve';
 import {
   clearHistorySessionOpenTransition,
   getHistorySessionOpenTransitionSnapshot,
@@ -2514,7 +2514,7 @@ export const ModernFlowChatContainer: React.FC<ModernFlowChatContainerProps> = (
 
   const handleDeleteSessionTreeSession = useCallback(async (selection: SessionTreeSelection) => {
     if (selection.isRoot) return false;
-    if (activeSession && resolveSessionDriverId(activeSession.sessionId, activeSession) === 'dispatch') {
+    if (activeSession && isObserverSessionDriver(resolveSessionDriverId(activeSession.sessionId, activeSession))) {
       notificationService.error(t('flowChatHeader.agentTreeDeleteUnsupported'), { duration: 5000 });
       return false;
     }

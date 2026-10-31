@@ -16,7 +16,7 @@ vi.mock('../store/FlowChatStore', () => ({ flowChatStore: {
   getState: () => ({ sessions: fixture.sessions }), loadSessionHistory: fixture.history,
   addExternalSession: fixture.addSession,
 } }));
-vi.mock('../session-drivers/resolve', () => ({ resolveSessionDriverId: () => 'local' }));
+vi.mock('../session-drivers/resolve', () => ({ resolveSessionDriverId: () => 'local', isObserverSessionDriver: (id: string) => id !== 'local' }));
 
 const exchange: VoiceExchange = {
   surfaceId: 'local', sessionId: 'conversation', workspaceId: 'workspace-remote',

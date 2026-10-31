@@ -175,7 +175,9 @@
       "trustNormal": "normal trust",
       "trustFull": "full trust",
       "externalAgents": "external agents: {{agents}}",
-      "showEarlier": "Show {{count}} earlier tasks"
+      "showEarlier": "Show {{count}} earlier tasks",
+      "open": "Open",
+      "openFailed": "Could not open this task's session."
     },
     "openedToAccounts": "Open",
     "closeConfirmTitle": "Stop opening {{name}}?",

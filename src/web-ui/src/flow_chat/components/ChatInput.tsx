@@ -203,6 +203,7 @@ import {
 } from '@/features/dispatch/approvalPolicy';
 import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
 import { useComposerCapabilities } from '../session-drivers/useComposerCapabilities';
+import { resolveSessionDriverId } from '../session-drivers/resolve';
 import { ComposerVoiceInputButton } from './voice/ComposerVoiceInputButton';
 import { useRealtimeVoiceCallActive } from './voice/RealtimeVoiceCallContext';
 import { useComposerVoiceInput } from './voice/useComposerVoiceInput';
@@ -1317,6 +1318,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     [effectiveTargetSession]
   );
   const isAcpTargetSession = Boolean(acpTargetAgentType);
+  // A task another device or account delegated here: watched and approved, never driven.
+  const isDelegatedTarget = Boolean(effectiveTargetSessionId)
+    && resolveSessionDriverId(effectiveTargetSessionId ?? '', effectiveTargetSession) === 'delegated';
   const executionLevelPolicy = useMemo(
     () => resolveChatInputExecutionLevelPolicy({
       isAssistantWorkspace,
@@ -2524,7 +2528,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       );
     }
 
-    if (!effectiveTargetSessionId || isAcpTargetSession) {
+    if (!effectiveTargetSessionId || isAcpTargetSession || isDelegatedTarget) {
       setSessionPermissionMode(null);
       setSessionPermissionModeUnread(false);
       setArmedTurnPermissionMode(null);
@@ -2593,6 +2597,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     effectiveTargetSession?.externalContinuationPermissionMode,
     isBtwDraftTarget,
     isAcpTargetSession,
+    isDelegatedTarget,
     t,
   ]);
 
@@ -6574,7 +6579,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </span>
               ) : (
                 <span className="openbitfun-chat-input__placeholder" data-openbitfun-component="chat-input" data-openbitfun-part="placeholder" aria-hidden>
-                  {t('input.placeholder')}
+                  {isDelegatedTarget ? t('chatInput.delegated.readOnly') : t('input.placeholder')}
                 </span>
               ))}
               <RichTextInput

@@ -175,7 +175,9 @@
       "trustNormal": "普通信任",
       "trustFull": "完全信任",
       "externalAgents": "外部智能体：{{agents}}",
-      "showEarlier": "显示更早的 {{count}} 个任务"
+      "showEarlier": "显示更早的 {{count}} 个任务",
+      "open": "查看",
+      "openFailed": "打不开这个任务的会话。"
     },
     "openedToAccounts": "已开放",
     "closeConfirmTitle": "停止开放「{{name}}」？",

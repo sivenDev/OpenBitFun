@@ -1100,7 +1100,10 @@
     "loadingMcpPrompts": "正在載入 MCP 提示詞...",
     "externalCommandsLoading": "正在載入相容命令...",
     "externalCommandsHostUnavailable": "目前主機不支援外部命令。",
-    "externalCommandsLoadFailed": "外部命令載入失敗，請重新開啟命令選擇器重試。"
+    "externalCommandsLoadFailed": "外部命令載入失敗，請重新開啟命令選擇器重試。",
+    "delegated": {
+      "readOnly": "這是其他裝置或帳號交給助理的任務，只能檢視和審批。"
+    }
   },
   "planner": {
     "title": "任務規劃",

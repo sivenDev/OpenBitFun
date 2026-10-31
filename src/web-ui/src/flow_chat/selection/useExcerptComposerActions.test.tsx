@@ -25,7 +25,7 @@ vi.mock('../services/btwSessionPane', () => ({ openBtwSessionInAuxPane: mocks.op
 vi.mock('../services/sessionActivation', () => ({ openMainSession: vi.fn() }));
 vi.mock('@/app/scenes/session/sessionPanelLayout', () => ({ expandSessionAuxPane: mocks.expand }));
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: () => true }));
-vi.mock('../session-drivers/resolve', () => ({ resolveSessionDriverId: () => 'local' }));
+vi.mock('../session-drivers/resolve', () => ({ resolveSessionDriverId: () => 'local', isObserverSessionDriver: (id: string) => id !== 'local' }));
 
 const excerpt: ConversationExcerptContext = {
   id: 'excerpt-1', timestamp: 1, type: 'conversation-excerpt',

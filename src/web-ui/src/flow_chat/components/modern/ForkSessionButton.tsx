@@ -4,6 +4,7 @@ import { Icon, IconButton, Tooltip } from '@openbitfun/ui';
 import { flowChatManager } from '../../services/FlowChatManager';
 import { flowChatStore } from '../../store/FlowChatStore';
 import { resolveSessionRelationship } from '../../utils/sessionMetadata';
+import { resolveSessionDriverId } from '../../session-drivers/resolve';
 import { createLogger } from '@/shared/utils/logger';
 import { notificationService } from '@/shared/notification-system';
 
@@ -22,8 +23,10 @@ export const ForkSessionButton: React.FC<ForkSessionButtonProps> = ({
   const [isForking, setIsForking] = useState(false);
   const session = sessionId ? flowChatStore.getState().sessions.get(sessionId) : undefined;
   const sessionRelationship = resolveSessionRelationship(session);
+  // A delegated task belongs to whoever sent it; the owner only watches it.
   const shouldHideForkAction =
-    sessionRelationship.isBtw || sessionRelationship.isSubagent;
+    sessionRelationship.isBtw || sessionRelationship.isSubagent
+    || (!!sessionId && resolveSessionDriverId(sessionId, session) === 'delegated');
 
   const handleFork = useCallback(async () => {
     if (!sessionId || isForking) {
