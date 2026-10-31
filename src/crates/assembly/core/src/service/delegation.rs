@@ -28,6 +28,278 @@ pub const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
 /// never adopts them: the delegating subagent already observes them.
 pub const DELEGATED_JOB_ID_PREFIX: &str = "delegation-";
 
+/// Agent type of an opened assistant: `assistant:<directory>` names one
+/// directory under this device's assistant workspace base. Older targets do
+/// not know the prefix and refuse it as an unknown mode.
+pub const ASSISTANT_AGENT_TYPE_PREFIX: &str = "assistant:";
+/// The agent mode an opened assistant's tasks run in.
+pub const ASSISTANT_RUN_AGENT_TYPE: &str = "Claw";
+const DEFAULT_ASSISTANT_DIRECTORY: &str = "workspace";
+const NAMED_ASSISTANT_DIRECTORY_PREFIX: &str = "workspace-";
+/// Directory under the product home that holds delegated task directories.
+/// Nothing under it is a source of memories.
+const DELEGATION_WORKSPACES_DIR: &str = "workspaces";
+
+/// The assistant directory an `assistant:<directory>` agent type names, when
+/// it is one this device could hold.
+pub fn assistant_directory(agent_type: &str) -> Option<&str> {
+    let directory = agent_type
+        .trim()
+        .strip_prefix(ASSISTANT_AGENT_TYPE_PREFIX)?;
+    let valid = directory == DEFAULT_ASSISTANT_DIRECTORY
+        || directory
+            .strip_prefix(NAMED_ASSISTANT_DIRECTORY_PREFIX)
+            .is_some_and(|id| {
+                !id.is_empty()
+                    && id.len() <= MAX_OPEN_AGENT_ID_LEN
+                    && id
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+            });
+    valid.then_some(directory)
+}
+
+/// The agent type that opens the assistant in `directory`.
+pub fn assistant_agent_type(directory: &str) -> String {
+    format!("{ASSISTANT_AGENT_TYPE_PREFIX}{directory}")
+}
+
+/// Root of the assistant an `assistant:<directory>` agent type names.
+pub fn assistant_workspace_root(path_manager: &PathManager, agent_type: &str) -> Option<PathBuf> {
+    assistant_directory(agent_type).map(|directory| {
+        path_manager
+            .assistant_workspace_base_dir(None)
+            .join(directory)
+    })
+}
+
+/// An assistant this device could open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAssistant {
+    /// The agent type that opens it (`assistant:<directory>`).
+    pub agent_type: String,
+    /// The assistant id, or `None` for the default assistant.
+    pub assistant_id: Option<String>,
+    pub root_path: PathBuf,
+}
+
+/// The assistants on this device, read from their directories so headless
+/// hosts can list them without the workspace catalog.
+pub fn local_assistants(path_manager: &PathManager) -> Vec<LocalAssistant> {
+    let Ok(entries) = std::fs::read_dir(path_manager.assistant_workspace_base_dir(None)) else {
+        return Vec::new();
+    };
+    let mut assistants: Vec<LocalAssistant> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| {
+            let directory = entry.file_name().to_string_lossy().into_owned();
+            let agent_type = assistant_agent_type(&directory);
+            assistant_directory(&agent_type)?;
+            Some(LocalAssistant {
+                assistant_id: directory
+                    .strip_prefix(NAMED_ASSISTANT_DIRECTORY_PREFIX)
+                    .map(str::to_string),
+                root_path: entry.path(),
+                agent_type,
+            })
+        })
+        .collect();
+    assistants.sort_by(|left, right| left.agent_type.cmp(&right.agent_type));
+    assistants
+}
+
+/// Parent of the directories delegated tasks run in.
+pub fn delegation_workspaces_root(path_manager: &PathManager) -> PathBuf {
+    path_manager
+        .product_home_dir()
+        .join(DELEGATION_DIR)
+        .join(DELEGATION_WORKSPACES_DIR)
+}
+
+/// Whether `path` is a directory a delegated task ran in. Such sessions
+/// belong to another account's or device's request and never feed memories.
+pub fn is_delegation_workspace_path(path: &Path) -> bool {
+    crate::infrastructure::try_get_path_manager_arc()
+        .is_ok_and(|path_manager| path.starts_with(delegation_workspaces_root(&path_manager)))
+}
+
+/// How far the owner trusts the requester of a delegated task.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationTrust {
+    /// The default for another account: the task cannot reach the owner's
+    /// desktop, other sessions, schedules or publishing, and gets no memory.
+    #[default]
+    Normal,
+    /// The owner's own devices, or a connection the owner chose to trust
+    /// fully: the task runs like the owner's own.
+    Full,
+}
+
+impl DelegationTrust {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Full => "full",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "normal" => Some(Self::Normal),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
+/// Turn context keys that carry the facts of a delegated turn. The target's
+/// worker writes them into the `dispatchDelegation` turn metadata; the kernel
+/// copies them into the turn and every subagent it starts.
+pub const DELEGATION_ASSISTANT_CONTEXT_KEY: &str = "dispatchDelegationAssistant";
+pub const DELEGATION_TASK_DIR_CONTEXT_KEY: &str = "dispatchDelegationTaskDir";
+pub const DELEGATION_TRUST_CONTEXT_KEY: &str = "dispatchDelegationTrust";
+const METADATA_ASSISTANT_FIELD: &str = "assistantWorkspace";
+const METADATA_TASK_DIR_FIELD: &str = "taskWorkspace";
+const METADATA_TRUST_FIELD: &str = "trust";
+
+/// What the kernel knows about a turn another device delegated here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelegatedTurnFacts {
+    /// Root of the opened assistant the task runs as; read-only to it.
+    pub assistant_workspace: Option<PathBuf>,
+    /// The task's own directory, the only place it writes files.
+    pub task_dir: Option<PathBuf>,
+    pub trust: DelegationTrust,
+}
+
+impl DelegatedTurnFacts {
+    /// Copies the facts from a turn's `dispatchDelegation` metadata into its
+    /// context variables. A missing or unknown trust stays unset, which reads
+    /// as [`DelegationTrust::Normal`].
+    pub fn copy_metadata_to_context(
+        metadata: Option<&Value>,
+        context: &mut std::collections::HashMap<String, String>,
+    ) {
+        let Some(delegation) = metadata
+            .and_then(|metadata| metadata.get(DISPATCH_DELEGATION_CONTEXT_KEY))
+            .filter(|delegation| delegation.is_object())
+        else {
+            return;
+        };
+        context.insert(
+            DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
+            "true".to_string(),
+        );
+        for (field, key) in [
+            (METADATA_ASSISTANT_FIELD, DELEGATION_ASSISTANT_CONTEXT_KEY),
+            (METADATA_TASK_DIR_FIELD, DELEGATION_TASK_DIR_CONTEXT_KEY),
+            (METADATA_TRUST_FIELD, DELEGATION_TRUST_CONTEXT_KEY),
+        ] {
+            if let Some(value) = delegation
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                context.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+
+    /// The metadata fields a target's worker adds for a delegated turn.
+    pub fn metadata_fields(
+        assistant_workspace: Option<&str>,
+        task_dir: &str,
+        trust: DelegationTrust,
+    ) -> serde_json::Map<String, Value> {
+        let mut fields = serde_json::Map::new();
+        if let Some(assistant_workspace) = assistant_workspace {
+            fields.insert(
+                METADATA_ASSISTANT_FIELD.to_string(),
+                Value::String(assistant_workspace.to_string()),
+            );
+        }
+        fields.insert(
+            METADATA_TASK_DIR_FIELD.to_string(),
+            Value::String(task_dir.to_string()),
+        );
+        fields.insert(
+            METADATA_TRUST_FIELD.to_string(),
+            Value::String(trust.as_str().to_string()),
+        );
+        fields
+    }
+
+    /// The facts of a delegated turn, or `None` for any other turn.
+    pub fn from_context(context: &std::collections::HashMap<String, String>) -> Option<Self> {
+        if context
+            .get(DISPATCH_DELEGATION_CONTEXT_KEY)
+            .map(String::as_str)
+            != Some("true")
+        {
+            return None;
+        }
+        let path = |key: &str| {
+            context
+                .get(key)
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+        };
+        Some(Self {
+            assistant_workspace: path(DELEGATION_ASSISTANT_CONTEXT_KEY),
+            task_dir: path(DELEGATION_TASK_DIR_CONTEXT_KEY),
+            trust: context
+                .get(DELEGATION_TRUST_CONTEXT_KEY)
+                .and_then(|value| DelegationTrust::parse(value))
+                .unwrap_or_default(),
+        })
+    }
+
+    /// Context keys a subagent inherits from its delegated parent turn.
+    pub const INHERITED_CONTEXT_KEYS: [&'static str; 3] = [
+        DELEGATION_ASSISTANT_CONTEXT_KEY,
+        DELEGATION_TASK_DIR_CONTEXT_KEY,
+        DELEGATION_TRUST_CONTEXT_KEY,
+    ];
+
+    /// Whether the task may see the owner's private context: `USER.md` and
+    /// the memory summary.
+    pub fn includes_private_context(&self) -> bool {
+        self.trust == DelegationTrust::Full
+    }
+
+    /// Narrows `restrictions` for this turn: a task that runs as an
+    /// assistant writes only in its own directory, so it can never change
+    /// the assistant's persona, instructions or memory.
+    #[cfg(feature = "agent-runtime")]
+    pub fn restrict_tools(
+        &self,
+        mut restrictions: crate::agentic::tools::ToolRuntimeRestrictions,
+    ) -> crate::agentic::tools::ToolRuntimeRestrictions {
+        if let (Some(_), Some(task_dir)) = (&self.assistant_workspace, &self.task_dir) {
+            let root = task_dir.to_string_lossy().into_owned();
+            let policy = &mut restrictions.path_policy;
+            for roots in [
+                &mut policy.write_roots,
+                &mut policy.edit_roots,
+                &mut policy.delete_roots,
+            ] {
+                if roots.is_empty() {
+                    roots.push(root.clone());
+                } else {
+                    roots.retain(|existing| Path::new(existing).starts_with(task_dir));
+                    if roots.is_empty() {
+                        roots.push(root.clone());
+                    }
+                }
+            }
+        }
+        restrictions
+    }
+}
+
 /// What a delegated job may do on this device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -180,6 +452,23 @@ impl OpenAgent {
             && external_client_id(agent_type).is_none()
         {
             return Err("external agent type requires a client id".to_string());
+        }
+        if agent_type.starts_with(ASSISTANT_AGENT_TYPE_PREFIX) {
+            if assistant_directory(agent_type).is_none() {
+                return Err(format!("'{agent_type}' does not name an assistant"));
+            }
+            // An assistant answers questions in a directory of each task's
+            // own; it never takes a repository or a shared directory.
+            if self
+                .task_kinds
+                .iter()
+                .any(|kind| *kind != DelegationTaskKind::Message)
+            {
+                return Err("an opened assistant accepts only message tasks".to_string());
+            }
+            if self.message_workspace.is_some() {
+                return Err("an opened assistant runs each task in its own directory".to_string());
+            }
         }
         if self.display_name.trim().is_empty() {
             return Err("open agent requires a display name".to_string());
@@ -564,6 +853,11 @@ impl OpenAgentStore {
     /// Opens `agent`, replacing any stored entry with the same id. External
     /// agents are opened only through [`Self::open_external_agent`].
     pub async fn open(&self, agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
+        if assistant_directory(&agent.agent_type).is_some() {
+            return Err(OpenAgentStoreError::Invalid(
+                "assistants are opened only through open_assistant".to_string(),
+            ));
+        }
         if ExternalAgentUsageNotice::for_agent_type(&agent.agent_type).is_some() {
             return Err(OpenAgentStoreError::Invalid(
                 "external agents are opened only after confirming their usage notice".to_string(),
@@ -664,6 +958,47 @@ impl OpenAgentStore {
             )
             .await?;
         Ok(())
+    }
+
+    /// Opens the assistant `agent.agent_type` names, under `assistants_base`
+    /// (see [`PathManager::assistant_workspace_base_dir`]). The owner confirms
+    /// once that tasks may use external agents with this device's own login
+    /// or credentials. An empty display name takes the assistant's directory.
+    pub async fn open_assistant(
+        &self,
+        assistants_base: &Path,
+        mut agent: OpenAgent,
+        usage_confirmed: bool,
+    ) -> Result<OpenAgent, OpenAgentStoreError> {
+        agent.agent_type = agent.agent_type.trim().to_string();
+        let root = assistant_directory(&agent.agent_type)
+            .map(|directory| assistants_base.join(directory))
+            .ok_or_else(|| {
+                OpenAgentStoreError::Invalid(format!(
+                    "'{}' does not name an assistant",
+                    agent.agent_type
+                ))
+            })?;
+        if !root.is_dir() {
+            return Err(OpenAgentStoreError::Invalid(format!(
+                "assistant '{}' does not exist on this device",
+                agent.agent_type
+            )));
+        }
+        if !usage_confirmed {
+            return Err(OpenAgentStoreError::Invalid(
+                "opening an assistant requires confirming that its tasks may use external agents with this device's own login or credentials".to_string(),
+            ));
+        }
+        agent.task_kinds = vec![DelegationTaskKind::Message];
+        agent.message_workspace = None;
+        if agent.display_name.trim().is_empty() {
+            agent.display_name = assistant_directory(&agent.agent_type)
+                .unwrap_or_default()
+                .to_string();
+        }
+        self.store_entry(agent.clone()).await?;
+        Ok(agent)
     }
 
     /// Opens a local agent mode after resolving its canonical id against the
@@ -1174,6 +1509,172 @@ mod tests {
         );
         assert_eq!(ExternalAgentUsageNotice::for_agent_type("Standard"), None);
         assert_eq!(ExternalAgentUsageNotice::for_agent_type("acp:"), None);
+    }
+
+    #[test]
+    fn assistant_agent_types_name_only_assistant_directories() {
+        assert_eq!(
+            assistant_directory("assistant:workspace"),
+            Some("workspace")
+        );
+        assert_eq!(
+            assistant_directory("assistant:workspace-ab12_c"),
+            Some("workspace-ab12_c")
+        );
+        for invalid in [
+            "assistant:",
+            "assistant:workspace-",
+            "assistant:../workspace",
+            "assistant:workspace-a/b",
+            "assistant:notes",
+            "Claw",
+        ] {
+            assert_eq!(assistant_directory(invalid), None, "{invalid}");
+        }
+        assert_eq!(assistant_agent_type("workspace-x"), "assistant:workspace-x");
+    }
+
+    fn assistant_entry(id: &str, agent_type: &str) -> OpenAgent {
+        OpenAgent {
+            agent_type: agent_type.to_string(),
+            display_name: String::new(),
+            ..agent(id, &[ALL_SAME_ACCOUNT_DEVICES])
+        }
+    }
+
+    #[tokio::test]
+    async fn assistants_open_only_with_confirmation_and_only_for_message_tasks() {
+        let (store, dir) = store();
+        let path_manager = PathManager::with_user_root_for_tests(dir.path().join("user"));
+        let base = path_manager.assistant_workspace_base_dir(None);
+        std::fs::create_dir_all(base.join("workspace-ann")).unwrap();
+        std::fs::create_dir_all(base.join("notes")).unwrap();
+        assert_eq!(
+            local_assistants(&path_manager)
+                .into_iter()
+                .map(|assistant| assistant.agent_type)
+                .collect::<Vec<_>>(),
+            vec!["assistant:workspace-ann".to_string()]
+        );
+
+        let entry = assistant_entry("ann", "assistant:workspace-ann");
+        assert!(store
+            .open_assistant(&base, entry.clone(), false)
+            .await
+            .is_err());
+        assert!(store
+            .open_assistant(
+                &base,
+                assistant_entry("gone", "assistant:workspace-gone"),
+                true
+            )
+            .await
+            .is_err());
+        // Opening ignores a requested coding kind or shared directory.
+        let opened = store
+            .open_assistant(
+                &base,
+                OpenAgent {
+                    task_kinds: vec![DelegationTaskKind::Coding],
+                    message_workspace: Some("/tmp".to_string()),
+                    ..entry.clone()
+                },
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened.task_kinds, vec![DelegationTaskKind::Message]);
+        assert_eq!(opened.message_workspace, None);
+        assert_eq!(opened.display_name, "workspace-ann");
+        assert!(store.open(entry).await.is_err());
+
+        let granted = store
+            .authorize("laptop", "ann", DelegationTaskKind::Message)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(granted.agent_type, "assistant:workspace-ann");
+        assert_eq!(
+            store
+                .authorize("laptop", "ann", DelegationTaskKind::Coding)
+                .await
+                .unwrap(),
+            Err(DelegationRefusal::TaskKindNotAllowed {
+                open_agent_id: "ann".to_string(),
+                kind: DelegationTaskKind::Coding,
+            })
+        );
+    }
+
+    #[test]
+    fn delegated_turn_facts_travel_from_metadata_to_context() {
+        let fields = DelegatedTurnFacts::metadata_fields(
+            Some("/home/a/.openbitfun/personal_assistant/workspace"),
+            "/home/a/.openbitfun/delegation/workspaces/ann/conn/job",
+            DelegationTrust::Normal,
+        );
+        let mut delegation = json!({ "openAgentId": "ann" });
+        delegation.as_object_mut().unwrap().extend(fields);
+        let metadata = json!({ DISPATCH_DELEGATION_CONTEXT_KEY: delegation });
+        let mut context = std::collections::HashMap::new();
+        DelegatedTurnFacts::copy_metadata_to_context(Some(&metadata), &mut context);
+        let facts = DelegatedTurnFacts::from_context(&context).unwrap();
+        assert_eq!(
+            facts.assistant_workspace.as_deref(),
+            Some(Path::new(
+                "/home/a/.openbitfun/personal_assistant/workspace"
+            ))
+        );
+        assert_eq!(facts.trust, DelegationTrust::Normal);
+        assert!(!facts.includes_private_context());
+
+        // A turn without the delegation marker has no facts, and a missing or
+        // unknown trust reads as normal.
+        let mut plain = std::collections::HashMap::new();
+        DelegatedTurnFacts::copy_metadata_to_context(Some(&json!({})), &mut plain);
+        assert!(DelegatedTurnFacts::from_context(&plain).is_none());
+        context.insert(
+            DELEGATION_TRUST_CONTEXT_KEY.to_string(),
+            "owner".to_string(),
+        );
+        assert_eq!(
+            DelegatedTurnFacts::from_context(&context).unwrap().trust,
+            DelegationTrust::Normal
+        );
+        context.insert(DELEGATION_TRUST_CONTEXT_KEY.to_string(), "full".to_string());
+        assert!(DelegatedTurnFacts::from_context(&context)
+            .unwrap()
+            .includes_private_context());
+    }
+
+    #[cfg(feature = "agent-runtime")]
+    #[test]
+    fn assistant_tasks_write_only_in_their_own_directory() {
+        let facts = DelegatedTurnFacts {
+            assistant_workspace: Some(PathBuf::from("/a/personal_assistant/workspace")),
+            task_dir: Some(PathBuf::from("/a/delegation/workspaces/job")),
+            trust: DelegationTrust::Full,
+        };
+        let restricted = facts.restrict_tools(Default::default());
+        for roots in [
+            &restricted.path_policy.write_roots,
+            &restricted.path_policy.edit_roots,
+            &restricted.path_policy.delete_roots,
+        ] {
+            assert_eq!(roots, &vec!["/a/delegation/workspaces/job".to_string()]);
+        }
+        assert!(restricted.path_policy.read_roots.is_empty());
+
+        // A delegated turn that does not run as an assistant keeps its tools.
+        let plain = DelegatedTurnFacts {
+            assistant_workspace: None,
+            ..facts
+        };
+        assert!(plain
+            .restrict_tools(Default::default())
+            .path_policy
+            .write_roots
+            .is_empty());
     }
 
     #[tokio::test]

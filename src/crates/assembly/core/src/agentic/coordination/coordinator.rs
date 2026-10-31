@@ -474,6 +474,32 @@ fn metadata_bool(metadata: Option<&serde_json::Value>, key: &str) -> Option<bool
         .and_then(serde_json::Value::as_bool)
 }
 
+/// Narrows the tools of a turn another device delegated here, from the
+/// facts its worker put in the turn metadata.
+fn runtime_tool_restrictions_for_delegated_turn(
+    restrictions: ToolRuntimeRestrictions,
+    metadata: Option<&serde_json::Value>,
+) -> ToolRuntimeRestrictions {
+    let mut context = HashMap::new();
+    crate::service::delegation::DelegatedTurnFacts::copy_metadata_to_context(
+        metadata,
+        &mut context,
+    );
+    runtime_tool_restrictions_for_delegated_context(restrictions, &context)
+}
+
+/// As [`runtime_tool_restrictions_for_delegated_turn`], for a subagent whose
+/// context its delegated parent forwarded.
+fn runtime_tool_restrictions_for_delegated_context(
+    restrictions: ToolRuntimeRestrictions,
+    context: &HashMap<String, String>,
+) -> ToolRuntimeRestrictions {
+    match crate::service::delegation::DelegatedTurnFacts::from_context(context) {
+        Some(facts) => facts.restrict_tools(restrictions),
+        None => restrictions,
+    }
+}
+
 fn runtime_tool_restrictions_for_session_lifetime(
     mut restrictions: ToolRuntimeRestrictions,
     transient: bool,
@@ -1683,13 +1709,7 @@ impl ConversationCoordinator {
         context: &mut HashMap<String, String>,
         metadata: Option<&serde_json::Value>,
     ) {
-        let key = crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
-        if metadata
-            .and_then(|metadata| metadata.get(key))
-            .is_some_and(serde_json::Value::is_object)
-        {
-            context.insert(key.to_string(), "true".to_string());
-        }
+        crate::service::delegation::DelegatedTurnFacts::copy_metadata_to_context(metadata, context);
     }
 
     fn copy_output_schema_context(
@@ -7204,9 +7224,12 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             user_message_metadata.as_ref(),
             session.created_by.as_deref(),
         );
-        let runtime_tool_restrictions = runtime_tool_restrictions_for_session_lifetime(
-            runtime_tool_restrictions,
-            self.session_manager.is_transient_session(&session_id),
+        let runtime_tool_restrictions = runtime_tool_restrictions_for_delegated_turn(
+            runtime_tool_restrictions_for_session_lifetime(
+                runtime_tool_restrictions,
+                self.session_manager.is_transient_session(&session_id),
+            ),
+            user_message_metadata.as_ref(),
         );
 
         // Materialize references only when a queued turn is actually being
@@ -8175,13 +8198,16 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             .and_then(serde_json::Value::as_str)
             .unwrap_or(&plan.user_input)
             .to_string();
-        let runtime_tool_restrictions = runtime_tool_restrictions_for_session_lifetime(
-            miniapp_agent_run_tool_restrictions(
-                plan.user_message_metadata.as_ref(),
-                session.created_by.as_deref(),
+        let runtime_tool_restrictions = runtime_tool_restrictions_for_delegated_turn(
+            runtime_tool_restrictions_for_session_lifetime(
+                miniapp_agent_run_tool_restrictions(
+                    plan.user_message_metadata.as_ref(),
+                    session.created_by.as_deref(),
+                ),
+                self.session_manager
+                    .is_transient_session(&request.session_id),
             ),
-            self.session_manager
-                .is_transient_session(&request.session_id),
+            plan.user_message_metadata.as_ref(),
         );
         let mut context_vars = HashMap::new();
         context_vars.insert(
@@ -13032,14 +13058,17 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         user_input_text: task_description,
                         created_by: session.created_by.clone(),
                         subagent_parent_info: Some(request.subagent_parent_info),
-                        context: request.context,
+                        context: request.context.clone(),
                         permission_runtime_ceiling: Some(request.permission_runtime_ceiling),
                         delegation_policy: request.delegation_policy,
-                        runtime_tool_restrictions: runtime_tool_restrictions_for_session_lifetime(
-                            runtime_tool_restrictions_for_delegation_policy(
-                                request.delegation_policy,
+                        runtime_tool_restrictions: runtime_tool_restrictions_for_delegated_context(
+                            runtime_tool_restrictions_for_session_lifetime(
+                                runtime_tool_restrictions_for_delegation_policy(
+                                    request.delegation_policy,
+                                ),
+                                transient,
                             ),
-                            transient,
+                            &request.context,
                         ),
                         prompt_cache_source_session_id: None,
                         session_kind: SessionKind::Subagent,
@@ -13133,12 +13162,17 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     user_input_text: task_description,
                     created_by,
                     subagent_parent_info: Some(request.subagent_parent_info),
-                    context: request.context,
+                    context: request.context.clone(),
                     permission_runtime_ceiling: Some(request.permission_runtime_ceiling),
                     delegation_policy: request.delegation_policy,
-                    runtime_tool_restrictions: runtime_tool_restrictions_for_session_lifetime(
-                        runtime_tool_restrictions_for_delegation_policy(request.delegation_policy),
-                        parent_transient,
+                    runtime_tool_restrictions: runtime_tool_restrictions_for_delegated_context(
+                        runtime_tool_restrictions_for_session_lifetime(
+                            runtime_tool_restrictions_for_delegation_policy(
+                                request.delegation_policy,
+                            ),
+                            parent_transient,
+                        ),
+                        &request.context,
                     ),
                     prompt_cache_source_session_id: None,
                     session_kind: SessionKind::Subagent,
@@ -13209,12 +13243,17 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     user_input_text: task_description,
                     created_by,
                     subagent_parent_info: Some(request.subagent_parent_info),
-                    context: request.context,
+                    context: request.context.clone(),
                     permission_runtime_ceiling: Some(request.permission_runtime_ceiling),
                     delegation_policy: request.delegation_policy,
-                    runtime_tool_restrictions: runtime_tool_restrictions_for_session_lifetime(
-                        runtime_tool_restrictions_for_delegation_policy(request.delegation_policy),
-                        parent_transient,
+                    runtime_tool_restrictions: runtime_tool_restrictions_for_delegated_context(
+                        runtime_tool_restrictions_for_session_lifetime(
+                            runtime_tool_restrictions_for_delegation_policy(
+                                request.delegation_policy,
+                            ),
+                            parent_transient,
+                        ),
+                        &request.context,
                     ),
                     prompt_cache_source_session_id: Some(snapshot.parent_session_id),
                     session_kind: SessionKind::Subagent,

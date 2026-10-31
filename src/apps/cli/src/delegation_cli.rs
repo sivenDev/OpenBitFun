@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Subcommand, ValueEnum};
 use openbitfun_core::service::delegation::{
-    ConnectionLimits, DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord,
-    OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
+    assistant_agent_type, assistant_directory, local_assistants, ConnectionLimits,
+    DelegationTaskKind, ExternalAgentUsageNotice, OpenAgent, OpenAgentRecord, OpenAgentStore,
+    ALL_SAME_ACCOUNT_DEVICES,
 };
 use openbitfun_core::service::delegation_audit::{DelegationAuditEvent, DelegationAuditLog};
 
@@ -22,21 +23,31 @@ pub(crate) enum DelegationAction {
         #[arg(long)]
         json: bool,
     },
-    /// Open a local agent mode, or an enabled external agent (`acp:<id>`),
-    /// to other devices of this account
+    /// List the assistants on this device that can be opened
+    Assistants {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Open an assistant to other devices of this account
     Open {
         /// Stable id other devices address (letters, digits, '-' or '_')
         id: String,
+        /// The assistant that answers delegated tasks: its directory as
+        /// `openbitfun delegation assistants` lists it (`workspace` is the
+        /// default assistant)
+        #[arg(long, conflicts_with = "agent_type")]
+        assistant: Option<String>,
         /// Local agent mode or external agent that runs delegated jobs
-        #[arg(long = "agent")]
-        agent_type: String,
+        #[arg(long = "agent", required_unless_present = "assistant")]
+        agent_type: Option<String>,
         /// Name shown to other devices; defaults to the agent's name
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
-        /// Task kinds other devices may delegate (repeatable)
-        #[arg(long = "task-kind", value_enum, required = true)]
+        /// Task kinds other devices may delegate (repeatable); an assistant
+        /// takes message tasks only
+        #[arg(long = "task-kind", value_enum, required_unless_present = "assistant")]
         task_kinds: Vec<CliDelegationTaskKind>,
         /// Existing directory message tasks run in. Without one, each
         /// requesting device gets its own empty directory.
@@ -128,8 +139,69 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 print_records(&records);
             }
         }
+        DelegationAction::Assistants { json } => {
+            let assistants = local_assistants(&path_manager);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&assistants)?);
+            } else if assistants.is_empty() {
+                println!("No assistants on this device.");
+            } else {
+                for assistant in &assistants {
+                    println!(
+                        "- {} ({})",
+                        escape_terminal_text(
+                            assistant_directory(&assistant.agent_type).unwrap_or_default()
+                        ),
+                        escape_terminal_text(&assistant.root_path.to_string_lossy())
+                    );
+                }
+            }
+        }
         DelegationAction::Open {
             id,
+            assistant: Some(directory),
+            name,
+            description,
+            devices,
+            all_devices,
+            accept_usage,
+            ..
+        } => {
+            if !accept_usage {
+                println!("{ASSISTANT_USAGE_NOTICE}");
+                bail!("run again with --accept-usage to open this assistant");
+            }
+            let entry = OpenAgent {
+                id,
+                agent_type: assistant_agent_type(directory.trim()),
+                display_name: name.unwrap_or_default(),
+                description,
+                task_kinds: vec![DelegationTaskKind::Message],
+                message_workspace: None,
+                same_account_devices: if all_devices {
+                    vec![ALL_SAME_ACCOUNT_DEVICES.to_string()]
+                } else {
+                    devices
+                },
+                connections: Vec::new(),
+            };
+            let agent = store
+                .open_assistant(
+                    &path_manager.assistant_workspace_base_dir(None),
+                    entry,
+                    true,
+                )
+                .await?;
+            println!(
+                "Opened assistant {} ({}) to {}",
+                escape_terminal_text(&agent.id),
+                escape_terminal_text(&agent.display_name),
+                describe_devices(&agent.same_account_devices)
+            );
+        }
+        DelegationAction::Open {
+            id,
+            assistant: None,
             agent_type,
             name,
             description,
@@ -151,7 +223,7 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 .transpose()?;
             let entry = OpenAgent {
                 id,
-                agent_type,
+                agent_type: agent_type.unwrap_or_default(),
                 display_name: name.unwrap_or_default(),
                 description,
                 task_kinds: task_kinds.into_iter().map(Into::into).collect(),
@@ -319,6 +391,12 @@ fn describe_limits(limits: ConnectionLimits) -> String {
         });
     format!("{jobs}, {minutes}")
 }
+
+/// What the owner confirms before opening an assistant.
+const ASSISTANT_USAGE_NOTICE: &str = "Delegated tasks run this assistant on this device. \
+     The assistant may hand work to external agents such as Claude Code or Codex with this device's own login or credentials: \
+     that uses your quota with their providers, so check that their terms of service allow this use. \
+     A Claude subscription login is for your own everyday use; an API key is recommended for delegated tasks.";
 
 fn usage_notice_text(notice: ExternalAgentUsageNotice) -> &'static str {
     match notice {

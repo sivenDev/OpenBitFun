@@ -326,6 +326,58 @@ The following files are located in the workspace root directory and define your 
     )))
 }
 
+/// The persona of an opened assistant for a task another device delegated.
+/// Reads the assistant's files without creating or changing any of them:
+/// the task must not alter the assistant. `USER.md` describes the owner and
+/// is included only when the owner trusts the requester fully.
+#[cfg(feature = "agent-runtime")]
+pub(crate) async fn build_delegated_assistant_persona_prompt(
+    assistant_root: &Path,
+    include_user_profile: bool,
+) -> Option<String> {
+    let mut file_names = vec![SOUL_FILE_NAME, IDENTITY_FILE_NAME];
+    if include_user_profile {
+        file_names.push(USER_FILE_NAME);
+    }
+    let mut prompt = String::from("<persona>\n");
+    let mut found = false;
+    for file_name in file_names {
+        let file_path = assistant_root.join(file_name);
+        let content = match fs::read_to_string(&file_path).await {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                warn!(
+                    "Failed to read delegated assistant persona file: path={} error={}",
+                    file_path.display(),
+                    error
+                );
+                continue;
+            }
+        };
+        found = true;
+        prompt.push_str(&format!(
+            "<persona_file name=\"{}\" description=\"{}\">\n{}\n</persona_file>\n",
+            file_name,
+            persona_file_description(file_name),
+            normalize_line_endings(&content)
+        ));
+    }
+    if !found {
+        return None;
+    }
+    prompt.push_str("</persona>");
+    Some(format!(
+        r#"# Persona
+
+You are this assistant, answering a task that another device delegated to you. The files below define who you are. They belong to your owner: you cannot change them, and this task does not change your memory. Work in the current workspace directory, which belongs to this task.
+
+{}
+"#,
+        prompt
+    ))
+}
+
 #[cfg(feature = "agent-runtime")]
 fn persona_file_description(file_name: &str) -> &'static str {
     match file_name {
@@ -353,6 +405,39 @@ mod tests {
             .expect("System time before unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), unique))
+    }
+
+    #[tokio::test]
+    async fn delegated_assistant_persona_reads_without_changing_the_assistant() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, content) in [
+            (SOUL_FILE_NAME, "soul: patient"),
+            (IDENTITY_FILE_NAME, "name: Ann"),
+            (USER_FILE_NAME, "owner: lives in Lyon"),
+            (BOOTSTRAP_FILE_NAME, "finish setup"),
+        ] {
+            fs::write(root.path().join(name), content).await.unwrap();
+        }
+
+        let normal = super::build_delegated_assistant_persona_prompt(root.path(), false)
+            .await
+            .unwrap();
+        assert!(normal.contains("soul: patient") && normal.contains("name: Ann"));
+        assert!(!normal.contains("lives in Lyon"));
+        assert!(!normal.contains("finish setup"));
+        let full = super::build_delegated_assistant_persona_prompt(root.path(), true)
+            .await
+            .unwrap();
+        assert!(full.contains("lives in Lyon"));
+
+        // An assistant without persona files gets none, and nothing is created.
+        let empty = tempfile::tempdir().unwrap();
+        assert!(
+            super::build_delegated_assistant_persona_prompt(empty.path(), true)
+                .await
+                .is_none()
+        );
+        assert_eq!(std::fs::read_dir(empty.path()).unwrap().count(), 0);
     }
 
     #[test]

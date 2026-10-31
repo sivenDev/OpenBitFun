@@ -1571,7 +1571,11 @@ impl ExecutionEngine {
         )
         .await
         .map(|prompt_context| {
-            prompt_context.with_remote_file_delivery_channel(remote_file_delivery_channel)
+            prompt_context
+                .with_remote_file_delivery_channel(remote_file_delivery_channel)
+                .with_delegated_turn(
+                    crate::service::delegation::DelegatedTurnFacts::from_context(&context.context),
+                )
         })
     }
 

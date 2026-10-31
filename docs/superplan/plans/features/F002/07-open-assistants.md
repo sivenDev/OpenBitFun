@@ -91,7 +91,15 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-cli --test cli_command_contracts delegation`（开放带人设的助理：回答体现人设；写入助理工作区被拒；记忆提取不收录外部任务）
 - `cargo check -p openbitfun-desktop --lib`
 
-- [ ] 助理可以被开放并以助理身份处理外部任务，助理工作区只读、不进入记忆提取，均有测试
+- [x] 助理可以被开放并以助理身份处理外部任务，助理工作区只读、不进入记忆提取，均有测试
+
+**Evidence (2026-10-31):**
+- 开放项 `assistant:<目录>`（`workspace` 或 `workspace-<id>`），按目录识别，无需工作区目录服务，CLI 与桌面都能列出；开放需确认外部智能体的额度与条款；只接受纯消息任务。
+- 目标端准入为每个任务建独立目录（`delegation/workspaces/<开放项>/<发起方>/<任务>`），由本机写入 `__assistantWorkspace`，拒绝发起方自带；助理被删除后拒绝新任务。
+- 工作进程以 `Claw` 模式运行，回合元数据带助理、任务目录与信任（同账号完全信任、连接普通，任务 3 改为读取连接设置）；外部智能体对助理任务可用。
+- 内核：人设只读取 `SOUL.md`、`IDENTITY.md`（完全信任另加 `USER.md`），不创建、不写入；写、改、删只允许任务目录，子智能体继承；普通信任不注入记忆；委派目录不参与记忆提取与扫描。
+- 测试：`cargo test -p openbitfun-core ... --lib -- delegation memories::startup bootstrap` 57 通过，`-- child_context tools::implementations::task remote_agent` 125 通过；`cargo test -p openbitfun-cli --bin openbitfun dispatch::` 118 通过；`cargo check -p openbitfun-desktop --lib` 通过。
+- 偏差：未新增 `assistant_delegation_v1`。旧目标的开放清单里不会有助理，旧发起方按目录里的类型提交即可被新目标接受，能力声明没有消费方。端到端模拟在任务 2 把模拟改为助理后一并验证。
 
 ## Task 2: 删除模式与外部智能体开放项、委派编码任务
 

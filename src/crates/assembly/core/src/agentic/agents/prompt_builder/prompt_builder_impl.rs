@@ -8,8 +8,11 @@ use crate::agentic::util::remote_workspace_layout::build_remote_workspace_layout
 use crate::agentic::workspace::WorkspaceBackend;
 use crate::agentic::WorkspaceBinding;
 use crate::infrastructure::try_get_path_manager_arc;
-use crate::service::bootstrap::build_workspace_persona_prompt;
+use crate::service::bootstrap::{
+    build_delegated_assistant_persona_prompt, build_workspace_persona_prompt,
+};
 use crate::service::config::{get_app_language_code, get_global_config_service};
+use crate::service::delegation::DelegatedTurnFacts;
 use crate::service::filesystem::get_formatted_directory_listing;
 use crate::service::i18n::LocaleId;
 use crate::service::instruction_context::build_workspace_instruction_files_context;
@@ -94,6 +97,9 @@ pub struct PromptBuilderContext {
     pub workspace_instruction_files_context: Option<String>,
     /// Distinguishes a resolved empty result from a caller that has not resolved instructions.
     pub workspace_instruction_files_context_resolved: bool,
+    /// Set for a turn another device delegated here: its persona comes from
+    /// the opened assistant, and the owner's private context follows trust.
+    pub delegated_turn: Option<DelegatedTurnFacts>,
 }
 
 impl PromptBuilderContext {
@@ -116,7 +122,20 @@ impl PromptBuilderContext {
             remote_file_delivery_channel: false,
             workspace_instruction_files_context: None,
             workspace_instruction_files_context_resolved: false,
+            delegated_turn: None,
         }
+    }
+
+    pub fn with_delegated_turn(mut self, delegated_turn: Option<DelegatedTurnFacts>) -> Self {
+        self.delegated_turn = delegated_turn;
+        self
+    }
+
+    /// Whether the owner's memory may enter this turn's context.
+    fn allows_private_context(&self) -> bool {
+        self.delegated_turn
+            .as_ref()
+            .is_none_or(DelegatedTurnFacts::includes_private_context)
     }
 
     pub fn with_supports_image_understanding(mut self, supports: bool) -> Self {
@@ -431,6 +450,7 @@ impl PromptBuilder {
         }
 
         let memory_section_allowed = self.context.remote_execution.is_none()
+            && self.context.allows_private_context()
             && policy.includes(UserContextSection::MemorySummary);
         if memory_section_allowed {
             let enabled = memory_summary_enabled().await;
@@ -568,7 +588,17 @@ For instructions on locating and reading the transcripts, read: `{}`
 
         // Replace {PERSONA}
         if result.contains(PLACEHOLDER_PERSONA) {
-            let persona = if self.context.remote_execution.is_some() {
+            let delegated_assistant = self.context.delegated_turn.as_ref().and_then(|facts| {
+                facts
+                    .assistant_workspace
+                    .as_ref()
+                    .map(|root| (root.clone(), facts.includes_private_context()))
+            });
+            let persona = if let Some((root, include_user_profile)) = delegated_assistant {
+                build_delegated_assistant_persona_prompt(&root, include_user_profile)
+                    .await
+                    .unwrap_or_default()
+            } else if self.context.remote_execution.is_some() {
                 "# Workspace persona\nMarkdown persona files (e.g. BOOTSTRAP.md, SOUL.md) live on the **remote** workspace. Use Read or Glob under the workspace root above to load them.\n\n"
                     .to_string()
             } else {

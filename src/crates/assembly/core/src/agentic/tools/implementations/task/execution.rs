@@ -97,6 +97,13 @@ fn forward_subagent_invocation_context(
         };
         subagent_context.insert(key.to_string(), value);
     }
+    // The child runs as the same delegated task: same assistant, directory
+    // and trust, so it cannot reach what its parent cannot.
+    for key in crate::service::delegation::DelegatedTurnFacts::INHERITED_CONTEXT_KEYS {
+        if let Some(Value::String(value)) = context.custom_data.get(key) {
+            subagent_context.insert(key.to_string(), value.clone());
+        }
+    }
 
     // The child runs under the parent turn's already-resolved permission mode.
     // Without this the child would fall back to the user-level default, so a
@@ -1827,9 +1834,44 @@ mod target_context_tests {
             .insert(key.to_string(), Value::Bool(true));
         let mut child = HashMap::new();
 
+        for (fact, value) in [
+            (
+                crate::service::delegation::DELEGATION_ASSISTANT_CONTEXT_KEY,
+                "/a/personal_assistant/workspace",
+            ),
+            (
+                crate::service::delegation::DELEGATION_TASK_DIR_CONTEXT_KEY,
+                "/a/delegation/workspaces/job",
+            ),
+            (
+                crate::service::delegation::DELEGATION_TRUST_CONTEXT_KEY,
+                "normal",
+            ),
+        ] {
+            parent
+                .custom_data
+                .insert(fact.to_string(), Value::String(value.to_string()));
+        }
+
         forward_subagent_invocation_context(&parent, &mut child);
 
         assert_eq!(child.get(key).map(String::as_str), Some("true"));
+        // The child runs as the same task: same assistant, directory and trust.
+        let facts = crate::service::delegation::DelegatedTurnFacts::from_context(&child)
+            .expect("the child is a delegated turn");
+        assert_eq!(
+            facts.task_dir.as_deref(),
+            Some(std::path::Path::new("/a/delegation/workspaces/job"))
+        );
+        assert_eq!(
+            facts.trust,
+            crate::service::delegation::DelegationTrust::Normal
+        );
+        assert!(facts
+            .restrict_tools(Default::default())
+            .path_policy
+            .write_roots
+            .contains(&"/a/delegation/workspaces/job".to_string()));
     }
 
     #[test]

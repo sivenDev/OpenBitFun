@@ -34,6 +34,9 @@ pub(crate) async fn run(job_id: String) -> Result<()> {
     let job = store.load_job(&job_id).ok();
     if job.as_ref().is_some_and(runs_external_agent) {
         crate::agent::agentic_system::allow_primary_external_agent_turns_for_process();
+    } else if job.as_ref().is_some_and(runs_assistant) {
+        // An opened assistant may hand work to external agents; their
+        // prompts reach the owner through the job's approval mailbox.
     } else {
         crate::agent::agentic_system::disable_external_agents_for_process(
             crate::agent::agentic_system::DISPATCH_EXTERNAL_AGENTS_UNSUPPORTED,
@@ -208,7 +211,7 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
                 job.request.session_id.clone(),
                 AgentSessionCreateRequest {
                     session_name: job.title.clone(),
-                    agent_type: job.request.agent_type.clone(),
+                    agent_type: session_agent_type(&job.request).to_string(),
                     agent_route_key: None,
                     workspace_path: Some(workspace_path.clone()),
                     project_workspace_path: Some(workspace_path.clone()),
@@ -287,7 +290,7 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
                     original_message: None,
                     turn_id: Some(turn_id.clone()),
                     execution: Default::default(),
-                    agent_type: job.request.agent_type.clone(),
+                    agent_type: session_agent_type(&job.request).to_string(),
                     workspace_path: Some(workspace_path),
                     workspace_id: Some(runtime.workspace().id.clone()),
                     remote_connection_id: None,
@@ -808,18 +811,48 @@ fn turn_metadata(
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut metadata = permissions::metadata(policy);
     if let Some(delegation) = &request.delegation {
-        metadata.insert(
-            DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
-            serde_json::json!({
-                "sourceDeviceId": request.source_device_id,
-                "sourceConnectionId": request.source_connection_id,
-                "openAgentId": delegation.open_agent_id,
-                "taskKind": delegation.task_kind,
-                "source": delegation.source,
-            }),
-        );
+        let mut facts = serde_json::json!({
+            "sourceDeviceId": request.source_device_id,
+            "sourceConnectionId": request.source_connection_id,
+            "openAgentId": delegation.open_agent_id,
+            "taskKind": delegation.task_kind,
+            "source": delegation.source,
+        });
+        if let Some(object) = facts.as_object_mut() {
+            object.extend(DelegatedTurnFacts::metadata_fields(
+                request.assistant_workspace.as_deref(),
+                &request.workspace_path,
+                delegation_trust(request),
+            ));
+        }
+        metadata.insert(DISPATCH_DELEGATION_CONTEXT_KEY.to_string(), facts);
     }
     metadata
+}
+
+/// How far the owner trusts who delegated `request`: the owner's own devices
+/// fully, another account's connection normally.
+fn delegation_trust(request: &super::protocol::DispatchSubmitRequest) -> DelegationTrust {
+    if request.source_connection_id.is_some() {
+        DelegationTrust::Normal
+    } else {
+        DelegationTrust::Full
+    }
+}
+
+/// Whether `job` runs as an opened assistant, which this device admitted.
+fn runs_assistant(job: &super::store::DispatchJobRecord) -> bool {
+    job.request.delegation.is_some() && job.request.assistant_workspace.is_some()
+}
+
+/// The agent mode the job's session runs: an opened assistant runs as the
+/// assistant mode with its persona; any other job runs the requested agent.
+fn session_agent_type(request: &super::protocol::DispatchSubmitRequest) -> &str {
+    if request.delegation.is_some() && request.assistant_workspace.is_some() {
+        ASSISTANT_RUN_AGENT_TYPE
+    } else {
+        &request.agent_type
+    }
 }
 
 /// Whether `job` runs an opened `acp:` external agent: only a delegated job,
@@ -832,6 +865,9 @@ fn runs_external_agent(job: &super::store::DispatchJobRecord) -> bool {
 /// Turn context key naming the device that delegated a dispatch job. The
 /// kernel reads it to refuse delegating such a turn onward.
 pub(crate) use openbitfun_core::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
+use openbitfun_core::service::delegation::{
+    DelegatedTurnFacts, DelegationTrust, ASSISTANT_RUN_AGENT_TYPE,
+};
 
 #[cfg(test)]
 mod tests {
@@ -867,6 +903,7 @@ mod tests {
                 }),
                 source_device_id: delegated.then(|| "laptop".to_string()),
                 source_connection_id: None,
+                assistant_workspace: None,
             },
             created_at: String::new(),
             title: String::new(),
@@ -880,6 +917,48 @@ mod tests {
         assert!(!runs_external_agent(&job("acp:codex", false)));
         assert!(!runs_external_agent(&job("Standard", true)));
         assert!(!runs_external_agent(&job("acp:", true)));
+    }
+
+    #[test]
+    fn assistant_jobs_run_as_the_assistant_with_their_facts() {
+        let mut assistant = job("assistant:workspace-ann", true);
+        assistant.request.assistant_workspace =
+            Some("/home/a/.openbitfun/personal_assistant/workspace-ann".to_string());
+        assert!(runs_assistant(&assistant));
+        assert_eq!(
+            session_agent_type(&assistant.request),
+            ASSISTANT_RUN_AGENT_TYPE
+        );
+        let metadata = turn_metadata(DispatchApprovalPolicy::Remote, &assistant.request);
+        let mut context = std::collections::HashMap::new();
+        DelegatedTurnFacts::copy_metadata_to_context(
+            Some(&serde_json::Value::Object(metadata)),
+            &mut context,
+        );
+        let facts = DelegatedTurnFacts::from_context(&context).expect("delegated facts");
+        assert_eq!(
+            facts.assistant_workspace.as_deref(),
+            Some(std::path::Path::new(
+                "/home/a/.openbitfun/personal_assistant/workspace-ann"
+            ))
+        );
+        assert_eq!(
+            facts.task_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/job"))
+        );
+        // The owner's own device is trusted fully, another account normally.
+        assert_eq!(facts.trust, DelegationTrust::Full);
+        assistant.request.source_device_id = None;
+        assistant.request.source_connection_id = Some("conn-1".to_string());
+        assert_eq!(
+            delegation_trust(&assistant.request),
+            DelegationTrust::Normal
+        );
+
+        // Other jobs keep their agent and have no assistant.
+        let plain = job("Standard", true);
+        assert!(!runs_assistant(&plain));
+        assert_eq!(session_agent_type(&plain.request), "Standard");
     }
 
     #[test]

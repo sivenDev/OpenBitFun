@@ -135,6 +135,14 @@ pub(crate) struct DispatchSubmitRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) source_connection_id: Option<String>,
+    /// Root of the opened assistant a delegated job runs as, chosen by this
+    /// device at admission; never accepted from the caller.
+    #[serde(
+        rename = "__assistantWorkspace",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) assistant_workspace: Option<String>,
 }
 
 /// A job delegated to one of this device's open agents.

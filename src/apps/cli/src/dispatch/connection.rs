@@ -392,6 +392,7 @@ mod tests {
             }),
             source_device_id: None,
             source_connection_id: connection_id.map(str::to_string),
+            assistant_workspace: None,
         }
     }
 
@@ -595,8 +596,13 @@ mod tests {
         let fixture = store_with_jobs().await;
         let store = &fixture.store;
         // The workspace request reaches its parser without the caller field.
-        let parsed = provision(&fixture, "delegation-parsed", "conn-1").await.unwrap();
-        assert!(parsed.get(DISPATCH_SOURCE_CONNECTION_ARG).is_none(), "{parsed}");
+        let parsed = provision(&fixture, "delegation-parsed", "conn-1")
+            .await
+            .unwrap();
+        assert!(
+            parsed.get(DISPATCH_SOURCE_CONNECTION_ARG).is_none(),
+            "{parsed}"
+        );
         let admitted = provision(&fixture, "delegation-new", "conn-1")
             .await
             .unwrap();

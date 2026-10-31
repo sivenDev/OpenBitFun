@@ -256,6 +256,7 @@ mod tests {
             }),
             source_device_id: None,
             source_connection_id: Some(connection_id.to_string()),
+            assistant_workspace: None,
         }
     }
 
@@ -380,16 +381,15 @@ mod tests {
             .create_job_with_intent(job.clone(), job, "one".to_string())
             .unwrap();
         let record = store.load_job("delegation-1").unwrap();
-        let guard =
-            ConnectionGuard::for_job(
+        let guard = ConnectionGuard::for_job(
             &record,
             grants.clone(),
             connections(dir.path(), "active"),
             None,
         )
-                .await
-                .unwrap()
-                .expect("a connection job is guarded");
+        .await
+        .unwrap()
+        .expect("a connection job is guarded");
         let now = guard.started;
         assert_eq!(guard.stop_reason(now).await, None);
         let late = guard
@@ -398,16 +398,15 @@ mod tests {
             .unwrap();
         assert!(late.contains("5-minute limit"), "{late}");
 
-        let revoked =
-            ConnectionGuard::for_job(
+        let revoked = ConnectionGuard::for_job(
             &record,
             grants.clone(),
             connections(dir.path(), "revoked"),
             None,
         )
-                .await
-                .unwrap()
-                .unwrap();
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(
             revoked.stop_reason(now).await.as_deref(),
             Some(CONNECTION_REVOKED)

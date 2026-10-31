@@ -52,7 +52,10 @@ pub(super) async fn collect_local_session_storage_roots() -> Vec<LocalSessionSto
 }
 
 fn workspace_is_local_memory_source(ws: &WorkspaceInfo) -> bool {
+    // Directories of tasks other devices delegated here are not the owner's
+    // conversations.
     ws.workspace_kind != WorkspaceKind::Remote
+        && !crate::service::delegation::is_delegation_workspace_path(&ws.root_path)
 }
 
 async fn local_session_storage_dir_for_workspace(ws: &WorkspaceInfo) -> Option<PathBuf> {

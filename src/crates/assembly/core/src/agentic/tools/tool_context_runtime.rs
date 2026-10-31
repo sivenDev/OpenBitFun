@@ -473,6 +473,12 @@ fn build_tool_context_custom_data(context: &ToolExecutionContext) -> HashMap<Str
             extension_custom_data.insert(key.to_string(), Value::Bool(value));
         }
     }
+    // A delegated turn's facts reach its tools and every subagent it starts.
+    for key in crate::service::delegation::DelegatedTurnFacts::INHERITED_CONTEXT_KEYS {
+        if let Some(value) = context.context_vars.get(key) {
+            extension_custom_data.insert(key.to_string(), Value::String(value.clone()));
+        }
+    }
     build_tool_runtime_custom_data(ToolRuntimeCustomDataInput {
         context_vars: &context.context_vars,
         delegation_policy: context.delegation_policy,

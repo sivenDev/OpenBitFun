@@ -1614,6 +1614,7 @@ mod tests {
             delegation: None,
             source_device_id: None,
             source_connection_id: None,
+            assistant_workspace: None,
         }
     }
 
