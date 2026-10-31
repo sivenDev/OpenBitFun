@@ -65,7 +65,8 @@ describe('DelegatedTaskList', () => {
       .toEqual(['Task a', 'Task b']);
     expect(rows()[0].textContent).toContain('nav.sessions.delegated.fromAccount:Bea');
     expect(rows()[0].textContent).toContain('nav.sessions.delegated.waiting:2');
-    expect(rows()[0].getAttribute('data-openbitfun-state')).toBe('attention');
+    expect(rows()[0].classList.contains('is-waiting')).toBe(true);
+    expect(rows()[1].classList.contains('is-waiting')).toBe(false);
     expect(rows()[1].textContent).toContain('nav.sessions.delegated.fromDevice:Laptop');
 
     // Review and approval happen on the AI collaboration page.

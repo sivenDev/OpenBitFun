@@ -59,8 +59,6 @@ export default function DelegatedTaskList({ workspace }: { workspace: WorkspaceI
   return (
     <div
       className="assistant-session-history__delegated"
-      data-openbitfun-component="sessions-section"
-      data-openbitfun-part="delegated-tasks"
       data-testid="nav-delegated-tasks"
     >
       {tasks.map(task => {
@@ -77,8 +75,7 @@ export default function DelegatedTaskList({ workspace }: { workspace: WorkspaceI
             className={['openbitfun-nav-panel__inline-item', 'assistant-session-history__delegated-item', waiting && 'is-waiting']
               .filter(Boolean).join(' ')}
             data-openbitfun-component="sessions-section"
-            data-openbitfun-part="delegated-task"
-            data-openbitfun-state={waiting ? 'attention' : undefined}
+            data-openbitfun-part="row"
             data-testid="nav-delegated-task"
             title={detail}
             onClick={() => useSceneStore.getState().openScene('ai-collaboration')}
