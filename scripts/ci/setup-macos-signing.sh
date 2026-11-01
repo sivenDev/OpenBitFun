@@ -23,7 +23,13 @@ if [[ "${#missing[@]}" -gt 0 ]]; then
     printf 'Apple signing is required, but these secrets are missing: %s\n' "${missing[*]}" >&2
     exit 1
   fi
-  printf 'Apple signing is not fully configured; leaving this non-release macOS build unsigned. Missing: %s\n' "${missing[*]}"
+  # Without a Developer ID, seal the whole bundle with an ad-hoc signature.
+  # Otherwise only the linker signs the executable, and Gatekeeper on Apple
+  # Silicon reports the app as damaged without offering "Open Anyway".
+  if [[ -n "${GITHUB_ENV:-}" ]]; then
+    echo "APPLE_SIGNING_IDENTITY=-" >>"${GITHUB_ENV}"
+  fi
+  printf 'Apple signing is not fully configured; signing this non-release macOS build ad hoc, without notarization. Missing: %s\n' "${missing[*]}"
   exit 0
 fi
 
