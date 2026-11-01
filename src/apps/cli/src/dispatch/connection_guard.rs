@@ -1,10 +1,11 @@
 //! Limits on what one connection may run with one open agent, and the guard
 //! that stops a cross-account job when its owner withdraws it.
 //!
-//! The owner sets a connection's limits on its grant. The number of tasks
-//! running at once is checked when a task is submitted; the length of a turn,
-//! the grant, and the connection itself are checked while the turn runs, so
-//! a revoked connection or grant stops work already in progress.
+//! The owner sets a connection's limits on its grant. A task over the number
+//! of tasks running at once is accepted and waits, queued, until one of them
+//! ends; waiting tasks start in the order they began to wait. The length of a
+//! turn, the grant, and the connection itself are checked while the turn
+//! runs, so a revoked connection or grant stops work already in progress.
 
 use std::time::{Duration, Instant};
 
@@ -12,11 +13,20 @@ use anyhow::{bail, Context, Result};
 use openbitfun_core::service::delegation::{ConnectionLimits, DelegationTaskKind, OpenAgentStore};
 use openbitfun_core::service::remote_connect::connections::ConnectionStore;
 
-use super::protocol::{DispatchDelegationTaskKind, DispatchSubmitRequest};
-use super::store::{DispatchJobRecord, DispatchStore};
+use super::protocol::{
+    DispatchDelegationTaskKind, DispatchHold, DispatchHoldReason, DispatchJobState,
+    DispatchSubmitRequest,
+};
+use super::store::{DispatchJobRecord, DispatchStore, WorkspaceLock};
 
 /// How often a running cross-account turn checks its guard.
 pub(super) const GUARD_INTERVAL: Duration = Duration::from_secs(1);
+/// How often a queued task looks for a free place.
+const PLACE_INTERVAL: Duration = if cfg!(test) {
+    Duration::from_millis(20)
+} else {
+    Duration::from_secs(2)
+};
 /// How often the guard refreshes this device's connection records from the
 /// Relay, so a revocation by the other side also stops running work.
 const RELAY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
@@ -78,45 +88,118 @@ async fn limits_for(
         .unwrap_or_default())
 }
 
-/// Refuses a new cross-account task, or a new turn of one, when the
-/// connection already runs as many tasks with this agent as its owner
-/// allows. Hold [`DispatchStore::lock_connection_admission`] from this check
-/// until the job or turn is queued.
-pub(super) async fn ensure_within_limits(
+/// Whether two requests run the same open agent over the same connection.
+fn same_place(request: &DispatchSubmitRequest, connection_id: &str, open_agent_id: &str) -> bool {
+    request.source_connection_id.as_deref() == Some(connection_id)
+        && request
+            .delegation
+            .as_ref()
+            .is_some_and(|delegation| delegation.open_agent_id == open_agent_id)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+/// Whether `job_id`, waiting since `since_ms`, may start now: the tasks
+/// running with this agent over this connection, and those that began to
+/// wait before it, leave a place under `max`.
+fn has_place(
+    store: &DispatchStore,
+    job_id: &str,
+    since_ms: u64,
+    connection_id: &str,
+    open_agent_id: &str,
+    max: u32,
+) -> Result<bool> {
+    let mut ahead = 0usize;
+    for job in store.list_jobs()? {
+        if job.job_id == job_id || job.state.is_terminal() {
+            continue;
+        }
+        let Ok(record) = store.load_job(&job.job_id) else {
+            continue;
+        };
+        if !same_place(&record.request, connection_id, open_agent_id) {
+            continue;
+        }
+        let counts = match job.state {
+            DispatchJobState::Running => true,
+            // A task that waited longer starts first.
+            DispatchJobState::Queued => store
+                .read_hold(&job.job_id)
+                .is_some_and(|hold| (hold.since_ms, job.job_id.as_str()) < (since_ms, job_id)),
+            _ => false,
+        };
+        ahead += usize::from(counts);
+    }
+    Ok(ahead < max as usize)
+}
+
+/// Waits until the cross-account task `job_id` may run under its
+/// connection's limit, recording why it waits meanwhile. Returns the
+/// connection's admission lock, which the caller holds until it marks the
+/// job running so concurrent workers never exceed the limit; returns none
+/// when the job has no limit, or was cancelled or ended while it waited.
+pub(super) async fn wait_for_place(
     store: &DispatchStore,
     grants: &OpenAgentStore,
-    request: &DispatchSubmitRequest,
-) -> Result<()> {
+    job_id: &str,
+) -> Result<Option<WorkspaceLock>> {
+    let job = store.load_job(job_id)?;
     let (Some(connection_id), Some(delegation)) =
-        (&request.source_connection_id, &request.delegation)
+        (&job.request.source_connection_id, &job.request.delegation)
     else {
-        return Ok(());
+        return Ok(None);
     };
-    let limits = limits_for(grants, connection_id, &delegation.open_agent_id).await?;
-    let Some(max) = limits.max_concurrent_jobs else {
-        return Ok(());
-    };
-    let running = store
-        .list_jobs()?
-        .into_iter()
-        .filter(|job| !job.state.is_terminal() && job.job_id != request.job_id)
-        .filter(|job| {
-            store.load_job(&job.job_id).is_ok_and(|record| {
-                record.request.source_connection_id.as_deref() == Some(connection_id.as_str())
-                    && record
-                        .request
-                        .delegation
-                        .as_ref()
-                        .is_some_and(|other| other.open_agent_id == delegation.open_agent_id)
-            })
-        })
-        .count();
-    if running >= max as usize {
-        bail!(
-            "the target device runs at most {max} task(s) at a time for this connection; try again when one finishes"
-        );
+    let mut since_ms = store.read_hold(job_id).map(|hold| hold.since_ms);
+    loop {
+        let state = store.load_state(job_id)?;
+        if state.state.is_terminal() || state.cancel_requested() {
+            store.clear_hold(job_id);
+            return Ok(None);
+        }
+        // A task waiting for a grant the owner withdrew never starts.
+        if let Ok(Err(_)) = grants
+            .authorize_connection(connection_id, &delegation.open_agent_id, task_kind(delegation.task_kind))
+            .await
+        {
+            store.clear_hold(job_id);
+            bail!(GRANT_WITHDRAWN);
+        }
+        let limits = limits_for(grants, connection_id, &delegation.open_agent_id).await?;
+        let Some(max) = limits.max_concurrent_jobs else {
+            store.clear_hold(job_id);
+            return Ok(None);
+        };
+        let admission = store.lock_connection_admission(connection_id)?;
+        let waited_since = since_ms.unwrap_or_else(now_ms);
+        if has_place(store, job_id, waited_since, connection_id, &delegation.open_agent_id, max)? {
+            store.clear_hold(job_id);
+            return Ok(Some(admission));
+        }
+        if since_ms.is_none() {
+            tracing::info!(
+                "Delegated job waits for a place on its connection: job_id={}, limit={}",
+                job_id,
+                max
+            );
+        }
+        since_ms = Some(waited_since);
+        store.write_hold(
+            job_id,
+            &DispatchHold {
+                reason: DispatchHoldReason::ConnectionLimit,
+                limit: Some(max),
+                since_ms: waited_since,
+            },
+        )?;
+        drop(admission);
+        tokio::time::sleep(PLACE_INTERVAL).await;
     }
-    Ok(())
 }
 
 /// Watches one turn of a cross-account job.
@@ -297,8 +380,15 @@ mod tests {
         store
     }
 
+    fn create(store: &DispatchStore, job_id: &str, connection_id: &str) {
+        let job = request(job_id, connection_id);
+        store
+            .create_job_with_intent(job.clone(), job, job_id.to_string())
+            .unwrap();
+    }
+
     #[tokio::test]
-    async fn a_connection_runs_only_as_many_tasks_as_its_owner_allows() {
+    async fn tasks_over_the_limit_wait_in_order_and_start_when_a_place_frees() {
         let dir = tempfile::tempdir().unwrap();
         let store = DispatchStore::open(dir.path().join("dispatch")).unwrap();
         let grants = grants(
@@ -309,51 +399,77 @@ mod tests {
             },
         )
         .await;
-        ensure_within_limits(&store, &grants, &request("delegation-1", "conn-1"))
-            .await
-            .unwrap();
-        let first = request("delegation-1", "conn-1");
+        for job_id in ["delegation-1", "delegation-2", "delegation-3"] {
+            create(&store, job_id, "conn-1");
+        }
+        // Another connection, granted without a limit, keeps its own count.
+        grants.grant_connection("helper", "conn-2").await.unwrap();
+        create(&store, "delegation-other", "conn-2");
+
+        // The first task takes the only place.
+        let place = wait_for_place(&store, &grants, "delegation-1").await.unwrap();
+        assert!(place.is_some());
         store
-            .create_job_with_intent(first.clone(), first, "one".to_string())
+            .mark_state("delegation-1", DispatchJobState::Running, None, None)
             .unwrap();
-        let error = ensure_within_limits(&store, &grants, &request("delegation-2", "conn-1"))
+        drop(place);
+        assert!(wait_for_place(&store, &grants, "delegation-other")
             .await
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("at most 1 task"), "{error}");
-        // A retried submission of the running job is not a second task.
-        ensure_within_limits(&store, &grants, &request("delegation-1", "conn-1"))
-            .await
-            .unwrap();
-        // Another connection has its own count.
-        ensure_within_limits(&store, &grants, &request("delegation-3", "conn-2"))
-            .await
-            .unwrap();
-        // A new turn of a finished task over the same connection is counted
-        // like a new task while another one runs.
-        let mut finished = request("delegation-old", "conn-1");
-        finished.prompt = "earlier".to_string();
-        let error = ensure_within_limits(&store, &grants, &finished)
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("at most 1 task"), "{error}");
-        // Admissions of one connection are serialized by a lock that is
-        // released with its guard.
-        drop(store.lock_connection_admission("conn-1").unwrap());
-        drop(store.lock_connection_admission("conn-1").unwrap());
-        // A finished task frees its place.
+            .unwrap()
+            .is_none());
+
+        // The second waits, queued, and says why.
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(200),
+            wait_for_place(&store, &grants, "delegation-2"),
+        )
+        .await;
+        assert!(waiting.is_err(), "the second task started over the limit");
+        let hold = store.read_hold("delegation-2").expect("a waiting task says why");
+        assert_eq!(hold.reason, DispatchHoldReason::ConnectionLimit);
+        assert_eq!(hold.limit, Some(1));
+
+        // When the first ends, the task that waited longer goes first.
         store
-            .mark_state(
-                "delegation-1",
-                crate::dispatch::protocol::DispatchJobState::Succeeded,
-                None,
-                None,
-            )
+            .mark_state("delegation-1", DispatchJobState::Succeeded, None, None)
             .unwrap();
-        ensure_within_limits(&store, &grants, &request("delegation-2", "conn-1"))
+        assert!(!has_place(&store, "delegation-3", hold.since_ms + 1, "conn-1", "helper", 1).unwrap());
+        let place = wait_for_place(&store, &grants, "delegation-2").await.unwrap();
+        assert!(place.is_some());
+        assert_eq!(store.read_hold("delegation-2"), None);
+    }
+
+    #[tokio::test]
+    async fn a_waiting_task_stops_when_cancelled_or_its_grant_is_withdrawn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DispatchStore::open(dir.path().join("dispatch")).unwrap();
+        let grants = grants(
+            dir.path(),
+            ConnectionLimits {
+                max_concurrent_jobs: Some(1),
+                max_job_minutes: None,
+            },
+        )
+        .await;
+        for job_id in ["delegation-1", "delegation-2", "delegation-3"] {
+            create(&store, job_id, "conn-1");
+        }
+        store
+            .mark_state("delegation-1", DispatchJobState::Running, None, None)
+            .unwrap();
+
+        store.request_cancel("delegation-2").unwrap();
+        assert!(wait_for_place(&store, &grants, "delegation-2")
             .await
-            .unwrap();
+            .unwrap()
+            .is_none());
+
+        grants.revoke_connection("helper", "conn-1").await.unwrap();
+        let Err(error) = wait_for_place(&store, &grants, "delegation-3").await else {
+            panic!("a task waited for a withdrawn grant");
+        };
+        assert_eq!(error.to_string(), GRANT_WITHDRAWN);
+        assert_eq!(store.read_hold("delegation-3"), None);
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@
 id: "F002-07"
 title: "AI协作：只开放助理与连接的信任级别"
 type: "feature"
-status: "approved"
+status: "complete"
 summary: "把 F002 收敛到 AI协作基准：开放对象只有助理，删除模式与外部智能体开放项及编码任务；每个外部任务是该助理名下的独立会话，助理以完整能力处理；跨账号连接分普通与完全信任两级；外部任务不改写助理。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-31"

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::protocol::{
     DispatchAppendRequest, DispatchApprovalPolicy, DispatchAttachment, DispatchContinueRequest,
-    DispatchDelegatedJobSummary, DispatchEvent, DispatchJobListEntry, DispatchJobState,
+    DispatchDelegatedJobSummary, DispatchEvent, DispatchHold, DispatchJobListEntry, DispatchJobState,
     DispatchSubmitRequest, DispatchTurnKind, DISPATCH_PROTOCOL_VERSION,
 };
 
@@ -19,6 +19,8 @@ const EVENTS_METADATA_FILE: &str = "events.meta.json";
 const EVENTS_LOCK_FILE: &str = ".events.lock";
 const PID_FILE: &str = "job.pid";
 const PREPARING_FILE: &str = "preparing";
+/// Why a queued job waits to start; see [`DispatchHold`].
+const HOLD_FILE: &str = "hold.json";
 const SPAWN_LOCK_FILE: &str = ".spawn.lock";
 const WORKER_LOCK_FILE: &str = ".worker.lock";
 const PENDING_PERMISSIONS_DIR: &str = "permissions/pending";
@@ -1133,6 +1135,25 @@ impl DispatchStore {
     pub(crate) fn remove_pid_if_matches(&self, job_id: &str, expected_pid: u32) {
         if matches!(self.read_pid(job_id), Ok(Some(pid)) if pid == expected_pid) {
             self.remove_pid(job_id);
+        }
+    }
+
+    /// Records why the queued job waits.
+    pub(crate) fn write_hold(&self, job_id: &str, hold: &DispatchHold) -> Result<()> {
+        let job_dir = self.existing_job_dir(job_id)?;
+        atomic_write_json(&job_dir.join(HOLD_FILE), hold)
+    }
+
+    /// Why the job waits, if it does. An unreadable record reads as none.
+    pub(crate) fn read_hold(&self, job_id: &str) -> Option<DispatchHold> {
+        let job_dir = self.existing_job_dir(job_id).ok()?;
+        let path = job_dir.join(HOLD_FILE);
+        path.exists().then(|| read_json(&path).ok()).flatten()
+    }
+
+    pub(crate) fn clear_hold(&self, job_id: &str) {
+        if let Ok(job_dir) = self.job_dir(job_id) {
+            remove_file_if_present(&job_dir.join(HOLD_FILE));
         }
     }
 

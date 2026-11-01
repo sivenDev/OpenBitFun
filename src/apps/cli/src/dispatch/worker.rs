@@ -68,6 +68,7 @@ pub(crate) async fn run(job_id: String) -> Result<()> {
     }
     store.clear_pending_permissions(&job_id);
     store.clear_preparing(&job_id);
+    store.clear_hold(&job_id);
     store.remove_pid_if_matches(&job_id, worker_pid);
     shutdown_mcp_servers().await;
     result
@@ -131,6 +132,11 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     // workspace. Waiting workers remain Queued and are visible/cancellable.
     let lock_path = store.workspace_lock_path(&job.request.workspace_path);
     let _workspace_lock = WorkspaceLock::acquire(&lock_path)?;
+    // A task over its connection's limit stays Queued here until a place is
+    // free; the admission lock is held until the job is marked running.
+    let place =
+        connection_guard::wait_for_place(store, &super::delegation::open_agent_store()?, job_id)
+            .await?;
     let state = store.load_state(job_id)?;
     if state.state.is_terminal() {
         return Ok(());
@@ -145,6 +151,7 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
         return Ok(());
     }
     store.mark_state(job_id, DispatchJobState::Running, None, None)?;
+    drop(place);
 
     // Persist the effective options before execution so `list`/`status` and
     // any replacement worker observe the same choices this turn runs with.

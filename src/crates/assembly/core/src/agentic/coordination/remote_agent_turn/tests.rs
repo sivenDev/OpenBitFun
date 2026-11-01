@@ -89,6 +89,7 @@ fn page(state: RemoteAgentJobState, cursor: u64, events: Vec<Value>) -> RemoteAg
         pending_permissions: Vec::new(),
         cursor_reset: false,
         last_error: None,
+        hold: None,
     }
 }
 
@@ -480,4 +481,52 @@ async fn a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits
     let (end, _) = observation.await.expect("observation finishes");
     assert!(matches!(end, RemoteJobEnd::Succeeded { .. }));
     assert!(manager.pending_requests().is_empty());
+}
+
+#[test]
+fn the_parent_hears_why_a_job_waits_on_its_device() {
+    let root = tempfile::tempdir().expect("temp dir");
+    let store = Arc::new(CoordinationStore::new(
+        root.path().join("coordination.sqlite"),
+    ));
+    let mut other_account = link().job;
+    other_account.device_id = openbitfun_runtime_ports::remote_connection_target("c1");
+    let mut holds = HoldTracker::new(store.clone(), "child", &other_account, "B1".to_string());
+
+    // Queued on the device: the child session says so once, the parent
+    // learns the limit and that it starts on its own.
+    let mut queued = page(RemoteAgentJobState::Queued, 0, Vec::new());
+    queued.hold = Some(RemoteAgentJobHold {
+        reason: openbitfun_runtime_ports::RemoteAgentHoldReason::ConnectionLimit,
+        limit: Some(1),
+    });
+    let note = holds.observe(&queued);
+    assert!(
+        matches!(&note, Some(ExternalAgentTurnEvent::Thought { text }) if *text == queued_note("B1")),
+        "{note:?}"
+    );
+    assert!(holds.observe(&queued).is_none());
+    let reason = store.remote_holds().note("child").expect("queued hold");
+    assert!(reason.contains("allows 1 task(s) at a time"), "{reason}");
+    assert!(reason.contains("Unblock:"), "{reason}");
+
+    // Running and asking the other account's owner: the parent learns who
+    // must act.
+    let mut asking = page(RemoteAgentJobState::Running, 1, Vec::new());
+    asking.pending_permissions = vec![target_prompt("target-1")];
+    assert!(holds.observe(&asking).is_none());
+    let reason = store.remote_holds().note("child").expect("owner hold");
+    assert!(reason.contains("Unblock: the owner of B1"), "{reason}");
+
+    // Answered: nothing holds it any more.
+    holds.observe(&page(RemoteAgentJobState::Running, 2, Vec::new()));
+    assert_eq!(store.remote_holds().note("child"), None);
+
+    // A job of this account asks this host, so its prompts hold nothing.
+    let mut own = HoldTracker::new(store.clone(), "own", &link().job, "A2".to_string());
+    own.observe(&asking);
+    assert_eq!(store.remote_holds().note("own"), None);
+    holds.observe(&queued);
+    holds.finish();
+    assert_eq!(store.remote_holds().note("child"), None);
 }

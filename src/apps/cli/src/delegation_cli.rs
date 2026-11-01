@@ -62,8 +62,9 @@ pub(crate) enum DelegationAction {
         /// The connection to grant it to
         connection_id: String,
         /// Most tasks this connection may run at once with the assistant
-        /// (1-100). Setting either limit replaces both; granting again
-        /// without limits keeps the current ones.
+        /// (1-100); more wait, queued, until one finishes. Setting either
+        /// limit replaces both; granting again without limits keeps the
+        /// current ones.
         #[arg(long)]
         max_jobs: Option<u32>,
         /// Minutes one turn may run before it is stopped (1-1440)

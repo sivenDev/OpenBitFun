@@ -110,14 +110,21 @@ pub(crate) struct CoordinationStore {
     db_path: PathBuf,
     connection: OnceCell<Arc<Mutex<Connection>>>,
     execution_owner_token: String,
+    /// Why delegated subagents on other devices wait, by child session.
+    remote_holds: super::remote_holds::RemoteHolds,
 }
 
 impl CoordinationStore {
+    pub(crate) fn remote_holds(&self) -> &super::remote_holds::RemoteHolds {
+        &self.remote_holds
+    }
+
     pub(crate) fn new(db_path: PathBuf) -> Self {
         Self {
             db_path,
             connection: OnceCell::new(),
             execution_owner_token: Uuid::new_v4().to_string(),
+            remote_holds: Default::default(),
         }
     }
 

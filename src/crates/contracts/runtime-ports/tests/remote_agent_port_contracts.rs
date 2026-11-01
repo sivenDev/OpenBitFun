@@ -5,7 +5,8 @@ use openbitfun_product_domains::tool_permissions::PermissionReply;
 use openbitfun_runtime_ports::{
     remote_connection_target, remote_target_connection, PortError, PortErrorKind, PortResult,
     RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentDelegationPort, RemoteAgentDescriptor,
-    RemoteAgentJob, RemoteAgentJobSnapshot, RemoteAgentJobState, RemoteAgentListing,
+    RemoteAgentHoldReason, RemoteAgentJob, RemoteAgentJobHold, RemoteAgentJobSnapshot,
+    RemoteAgentJobState, RemoteAgentListing,
     RemoteAgentSource, RemoteAgentSubmitRequest, RemoteAgentUnavailableReason,
 };
 use serde_json::json;
@@ -116,6 +117,29 @@ fn snapshots_read_target_status_payloads_and_newer_states() {
     assert_eq!(snapshot.state, RemoteAgentJobState::Running);
     assert_eq!(snapshot.cursor, 7);
     assert_eq!(snapshot.events.len(), 1);
+    // An older device never says why a job waits.
+    assert_eq!(snapshot.hold, None);
+
+    let queued: RemoteAgentJobSnapshot = serde_json::from_value(json!({
+        "state": "queued",
+        "cursor": 0,
+        "hold": {"reason": "connectionLimit", "limit": 2, "sinceMs": 1}
+    }))
+    .unwrap();
+    assert_eq!(
+        queued.hold,
+        Some(RemoteAgentJobHold {
+            reason: RemoteAgentHoldReason::ConnectionLimit,
+            limit: Some(2),
+        })
+    );
+    let unknown: RemoteAgentJobSnapshot = serde_json::from_value(json!({
+        "state": "queued",
+        "cursor": 0,
+        "hold": {"reason": "somethingNewer", "sinceMs": 1}
+    }))
+    .unwrap();
+    assert_eq!(unknown.hold.unwrap().reason, RemoteAgentHoldReason::Unknown);
 
     let newer: RemoteAgentJobSnapshot =
         serde_json::from_value(json!({"state": "paused", "cursor": 0})).unwrap();
@@ -174,6 +198,7 @@ impl RemoteAgentDelegationPort for FakeHost {
             pending_permissions: Vec::new(),
             cursor_reset: false,
             last_error: None,
+            hold: None,
         })
     }
 

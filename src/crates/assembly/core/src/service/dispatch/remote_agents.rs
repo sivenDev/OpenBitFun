@@ -415,6 +415,7 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for RemoteAgentDirector
                         pending_permissions: Vec::new(),
                         cursor_reset: false,
                         last_error: Some(reason),
+                        hold: None,
                     });
                 }
                 return Err(target_error(error));

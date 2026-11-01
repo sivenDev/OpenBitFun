@@ -8,6 +8,7 @@ mod coordination_store;
 mod delegation_context;
 mod external_agent_turn;
 mod remote_agent_turn;
+mod remote_holds;
 pub use control_conversation::{
     ControlConversation, CreateControlConversationRequest, VoiceExchangeRequest,
 };
@@ -26,6 +27,8 @@ pub(crate) use background_outcomes::{
     BackgroundSubagentOutcome, BackgroundSubagentOutcomeStore, BackgroundSubagentWaitMode,
     BackgroundSubagentWaitResult, BackgroundSubagentWaitStatus,
 };
+#[cfg(test)]
+pub(crate) use background_outcomes::BlockedBackgroundTask;
 pub(crate) use coordination_store::{validate_agent_id, DirectChildAgentRecord};
 pub(crate) use external_agent_turn::external_agent_client_id;
 

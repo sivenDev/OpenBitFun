@@ -44,6 +44,9 @@ pub(crate) enum BackgroundSubagentWaitStatus {
     Completed,
     TimedOut,
     Steered,
+    /// A selected agent on another device waits for a reason not reported
+    /// yet, and no result is ready.
+    Blocked,
 }
 
 impl BackgroundSubagentWaitStatus {
@@ -52,6 +55,7 @@ impl BackgroundSubagentWaitStatus {
             Self::Completed => "completed",
             Self::TimedOut => "timed_out",
             Self::Steered => "steered",
+            Self::Blocked => "blocked",
         }
     }
 }
@@ -62,11 +66,22 @@ pub(crate) enum BackgroundSubagentWaitMode {
     All,
 }
 
+/// A pending agent on another device that waits, with why and what
+/// unblocks it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BlockedBackgroundTask {
+    pub bg_task_id: String,
+    pub agent_id: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct BackgroundSubagentWaitResult {
     pub status: BackgroundSubagentWaitStatus,
     pub outcomes: Vec<BackgroundSubagentOutcome>,
     pub pending_bg_task_ids: Vec<String>,
+    /// Pending agents that wait on their device, and why.
+    pub blocked: Vec<BlockedBackgroundTask>,
     pub missing_bg_task_ids: Vec<String>,
     pub already_delivered_bg_task_ids: Vec<String>,
 }
@@ -88,6 +103,9 @@ struct LiveBackgroundResult {
 struct AvailableOutcomes {
     outcomes: Vec<BackgroundSubagentOutcome>,
     pending_bg_task_ids: Vec<String>,
+    blocked: Vec<BlockedBackgroundTask>,
+    /// Child sessions of pending agents whose hold no wait reported yet.
+    unreported_holds: Vec<String>,
 }
 
 pub(crate) struct BackgroundSubagentOutcomeStore {
@@ -247,6 +265,7 @@ impl BackgroundSubagentOutcomeStore {
                 BackgroundSubagentWaitStatus::Completed,
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
                 &diagnostics,
             ));
         }
@@ -267,6 +286,8 @@ impl BackgroundSubagentOutcomeStore {
 
             let notified = self.changes.notified();
             tokio::pin!(notified);
+            let holds_changed = self.coordination_store.remote_holds().changed();
+            tokio::pin!(holds_changed);
 
             let available = self.collect_available(&selected_task_pks).await?;
             if round_injection_preemption_token.is_some_and(CancellationToken::is_cancelled) {
@@ -275,6 +296,7 @@ impl BackgroundSubagentOutcomeStore {
                         BackgroundSubagentWaitStatus::Steered,
                         Vec::new(),
                         available.pending_bg_task_ids,
+                        available.blocked,
                         &diagnostics,
                     ));
                 }
@@ -309,6 +331,40 @@ impl BackgroundSubagentOutcomeStore {
                 debounce_deadline = None;
                 continue;
             }
+            // An agent on another device waits for a reason the parent has
+            // not heard: say so now, with any results already in, instead of
+            // waiting in silence. Each hold ends one wait early; the next
+            // wait waits.
+            if !available.unreported_holds.is_empty() {
+                let reported = available.unreported_holds.clone();
+                let result = if available.outcomes.is_empty() {
+                    Some(wait_result(
+                        BackgroundSubagentWaitStatus::Blocked,
+                        Vec::new(),
+                        available.pending_bg_task_ids,
+                        available.blocked,
+                        &diagnostics,
+                    ))
+                } else {
+                    self.claim_result(
+                        parent_session_id,
+                        delivered_parent_dialog_turn_id,
+                        BackgroundSubagentWaitStatus::Blocked,
+                        available,
+                        &diagnostics,
+                    )
+                    .await?
+                };
+                if let Some(result) = result {
+                    let holds = self.coordination_store.remote_holds();
+                    for session_id in &reported {
+                        holds.mark_reported(session_id);
+                    }
+                    return Ok(result);
+                }
+                debounce_deadline = None;
+                continue;
+            }
             if wait_mode == BackgroundSubagentWaitMode::Any
                 && !available.outcomes.is_empty()
                 && debounce_deadline.is_none()
@@ -323,6 +379,7 @@ impl BackgroundSubagentOutcomeStore {
                         BackgroundSubagentWaitStatus::TimedOut,
                         Vec::new(),
                         available.pending_bg_task_ids,
+                        available.blocked,
                         &diagnostics,
                     ));
                 }
@@ -363,6 +420,7 @@ impl BackgroundSubagentOutcomeStore {
                     }
                 } => {}
                 _ = &mut notified => {}
+                _ = &mut holds_changed => {}
                 _ = sleep_until(wake_at) => {}
             }
         }
@@ -383,6 +441,19 @@ impl BackgroundSubagentOutcomeStore {
                     .outcomes
                     .push(self.outcome_from_record(&record).await?);
             } else {
+                let holds = self.coordination_store.remote_holds();
+                if let Some(reason) = holds.note(&record.child_session_id) {
+                    if holds.unreported(&record.child_session_id) {
+                        available
+                            .unreported_holds
+                            .push(record.child_session_id.clone());
+                    }
+                    available.blocked.push(BlockedBackgroundTask {
+                        bg_task_id: record.bg_task_id.clone(),
+                        agent_id: record.agent_id.clone(),
+                        reason,
+                    });
+                }
                 available.pending_bg_task_ids.push(record.bg_task_id);
             }
         }
@@ -420,7 +491,15 @@ impl BackgroundSubagentOutcomeStore {
             .filter(|outcome| claimed_task_pks.contains(&outcome.task_pk))
             .collect::<Vec<_>>();
         Ok((!outcomes.is_empty())
-            .then(|| wait_result(status, outcomes, available.pending_bg_task_ids, diagnostics)))
+            .then(|| {
+                wait_result(
+                    status,
+                    outcomes,
+                    available.pending_bg_task_ids,
+                    available.blocked,
+                    diagnostics,
+                )
+            }))
     }
 
     async fn outcome_from_record(
@@ -734,12 +813,14 @@ fn wait_result(
     status: BackgroundSubagentWaitStatus,
     outcomes: Vec<BackgroundSubagentOutcome>,
     pending_bg_task_ids: Vec<String>,
+    blocked: Vec<BlockedBackgroundTask>,
     diagnostics: &WaitSelectionDiagnostics,
 ) -> BackgroundSubagentWaitResult {
     BackgroundSubagentWaitResult {
         status,
         outcomes,
         pending_bg_task_ids,
+        blocked,
         missing_bg_task_ids: diagnostics.missing_bg_task_ids.clone(),
         already_delivered_bg_task_ids: diagnostics.already_delivered_bg_task_ids.clone(),
     }
@@ -857,5 +938,93 @@ mod tests {
             recovered.outcomes[0].content.as_deref(),
             Some("persisted child result")
         );
+    }
+
+    #[tokio::test]
+    async fn a_held_remote_agent_ends_one_wait_early_and_is_listed_after() {
+        let root = tempfile::tempdir().expect("background outcome temp directory");
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("create workspace");
+        crate::service::workspace::legacy_compat::register_local_fixture_blocking(&workspace);
+        let path_manager = Arc::new(PathManager::with_user_root_for_tests(
+            root.path().join("config"),
+        ));
+        let session_manager = Arc::new(SessionManager::new(
+            Arc::new(SessionContextStore::new()),
+            Arc::new(PersistenceManager::new(path_manager.clone()).expect("persistence manager")),
+            SessionManagerConfig {
+                max_active_sessions: 10,
+                session_idle_timeout: Duration::from_secs(3600),
+                auto_save_interval: Duration::from_secs(300),
+                enable_persistence: true,
+                prompt_cache_policy: PromptCachePolicy::default(),
+            },
+        ));
+        let config = SessionConfig {
+            tool_presentation_mode: Default::default(),
+            workspace_path: Some(workspace.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        for (id, agent) in [("parent-session", "Standard"), ("child-session", "GeneralPurpose")] {
+            session_manager
+                .create_session_with_id(Some(id.to_string()), id.to_string(), agent.to_string(), config.clone())
+                .await
+                .expect("create session");
+        }
+        session_manager
+            .start_dialog_turn(
+                "child-session",
+                "GeneralPurpose".to_string(),
+                "Ask another account".to_string(),
+                Some("child-turn".to_string()),
+                None,
+                None,
+            )
+            .await
+            .expect("start child turn");
+        let coordination = Arc::new(CoordinationStore::new(
+            path_manager.agent_coordination_database_file(),
+        ));
+        let registered = coordination
+            .register_background_task(BackgroundTaskRegistration {
+                parent_session_id: "parent-session".to_string(),
+                requested_agent_id: None,
+                child_session_id: "child-session".to_string(),
+                parent_dialog_turn_id: "parent-turn".to_string(),
+                parent_tool_call_id: "task-tool".to_string(),
+                child_dialog_turn_id: "child-turn".to_string(),
+            })
+            .await
+            .expect("register task");
+        coordination.remote_holds().set(
+            "child-session",
+            "Waiting for the owner of B1.\nUnblock: the owner of B1 approves it.".to_string(),
+        );
+        let outcomes = BackgroundSubagentOutcomeStore::new(session_manager, coordination);
+        let wait = || {
+            outcomes.wait_for(
+                "parent-session",
+                &[],
+                true,
+                BackgroundSubagentWaitMode::All,
+                Duration::from_millis(200),
+                "wait-turn",
+                None,
+                None,
+            )
+        };
+
+        let first = wait().await.expect("first wait");
+        assert_eq!(first.status, BackgroundSubagentWaitStatus::Blocked);
+        assert!(first.outcomes.is_empty());
+        assert_eq!(first.pending_bg_task_ids, vec![registered.bg_task_id.clone()]);
+        assert_eq!(first.blocked.len(), 1);
+        assert_eq!(first.blocked[0].bg_task_id, registered.bg_task_id);
+        assert!(first.blocked[0].reason.contains("Unblock:"));
+
+        // The same hold does not end the next wait early, but still says why.
+        let second = wait().await.expect("second wait");
+        assert_eq!(second.status, BackgroundSubagentWaitStatus::TimedOut);
+        assert_eq!(second.blocked.len(), 1);
     }
 }

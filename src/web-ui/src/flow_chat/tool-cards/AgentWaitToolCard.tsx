@@ -21,6 +21,7 @@ interface AgentWaitResult {
   status?: string;
   results?: unknown[];
   pending_bg_task_ids?: string[];
+  blocked?: Array<{ bg_task_id?: string; agent_id?: string; reason?: string }>;
 }
 
 function subscribeToFlowChatStore(listener: () => void): () => void {
@@ -90,7 +91,9 @@ export const AgentWaitToolCard: React.FC<ToolCardProps> = ({
     ? t('toolCards.agentWait.steered')
     : status === 'completed' && result.status === 'timed_out' && Array.isArray(result.pending_bg_task_ids)
       ? t('toolCards.agentWait.timedOut', { count: result.pending_bg_task_ids.length })
-      : undefined;
+      : status === 'completed' && result.status === 'blocked' && Array.isArray(result.blocked)
+        ? t('toolCards.agentWait.blocked', { count: result.blocked.length })
+        : undefined;
   const summary = interactionOutcome(status, t, waitDescription ?? (Array.isArray(result.results)
     ? result.results.length ? t('toolCards.interaction.receivedResults', { value: formatNumber(result.results.length) })
       : t('toolCards.interaction.noResults') : t('toolCards.interaction.resultsReceived')),

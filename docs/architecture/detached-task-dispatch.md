@@ -503,3 +503,14 @@ with a fast-forward into that worktree; a baseline that gained its own commits i
 untouched and the subagent reports the sync failure with its answer. Delegated jobs are
 left out of the Dispatch panel's job list and target-job adoption, so only the
 delegating subagent observes them.
+
+A cross-account grant may limit how many tasks its connection runs at once with an
+open agent. The target accepts a task over the limit and keeps it `queued`: its worker
+waits for a place before it marks the job running, counting running jobs of the same
+connection and open agent plus jobs that began to wait earlier, under the connection's
+admission lock. While it waits, `status` carries an optional
+`hold: { reason: "connectionLimit", limit, sinceMs }`; cancellation and a withdrawn grant
+still end the waiting job. Older requesters ignore `hold`; requesters read an unknown
+reason as queued. The requester reports a queued job, and a cross-account job that waits
+for its target owner's approval, to the delegating agent: `AgentWait` returns early once
+per hold with status `blocked`, listing what each task waits for and what unblocks it.

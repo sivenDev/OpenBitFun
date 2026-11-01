@@ -119,6 +119,17 @@ impl AgentWaitTool {
             }
             message.push_str("</result>");
         }
+        for blocked in &result.blocked {
+            message.push_str(&format!(
+                "\n<blocked bg_task_id=\"{}\" agent_id=\"{}\">{}</blocked>",
+                blocked.bg_task_id, blocked.agent_id, blocked.reason,
+            ));
+        }
+        if !result.blocked.is_empty() {
+            message.push_str(
+                "\nBlocked tasks keep running and continue on their own once unblocked. Tell the user what each one waits for. Do not send the same request again; call AgentWait later to collect the results.",
+            );
+        }
         if !result.pending_bg_task_ids.is_empty() {
             message.push_str(&format!(
                 "\nPending background task IDs: {}.",
@@ -164,7 +175,7 @@ impl Tool for AgentWaitTool {
     }
 
     async fn description(&self) -> OpenBitFunResult<String> {
-        Ok("Wait for selected background agent results. The tool also returns when `timeout_seconds` has elapsed.".to_string())
+        Ok("Wait for selected background agent results. The tool also returns when `timeout_seconds` has elapsed, and early with status `blocked` when an agent on another device starts waiting for something, such as its owner's approval; blocked agents keep running.".to_string())
     }
 
     fn short_description(&self) -> String {
@@ -210,6 +221,19 @@ impl Tool for AgentWaitTool {
                     }
                 },
                 "pending_bg_task_ids": {"type": "array", "items": {"type": "string"}},
+                "blocked": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "bg_task_id": {"type": "string"},
+                            "agent_id": {"type": "string"},
+                            "reason": {"type": "string"}
+                        },
+                        "required": ["bg_task_id", "agent_id", "reason"],
+                        "additionalProperties": false
+                    }
+                },
                 "already_delivered_bg_task_ids": {"type": "array", "items": {"type": "string"}},
                 "missing_bg_task_ids": {"type": "array", "items": {"type": "string"}},
                 "invalid_bg_task_inputs": {"type": "array", "items": {}}
@@ -291,6 +315,11 @@ impl Tool for AgentWaitTool {
             "status": result.status.as_str(),
             "results": result.outcomes.iter().map(Self::outcome_json).collect::<Vec<_>>(),
             "pending_bg_task_ids": result.pending_bg_task_ids,
+            "blocked": result.blocked.iter().map(|blocked| json!({
+                "bg_task_id": blocked.bg_task_id,
+                "agent_id": blocked.agent_id,
+                "reason": blocked.reason,
+            })).collect::<Vec<_>>(),
             "already_delivered_bg_task_ids": result.already_delivered_bg_task_ids,
             "missing_bg_task_ids": result.missing_bg_task_ids,
             "invalid_bg_task_inputs": request.invalid_bg_task_inputs,
@@ -307,7 +336,7 @@ impl Tool for AgentWaitTool {
 mod tests {
     use super::{AgentWaitTool, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS};
     use crate::agentic::coordination::{
-        BackgroundSubagentWaitResult, BackgroundSubagentWaitStatus,
+        BackgroundSubagentWaitResult, BackgroundSubagentWaitStatus, BlockedBackgroundTask,
     };
     use crate::agentic::tools::framework::Tool;
 
@@ -324,6 +353,7 @@ mod tests {
             status: BackgroundSubagentWaitStatus::Completed,
             outcomes: Vec::new(),
             pending_bg_task_ids: Vec::new(),
+            blocked: Vec::new(),
             missing_bg_task_ids: Vec::new(),
             already_delivered_bg_task_ids: Vec::new(),
         };
@@ -340,6 +370,7 @@ mod tests {
             status: BackgroundSubagentWaitStatus::Completed,
             outcomes: Vec::new(),
             pending_bg_task_ids: vec!["bg-pending".to_string()],
+            blocked: Vec::new(),
             already_delivered_bg_task_ids: vec!["bg-delivered".to_string()],
             missing_bg_task_ids: vec!["bg-missing".to_string()],
         };
@@ -357,6 +388,31 @@ mod tests {
                 "\nIgnored invalid bg_task_ids inputs: 123, null."
             )
         );
+    }
+
+    #[test]
+    fn assistant_result_says_why_a_task_is_blocked_and_not_to_resend() {
+        let result = BackgroundSubagentWaitResult {
+            status: BackgroundSubagentWaitStatus::Blocked,
+            outcomes: Vec::new(),
+            pending_bg_task_ids: vec!["bg-1".to_string()],
+            blocked: vec![BlockedBackgroundTask {
+                bg_task_id: "bg-1".to_string(),
+                agent_id: "helper".to_string(),
+                reason: "Waiting for the owner of B1.\nUnblock: the owner of B1 approves it."
+                    .to_string(),
+            }],
+            already_delivered_bg_task_ids: Vec::new(),
+            missing_bg_task_ids: Vec::new(),
+        };
+        let text = AgentWaitTool::assistant_result(&result, &[]);
+        assert!(text.starts_with("AgentWait finished with status blocked."), "{text}");
+        assert!(
+            text.contains("<blocked bg_task_id=\"bg-1\" agent_id=\"helper\">Waiting for the owner of B1.\nUnblock: the owner of B1 approves it.</blocked>"),
+            "{text}"
+        );
+        assert!(text.contains("Do not send the same request again"), "{text}");
+        assert!(text.contains("Pending background task IDs: bg-1."), "{text}");
     }
 
     #[test]

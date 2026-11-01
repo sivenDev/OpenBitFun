@@ -369,14 +369,20 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
             .contains("only from the owner of the target device"),
         "{refused:?}"
     );
-    // Condition 6: B1 runs one task at a time for this connection.
-    let over_limit = port
+    // Condition 6: B1 runs one task at a time for this connection; another
+    // is accepted and waits, queued, saying why.
+    let queued = port
         .submit(submit_request(approval_address.clone(), "One more"))
         .await
-        .expect_err("over the owner's limit");
-    assert!(
-        over_limit.message.contains("at most 1 task"),
-        "{over_limit:?}"
+        .expect("a task over the owner's limit is accepted");
+    let (waiting, _) = observe_until(port, &queued, |page| page.hold.is_some()).await;
+    assert_eq!(waiting.state, RemoteAgentJobState::Queued);
+    assert_eq!(
+        waiting.hold,
+        Some(openbitfun_runtime_ports::RemoteAgentJobHold {
+            reason: openbitfun_runtime_ports::RemoteAgentHoldReason::ConnectionLimit,
+            limit: Some(1),
+        })
     );
     // B1's owner sees the full request on B1 and approves it there.
     let status = manifest.owner_json(
@@ -402,6 +408,15 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
         "{:?}",
         finished.last_error
     );
+    // The queued task starts on its own once the first ends.
+    let (started, _) = observe_until(port, &queued, |page| page.state.is_terminal()).await;
+    assert_eq!(
+        started.state,
+        RemoteAgentJobState::Succeeded,
+        "{:?}",
+        started.last_error
+    );
+    assert_eq!(started.hold, None);
 
     // Another task, now that B1 is free again.
     let message = port
@@ -504,7 +519,9 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
         audit(&b1),
         vec![
             (job.job_id.clone(), "submitted".into(), "".into()),
+            (queued.job_id.clone(), "submitted".into(), "".into()),
             (job.job_id.clone(), "finished".into(), "succeeded".into()),
+            (queued.job_id.clone(), "finished".into(), "succeeded".into()),
             (message.job_id.clone(), "submitted".into(), "".into()),
             (
                 message.job_id.clone(),

@@ -2354,6 +2354,7 @@
       "completed": "Received {{count}} results",
       "steered": "Wait ended early",
       "timedOut": "Wait deadline reached; {{count}} tasks are still running",
+      "blocked": "{{count}} tasks are waiting on another device; they keep running",
       "failed": "Wait failed",
       "failedWithError": "Wait failed: {{error}}",
       "steeringHint": "Send a steering message to end the wait early and let the agent handle new instructions",

@@ -2354,6 +2354,7 @@
       "completed": "已收到 {{count}} 個結果",
       "steered": "已提前結束等待",
       "timedOut": "等待期限已到；仍有 {{count}} 個任務在執行",
+      "blocked": "{{count}} 個任務在其他裝置上等待，仍在繼續",
       "failed": "等待失敗",
       "failedWithError": "等待失敗：{{error}}",
       "steeringHint": "可以傳送引導訊息提前結束等待並讓智能體處理新指示",

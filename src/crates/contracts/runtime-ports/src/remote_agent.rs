@@ -191,6 +191,28 @@ impl RemoteAgentJobState {
     }
 }
 
+/// Why a queued job has not started on its device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAgentJobHold {
+    pub reason: RemoteAgentHoldReason,
+    /// The number of tasks the device's owner allows at once, for a
+    /// connection limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteAgentHoldReason {
+    /// The connection already runs as many tasks with the agent as the
+    /// device's owner allows.
+    ConnectionLimit,
+    /// A reason from a newer device.
+    #[serde(other)]
+    Unknown,
+}
+
 /// One page of a job's event log after `cursor`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -209,6 +231,9 @@ pub struct RemoteAgentJobSnapshot {
     pub cursor_reset: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Why the job waits to start; older devices never send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<RemoteAgentJobHold>,
 }
 
 #[async_trait]

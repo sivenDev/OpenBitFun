@@ -337,6 +337,25 @@ describe('AgentWaitToolCard', () => {
     expect(html).not.toContain('Send a steering message');
   });
 
+  it('says a blocked wait leaves its tasks running on another device', () => {
+    getState.mockReturnValue({ sessions: new Map([['session-1', session()]]) });
+    const completed = item('completed');
+    completed.toolResult = {
+      success: true,
+      result: {
+        status: 'blocked',
+        results: [],
+        pending_bg_task_ids: ['a1_bg1'],
+        blocked: [{ bg_task_id: 'a1_bg1', agent_id: 'helper', reason: 'Waiting for the owner of B1.' }],
+      },
+    };
+    const html = renderToStaticMarkup(
+      <AgentWaitToolCard toolItem={completed} config={config} sessionId="session-1" />,
+    );
+
+    expect(html).toContain('1 tasks are waiting on another device; they keep running');
+  });
+
   it('formats failures with an optional error detail', () => {
     getState.mockReturnValue({ sessions: new Map([['session-1', session()]]) });
     const failed = item('error');

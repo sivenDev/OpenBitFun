@@ -1091,8 +1091,8 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     let (ok, listed) = delegation_cli(&target, &["list"]);
     assert!(ok && listed.contains(&connection_id), "{listed}");
 
-    // B1's owner allows one task at a time; a second is refused while the
-    // first runs, and withdrawing the grant stops the running one.
+    // B1's owner allows one task at a time; a second waits, queued and saying
+    // why, while the first runs, and withdrawing the grant stops both.
     let (ok, output) = delegation_cli(
         &target,
         &[
@@ -1136,23 +1136,44 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
     let owner_view = owner_dispatch(&target, "status", &json!({ "jobId": held }));
     let resources = owner_view["pendingPermissions"][0]["resources"].to_string();
     assert!(resources.contains("USER.md"), "{owner_view}");
-    let error = submit_message_over_connection(&rpc, &connection_id)
+    let (queued, _) = submit_message_over_connection(&rpc, &connection_id)
         .await
-        .unwrap_err();
-    assert!(error.to_string().contains("at most 1 task"), "{error}");
+        .expect("a task over the limit is accepted");
+    let deadline = Instant::now() + JOB_TIMEOUT;
+    let waiting = loop {
+        let page = rpc
+            .invoke_connection(
+                &connection_id,
+                "dispatch_target_status",
+                json!({ "jobId": queued }),
+            )
+            .await
+            .expect("observe the queued task");
+        if !page["hold"].is_null() {
+            break page;
+        }
+        assert_eq!(page["state"], "queued", "the task did not wait: {page}");
+        assert!(Instant::now() < deadline, "the task never said why it waits: {page}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    assert_eq!(waiting["state"], "queued", "{waiting}");
+    assert_eq!(waiting["hold"]["reason"], "connectionLimit", "{waiting}");
+    assert_eq!(waiting["hold"]["limit"], 1, "{waiting}");
     let (ok, output) = delegation_cli(
         &target,
         &["revoke-connection", OPEN_AGENT_ID, &connection_id],
     );
     assert!(ok, "{output}");
-    let stopped = wait_over_connection(&rpc, &connection_id, &held, false).await;
-    assert_eq!(stopped["state"], "failed", "{stopped}");
-    assert!(
-        stopped["lastError"]
-            .as_str()
-            .is_some_and(|error| error.contains("withdrew this connection's access")),
-        "{stopped}"
-    );
+    for job in [&held, &queued] {
+        let stopped = wait_over_connection(&rpc, &connection_id, job, false).await;
+        assert_eq!(stopped["state"], "failed", "{stopped}");
+        assert!(
+            stopped["lastError"]
+                .as_str()
+                .is_some_and(|error| error.contains("withdrew this connection's access")),
+            "{stopped}"
+        );
+    }
 
     // Granted again, A1's delegation directory lists it as an agent of B's
     // account and runs a message task over the connection, like a
@@ -1189,16 +1210,22 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             )
         })
         .collect();
-    assert_eq!(
-        events,
-        vec![
-            (held.clone(), "submitted".into(), "".into()),
-            (held, "finished".into(), "failed".into()),
-            (delivered.clone(), "submitted".into(), "".into()),
-            (delivered.clone(), "finished".into(), "succeeded".into()),
-        ],
-        "{audit}"
-    );
+    // The two stopped tasks may finish in either order.
+    let of = |job: &str| -> Vec<(String, String)> {
+        events
+            .iter()
+            .filter(|(id, _, _)| id == job)
+            .map(|(_, event, state)| (event.clone(), state.clone()))
+            .collect()
+    };
+    assert_eq!(events.len(), 6, "{audit}");
+    for (job, end) in [(&held, "failed"), (&queued, "failed"), (&delivered, "succeeded")] {
+        assert_eq!(
+            of(job),
+            vec![("submitted".into(), "".into()), ("finished".into(), end.into())],
+            "{audit}"
+        );
+    }
     assert!(
         audit
             .as_array()

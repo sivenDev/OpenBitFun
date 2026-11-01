@@ -18,8 +18,8 @@ use openbitfun_agent_runtime::permission::PermissionWaitOutcome;
 use openbitfun_runtime_ports::{
     ExternalAgentTurnEvent, PermissionRequest, PermissionRequestSource,
     PermissionRequestSourceKind, PortErrorKind, RemoteAgentAddress, RemoteAgentDelegationPort,
-    RemoteAgentJob, RemoteAgentJobSnapshot, RemoteAgentJobState, RemoteAgentSource,
-    RemoteAgentSubmitRequest,
+    RemoteAgentJob, RemoteAgentJobHold, RemoteAgentJobSnapshot, RemoteAgentJobState,
+    RemoteAgentSource, RemoteAgentSubmitRequest,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -135,7 +135,14 @@ pub(crate) async fn run_remote_agent_turn(
     };
     record_link(&turn, &link).await;
 
+    let job_device_name = device_name(&port, &link.job.device_id).await;
     let mut sink = LiveSink {
+        holds: HoldTracker::new(
+            turn.coordination_store.clone(),
+            &turn.session_id,
+            &link.job,
+            job_device_name.clone(),
+        ),
         stream: ChildSessionStream::new(
             &turn.session_id,
             &turn.dialog_turn_id,
@@ -153,10 +160,11 @@ pub(crate) async fn run_remote_agent_turn(
             },
             &link.job,
             &port,
-            device_name(&port, &link.job.device_id).await,
+            job_device_name,
         ),
     };
     let (end, cursor) = observe_job(&port, &link, &turn.cancel_token, &mut sink).await;
+    sink.holds.finish();
     sink.prompts
         .cancel_all("The remote agent job is no longer waiting")
         .await;
@@ -237,6 +245,7 @@ pub(crate) trait JobPageSink: Send {
 /// an answer the earlier process can no longer give. Cancelling the task
 /// through AgentControl cancels the job too.
 pub(crate) struct ResumedTaskSink {
+    holds: HoldTracker,
     store: Arc<CoordinationStore>,
     task_pk: i64,
     cancel: CancellationToken,
@@ -263,6 +272,7 @@ impl ResumedTaskSink {
         port: &Arc<dyn RemoteAgentDelegationPort>,
         cancel: CancellationToken,
     ) -> Self {
+        let job_device_name = device_name(port, &link.job.device_id).await;
         let prompts = PromptForwarder::new(
             task.permissions,
             PromptScope {
@@ -273,9 +283,15 @@ impl ResumedTaskSink {
             },
             &link.job,
             port,
-            device_name(port, &link.job.device_id).await,
+            job_device_name.clone(),
         );
         Self {
+            holds: HoldTracker::new(
+                task.store.clone(),
+                task.session_id,
+                &link.job,
+                job_device_name,
+            ),
             store: task.store,
             task_pk: task.task_pk,
             stream: ChildSessionStream::new(
@@ -292,6 +308,7 @@ impl ResumedTaskSink {
 
     /// Withdraws the prompts still filed once observation ends.
     pub(crate) async fn finish(mut self) {
+        self.holds.finish();
         self.prompts
             .cancel_all("The remote agent job is no longer waiting")
             .await;
@@ -317,8 +334,17 @@ impl JobPageSink for ResumedTaskSink {
             }
         };
         if !still_running {
+            self.holds.finish();
             self.cancel.cancel();
             return;
+        }
+        if let Some(note) = self.holds.observe(snapshot) {
+            for event in self.stream.project(note) {
+                let _ = self
+                    .event_queue
+                    .enqueue(event, Some(EventPriority::Normal))
+                    .await;
+            }
         }
         let round_id = if snapshot.pending_permissions.is_empty() {
             String::new()
@@ -433,6 +459,7 @@ fn spawn_cancel(port: Arc<dyn RemoteAgentDelegationPort>, job: RemoteAgentJob) {
 
 /// Projects progress onto the child session and forwards prompts.
 struct LiveSink {
+    holds: HoldTracker,
     stream: ChildSessionStream,
     event_queue: Arc<EventQueue>,
     prompts: PromptForwarder,
@@ -461,6 +488,10 @@ impl JobPageSink for LiveSink {
             .flat_map(|event| self.stream.project(event))
             .collect();
         self.enqueue(projected).await;
+        if let Some(note) = self.holds.observe(snapshot) {
+            let projected = self.stream.project(note);
+            self.enqueue(projected).await;
+        }
         let round_id = if snapshot.pending_permissions.is_empty() {
             String::new()
         } else {
@@ -576,6 +607,95 @@ struct OwnerWait {
 /// Shown in a cross-account child session while the target owner decides.
 pub(crate) fn owner_approval_note(device_name: &str) -> String {
     format!("Waiting for the owner of {device_name} to approve an action on their device.")
+}
+
+/// Shown in the child session when the job starts to wait on its device.
+pub(crate) fn queued_note(device_name: &str) -> String {
+    format!(
+        "Queued on {device_name} until a task that its owner allows to run at the same time finishes."
+    )
+}
+
+/// What the parent hears while a job of another account waits for the
+/// owner of its device: the reason and what unblocks it.
+fn owner_blocked_reason(device_name: &str) -> String {
+    format!(
+        "Waiting for the owner of {device_name} to approve an action on their device.\nUnblock: the owner of {device_name} approves or rejects it there."
+    )
+}
+
+/// What the parent hears while a job waits, queued, to start on its device.
+fn queued_reason(device_name: &str, hold: &RemoteAgentJobHold) -> String {
+    let allowed = match hold.limit {
+        Some(limit) => format!("{limit} task(s)"),
+        None => "a limited number of tasks".to_string(),
+    };
+    match hold.reason {
+        openbitfun_runtime_ports::RemoteAgentHoldReason::ConnectionLimit => format!(
+            "Queued on {device_name}: its owner allows {allowed} at a time from this connection, and that many are running.\nUnblock: one of them finishes, or the owner of {device_name} raises the limit. The task starts on its own."
+        ),
+        openbitfun_runtime_ports::RemoteAgentHoldReason::Unknown => format!(
+            "Queued on {device_name}; it starts when the device allows it.\nUnblock: the device starts it on its own."
+        ),
+    }
+}
+
+/// Keeps the parent informed of why a job makes no progress on its device:
+/// queued there, or, for a job of another account, waiting for that
+/// account's owner. A job of this account asks this host's own mailbox, so
+/// its prompts are not a reason to report.
+struct HoldTracker {
+    store: Arc<CoordinationStore>,
+    session_id: String,
+    device_name: String,
+    other_account: bool,
+    queued: bool,
+}
+
+impl HoldTracker {
+    fn new(
+        store: Arc<CoordinationStore>,
+        session_id: &str,
+        job: &RemoteAgentJob,
+        device_name: String,
+    ) -> Self {
+        Self {
+            store,
+            session_id: session_id.to_string(),
+            device_name,
+            other_account: openbitfun_runtime_ports::remote_target_connection(&job.device_id)
+                .is_some(),
+            queued: false,
+        }
+    }
+
+    /// Records the hold this page shows, and returns a note for the child
+    /// session when the job starts to queue.
+    fn observe(&mut self, snapshot: &RemoteAgentJobSnapshot) -> Option<ExternalAgentTurnEvent> {
+        let holds = self.store.remote_holds();
+        if let Some(hold) = snapshot.hold.as_ref().filter(|_| !snapshot.state.is_terminal()) {
+            holds.set(&self.session_id, queued_reason(&self.device_name, hold));
+            let started = !self.queued;
+            self.queued = true;
+            return started.then(|| ExternalAgentTurnEvent::Thought {
+                text: queued_note(&self.device_name),
+            });
+        }
+        self.queued = false;
+        if self.other_account
+            && !snapshot.state.is_terminal()
+            && !snapshot.pending_permissions.is_empty()
+        {
+            holds.set(&self.session_id, owner_blocked_reason(&self.device_name));
+        } else {
+            holds.clear(&self.session_id);
+        }
+        None
+    }
+
+    fn finish(&self) {
+        self.store.remote_holds().clear(&self.session_id);
+    }
 }
 
 /// The child turn whose prompts a [`PromptForwarder`] files.

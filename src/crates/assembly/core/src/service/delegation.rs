@@ -446,7 +446,7 @@ pub struct ConnectionGrant {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionLimits {
-    /// Tasks that may run at once; more are refused at submission.
+    /// Tasks that may run at once; more wait, queued, until one finishes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_concurrent_jobs: Option<u32>,
     /// Minutes one turn of a task may run before it is stopped.

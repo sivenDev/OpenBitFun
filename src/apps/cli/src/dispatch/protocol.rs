@@ -722,6 +722,30 @@ impl DispatchEvent {
     }
 }
 
+/// Why a queued job has not started yet. Requesters that do not know a
+/// reason still read the job as queued.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DispatchHold {
+    pub(crate) reason: DispatchHoldReason,
+    /// The number of tasks the owner allows at once, for a connection limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) limit: Option<u32>,
+    /// When the job began to wait, in milliseconds since the epoch. Earlier
+    /// waits start first.
+    pub(crate) since_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum DispatchHoldReason {
+    /// The connection already runs as many tasks with this agent as its
+    /// owner allows.
+    ConnectionLimit,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DispatchStatusResponse {
@@ -735,6 +759,9 @@ pub(crate) struct DispatchStatusResponse {
     pub(crate) omitted_event_count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) last_error: Option<String>,
+    /// Why a queued job waits; older requesters ignore it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hold: Option<DispatchHold>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

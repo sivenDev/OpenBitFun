@@ -366,16 +366,8 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
         .unwrap_or_else(|| truncate_chars(request.prompt.trim(), 120));
     request.title = Some(title.clone());
 
-    // Counted after a retried submission was answered above, so a retry is
-    // never refused as a second task; the lock makes the count and the new
-    // job one step for concurrent submissions over the same connection.
-    let _admission = request
-        .source_connection_id
-        .as_deref()
-        .map(|connection_id| store.lock_connection_admission(connection_id))
-        .transpose()?;
-    connection_guard::ensure_within_limits(&store, &delegation::open_agent_store()?, &request)
-        .await?;
+    // A task over the connection's limit is accepted and waits in its worker
+    // for a free place (`connection_guard::wait_for_place`).
     let outcome = store.create_job_with_intent(intent, request.clone(), title)?;
     let state = match outcome {
         CreateJobOutcome::Created(state) => {
@@ -454,23 +446,11 @@ async fn continue_job(request: DispatchContinueRequest) -> Result<DispatchContin
     let job = store.load_job(&request.job_id)?;
     // A worker may still be settling the previous turn's terminal state.
     reconcile_worker_liveness(&store, &request.job_id)?;
-    let _admission = job
-        .request
-        .source_connection_id
-        .as_deref()
-        .map(|connection_id| store.lock_connection_admission(connection_id))
-        .transpose()?;
     let state = if let Some(state) = store.load_existing_follow_up_for_intent(&request)? {
         state
     } else {
-        // A new turn of a cross-account task counts against the same limit
-        // as a new task; the job itself is finished, so it is not counted.
-        connection_guard::ensure_within_limits(
-            &store,
-            &delegation::open_agent_store()?,
-            &job.request,
-        )
-        .await?;
+        // A new turn of a cross-account task waits for a free place in its
+        // worker, as a new task does.
         // Validate before acceptance, just as submit does. The worker still
         // revalidates in case target configuration changes before it starts.
         let selected_model =
@@ -645,6 +625,9 @@ fn status(request: DispatchStatusRequest) -> Result<DispatchStatusResponse> {
         event_log_complete: !page.history_truncated && page.omitted_event_count == 0,
         omitted_event_count: page.omitted_event_count,
         last_error: state.last_error,
+        hold: (state.state == DispatchJobState::Queued)
+            .then(|| store.read_hold(&request.job_id))
+            .flatten(),
     })
 }
 
