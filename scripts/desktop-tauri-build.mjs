@@ -363,6 +363,18 @@ export function prepareTauriConfig(
   injectDshProfileResource(config);
   injectExternalFrontendResource(config);
 
+  // A distribution build may carry its own version, e.g. 1.0.8-plus. The
+  // frontend reads the same variable in scripts/generate-version.cjs.
+  const buildVersion = process.env.OPENBITFUN_BUILD_VERSION;
+  if (buildVersion) {
+    if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(buildVersion)) {
+      console.error(`OPENBITFUN_BUILD_VERSION must be a semantic version, got: ${buildVersion}`);
+      process.exit(1);
+    }
+    config.version = buildVersion;
+    console.log(`[tauri-build] Version ${buildVersion}`);
+  }
+
   const release = releaseChannel
     ?? resolveReleaseChannel(process.env.OPENBITFUN_RELEASE_CHANNEL);
   const primaryEndpoint =

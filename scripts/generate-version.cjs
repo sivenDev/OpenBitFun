@@ -66,7 +66,8 @@ function generateVersionInfo(buildEnv) {
   
   const versionInfo = {
     name: packageJson.name === 'OpenBitFun' ? 'OpenBitFun' : packageJson.name,
-    version: packageJson.version,
+    // A distribution build may carry its own version, e.g. 1.0.8-plus.
+    version: process.env.OPENBITFUN_BUILD_VERSION || packageJson.version,
     buildDate,
     buildTimestamp,
     buildEnv,

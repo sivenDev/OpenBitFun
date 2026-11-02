@@ -569,3 +569,28 @@ test('Windows signing rejects malformed fingerprints and leaves other platforms 
   configureWindowsSigning(unsigned, {}, 'win32');
   assert.deepEqual(unsigned, {});
 });
+
+test('a distribution build carries its own version', () => {
+  const fixture = join(tmpdir(), `openbitfun-build-version-${process.pid}-${Date.now()}`);
+  const previous = process.env.OPENBITFUN_BUILD_VERSION;
+  mkdirSync(fixture, { recursive: true });
+  const baseConfig = join(fixture, 'tauri.conf.json');
+  writeFileSync(baseConfig, JSON.stringify({ bundle: { resources: {} } }));
+  try {
+    process.env.OPENBITFUN_BUILD_VERSION = '1.0.8-plus';
+    const generated = prepareTauriConfig(baseConfig, {
+      desktopDir: fixture, flashgrepBinary: join(fixture, 'flashgrep-aarch64-apple-darwin'),
+    });
+    assert.equal(JSON.parse(readFileSync(generated, 'utf8')).version, '1.0.8-plus');
+
+    delete process.env.OPENBITFUN_BUILD_VERSION;
+    const plain = prepareTauriConfig(baseConfig, {
+      desktopDir: fixture, flashgrepBinary: join(fixture, 'flashgrep-aarch64-apple-darwin'),
+    });
+    assert.equal(JSON.parse(readFileSync(plain, 'utf8')).version, undefined);
+  } finally {
+    if (previous === undefined) delete process.env.OPENBITFUN_BUILD_VERSION;
+    else process.env.OPENBITFUN_BUILD_VERSION = previous;
+    rmSync(fixture, { force: true, recursive: true });
+  }
+});
