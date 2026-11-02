@@ -4,9 +4,9 @@
 
 ## Status
 
-| Type | Plans | Complete |
-| --- | --- | --- |
-| `feature` | 12 | 12 |
+| Type | Plans | Draft | Complete |
+| --- | --- | --- | --- |
+| `feature` | 13 | 1 | 12 |
 
 ## Plan Groups
 
@@ -26,3 +26,4 @@
 | `F002-06` | [跨账号委派：按连接授权、目标端审批、额度与审计](features/F002/06-cross-account-delegation.md) | `complete` | 2026-10-30 |
 | `F002-07` | [AI协作：只开放助理与连接的信任级别](features/F002/07-open-assistants.md) | `complete` | 2026-10-31 |
 | `F002-08` | [AI协作：外部任务受阻时如实告知，超出额度时排队](features/F002/08-waiting-and-queueing.md) | `complete` | 2026-11-01 |
+| `F002-09` | [AI协作：接回以前的外部任务、按授权保留会话，并删除兼容代码](features/F002/09-resume-and-retention.md) | `draft` | 2026-11-01 |
