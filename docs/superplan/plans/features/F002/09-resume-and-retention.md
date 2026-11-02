@@ -2,7 +2,7 @@
 id: "F002-09"
 title: "AI协作：接回以前的外部任务、按授权保留会话，并删除兼容代码"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "发起设备可以在新的对话中接回自己以前派给远程助理的任务并延续原会话；目标端按授权配置外部任务会话的保留时长（默认 7 天）；删除 AI协作对它更早开发版本的兼容代码。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-01"
@@ -148,7 +148,14 @@ parent: "F002"
 - `cargo test -p openbitfun-desktop --lib remote_agent_delegation`（两账号模拟：新对话接回后回答延续上下文、目标端仍是同一会话；原对话追问被告知已转走；运行中不能接回；其他连接与撤销后重新配对接回失败；任务被清理后接回失败）
 - `node scripts/dev/sim-devices.mjs --check`
 
-- [ ] 发起方可列出并接回以前的任务，归属转移与各类拒绝均有测试
+- [x] 发起方可列出并接回以前的任务，归属转移与各类拒绝均有测试
+  - 证据（2026-11-01）：
+    - 列出方式（与计划不同，已记录）：未新增延迟工具。新工具需要改动约 15 处工具注册表与生成目录；改为在 `Task`/`AgentSpawn` 的可用智能体目录中，每个远程助理下列出本机最近派给它的 5 个任务（编号、开始与最后回合日期、第一次请求摘要、是否仍在运行），满足 RFC D12「从本机出站记录列出」。
+    - `CoordinationStore::outbound_remote_tasks` 跨对话列出出站记录；`RemoteJobLink` 增加 `agentType` 与 `summary`；任务归属 = 带该任务链接的最新后台任务（`remote_agent_turn/earlier_tasks.rs`）。
+    - `AgentSpawn`/`Task` 新增 `resume_task_id`（只用于远程智能体的新建；分叉、追问、取消与非远程类型拒绝）。工具先校验任务存在、属于该助理、本机未在运行；回合再观察一次目标端，未结束则拒绝，然后 `continue_job`，归属转到当前对话；原对话追问报「已在另一个对话中继续」；目标端拒绝原样报告。
+    - core 测试（`remote_agent coordination_store tools::implementations::task agent_wait background_outcomes delegation`）193 项通过，新增 `a_later_conversation_resumes_an_earlier_task_and_takes_it_over`（未知任务、目标端仍运行、接回成功且从原游标继续、归属转移、原对话被拒、新对话可继续追问）、`a_task_still_running_here_is_not_resumed`、`summaries_are_one_short_line`、`an_earlier_remote_task_is_resumed_only_by_a_fresh_spawn`。
+    - 文档：`docs/architecture/detached-task-dispatch.md` 增加接回、归属与按授权保留。
+    - 两账号模拟 `node scripts/dev/sim-devices.mjs --check` 通过（2 项）：B1 上已结束的任务被接回，同一任务继续并成功，审计多一条该任务的 `finished`；B1 已不存在的任务接回失败；B2 撤销连接后接回失败。
 
 ## References
 - `docs/superplan/rfcs/F002.md`

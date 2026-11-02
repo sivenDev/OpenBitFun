@@ -232,9 +232,35 @@ impl AgentExecutionTool {
                     .list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
                     .await;
                 agents = crate::agentic::agents::merge_remote_agents(agents, descriptors, false);
+                Self::describe_earlier_remote_tasks(&mut agents).await;
             }
         }
         agents
+    }
+
+    /// Lists under each remote agent the tasks this host delegated to it
+    /// earlier, so the parent can resume one instead of starting over.
+    async fn describe_earlier_remote_tasks(agents: &mut [AgentInfo]) {
+        use crate::agentic::coordination::remote_agent_turn::earlier_tasks;
+        let Some(coordinator) = get_global_coordinator() else {
+            return;
+        };
+        let tasks =
+            match earlier_tasks::earlier_remote_tasks(&coordinator.coordination_store()).await {
+                Ok(tasks) => tasks,
+                Err(error) => {
+                    debug!("Earlier remote tasks omitted from catalog: {}", error);
+                    return;
+                }
+            };
+        for agent in agents
+            .iter_mut()
+            .filter(|agent| openbitfun_runtime_ports::RemoteAgentAddress::parse(&agent.id).is_some())
+        {
+            if let Some(note) = earlier_tasks::describe_earlier_tasks(&tasks, &agent.id) {
+                agent.description = format!("{}\n\n{note}", agent.description);
+            }
+        }
     }
 
     async fn get_agents_types(&self, context: Option<&ToolUseContext>) -> Vec<String> {

@@ -379,7 +379,8 @@ with their cursor, and caches written before title projection replay once after
 an upgrade to recover the title event. This changes controller presentation only;
 it does not rename the target-owned job or session.
 
-Target and outbound records are retained for 30 days after terminal state, as
+Target and outbound records are retained for 30 days after terminal state (delegated
+jobs follow their grant; see the agent delegation catalog), as
 are the cached transcripts, which are also dropped as soon as a projection is
 deleted or archived. Garbage collection never removes queued or running jobs.
 Target cleanup is limited to the job's managed worktree and private transfer
@@ -499,6 +500,23 @@ session, cursor) lives in the coordination database's `remote_job` column, which
 restarted requester reads to observe it again. Delegated jobs are left out of the
 Dispatch panel's job list and target-job adoption, so only the delegating subagent
 observes them.
+
+A delegated job belongs to the conversation that last continued it: the newest
+background task carrying its link. The Task catalog lists, under each remote agent, the
+five most recent jobs this host delegated to it (job id, dates, the start of the first
+prompt). Spawning a remote agent with `resume_task_id` continues one of them in the
+current conversation: the job must have ended both here and on its device, and the turn
+is an ordinary `continue`, so the device admits it only for the same requester (device or
+connection) while the grant holds and the job is kept. The resuming conversation then
+owns the job; a follow-up from the earlier conversation is refused and says why. A job
+the device has since deleted, or a revoked connection, fails the resume with the
+device's error.
+
+A delegated job's retention is chosen per grant: 1, 7 (the default), 30, or 90 days after
+its last turn (`sessionRetentionDays` on a connection grant, `sessionRetentionDays` on the
+open agent for same-account devices). A job whose grant is gone uses 7 days. Its expiry
+also removes its private directory and the session stored for it. When the open list
+cannot be read, delegated jobs are skipped for that round.
 
 A cross-account grant may limit how many tasks its connection runs at once with an
 open agent. The target accepts a task over the limit and keeps it `queued`: its worker

@@ -51,6 +51,10 @@ pub(crate) struct RemoteJobLink {
     pub(crate) job: RemoteAgentJob,
     /// Event cursor where the task's own turn begins on the target.
     pub(crate) cursor: u64,
+    /// The agent the job was delegated to.
+    pub(crate) agent_type: String,
+    /// The start of the job's first prompt.
+    pub(crate) summary: String,
 }
 
 impl RemoteJobLink {
@@ -75,6 +79,9 @@ pub(crate) struct RemoteAgentTurn {
     pub(crate) source: RemoteAgentSource,
     pub(crate) permissions: Option<ExternalAgentPermissionRoute>,
     pub(crate) cancel_token: CancellationToken,
+    /// An earlier task of this agent the subagent continues instead of
+    /// submitting a new one.
+    pub(crate) resume_task_id: Option<String>,
 }
 
 /// How an observed job ended.
@@ -106,14 +113,16 @@ pub(crate) async fn run_remote_agent_turn(
         .latest_remote_job_for_child(&turn.session_id)
         .await?
         .and_then(|value| RemoteJobLink::parse(&value));
-    let link = match previous {
-        Some(previous) => {
+    let link = match (previous, turn.resume_task_id.as_deref()) {
+        (Some(previous), _) => {
+            ensure_still_owned(&turn, &previous).await?;
             port.continue_job(&previous.job, &turn.dialog_turn_id, turn.prompt.clone())
                 .await
                 .map_err(|error| remote_error(&agent_type, error))?;
             previous
         }
-        None => {
+        (None, Some(task_id)) => resume_earlier_task(&turn, &port, task_id).await?,
+        (None, None) => {
             let job = port
                 .submit(RemoteAgentSubmitRequest {
                     address,
@@ -129,7 +138,12 @@ pub(crate) async fn run_remote_agent_turn(
                 })
                 .await
                 .map_err(|error| remote_error(&agent_type, error))?;
-            RemoteJobLink { job, cursor: 0 }
+            RemoteJobLink {
+                job,
+                cursor: 0,
+                agent_type: agent_type.clone(),
+                summary: earlier_tasks::summarize_prompt(&turn.prompt),
+            }
         }
     };
     record_link(&turn, &link).await;
@@ -208,6 +222,57 @@ pub(crate) async fn run_remote_agent_turn(
             "Remote agent '{agent_type}' failed: {error}"
         ))),
     }
+}
+
+/// A follow-up continues the job only while this conversation owns it.
+async fn ensure_still_owned(
+    turn: &RemoteAgentTurn,
+    previous: &RemoteJobLink,
+) -> OpenBitFunResult<()> {
+    let task =
+        earlier_tasks::earlier_remote_task(&turn.coordination_store, &previous.job.job_id).await?;
+    if task.is_some_and(|task| !task.owned_by(&turn.session_id)) {
+        return Err(OpenBitFunError::Validation(format!(
+            "Remote agent '{}' task '{}' was resumed in another conversation, so this agent can no longer continue it; spawn a new agent for new work",
+            turn.agent_type, previous.job.job_id
+        )));
+    }
+    Ok(())
+}
+
+/// Continues an earlier, ended task of the same agent in this conversation.
+async fn resume_earlier_task(
+    turn: &RemoteAgentTurn,
+    port: &Arc<dyn RemoteAgentDelegationPort>,
+    task_id: &str,
+) -> OpenBitFunResult<RemoteJobLink> {
+    let agent_type = &turn.agent_type;
+    let task = earlier_tasks::earlier_remote_task(&turn.coordination_store, task_id)
+        .await?
+        .filter(|task| &task.link.agent_type == agent_type)
+        .ok_or_else(|| {
+            OpenBitFunError::Validation(format!(
+                "Remote agent '{agent_type}' has no earlier task '{task_id}' from this device"
+            ))
+        })?;
+    if task.running {
+        return Err(OpenBitFunError::Validation(format!(
+            "Remote agent '{agent_type}' task '{task_id}' is still running in another conversation; resume it after it ends"
+        )));
+    }
+    let snapshot = port
+        .observe(&task.link.job, task.link.cursor)
+        .await
+        .map_err(|error| remote_error(agent_type, error))?;
+    if !snapshot.state.is_terminal() {
+        return Err(OpenBitFunError::Validation(format!(
+            "Remote agent '{agent_type}' task '{task_id}' is still running on its device; resume it after it ends"
+        )));
+    }
+    port.continue_job(&task.link.job, &turn.dialog_turn_id, turn.prompt.clone())
+        .await
+        .map_err(|error| remote_error(agent_type, error))?;
+    Ok(task.link)
 }
 
 async fn record_link(turn: &RemoteAgentTurn, link: &RemoteJobLink) {
@@ -921,5 +986,6 @@ fn remote_error(agent_type: &str, error: openbitfun_runtime_ports::PortError) ->
     }
 }
 
+pub(crate) mod earlier_tasks;
 #[cfg(test)]
 mod tests;

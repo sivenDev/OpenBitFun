@@ -300,6 +300,30 @@ impl AgentExecutionTool {
         )
     }
 
+    /// Checks that `task_id` is an ended task this host delegated to
+    /// `agent_type`; the device decides at the turn whether it still has it.
+    pub(super) async fn ensure_earlier_remote_task(
+        coordinator: &crate::agentic::coordination::ConversationCoordinator,
+        agent_type: &str,
+        task_id: &str,
+    ) -> OpenBitFunResult<()> {
+        use crate::agentic::coordination::remote_agent_turn::earlier_tasks;
+        let task = earlier_tasks::earlier_remote_task(&coordinator.coordination_store(), task_id)
+            .await?
+            .filter(|task| task.link.agent_type == agent_type)
+            .ok_or_else(|| {
+                OpenBitFunError::tool(format!(
+                    "remote agent {agent_type} has no earlier task '{task_id}'; use a task listed under that agent"
+                ))
+            })?;
+        if task.running {
+            return Err(OpenBitFunError::tool(format!(
+                "remote agent {agent_type} task '{task_id}' is still running in another conversation; resume it after it ends"
+            )));
+        }
+        Ok(())
+    }
+
     /// Admits a `remote:<deviceId>/<openAgentId>` subagent under the same
     /// parent checks as external agents: the target device runs its own
     /// tools, so a parent restriction could not be held to them. A remote
@@ -486,6 +510,17 @@ impl AgentExecutionTool {
             OpenBitFunError::tool("Required parameter missing: prompt".to_string())
         })?;
         let context_mode = invocation.context_mode;
+        if invocation.resume_task_id.is_some()
+            && invocation
+                .subagent_type
+                .as_deref()
+                .and_then(openbitfun_runtime_ports::RemoteAgentAddress::parse)
+                .is_none()
+        {
+            return Err(OpenBitFunError::tool(
+                "resume_task_id applies only to remote agent types".to_string(),
+            ));
+        }
         let target_session_id = match invocation.target_agent_id.as_deref() {
             Some(agent_id) => Some(coordinator.resolve_agent_id(&session_id, agent_id).await?),
             None => None,
@@ -625,6 +660,10 @@ impl AgentExecutionTool {
                     )
                     .await?;
                     let subagent_type = address.agent_type();
+                    if let Some(task_id) = invocation.resume_task_id.as_deref() {
+                        Self::ensure_earlier_remote_task(&coordinator, &subagent_type, task_id)
+                            .await?;
+                    }
                     logical_subagent_type = Some(subagent_type.clone());
                     Some(subagent_type)
                 } else if let Some(client_id) = requested_external_agent.as_deref() {
@@ -1095,6 +1134,13 @@ impl AgentExecutionTool {
             })
             .unwrap_or_default();
         forward_subagent_invocation_context(context, &mut subagent_context);
+        if let Some(task_id) = invocation.resume_task_id.clone() {
+            subagent_context.insert(
+                crate::agentic::coordination::remote_agent_turn::earlier_tasks::RESUME_REMOTE_TASK_CONTEXT_KEY
+                    .to_string(),
+                task_id,
+            );
+        }
         let subagent_context = (!subagent_context.is_empty()).then_some(subagent_context);
         let permission_runtime_ceiling =
             Self::derive_parent_permission_runtime_ceiling(context).await?;

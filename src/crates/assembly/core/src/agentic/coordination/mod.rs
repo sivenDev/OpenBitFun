@@ -7,7 +7,7 @@ mod control_conversation;
 mod coordination_store;
 mod delegation_context;
 mod external_agent_turn;
-mod remote_agent_turn;
+pub(crate) mod remote_agent_turn;
 mod remote_holds;
 pub use control_conversation::{
     ControlConversation, CreateControlConversationRequest, VoiceExchangeRequest,

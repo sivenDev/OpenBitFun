@@ -836,6 +836,40 @@ ORDER BY tasks.task_pk DESC LIMIT 1
         .await
     }
 
+    /// Every background task that delegated to another device, newest first,
+    /// across all conversations. The newest task of a job is the one that
+    /// last continued it.
+    pub(crate) async fn outbound_remote_tasks(
+        &self,
+    ) -> OpenBitFunResult<Vec<OutboundRemoteTask>> {
+        self.with_connection(move |connection| {
+            let mut statement = connection
+                .prepare(
+                    r#"
+SELECT tasks.remote_job, tasks.parent_session_id, agents.child_session_id, tasks.status, tasks.created_at_ms
+FROM background_tasks AS tasks
+JOIN agents ON agents.agent_pk = tasks.agent_pk
+WHERE tasks.remote_job IS NOT NULL
+ORDER BY tasks.task_pk DESC
+                    "#,
+                )
+                .map_err(db_error)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(OutboundRemoteTask {
+                        remote_job: row.get(0)?,
+                        parent_session_id: row.get(1)?,
+                        child_session_id: row.get(2)?,
+                        status: row.get(3)?,
+                        created_at_ms: row.get(4)?,
+                    })
+                })
+                .map_err(db_error)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
+        })
+        .await
+    }
+
     /// Running delegated tasks that an earlier process started.
     pub(crate) async fn orphaned_remote_tasks(
         &self,
@@ -1038,6 +1072,17 @@ ORDER BY tasks.task_pk DESC LIMIT 1
         })
         .await
     }
+}
+
+/// One turn of a delegated job, as [`CoordinationStore::outbound_remote_tasks`]
+/// lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OutboundRemoteTask {
+    pub(crate) remote_job: String,
+    pub(crate) parent_session_id: String,
+    pub(crate) child_session_id: Option<String>,
+    pub(crate) status: String,
+    pub(crate) created_at_ms: i64,
 }
 
 const BACKGROUND_TASK_SELECT: &str = r#"

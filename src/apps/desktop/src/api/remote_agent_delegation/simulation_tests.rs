@@ -435,6 +435,31 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
     );
     assert!(!events.is_empty());
 
+    // Condition 13: a later conversation resumes the first task. B1 continues
+    // the same job, and with it the same session, from where it ended.
+    let (before, _) = observe_until(port, &job, |page| page.state.is_terminal()).await;
+    port.continue_job(&job, "resumed-turn", "Go on from where you stopped".to_string())
+        .await
+        .expect("resume the earlier task");
+    let (resumed, _) = observe_until(port, &job, |page| {
+        page.state.is_terminal() && page.cursor > before.cursor
+    })
+    .await;
+    assert_eq!(
+        resumed.state,
+        RemoteAgentJobState::Succeeded,
+        "{:?}",
+        resumed.last_error
+    );
+    // A task B1 no longer keeps cannot be resumed.
+    let gone = openbitfun_runtime_ports::RemoteAgentJob {
+        job_id: format!("delegation-{}", uuid::Uuid::new_v4()),
+        ..job.clone()
+    };
+    port.continue_job(&gone, "resumed-turn", "Go on".to_string())
+        .await
+        .expect_err("a task the device deleted is not resumed");
+
     // Condition 4: B2's owner revokes the connection while a task runs. The
     // task stops on B2, A1 reads that access was revoked, and new tasks are
     // refused.
@@ -492,6 +517,9 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
     port.submit(submit_request(holds_address.clone(), "After revoking"))
         .await
         .expect_err("a revoked connection takes no new tasks");
+    port.continue_job(&held, "resumed-turn", "Go on".to_string())
+        .await
+        .expect_err("a revoked connection resumes no earlier task");
 
     // Condition 8: each owner sees the tasks other accounts sent them.
     let audit = |device: &str| -> Vec<(String, String, String)> {
@@ -528,6 +556,7 @@ async fn desktop_requester_delegates_to_other_accounts_over_connections() {
                 "finished".into(),
                 "succeeded".into()
             ),
+            (job.job_id.clone(), "finished".into(), "succeeded".into()),
         ]
     );
     assert_eq!(

@@ -87,6 +87,8 @@ pub(super) struct TaskInvocation {
     pub(super) is_retry: bool,
     pub(super) requested_auto_retry: bool,
     pub(super) cancel_descendants: bool,
+    /// An earlier task of a remote agent that the new subagent continues.
+    pub(super) resume_task_id: Option<String>,
 }
 
 impl AgentExecutionTool {
@@ -143,6 +145,7 @@ impl AgentExecutionTool {
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
                 cancel_descendants: false,
+                resume_task_id: None,
             });
         }
 
@@ -195,13 +198,14 @@ impl AgentExecutionTool {
                         }
                         Self::ensure_fields_absent(
                             input,
-                            &["retry", "auto_retry", "retry_coverage"],
+                            &["retry", "auto_retry", "retry_coverage", "resume_task_id"],
                             action,
                         )?;
                     }
                 }
 
                 let (model_id, inherit_parent_model) = Self::optional_model_id(input)?;
+                let resume_task_id = Self::optional_trimmed_string(input, "resume_task_id")?;
 
                 Ok(TaskInvocation {
                     action,
@@ -218,6 +222,7 @@ impl AgentExecutionTool {
                     is_retry: false,
                     requested_auto_retry: false,
                     cancel_descendants: false,
+                    resume_task_id,
                 })
             }
             TaskAction::SendInput => {
@@ -231,6 +236,7 @@ impl AgentExecutionTool {
                         "retry",
                         "auto_retry",
                         "retry_coverage",
+                        "resume_task_id",
                     ],
                     action,
                 )?;
@@ -252,6 +258,7 @@ impl AgentExecutionTool {
                     is_retry: false,
                     requested_auto_retry: false,
                     cancel_descendants: false,
+                    resume_task_id: None,
                 })
             }
             TaskAction::Cancel => {
@@ -269,6 +276,7 @@ impl AgentExecutionTool {
                         "retry",
                         "auto_retry",
                         "retry_coverage",
+                        "resume_task_id",
                     ],
                     action,
                 )?;
@@ -288,6 +296,7 @@ impl AgentExecutionTool {
                     is_retry: false,
                     requested_auto_retry: false,
                     cancel_descendants,
+                    resume_task_id: None,
                 })
             }
         }

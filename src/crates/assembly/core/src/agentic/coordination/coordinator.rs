@@ -2670,6 +2670,10 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         }
     }
 
+    pub(crate) fn coordination_store(&self) -> Arc<super::coordination_store::CoordinationStore> {
+        self.background_subagent_outcomes.coordination_store()
+    }
+
     pub fn remote_agent_port(
         &self,
     ) -> Option<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>> {
@@ -11475,6 +11479,10 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     execution_context.permission_delegation.clone(),
                     None,
                 );
+                let resume_task_id = execution_context
+                    .context
+                    .get(super::remote_agent_turn::earlier_tasks::RESUME_REMOTE_TASK_CONTEXT_KEY)
+                    .cloned();
                 drop((execution_engine, initial_messages, execution_context));
                 let parent_agent_type = self
                     .session_manager
@@ -11498,6 +11506,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         },
                         permissions,
                         cancel_token: subagent_cancel_token.clone(),
+                        resume_task_id,
                     },
                 ))
             }
