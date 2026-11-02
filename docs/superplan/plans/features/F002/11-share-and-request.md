@@ -264,7 +264,18 @@ parent: "F002"
 - `pnpm run check:core-boundaries`
 - `pnpm run lint:rs:desktop`
 
-- [ ] 命令与注册表一致；桌面端启动后有共享即广播、无共享不监听；后台时申请到达发通知
+- [x] 命令与注册表一致；桌面端启动后有共享即广播、无共享不监听；后台时申请到达发通知
+  - 证据（2026-11-02）：
+    - `src/apps/desktop/src/api/lan_share_api.rs`：15 个命令（结构化 `request`），应用启动时 `init_services` 用生产事件发送器启动共享主机；主机启动失败时每个命令返回原因。`cargo test --locked -p openbitfun-desktop --lib -- lan_share_api remote_workspace_policy peer_host_invoke` 26 项通过（含请求形状与租户列表两项新测试、每个已注册命令都有注册表行的闭包测试）。
+    - 注册表 15 行均为 `Agnostic`、`ControllerLocal`、`REFUSED`；`cargo test --locked -p openbitfun-product-domains --lib remote_surface` 20 项通过；`node scripts/generate-interactive-capabilities.mjs` 重新生成注册表、`productControl.ts`、`remoteSurface.ts` 与 `docs/interactive-capabilities/`，`--check` 与 `scripts/interactive-capabilities.test.mjs` 通过；能力目录在「个人助理」下新增 `lan-share`、`lan-discover` 两项。
+    - Web UI `LanShareAPI.ts`：命令与 `lan_share://requests|shared|shared_with_me|discovered` 事件订阅；`type-check:web` 通过，`lint:web` 0 错误（16 条警告均在既有文件）。
+    - 有共享才监听、无共享不监听由 Task 3 回环测试覆盖（共享前 `port()` 为空，停止后为空）；真实 Bonjour 广播在 Task 7 验收。
+    - `check:core-boundaries` 通过；clippy（1.91.1，1.95.0 工具链未装 clippy）在改动的 core 文件上无告警。`pnpm run lint:rs:desktop` 未能运行：1.95.0 未装 clippy，1.91.1 低于桌面依赖要求的 rustc 版本；留给 CI。
+  - 与计划的差异：
+    - `lan-share` 加入 core 的 `product-full`（边界规则要求桌面端只选 `product-full`），桌面端 `Cargo.toml` 不变；服务端随 `product-full` 一并编译，但不启动共享主机。
+    - 后台通知由 Web UI 在收到 `lan_share://requests` 且窗口不在前台时经已有的 `send_system_notification` 发出（与应用其他通知一致，文案走 i18n），随 Task 5 的确认框实现；桌面端 Rust 不再单独发通知。
+    - `lan_share_update` 同时用于改设置与同步对外显示的助理名称（`name` 可选），Web UI 在助理改名后调用。
+    - `lan_share_delete_tenant` 只删除已无授权的设备的数据；仍有授权时要求先撤销。
 
 ## Task 5: 主人界面：共享、管理与确认框
 

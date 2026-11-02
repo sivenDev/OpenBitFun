@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "e729efc8e95c12755d3bc69c658cacc304f04f68b8affd655f0545cfa365e8ce",
-  "commandCount": 711,
+  "catalogDigest": "b3f3da00a105dab3ec61c2062ccc9431ff66d62968a7edcdb39740dca5f3ae3c",
+  "commandCount": 726,
   "coverage": {
-    "commandCount": 711,
-    "documentedCommandCount": 651,
+    "commandCount": 726,
+    "documentedCommandCount": 666,
     "implementationCommandCount": 60,
     "implementationDigest": "5047b674e890f899e65baf9235e9df4bd912fa28f44eb10a656e079a1b89974d"
   },
@@ -5380,6 +5380,246 @@
       "sourceFile": "src/apps/desktop/src/api/agentic_api.rs",
       "signature": "fn interrupt_dialog_turn( runtime: State<'_, DesktopRuntimeContext>, request: CancelDialogTurnRequest, ) -> Result<(), String>",
       "remoteWorkspacePolicy": "LocalOnly"
+    },
+    {
+      "id": "lan_share_decide",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_decide",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_decide(request: LanShareDecideRequest) -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_delete_tenant",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_delete_tenant",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_delete_tenant(request: LanShareDeleteTenantRequest) -> Result<bool, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_discover_list",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_discover_list",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_discover_list() -> Result<Vec<DiscoveredDevice>, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_discover_start",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_discover_start",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_discover_start() -> Result<Vec<DiscoveredDevice>, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_discover_stop",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_discover_stop",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_discover_stop() -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_overview",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_overview",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_overview() -> Result<LanShareOverview, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_remove",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_remove",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_remove(request: LanShareRemoveRequest) -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_request",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_request",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_request(request: LanShareAskRequest) -> Result<RequestOpened, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_requests",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_requests",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_requests() -> Result<Vec<ShareRequestView>, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_revoke",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_revoke",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_revoke(request: LanShareRevokeRequest) -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_set_display_name",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_set_display_name",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_set_display_name( request: LanShareDisplayNameRequest, ) -> Result<HostStatus, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_share",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_share",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_share(request: LanShareShareRequest) -> Result<SharedAssistant, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_shared_with_me",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_shared_with_me",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_shared_with_me() -> Result<Vec<SharedWithMe>, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_stop",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_stop",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_stop(request: LanShareAssistantRequest) -> Result<bool, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_update",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-share"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_update",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_update(request: LanShareUpdateRequest) -> Result<SharedAssistant, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
       "id": "list_agent_companion_pets",

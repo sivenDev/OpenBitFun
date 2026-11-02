@@ -2070,6 +2070,21 @@ pub async fn run() {
             api::delegation_tasks_api::delegation_list_tasks,
             api::delegation_tasks_api::delegation_task_status,
             api::delegation_tasks_api::delegation_task_answer,
+            api::lan_share_api::lan_share_overview,
+            api::lan_share_api::lan_share_share,
+            api::lan_share_api::lan_share_update,
+            api::lan_share_api::lan_share_stop,
+            api::lan_share_api::lan_share_revoke,
+            api::lan_share_api::lan_share_delete_tenant,
+            api::lan_share_api::lan_share_requests,
+            api::lan_share_api::lan_share_decide,
+            api::lan_share_api::lan_share_discover_start,
+            api::lan_share_api::lan_share_discover_stop,
+            api::lan_share_api::lan_share_discover_list,
+            api::lan_share_api::lan_share_request,
+            api::lan_share_api::lan_share_shared_with_me,
+            api::lan_share_api::lan_share_remove,
+            api::lan_share_api::lan_share_set_display_name,
             api::delegation_api::delegation_audit_list,
             api::dispatch_api::dispatch_list_targets,
             api::dispatch_api::dispatch_probe_target,
@@ -2779,6 +2794,8 @@ fn init_services(app_handle: tauri::AppHandle, default_log_level: log::LevelFilt
         };
 
         service::snapshot::initialize_snapshot_event_emitter(emitter.clone());
+
+        tokio::spawn(api::lan_share_api::start(emitter.clone()));
 
         openbitfun_core::service::initialize_file_watch_service(emitter.clone());
 

@@ -4,7 +4,7 @@
   "title": "OpenBitFun Playbook",
   "origin": "https://playbook.openbitfun.com",
   "source": "src/shared/interactive-capabilities/catalog.json",
-  "digest": "e729efc8e95c12755d3bc69c658cacc304f04f68b8affd655f0545cfa365e8ce",
+  "digest": "b3f3da00a105dab3ec61c2062ccc9431ff66d62968a7edcdb39740dca5f3ae3c",
   "ownerDigest": "f27c231da2e536e4f2123910f34f862b55d21feb0528bc915d4d13edbd528af9",
   "searchAcceptance": [
     {
@@ -175,11 +175,11 @@
     "features": 23,
     "settings": 21,
     "userFacing": 44,
-    "documentedItems": 337,
+    "documentedItems": 339,
     "controlCoverage": {
       "direct": 56,
       "delegated": 67,
-      "interactive": 214,
+      "interactive": 216,
       "unsupported": 0
     }
   },
@@ -1506,7 +1506,9 @@
         "identity-avatar",
         "persona-documents",
         "assistant-sessions",
-        "assistant-schedules"
+        "assistant-schedules",
+        "lan-share",
+        "lan-discover"
       ],
       "kind": "query",
       "risk": "read",
@@ -1828,6 +1830,98 @@
       "capabilityId": "feature.personal-assistants",
       "itemIds": [
         "assistant-schedules"
+      ],
+      "kind": "open",
+      "risk": "ui",
+      "executionHost": "presentationSurface",
+      "availability": {
+        "desktop": {
+          "available": true
+        },
+        "cli": {
+          "available": false,
+          "reason": "This delivery profile has no live presentation surface"
+        },
+        "peer": {
+          "available": true,
+          "requiredCapabilities": [
+            "product_control_v1",
+            "product_control_presentation_v1"
+          ]
+        },
+        "remoteControl": {
+          "available": true
+        },
+        "detachedDispatch": {
+          "available": false,
+          "reason": "This delivery profile has no live presentation surface"
+        }
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "openReason": "unstructuredInteraction",
+      "presentationTarget": {
+        "kind": "scene",
+        "sceneId": "profile"
+      }
+    },
+    {
+      "id": "feature.personal-assistants:open:lan-share",
+      "capabilityId": "feature.personal-assistants",
+      "itemIds": [
+        "lan-share"
+      ],
+      "kind": "open",
+      "risk": "ui",
+      "executionHost": "presentationSurface",
+      "availability": {
+        "desktop": {
+          "available": true
+        },
+        "cli": {
+          "available": false,
+          "reason": "This delivery profile has no live presentation surface"
+        },
+        "peer": {
+          "available": true,
+          "requiredCapabilities": [
+            "product_control_v1",
+            "product_control_presentation_v1"
+          ]
+        },
+        "remoteControl": {
+          "available": true
+        },
+        "detachedDispatch": {
+          "available": false,
+          "reason": "This delivery profile has no live presentation surface"
+        }
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "openReason": "unstructuredInteraction",
+      "presentationTarget": {
+        "kind": "scene",
+        "sceneId": "profile"
+      }
+    },
+    {
+      "id": "feature.personal-assistants:open:lan-discover",
+      "capabilityId": "feature.personal-assistants",
+      "itemIds": [
+        "lan-discover"
       ],
       "kind": "open",
       "risk": "ui",
@@ -20985,6 +21079,28 @@
             "reasonZh": "“查看和管理仅属于当前助理工作区的定时会话与自动任务”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
             "reasonEn": "“Review and manage scheduled sessions and automated jobs scoped to the current assistant workspace” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user."
           }
+        },
+        {
+          "id": "lan-share",
+          "titleZh": "在局域网内共享助理：设置信任程度、会话保留天数与同时任务数，确认其他设备的申请，撤销或停止共享",
+          "titleEn": "Share an assistant on the local network: set its trust, session retention and concurrent tasks, answer other devices' requests, and withdraw access or stop sharing",
+          "control": {
+            "kind": "open",
+            "reasonCode": "unstructuredInteraction",
+            "reasonZh": "“在局域网内共享助理”中的共享设置与对申请的允许或拒绝都是设备主人亲自做出的决定；智能体会打开精确入口，并把这些选择保留在用户可见界面。",
+            "reasonEn": "“Share an assistant on the local network” involves sharing settings and allowing or declining requests that the device owner decides in person; the Agent opens the exact entry and keeps those choices visible to the user."
+          }
+        },
+        {
+          "id": "lan-discover",
+          "titleZh": "发现局域网内其他设备共享的助理，申请使用，并管理已加入的共享助理",
+          "titleEn": "Discover assistants other devices share on the local network, ask to use them, and manage the shared assistants you added",
+          "control": {
+            "kind": "open",
+            "reasonCode": "unstructuredInteraction",
+            "reasonZh": "“发现局域网内其他设备共享的助理”依赖实时发现的设备与对方主人的确认，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
+            "reasonEn": "“Discover assistants other devices share on the local network” depends on devices found live and on the other owner's confirmation, and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user."
+          }
         }
       ],
       "stepsZh": [
@@ -21053,6 +21169,10 @@
         "Choose a model, send a message, and browse an assistant's sessions from its detail page",
         "查看和管理仅属于当前助理工作区的定时会话与自动任务",
         "Review and manage scheduled sessions and automated jobs scoped to the current assistant workspace",
+        "在局域网内共享助理：设置信任程度、会话保留天数与同时任务数，确认其他设备的申请，撤销或停止共享",
+        "Share an assistant on the local network: set its trust, session retention and concurrent tasks, answer other devices' requests, and withdraw access or stop sharing",
+        "发现局域网内其他设备共享的助理，申请使用，并管理已加入的共享助理",
+        "Discover assistants other devices share on the local network, ask to use them, and manage the shared assistants you added",
         "打开我的个人助理",
         "帮我创建一个新的个人助理",
         "我想修改主助理的人设",

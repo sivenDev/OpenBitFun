@@ -31,6 +31,10 @@ Create and manage persistent AI assistants, define their identity and persona, a
   - Choose a model, send a message, and browse an assistant's sessions from its detail page
 - **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 查看和管理仅属于当前助理工作区的定时会话与自动任务
   - Review and manage scheduled sessions and automated jobs scoped to the current assistant workspace
+- **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 在局域网内共享助理：设置信任程度、会话保留天数与同时任务数，确认其他设备的申请，撤销或停止共享
+  - Share an assistant on the local network: set its trust, session retention and concurrent tasks, answer other devices' requests, and withdraw access or stop sharing
+- **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 发现局域网内其他设备共享的助理，申请使用，并管理已加入的共享助理
+  - Discover assistants other devices share on the local network, ask to use them, and manage the shared assistants you added
 
 ## 怎么用 / How to use it
 

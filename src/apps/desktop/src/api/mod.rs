@@ -35,6 +35,7 @@ pub mod git_api;
 pub mod html_preview_api;
 pub mod i18n_api;
 pub mod insights_api;
+pub mod lan_share_api;
 pub mod local_file_download;
 pub mod market_image_api;
 pub mod mcp_api;

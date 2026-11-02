@@ -111,6 +111,26 @@ LAN session in the account slot attempt to restore the official Relay from the
 shared identity; failed sign-in leaves the previous credential on disk. Signing
 out closes both connections.
 
+## Sharing assistants on the local network
+
+Share an assistant from **Assistants** to let people on the same local network
+use it; no sign-in or Relay is involved. Choose its trust, how many days its
+conversations with other devices are kept, and how many of their tasks run at
+once. While anything is shared, this device is visible to others through
+Bonjour; it stops listening when the last share stops.
+
+A request opens a confirmation with a 60-second countdown on the owner's device
+and is declined when it runs out; a declined device can ask again a minute
+later, and **Decline and don't ask again** blocks it. The answer reaches the
+asking device at once. Each device that uses an assistant gets its own
+workspace and conversations under that assistant; the owner can withdraw its
+access and then delete what it left.
+
+Other devices' shared assistants are found with **Discover** next to **New
+assistant**. macOS asks once for local network access; if it was denied, enable
+OpenBitFun in **System Settings → Privacy & Security → Local Network**. In Peer
+Device Mode, sharing and Discover stay on the device in front of you.
+
 ## Global agent instructions
 
 Put personal instructions for local OpenBitFun sessions in

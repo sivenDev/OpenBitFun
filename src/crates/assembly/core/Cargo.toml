@@ -184,6 +184,7 @@ product-full = [
     "file-watch",
     "workspace-watch",
     "ssh-remote",
+    "lan-share",
     "dispatch-store",
     "ptc-runtime",
     "filesystem",
