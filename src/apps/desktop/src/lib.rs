@@ -2084,6 +2084,7 @@ pub async fn run() {
             api::lan_share_api::lan_share_request,
             api::lan_share_api::lan_share_shared_with_me,
             api::lan_share_api::lan_share_remove,
+            api::lan_share_api::lan_share_open_network_settings,
             api::lan_share_api::lan_share_set_display_name,
             api::delegation_api::delegation_audit_list,
             api::dispatch_api::dispatch_list_targets,

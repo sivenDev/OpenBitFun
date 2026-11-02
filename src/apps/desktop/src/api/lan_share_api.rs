@@ -300,6 +300,36 @@ pub async fn lan_share_set_display_name(
     host()?.set_display_name(&request.name).await
 }
 
+/// Opens the system settings that decide whether this app may use the
+/// local network, for when no sharing device can be found.
+#[tauri::command]
+pub async fn lan_share_open_network_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let (program, args) = (
+        "open",
+        ["x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"].as_slice(),
+    );
+    #[cfg(target_os = "windows")]
+    let (program, args) = (
+        "cmd",
+        ["/C", "start", "", "ms-settings:network-status"].as_slice(),
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    return Err("open your desktop environment's network settings".to_string());
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let status = openbitfun_core::util::process_manager::create_command(program)
+            .args(args)
+            .status()
+            .map_err(|error| format!("open network settings: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("open network settings: exited with {status}"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

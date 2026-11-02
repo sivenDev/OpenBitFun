@@ -446,6 +446,7 @@ pub(super) const OPERATIONS: &[OperationDefinition] = &[
     op("lan_share_discover_list",                                    Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_discover_start",                                   Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_discover_stop",                                    Agnostic,    ControllerLocal,  REFUSED),
+    op("lan_share_open_network_settings",                            Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_overview",                                         Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_remove",                                           Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_request",                                          Agnostic,    ControllerLocal,  REFUSED),

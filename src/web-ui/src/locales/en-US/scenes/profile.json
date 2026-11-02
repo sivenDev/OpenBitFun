@@ -265,6 +265,53 @@
         "failed": "Could not answer the request: {{reason}}",
         "notificationBody": "{{name}} wants to use your assistant “{{assistant}}”"
       }
+    },
+    "discover": {
+      "action": "Discover",
+      "peerUnavailable": "Not available while controlling another device",
+      "title": "Discover",
+      "description": "Assistants that other devices on your local network share. Click one to ask to use it.",
+      "searching": "Looking…",
+      "emptyTitle": "No device is sharing an assistant",
+      "emptyHint": "Check that the other device is on the same network and has shared an assistant. On macOS, OpenBitFun also needs Local Network access in System Settings.",
+      "openSettings": "Open System Settings",
+      "problem": "Other devices cannot be found right now",
+      "settingsFailed": "Could not open System Settings: {{reason}}",
+      "device": "{{device}} · {{code}}",
+      "reading": "Reading…",
+      "needsUpdate": "This device runs a version of OpenBitFun that does not work with yours. Update both devices to the latest version.",
+      "unreachable": "This device cannot be reached right now. Check that it is on the same network and OpenBitFun is open.",
+      "nothingShared": "This device is not sharing an assistant right now.",
+      "ask": "Ask to use",
+      "pending": "Waiting · {{seconds}}s",
+      "added": "In your assistants",
+      "cooling": "Ask again in {{seconds}}s",
+      "from": "From {{name}} ({{device}})",
+      "code": "Device code {{code}}",
+      "privacy": "The owner can see your conversations with this assistant",
+      "granted": "“{{name}}” was added to your assistants",
+      "declined": "The owner did not agree to share “{{name}}”",
+      "requestFailed": "The request was not sent: {{reason}}",
+      "shownAs": "Other devices see you as “{{name}}”",
+      "nameEdit": "Change",
+      "nameLabel": "The name other devices see",
+      "nameSave": "Save",
+      "nameCancel": "Cancel",
+      "nameFailed": "Could not change the name: {{reason}}"
+    },
+    "sharedWithMe": {
+      "title": "Shared with you",
+      "badge": "Shared",
+      "from": "From {{name}}'s device",
+      "revoked": "No longer shared",
+      "revokedHint": "The owner stopped sharing this assistant. You can remove it from your list.",
+      "source": "From {{name}} ({{device}} · {{code}})",
+      "addedAt": "Added {{time}}",
+      "remove": "Remove",
+      "removeTitle": "Remove “{{name}}”?",
+      "removeMessage": "It will be removed from your assistants, and {{owner}} will be told. You can ask again in Discover.",
+      "removeRevokedMessage": "It will be removed from your assistants.",
+      "removeFailed": "Could not remove it: {{reason}}"
     }
   }
 }

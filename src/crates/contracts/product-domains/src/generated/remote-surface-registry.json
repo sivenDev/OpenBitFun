@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "digest": "fnv1a64:eafba68723644e56",
+  "digest": "fnv1a64:30bca8c45b960dfd",
   "retiredCommandPrefixes": [
     {
       "prefix": "lsp_",
@@ -4321,6 +4321,18 @@
     },
     {
       "id": "lan_share_discover_stop",
+      "surface": "tauri_command",
+      "remoteWorkspace": "WorkspaceAgnostic",
+      "peer": {
+        "kind": "controller_local"
+      },
+      "cliPeer": {
+        "kind": "unsupported",
+        "reason": "the controller keeps this command; peer hosts refuse it before dispatch"
+      }
+    },
+    {
+      "id": "lan_share_open_network_settings",
       "surface": "tauri_command",
       "remoteWorkspace": "WorkspaceAgnostic",
       "peer": {

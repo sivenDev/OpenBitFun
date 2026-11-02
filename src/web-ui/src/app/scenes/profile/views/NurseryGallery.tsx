@@ -1,8 +1,8 @@
 import { resolveAssistantName } from '@/shared/utils/assistantName';
-import { Button, Icon, NumberBadge, PageHeader } from '@openbitfun/ui';
+import { Button, Icon, NumberBadge, PageHeader, Tooltip } from '@openbitfun/ui';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
-import { CircleAlert, LoaderCircle } from 'lucide-react';
+import { CircleAlert, LoaderCircle, Radar } from 'lucide-react';
 import {
   GalleryEmpty,
   GalleryLayout,
@@ -28,6 +28,8 @@ import { createLogger } from '@/shared/utils/logger';
 import AssistantCard from './AssistantCard';
 import AssistantShareDialog from './AssistantShareDialog';
 import AssistantShareManageDialog from './AssistantShareManageDialog';
+import DiscoverPanel from './DiscoverPanel';
+import SharedAssistantCard from './SharedAssistantCard';
 import { useNurseryStore } from '../nurseryStore';
 import './NurseryView.scss';
 
@@ -67,6 +69,8 @@ const NurseryGallery: React.FC = () => {
   const lanShareUnavailable = useLanShareStore((state) => state.unavailable);
   const [shareTarget, setShareTarget] = useState<WorkspaceInfo | null>(null);
   const [manageTarget, setManageTarget] = useState<WorkspaceInfo | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const sharedWithMe = useLanShareStore((state) => state.sharedWithMe);
 
   useEffect(() => (sharingAvailable ? subscribeLanShare() : undefined), [sharingAvailable]);
 
@@ -229,6 +233,22 @@ const NurseryGallery: React.FC = () => {
           title={t('nursery.gallery.assistantsTitle')}
           titleAdornment={<NumberBadge value={sortedAssistantWorkspacesList.length} />}
           tools={(
+            <>
+            {sharingAvailable ? (
+              <Tooltip content={peerActive ? t('nursery.discover.peerUnavailable') : t('nursery.discover.description')}>
+                <Button
+                  type="button"
+                  variant="fill"
+                  size="sm"
+                  onClick={() => setDiscovering(true)}
+                  disabled={peerActive}
+                  leadingIcon={<Icon glyph={Radar} size="sm" aria-hidden="true" />}
+                  data-testid="nursery-discover"
+                >
+                  {t('nursery.discover.action')}
+                </Button>
+              </Tooltip>
+            ) : null}
             <Button
               type="button"
               variant="primary"
@@ -246,6 +266,7 @@ const NurseryGallery: React.FC = () => {
                 {t(creating ? 'nursery.gallery.creating' : 'nursery.gallery.newAssistant')}
               </span>
             </Button>
+            </>
           )}
         >
           {workspaceLoading && sortedAssistantWorkspacesList.length === 0 ? (
@@ -348,6 +369,25 @@ const NurseryGallery: React.FC = () => {
             </GalleryGrid>
           )}
         </GalleryZone>
+
+        {sharingAvailable && sharedWithMe.length > 0 ? (
+          <GalleryZone
+            id="nursery-shared-with-me-zone"
+            className="nursery-gallery__assistant-zone"
+            title={t('nursery.sharedWithMe.title')}
+            titleAdornment={<NumberBadge value={sharedWithMe.length} />}
+          >
+            <GalleryGrid className="nursery-gallery__assistant-grid" role="list" data-testid="nursery-shared-with-me">
+              {sharedWithMe.map((assistant, i) => (
+                <SharedAssistantCard
+                  key={`${assistant.owner.publicKey}/${assistant.assistantId}`}
+                  assistant={assistant}
+                  style={{ '--surface-stagger-index': i } as React.CSSProperties}
+                />
+              ))}
+            </GalleryGrid>
+          </GalleryZone>
+        ) : null}
       </div>
 
       {shareTarget ? (
@@ -359,6 +399,7 @@ const NurseryGallery: React.FC = () => {
           onClose={() => setShareTarget(null)}
         />
       ) : null}
+      {discovering ? <DiscoverPanel open onClose={() => setDiscovering(false)} /> : null}
       {manageTarget && manageShare ? (
         <AssistantShareManageDialog
           open

@@ -265,6 +265,53 @@
         "failed": "無法處理申請：{{reason}}",
         "notificationBody": "{{name}} 想使用你的助理「{{assistant}}」"
       }
+    },
+    "discover": {
+      "action": "發現",
+      "peerUnavailable": "對端模式下無法使用",
+      "title": "發現",
+      "description": "同一區域網路內其他裝置共享的助理。點一下即可申請使用。",
+      "searching": "正在尋找…",
+      "emptyTitle": "沒有找到正在共享助理的裝置",
+      "emptyHint": "請確認對方和你在同一個網路中，並且已經共享了助理。在 macOS 上，還需要在系統設定中允許 OpenBitFun 存取區域網路。",
+      "openSettings": "打開系統設定",
+      "problem": "暫時無法尋找其他裝置",
+      "settingsFailed": "無法打開系統設定：{{reason}}",
+      "device": "{{device}} · {{code}}",
+      "reading": "正在讀取…",
+      "needsUpdate": "這台裝置的 OpenBitFun 版本與本機不相容，請把兩台裝置都更新到最新版本。",
+      "unreachable": "暫時無法存取這台裝置，請確認它在同一網路中並已打開 OpenBitFun。",
+      "nothingShared": "這台裝置目前沒有共享助理。",
+      "ask": "申請使用",
+      "pending": "等待確認 · {{seconds}} 秒",
+      "added": "已在你的助理列表",
+      "cooling": "{{seconds}} 秒後可再次申請",
+      "from": "來自 {{name}}（{{device}}）",
+      "code": "裝置碼 {{code}}",
+      "privacy": "對方可以查看你和這個助理的對話",
+      "granted": "「{{name}}」已加入你的助理列表",
+      "declined": "對方沒有同意使用「{{name}}」",
+      "requestFailed": "申請沒有送出：{{reason}}",
+      "shownAs": "你在其他裝置上顯示為「{{name}}」",
+      "nameEdit": "修改",
+      "nameLabel": "你在其他裝置上顯示的名字",
+      "nameSave": "儲存",
+      "nameCancel": "取消",
+      "nameFailed": "無法修改名字：{{reason}}"
+    },
+    "sharedWithMe": {
+      "title": "來自共享",
+      "badge": "來自共享",
+      "from": "來自 {{name}} 的裝置",
+      "revoked": "已停止共享",
+      "revokedHint": "對方已停止共享這個助理，你可以把它從列表中移除。",
+      "source": "來自 {{name}}（{{device}} · {{code}}）",
+      "addedAt": "{{time}} 加入",
+      "remove": "移除",
+      "removeTitle": "移除「{{name}}」？",
+      "removeMessage": "它將從你的助理列表中移除，{{owner}} 會收到通知。之後可以在「發現」中重新申請。",
+      "removeRevokedMessage": "它將從你的助理列表中移除。",
+      "removeFailed": "無法移除：{{reason}}"
     }
   }
 }

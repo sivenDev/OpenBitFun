@@ -267,7 +267,7 @@ parent: "F002"
 - [x] 命令与注册表一致；桌面端启动后有共享即广播、无共享不监听；后台时申请到达发通知
   - 证据（2026-11-02）：
     - `src/apps/desktop/src/api/lan_share_api.rs`：15 个命令（结构化 `request`），应用启动时 `init_services` 用生产事件发送器启动共享主机；主机启动失败时每个命令返回原因。`cargo test --locked -p openbitfun-desktop --lib -- lan_share_api remote_workspace_policy peer_host_invoke` 26 项通过（含请求形状与租户列表两项新测试、每个已注册命令都有注册表行的闭包测试）。
-    - 注册表 15 行均为 `Agnostic`、`ControllerLocal`、`REFUSED`；`cargo test --locked -p openbitfun-product-domains --lib remote_surface` 20 项通过；`node scripts/generate-interactive-capabilities.mjs` 重新生成注册表、`productControl.ts`、`remoteSurface.ts` 与 `docs/interactive-capabilities/`，`--check` 与 `scripts/interactive-capabilities.test.mjs` 通过；能力目录在「个人助理」下新增 `lan-share`、`lan-discover` 两项。
+    - 注册表 15 行均为 `Agnostic`、`ControllerLocal`、`REFUSED`；`cargo test --locked -p openbitfun-product-domains --lib remote_surface` 20 项通过；`node scripts/generate-interactive-capabilities.mjs` 重新生成注册表、`productControl.ts`、`remoteSurface.ts` 与 `docs/interactive-capabilities/`，`--check` 通过；能力目录在「个人助理」下新增 `lan-share`、`lan-discover` 两项。更正（Task 6 时发现）：当时记录的 `scripts/interactive-capabilities.test.mjs` 通过有误，两项的说明没有完整引用标题，该测试 1 项失败；已在 Task 6 修正，16 项通过。
     - Web UI `LanShareAPI.ts`：命令与 `lan_share://requests|shared|shared_with_me|discovered` 事件订阅；`type-check:web` 通过，`lint:web` 0 错误（16 条警告均在既有文件）。
     - 有共享才监听、无共享不监听由 Task 3 回环测试覆盖（共享前 `port()` 为空，停止后为空）；真实 Bonjour 广播在 Task 7 验收。
     - `check:core-boundaries` 通过；clippy（1.91.1，1.95.0 工具链未装 clippy）在改动的 core 文件上无告警。`pnpm run lint:rs:desktop` 未能运行：1.95.0 未装 clippy，1.91.1 低于桌面依赖要求的 rustc 版本；留给 CI。
@@ -329,7 +329,16 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/app/scenes/profile/views src/infrastructure/lan-share`
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`、`pnpm run theme:color-audit:all`
 
-- [ ] 发现、申请、各类失败原因、来自共享的助理的显示、撤销与移除有组件测试
+- [x] 发现、申请、各类失败原因、来自共享的助理的显示、撤销与移除有组件测试
+  - 证据（2026-11-02）：
+    - `pnpm --dir src/web-ui run test:run src/app/scenes/profile src/app/components/LanShareRequestDialog src/infrastructure/lan-share` 11 个文件 58 项通过。新增 `DiscoverPanel.test.tsx` 6 项（打开时查找、关闭时停止、找不到时的说明与打开系统设置、无法查找时的原因、按设备分组与申请状态及倒数、申请与结果提示、立即被拒与没有发出的原因、隐私说明与修改显示名）；`SharedAssistantCard.test.tsx` 4 项（来源标记与详情、已停止共享的标记、确认后移除并通知对方、移除失败原因）。
+    - 新命令 `lan_share_open_network_settings`（macOS 打开「本地网络」隐私设置，Windows 打开网络状态，其他平台返回说明）：注册表行 `Agnostic`、`ControllerLocal`、`REFUSED`，能力目录 `lan-discover` 证据；`cargo test --locked -p openbitfun-desktop --lib -- lan_share_api remote_workspace_policy peer_host_invoke` 26 项、`cargo test --locked -p openbitfun-product-domains --lib remote_surface` 20 项通过；`node scripts/generate-interactive-capabilities.mjs --check` 与 `node --test scripts/interactive-capabilities.test.mjs` 16 项通过。
+    - `pnpm run type-check:web` 通过；`pnpm run lint:web` 0 错误（16 条警告均在既有文件）；`pnpm run i18n:audit` 通过；`pnpm run theme:color-audit:all` 28 个界面通过，未改基线；`pnpm run check:core-boundaries` 通过。
+  - 与计划的差异：
+    - 来自共享的助理在助理页单独一组「来自共享」，每张卡标「来自 某某的设备」；与自己的助理分组显示，避免与「新建助理」卡位混排。
+    - 「对方可以查看你和这个助理的对话」显示在悬停详情和面板底部（申请前可见），不另加一步确认，保持点一下即申请。
+    - 找不到设备时无法区分「没人共享」与「本机没有本地网络权限」（macOS 拒绝时不报错，只是收不到），所以空状态同时说明两种原因并给出打开系统设置；查找本身失败或主机报告问题时单独显示原因。
+    - 「对方不在线」「需要更新」按设备显示在设备名下，「冷却中」显示在助理上并倒数；申请失败的原因按主机返回显示。
 
 ## Task 7: 两台 Mac 真机验收
 

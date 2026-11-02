@@ -126,6 +126,12 @@ asking device at once. Each device that uses an assistant gets its own
 workspace and conversations under that assistant; the owner can withdraw its
 access and then delete what it left.
 
+**Discover**, next to **New assistant**, lists the assistants other devices
+share, by device; click one to ask to use it. Assistants you were given appear
+under **Shared with you**, marked with their source. On macOS, OpenBitFun needs
+**Local Network** access (System Settings > Privacy & Security) to find other
+devices; when nothing is found, Discover links to that setting.
+
 Other devices' shared assistants are found with **Discover** next to **New
 assistant**. macOS asks once for local network access; if it was denied, enable
 OpenBitFun in **System Settings → Privacy & Security → Local Network**. In Peer

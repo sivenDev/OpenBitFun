@@ -4,7 +4,7 @@
   "title": "OpenBitFun Playbook",
   "origin": "https://playbook.openbitfun.com",
   "source": "src/shared/interactive-capabilities/catalog.json",
-  "digest": "b3f3da00a105dab3ec61c2062ccc9431ff66d62968a7edcdb39740dca5f3ae3c",
+  "digest": "047384179d84384a9b7094406a4197438d73d613e1dad5303d73144905413041",
   "ownerDigest": "f27c231da2e536e4f2123910f34f862b55d21feb0528bc915d4d13edbd528af9",
   "searchAcceptance": [
     {
@@ -21083,8 +21083,8 @@
           "control": {
             "kind": "open",
             "reasonCode": "unstructuredInteraction",
-            "reasonZh": "“在局域网内共享助理”中的共享设置与对申请的允许或拒绝都是设备主人亲自做出的决定；智能体会打开精确入口，并把这些选择保留在用户可见界面。",
-            "reasonEn": "“Share an assistant on the local network” involves sharing settings and allowing or declining requests that the device owner decides in person; the Agent opens the exact entry and keeps those choices visible to the user."
+            "reasonZh": "“在局域网内共享助理：设置信任程度、会话保留天数与同时任务数，确认其他设备的申请，撤销或停止共享”中的共享设置与对申请的允许或拒绝都是设备主人亲自做出的决定；智能体会打开精确入口，并把这些选择保留在用户可见界面。",
+            "reasonEn": "“Share an assistant on the local network: set its trust, session retention and concurrent tasks, answer other devices' requests, and withdraw access or stop sharing” involves sharing settings and allowing or declining requests that the device owner decides in person; the Agent opens the exact entry and keeps those choices visible to the user."
           }
         },
         {
@@ -21094,8 +21094,8 @@
           "control": {
             "kind": "open",
             "reasonCode": "unstructuredInteraction",
-            "reasonZh": "“发现局域网内其他设备共享的助理”依赖实时发现的设备与对方主人的确认，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-            "reasonEn": "“Discover assistants other devices share on the local network” depends on devices found live and on the other owner's confirmation, and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user."
+            "reasonZh": "“发现局域网内其他设备共享的助理，申请使用，并管理已加入的共享助理”依赖实时发现的设备与对方主人的确认，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
+            "reasonEn": "“Discover assistants other devices share on the local network, ask to use them, and manage the shared assistants you added” depends on devices found live and on the other owner's confirmation, and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user."
           }
         }
       ],

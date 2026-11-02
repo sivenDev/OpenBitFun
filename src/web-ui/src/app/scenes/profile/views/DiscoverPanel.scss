@@ -1,0 +1,131 @@
+.discover-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbitfun-space-4);
+  min-block-size: 240px;
+}
+
+.discover-panel__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  margin: 0;
+  color: var(--openbitfun-color-content-muted);
+  font-family: var(--openbitfun-type-support-font-family);
+  font-size: var(--openbitfun-type-support-font-size);
+  font-weight: var(--openbitfun-type-support-font-weight);
+  line-height: var(--openbitfun-type-support-line-height);
+  letter-spacing: var(--openbitfun-type-support-letter-spacing);
+}
+
+.discover-panel__problem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--openbitfun-space-2);
+}
+
+.discover-panel__empty {
+  flex: 1;
+}
+
+.discover-panel__devices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbitfun-space-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.discover-panel__device {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbitfun-space-2);
+}
+
+.discover-panel__device-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--openbitfun-space-2);
+  min-inline-size: 0;
+}
+
+.discover-panel__device-name {
+  font-family: var(--openbitfun-type-label-md-font-family);
+  font-size: var(--openbitfun-type-label-md-font-size);
+  font-weight: var(--openbitfun-type-label-md-font-weight);
+  line-height: var(--openbitfun-type-label-md-line-height);
+  letter-spacing: var(--openbitfun-type-label-md-letter-spacing);
+}
+
+.discover-panel__assistants {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: var(--openbitfun-space-2);
+}
+
+.discover-panel__assistant {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  min-inline-size: 0;
+  padding: var(--openbitfun-space-3) var(--openbitfun-space-2);
+  border: 0;
+  border-radius: var(--openbitfun-radius-base);
+  background: transparent;
+  color: inherit;
+  text-align: center;
+  cursor: pointer;
+
+  &:hover:not(:disabled),
+  &:focus-visible {
+    background: var(--openbitfun-color-action-quiet-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--openbitfun-color-focus-ring);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.discover-panel__avatar {
+  display: inline-flex;
+  border-radius: var(--openbitfun-radius-pill);
+}
+
+.discover-panel__assistant--granted .discover-panel__avatar,
+.discover-panel__assistant--pending .discover-panel__avatar {
+  outline: 2px solid var(--openbitfun-color-accent-default);
+  outline-offset: 2px;
+}
+
+.discover-panel__assistant-name {
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discover-panel__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbitfun-space-1);
+  max-inline-size: 260px;
+}
+
+.discover-panel__footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.discover-panel__name-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--openbitfun-space-2);
+}

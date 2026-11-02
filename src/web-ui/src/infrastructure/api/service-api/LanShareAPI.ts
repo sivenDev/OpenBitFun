@@ -230,6 +230,11 @@ class LanShareAPI {
     return invoke('lan_share_remove', { ownerKey, assistantId });
   }
 
+  /** Opens the system settings that let this app use the local network. */
+  openNetworkSettings(): Promise<void> {
+    return invoke('lan_share_open_network_settings');
+  }
+
   // ---- Events ----
 
   onRequests(handler: (payload: { requests: ShareRequest[] }) => void): () => void {

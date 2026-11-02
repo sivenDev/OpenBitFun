@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "b3f3da00a105dab3ec61c2062ccc9431ff66d62968a7edcdb39740dca5f3ae3c",
-  "commandCount": 726,
+  "catalogDigest": "047384179d84384a9b7094406a4197438d73d613e1dad5303d73144905413041",
+  "commandCount": 727,
   "coverage": {
-    "commandCount": 726,
-    "documentedCommandCount": 666,
+    "commandCount": 727,
+    "documentedCommandCount": 667,
     "implementationCommandCount": 60,
     "implementationDigest": "5047b674e890f899e65baf9235e9df4bd912fa28f44eb10a656e079a1b89974d"
   },
@@ -5459,6 +5459,22 @@
       "rustPath": "api::lan_share_api::lan_share_discover_stop",
       "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
       "signature": "fn lan_share_discover_stop() -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_open_network_settings",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_open_network_settings",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_open_network_settings() -> Result<(), String>",
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
