@@ -2,7 +2,7 @@
 id: "F002-04"
 title: "relay 跨账号连接登记与路由授权"
 type: "feature"
-status: "complete"
+status: "superseded"
 summary: "relay 支持一次性跨账号邀请、双方确认的连接记录与撤销，只在有效连接的两台设备之间路由委派 RPC，并在信息接口声明 cross_account_routing_v1。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"
@@ -12,6 +12,8 @@ parent: "F002"
 ---
 
 # relay 跨账号连接登记与路由授权 Plan
+
+> 已被 F002 RFC 第 6 版（局域网共享助理）取代，替代计划为 F002-10 至 F002-13（待 RFC 批准后制定）。本计划交付的成果中，Dispatch 执行与审批、外部任务以助理身份运行且不改写助理、受阻时如实告知与排队、会话保留期限，按 RFC D12 迁移进新流程，其余随第 6 版删除。
 
 **Goal:** relay 能安全地在不同账号的两台设备之间转发委派请求，且只转发给双方都确认过、尚未撤销的连接。
 

@@ -2,7 +2,7 @@
 id: "F002-02"
 title: "同账号委派给远程原生智能体"
 type: "feature"
-status: "complete"
+status: "superseded"
 summary: "发起方的智能体列表显示同账号设备开放的远程智能体；助理用 AgentSpawn 后台委派纯消息或编码任务，后端观察器按游标收回结果交给 AgentWait，重启后可补收。"
 source: "docs/superplan/human/features.md"
 created: "2026-10-30"
@@ -12,6 +12,8 @@ parent: "F002"
 ---
 
 # 同账号委派给远程原生智能体 Plan
+
+> 已被 F002 RFC 第 6 版（局域网共享助理）取代，替代计划为 F002-10 至 F002-13（待 RFC 批准后制定）。本计划交付的成果中，Dispatch 执行与审批、外部任务以助理身份运行且不改写助理、受阻时如实告知与排队、会话保留期限，按 RFC D12 迁移进新流程，其余随第 6 版删除。
 
 **Goal:** 助理能把任务交给同账号另一台设备上开放的智能体，不被阻塞，结果回到发起会话，发起方重启也不会丢失结果。
 

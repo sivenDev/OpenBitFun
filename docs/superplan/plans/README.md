@@ -4,9 +4,9 @@
 
 ## Status
 
-| Type | Plans | Complete |
-| --- | --- | --- |
-| `feature` | 13 | 13 |
+| Type | Plans | Complete | Superseded |
+| --- | --- | --- | --- |
+| `feature` | 13 | 4 | 9 |
 
 ## Plan Groups
 
@@ -15,15 +15,15 @@
 | ID | Plan | Status | Created |
 | --- | --- | --- | --- |
 | `F001-01` | [宿主中立的外部智能体执行器（ACP）](features/F001/01-external-agent-executor.md) | `complete` | 2026-10-29 |
-| `F002-01` | [目标端开放智能体清单与纯消息任务](features/F002/01-target-open-catalog.md) | `complete` | 2026-10-30 |
+| `F002-01` | [目标端开放智能体清单与纯消息任务](features/F002/01-target-open-catalog.md) | `superseded` | 2026-10-30 |
 | `F001-02` | [通过 Task 后台委派外部智能体](features/F001/02-task-delegation.md) | `complete` | 2026-10-29 |
-| `F002-02` | [同账号委派给远程原生智能体](features/F002/02-same-account-delegation.md) | `complete` | 2026-10-30 |
+| `F002-02` | [同账号委派给远程原生智能体](features/F002/02-same-account-delegation.md) | `superseded` | 2026-10-30 |
 | `F001-03` | [智能体列表展示外部智能体与可用状态](features/F001/03-agent-list.md) | `complete` | 2026-10-29 |
-| `F002-03` | [同账号委派给远程设备上的 ACP 外部智能体](features/F002/03-remote-external-agents.md) | `complete` | 2026-10-30 |
+| `F002-03` | [同账号委派给远程设备上的 ACP 外部智能体](features/F002/03-remote-external-agents.md) | `superseded` | 2026-10-30 |
 | `F001-04` | [外部智能体委派的远程场景](features/F001/04-remote-scenarios.md) | `complete` | 2026-10-29 |
-| `F002-04` | [relay 跨账号连接登记与路由授权](features/F002/04-relay-cross-account-routing.md) | `complete` | 2026-10-30 |
-| `F002-05` | [跨账号配对、连接级密钥与连接管理](features/F002/05-cross-account-pairing.md) | `complete` | 2026-10-30 |
-| `F002-06` | [跨账号委派：按连接授权、目标端审批、额度与审计](features/F002/06-cross-account-delegation.md) | `complete` | 2026-10-30 |
-| `F002-07` | [AI协作：只开放助理与连接的信任级别](features/F002/07-open-assistants.md) | `complete` | 2026-10-31 |
-| `F002-08` | [AI协作：外部任务受阻时如实告知，超出额度时排队](features/F002/08-waiting-and-queueing.md) | `complete` | 2026-11-01 |
-| `F002-09` | [AI协作：接回以前的外部任务、按授权保留会话，并删除兼容代码](features/F002/09-resume-and-retention.md) | `complete` | 2026-11-01 |
+| `F002-04` | [relay 跨账号连接登记与路由授权](features/F002/04-relay-cross-account-routing.md) | `superseded` | 2026-10-30 |
+| `F002-05` | [跨账号配对、连接级密钥与连接管理](features/F002/05-cross-account-pairing.md) | `superseded` | 2026-10-30 |
+| `F002-06` | [跨账号委派：按连接授权、目标端审批、额度与审计](features/F002/06-cross-account-delegation.md) | `superseded` | 2026-10-30 |
+| `F002-07` | [AI协作：只开放助理与连接的信任级别](features/F002/07-open-assistants.md) | `superseded` | 2026-10-31 |
+| `F002-08` | [AI协作：外部任务受阻时如实告知，超出额度时排队](features/F002/08-waiting-and-queueing.md) | `superseded` | 2026-11-01 |
+| `F002-09` | [AI协作：接回以前的外部任务、按授权保留会话，并删除兼容代码](features/F002/09-resume-and-retention.md) | `superseded` | 2026-11-01 |
