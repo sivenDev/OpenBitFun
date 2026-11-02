@@ -228,7 +228,7 @@ parent: "F002"
 
 - [x] 回环上的两个主机完成：发现 → 读目录 → 申请 → 超时拒绝 → 冷却拒绝 → 允许 → 推送到达 → 撤销推送 → 重新申请 → 移除 → 停止共享；未授权对端调用其他方法被拒绝；屏蔽的设备申请直接未获同意
   - 证据（2026-11-02）：
-    - `cargo test --locked -p openbitfun-core --features lan-share --test lan_share_flow` 2 项，连续 5 次通过（每次约 2.7 秒）：两个主机在 127.0.0.1 上依次完成 共享后才监听 → 发现并读目录 → 申请 → 超时拒绝（双方同时看到）→ 冷却中再申请被拒 → 允许后授权经推送到达 → 撤销经推送到达 → 重新申请并允许 → 使用者移除、主人删除授权 → 屏蔽后再申请直接未获同意 → 停止共享后不再监听、发现列表中消失；无授权的对端只能读目录、申请与查自己的申请，`remove` 与其他方法被拒，不支持 `assistant_share_v1` 的设备无法建立通道。
+    - `cargo test --locked -p openbitfun-core --features lan-share --test lan_share_flow` 2 项（后增至 3 项），连续 5 次通过（每次约 2.7 秒）：两个主机在 127.0.0.1 上依次完成 共享后才监听 → 发现并读目录 → 申请 → 超时拒绝（双方同时看到）→ 冷却中再申请被拒 → 允许后授权经推送到达 → 撤销经推送到达 → 重新申请并允许 → 使用者移除、主人删除授权 → 屏蔽后再申请直接未获同意 → 停止共享后不再监听、发现列表中消失；无授权的对端只能读目录、申请与查自己的申请，`remove` 与其他方法被拒，不支持 `assistant_share_v1` 的设备无法建立通道。
     - `--features lan-share --lib service::lan_share` 14 项、`--no-default-features --features local-storage --lib service::lan_share` 15 项（含申请队列 5 项：单个申请、截止、冷却、屏蔽、只查自己的申请、停止共享不冷却；`shared_with_me` 3 项：随目录同步、移除待送达、读不了不覆盖）。
     - `agent-runtime,git --lib service::delegation` 9 项（新增：普通信任读取应用数据目录时，除本租户、本租户会话存储与助理工作空间外都需主人批准）；`tool_pipeline` 53 项通过。
     - `check:core-boundaries` 通过；`scripts/core-boundaries/self-test.mjs` 通过。
@@ -236,7 +236,7 @@ parent: "F002"
     - `requests.rs` 不注入时钟对象，而是每个调用传入当前时间（毫秒）；申请时限与冷却时长由主机选项给出（默认 60 秒），回环测试用 0.7 / 0.9 秒。
     - 共享主机同时承担使用者一侧（发现会话、申请、接收推送、移除），`browse.rs` 只保存发现列表的纯状态；主机选项可关闭 Bonjour，测试直接送入发现事件。真实 Bonjour 的发现留给 Task 7 两台 Mac 验收。
     - 增加事件 `lan_share://discovered`，发现面板据此刷新，不轮询。
-    - 使用者只接受自己发起的申请的 `decision` 推送；连接中断时在截止后用 `request_status` 补查。
+    - 使用者只接受自己发起的申请的 `decision` 推送；连接中断时在截止后用 `request_status` 补查。目录本身从不把助理加入使用者的列表，只更新已有条目的名称与撤销状态；新授权只来自本机发起的申请（推送、申请时已授权、截止后补查为已授权）。回环测试 `a_catalog_alone_never_adds_an_assistant_this_device_did_not_ask_for` 覆盖（提交后安全评审提出）。
     - 本机显示名修改后重新监听（新通道用新名字介绍本机）并重新广播。
     - `lan-share` feature 只启用 `openbitfun-services-integrations/lan-share`；`shared_with_me.rs`、`protocol.rs`、`requests.rs` 不依赖它。
     - 安全评审（Task 2 提交后的自动评审）指出普通信任的委派任务可以读到应用数据目录中其他租户与会话：已在 `DelegatedTurnFacts::owner_private_paths` 中把应用数据目录列为需主人逐次批准的范围，本租户工作空间、本租户会话存储与助理工作空间除外。

@@ -327,3 +327,63 @@ async fn a_device_without_access_may_only_read_the_catalog_and_ask() {
     stranger.close().await;
     owner.shutdown().await;
 }
+
+/// Claims every assistant is granted to whoever asks.
+struct Boastful;
+
+#[async_trait]
+impl openbitfun_services_integrations::lan_share::RequestHandler for Boastful {
+    async fn handle(
+        &self,
+        _peer: &openbitfun_services_integrations::lan_share::PeerIdentity,
+        method: &str,
+        _body: Value,
+    ) -> Result<Value, String> {
+        match method {
+            "catalog" => Ok(json!({ "assistants": [
+                { "id": "workspace", "name": "Free", "access": { "state": "granted" } }
+            ] })),
+            _ => Err("no".to_string()),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_catalog_alone_never_adds_an_assistant_this_device_did_not_ask_for() {
+    let user_dir = tempfile::tempdir().unwrap();
+    let user = host(user_dir.path(), Arc::new(Events::default())).await;
+    let identity = Arc::new(ShareIdentity::generate("Lure's Mac", "Lure").unwrap());
+    let mut config = ChannelConfig::new(identity.clone());
+    config.capabilities = vec!["assistant_share_v1".to_string()];
+    config.required_capabilities = config.capabilities.clone();
+    config.allow_loopback = true;
+    let listener = openbitfun_services_integrations::lan_share::LanListener::bind(
+        config,
+        Arc::new(Boastful),
+        &[Ipv4Addr::LOCALHOST],
+    )
+    .await
+    .unwrap();
+
+    user.discover_start().await.unwrap();
+    user.observe(DiscoveryEvent::Found(DiscoveredPeer {
+        device_id: identity.device_id().to_string(),
+        device_name: identity.device_name().to_string(),
+        display_name: identity.display_name().to_string(),
+        public_key: identity.public_key(),
+        fingerprint: identity.fingerprint(),
+        protocol_version: PROTOCOL_VERSION,
+        addresses: vec![Ipv4Addr::LOCALHOST],
+        port: listener.port(),
+    }))
+    .await;
+    eventually("the user reads the catalog", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Granted)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(user.shared_with_me().await.unwrap().is_empty());
+
+    user.shutdown().await;
+    listener.shutdown();
+}

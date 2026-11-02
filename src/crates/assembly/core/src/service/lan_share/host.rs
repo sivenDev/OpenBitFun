@@ -923,12 +923,14 @@ impl LanShareHost {
             }
         };
         self.deliver_removals(&key, &connection).await;
-        self.refresh_catalog(&connection).await;
+        self.refresh_catalog(&connection, None).await;
     }
 
     /// Reads the catalog of the owner at the other end of `connection` and
     /// brings the Discover list and this device's grants in line with it.
-    async fn refresh_catalog(&self, connection: &LanConnection) {
+    /// A catalog never adds an assistant to this device's list by itself:
+    /// only `asked`, an assistant this device just asked for, may be added.
+    async fn refresh_catalog(&self, connection: &LanConnection, asked: Option<&str>) {
         let owner = connection.peer().clone();
         let catalog: Result<CatalogResponse, String> =
             match connection.call(METHOD_CATALOG, json!({})).await {
@@ -937,7 +939,7 @@ impl LanShareHost {
             };
         match catalog {
             Ok(catalog) => {
-                self.sync_grants(&owner, &catalog.assistants).await;
+                self.sync_grants(&owner, &catalog.assistants, asked).await;
                 self.inner
                     .browse
                     .lock()
@@ -955,8 +957,14 @@ impl LanShareHost {
         self.emit(EVENT_DISCOVERED, json!({})).await;
     }
 
-    /// Records in [`SharedWithMeStore`] what the owner's catalog says.
-    async fn sync_grants(&self, owner: &PeerIdentity, catalog: &[CatalogAssistant]) {
+    /// Records in [`SharedWithMeStore`] what the owner's catalog says about
+    /// the assistants already listed, and adds `asked` when it is granted.
+    async fn sync_grants(
+        &self,
+        owner: &PeerIdentity,
+        catalog: &[CatalogAssistant],
+        asked: Option<&str>,
+    ) {
         let store = &self.inner.options.shared_with_me;
         let key = hex::encode(owner.public_key);
         let address = Some(owner.address.to_string());
@@ -980,7 +988,8 @@ impl LanShareHost {
                 let removed = removing.iter().any(|removal| {
                     removal.owner.public_key == key && removal.assistant_id == assistant.id
                 });
-                if assistant.access == Access::Granted && !listed && !removed {
+                let was_asked = asked == Some(assistant.id.as_str());
+                if was_asked && assistant.access == Access::Granted && !listed && !removed {
                     store
                         .add_grant(share_peer(owner)?, assistant, address.clone())
                         .await
@@ -1033,7 +1042,10 @@ impl LanShareHost {
                 .map_err(remote_message)?,
         )?;
         match opened.granted {
-            Some(_) => self.refresh_catalog(&connection).await,
+            Some(granted) => {
+                self.refresh_catalog(&connection, granted.then_some(assistant_id))
+                    .await
+            }
             None => {
                 self.inner
                     .my_requests
@@ -1096,24 +1108,28 @@ impl LanShareHost {
                 Ok(body) => from_value(body),
                 Err(error) => Err(error.to_string()),
             };
-            match status {
+            let granted = match status {
                 Ok(status) if status.state == RequestState::Pending => {
                     host.look_up_after(connection, opened);
                     return;
                 }
-                Ok(_) => {}
-                Err(error) => debug!(
-                    "Share request status unavailable: assistant_id={}, error={}",
-                    request.assistant_id, error
-                ),
-            }
+                Ok(status) => status.state == RequestState::Granted,
+                Err(error) => {
+                    debug!(
+                        "Share request status unavailable: assistant_id={}, error={}",
+                        request.assistant_id, error
+                    );
+                    false
+                }
+            };
             host.inner
                 .my_requests
                 .lock()
                 .expect("requests lock")
                 .remove(&opened.request_id);
             if !connection.is_closed() {
-                host.refresh_catalog(&connection).await;
+                let asked = granted.then_some(request.assistant_id.as_str());
+                host.refresh_catalog(&connection, asked).await;
             }
         });
     }
@@ -1172,7 +1188,7 @@ impl LanShareHost {
             Ok(connection) => {
                 self.deliver_removals(&owner_key, &connection).await;
                 if self.inner.browsing.load(Ordering::SeqCst) {
-                    self.refresh_catalog(&connection).await;
+                    self.refresh_catalog(&connection, None).await;
                 }
             }
             Err(error) => debug!(
@@ -1354,7 +1370,7 @@ impl LanShareHost {
                     }
                 } else if let Some(connection) = self.open_owner_connection(&key) {
                     // The owner's catalog says how long to wait before asking again.
-                    self.refresh_catalog(&connection).await;
+                    self.refresh_catalog(&connection, None).await;
                 }
             }
             PUSH_REVOKED => {
@@ -1379,7 +1395,7 @@ impl LanShareHost {
                 }
                 if let Some(connection) = self.open_owner_connection(&key) {
                     if self.inner.browsing.load(Ordering::SeqCst) {
-                        self.refresh_catalog(&connection).await;
+                        self.refresh_catalog(&connection, None).await;
                     }
                 }
             }
