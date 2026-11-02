@@ -123,17 +123,17 @@ const LanShareRequestDialog: React.FC = () => {
         </DialogHeading>
       </DialogHeader>
       <DialogBody className="lan-share-request" data-testid="lan-share-request">
-        <p className="lan-share-request__message">
+        <p className="lan-share-request__message" data-openbitfun-component="lan-share-request" data-openbitfun-part="message">
           {t('nursery.share.request.message', {
             name: request.peer.displayName,
             device: request.peer.deviceName,
             assistant: request.assistantName,
           })}
         </p>
-        <p className="lan-share-request__code" data-testid="lan-share-request-code">
+        <p className="lan-share-request__code" data-openbitfun-component="lan-share-request" data-openbitfun-part="code" data-testid="lan-share-request-code">
           {t('nursery.share.request.code', { code: request.peer.fingerprint })}
         </p>
-        <p className="lan-share-request__hint">{t('nursery.share.request.hint')}</p>
+        <p className="lan-share-request__hint" data-openbitfun-component="lan-share-request" data-openbitfun-part="hint">{t('nursery.share.request.hint')}</p>
       </DialogBody>
       <DialogFooter className="lan-share-request__footer">
         <Button
@@ -147,7 +147,7 @@ const LanShareRequestDialog: React.FC = () => {
         >
           {t('nursery.share.request.block')}
         </Button>
-        <span className="lan-share-request__actions">
+        <span className="lan-share-request__actions" data-openbitfun-component="lan-share-request" data-openbitfun-part="actions">
           <Button
             size="sm"
             variant="fill"

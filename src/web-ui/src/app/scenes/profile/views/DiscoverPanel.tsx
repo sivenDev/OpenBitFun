@@ -205,7 +205,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
             tone="warning"
             message={t('nursery.discover.problem')}
             description={(
-              <span className="discover-panel__problem">
+              <span className="discover-panel__problem" data-openbitfun-component="discover-panel" data-openbitfun-part="problem">
                 <span>{hostProblem}</span>
                 {settingsButton}
               </span>
@@ -230,20 +230,20 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
             />
           )
         ) : (
-          <ul className="discover-panel__devices">
+          <ul className="discover-panel__devices" data-openbitfun-component="discover-panel" data-openbitfun-part="devices">
             {devices.map((device) => {
               const note = deviceNote(device);
               return (
-                <li key={device.publicKey} className="discover-panel__device" data-testid="discover-device">
-                  <div className="discover-panel__device-head">
-                    <span className="discover-panel__device-name">{device.displayName}</span>
-                    <span className="discover-panel__meta">
+                <li key={device.publicKey} className="discover-panel__device" data-openbitfun-component="discover-panel" data-openbitfun-part="device" data-testid="discover-device">
+                  <div className="discover-panel__device-head" data-openbitfun-component="discover-panel" data-openbitfun-part="deviceHead">
+                    <span className="discover-panel__device-name" data-openbitfun-component="discover-panel" data-openbitfun-part="deviceName">{device.displayName}</span>
+                    <span className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta">
                       {t('nursery.discover.device', { device: device.deviceName, code: device.fingerprint })}
                     </span>
                   </div>
-                  {note ? <p className="discover-panel__meta" data-testid="discover-device-note">{note}</p> : null}
+                  {note ? <p className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta" data-testid="discover-device-note">{note}</p> : null}
                   {device.assistants.length > 0 ? (
-                    <div className="discover-panel__assistants" role="list">
+                    <div className="discover-panel__assistants" data-openbitfun-component="discover-panel" data-openbitfun-part="assistants" role="list">
                       {device.assistants.map((assistant) => {
                         const key = accessKey(device, assistant);
                         const askable = assistant.access.state === 'available'
@@ -253,7 +253,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
                             key={key}
                             placement="bottom"
                             content={(
-                              <span className="discover-panel__detail">
+                              <span className="discover-panel__detail" data-openbitfun-component="discover-panel" data-openbitfun-part="detail">
                                 <strong>{assistant.name}</strong>
                                 {assistant.description ? <span>{assistant.description}</span> : null}
                                 <span>{t('nursery.discover.from', { name: device.displayName, device: device.deviceName })}</span>
@@ -265,6 +265,8 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
                             <button
                               type="button"
                               role="listitem"
+                              data-openbitfun-component="discover-panel"
+                              data-openbitfun-part="assistant"
                               className={[
                                 'discover-panel__assistant',
                                 `discover-panel__assistant--${assistant.access.state}`,
@@ -275,11 +277,11 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
                               onClick={() => { void ask(device, assistant); }}
                               data-testid="discover-assistant"
                             >
-                              <span className="discover-panel__avatar" aria-hidden="true">
+                              <span className="discover-panel__avatar" data-openbitfun-component="discover-panel" data-openbitfun-part="avatar" aria-hidden="true">
                                 <AssistantAvatar stableKey={key} name={assistant.name} size={44} />
                               </span>
-                              <span className="discover-panel__assistant-name">{assistant.name}</span>
-                              <span className="discover-panel__meta">{accessText(assistant.access)}</span>
+                              <span className="discover-panel__assistant-name" data-openbitfun-component="discover-panel" data-openbitfun-part="assistantName">{assistant.name}</span>
+                              <span className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta">{accessText(assistant.access)}</span>
                             </button>
                           </Tooltip>
                         );
@@ -294,7 +296,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
       </DialogBody>
       <DialogFooter className="discover-panel__footer">
         {editingName !== null ? (
-          <span className="discover-panel__name-edit">
+          <span className="discover-panel__name-edit" data-openbitfun-component="discover-panel" data-openbitfun-part="nameEdit">
             <Input
               size="sm"
               value={editingName}
@@ -315,7 +317,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
             </Button>
           </span>
         ) : (
-          <span className="discover-panel__meta">
+          <span className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta">
             {status ? t('nursery.discover.shownAs', { name: status.displayName }) : null}
             {status ? (
               <Button size="xs" variant="text" onClick={() => setEditingName(status.displayName)} data-testid="discover-name-edit">
@@ -324,7 +326,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
             ) : null}
           </span>
         )}
-        <span className="discover-panel__meta">{t('nursery.discover.privacy')}</span>
+        <span className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta">{t('nursery.discover.privacy')}</span>
       </DialogFooter>
     </Dialog>
   );

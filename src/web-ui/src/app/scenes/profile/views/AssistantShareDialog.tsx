@@ -144,7 +144,8 @@ const AssistantShareDialog: React.FC<AssistantShareDialogProps> = ({
         </DialogHeading>
         <DialogClose />
       </DialogHeader>
-      <DialogBody className="assistant-share-dialog" data-testid="assistant-share-dialog">
+      <DialogBody data-testid="assistant-share-dialog">
+        <div className="assistant-share-dialog" data-openbitfun-component="assistant-share-dialog" data-openbitfun-part="fields">
         <Field
           label={t('nursery.share.dialog.trust')}
           description={t(settings.trust === 'full'
@@ -217,6 +218,7 @@ const AssistantShareDialog: React.FC<AssistantShareDialogProps> = ({
             )}
           />
         ) : null}
+        </div>
       </DialogBody>
       <DialogFooter>
         <Button size="sm" variant="fill" onClick={onClose}>

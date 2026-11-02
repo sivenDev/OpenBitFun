@@ -109,7 +109,7 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
         <DialogClose />
       </DialogHeader>
       <DialogBody className="assistant-share-manage" data-testid="assistant-share-manage">
-        <p className="assistant-share-manage__summary">
+        <p className="assistant-share-manage__summary" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="summary">
           {t('nursery.share.manage.summary', {
             trust: trustLabel,
             days: share.sessionRetentionDays,
@@ -117,17 +117,17 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
           })}
         </p>
 
-        <section className="assistant-share-manage__section">
-          <h3 className="assistant-share-manage__heading">{t('nursery.share.manage.users')}</h3>
+        <section className="assistant-share-manage__section" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="section">
+          <h3 className="assistant-share-manage__heading" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="heading">{t('nursery.share.manage.users')}</h3>
           {share.grants.length === 0 ? (
-            <p className="assistant-share-manage__empty">{t('nursery.share.manage.noUsers')}</p>
+            <p className="assistant-share-manage__empty" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="empty">{t('nursery.share.manage.noUsers')}</p>
           ) : (
-            <ul className="assistant-share-manage__list">
+            <ul className="assistant-share-manage__list" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="list">
               {share.grants.map((grant) => (
-                <li key={grant.publicKey} className="assistant-share-manage__row" data-testid="assistant-share-user">
-                  <span className="assistant-share-manage__who">
+                <li key={grant.publicKey} className="assistant-share-manage__row" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="row" data-testid="assistant-share-user">
+                  <span className="assistant-share-manage__who" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="who">
                     <span>{grant.displayName}</span>
-                    <span className="assistant-share-manage__meta">
+                    <span className="assistant-share-manage__meta" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="meta">
                       {t('nursery.share.manage.device', { device: grant.deviceName, code: grant.fingerprint })}
                       {' · '}
                       {grant.lastUsedAt
@@ -152,12 +152,12 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
         </section>
 
         {leftDevices.length > 0 ? (
-          <section className="assistant-share-manage__section">
-            <h3 className="assistant-share-manage__heading">{t('nursery.share.manage.leftData')}</h3>
-            <ul className="assistant-share-manage__list">
+          <section className="assistant-share-manage__section" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="section">
+            <h3 className="assistant-share-manage__heading" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="heading">{t('nursery.share.manage.leftData')}</h3>
+            <ul className="assistant-share-manage__list" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="list">
               {leftDevices.map((deviceId) => (
-                <li key={deviceId} className="assistant-share-manage__row" data-testid="assistant-share-left-device">
-                  <span className="assistant-share-manage__meta">
+                <li key={deviceId} className="assistant-share-manage__row" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="row" data-testid="assistant-share-left-device">
+                  <span className="assistant-share-manage__meta" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="meta">
                     {t('nursery.share.manage.leftDevice', { id: deviceId.slice(0, 8) })}
                   </span>
                   <Button

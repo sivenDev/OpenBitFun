@@ -116,6 +116,11 @@ import { mcpServerConfigDialogAppearanceDescriptor } from '@/infrastructure/conf
 import { externalMcpOverviewAppearanceDescriptor } from '@/infrastructure/config/components/ExternalMcpOverview.appearance';
 import { voiceInputDiagnosticsAppearanceDescriptor } from '@/infrastructure/config/components/VoiceInputDiagnostics.appearance';
 import { assistantCardAppearanceDescriptor } from '@/app/scenes/profile/views/AssistantCard.appearance';
+import { lanShareRequestAppearanceDescriptor } from '@/app/components/LanShareRequestDialog/LanShareRequestDialog.appearance';
+import { assistantShareDialogAppearanceDescriptor } from '@/app/scenes/profile/views/AssistantShareDialog.appearance';
+import { assistantShareManageAppearanceDescriptor } from '@/app/scenes/profile/views/AssistantShareManageDialog.appearance';
+import { discoverPanelAppearanceDescriptor } from '@/app/scenes/profile/views/DiscoverPanel.appearance';
+import { sharedAssistantCardAppearanceDescriptor } from '@/app/scenes/profile/views/SharedAssistantCard.appearance';
 import { miniAppCustomizePanelAppearanceDescriptor } from '@/app/scenes/miniapps/customization/MiniAppCustomizePanel.appearance';
 import { userMessageEditComposerAppearanceDescriptor } from '@/flow_chat/components/modern/UserMessageEditComposer.appearance';
 import { monacoAppearanceAdapter } from '../adapters/MonacoAppearanceAdapter';
@@ -390,6 +395,11 @@ export function createDefaultAppearanceRegistry(): AppearanceRegistry {
     .registerComponent(externalMcpOverviewAppearanceDescriptor)
     .registerComponent(voiceInputDiagnosticsAppearanceDescriptor)
     .registerComponent(assistantCardAppearanceDescriptor)
+    .registerComponent(lanShareRequestAppearanceDescriptor)
+    .registerComponent(assistantShareDialogAppearanceDescriptor)
+    .registerComponent(assistantShareManageAppearanceDescriptor)
+    .registerComponent(discoverPanelAppearanceDescriptor)
+    .registerComponent(sharedAssistantCardAppearanceDescriptor)
     .registerComponent(miniAppCustomizePanelAppearanceDescriptor)
     .registerComponent(userMessageEditComposerAppearanceDescriptor)
     .registerComponent(tiptapEditorAppearanceDescriptor)

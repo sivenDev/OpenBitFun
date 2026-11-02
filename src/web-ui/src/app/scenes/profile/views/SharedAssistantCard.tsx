@@ -72,11 +72,13 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
       role="listitem"
       style={style}
       data-testid="shared-assistant-card"
+      data-openbitfun-component="shared-assistant-card"
+      data-openbitfun-part="root"
     >
       <Card className="assistant-card__surface" appearance="subtle" radius="md" padding="md" gap="sm" clip>
         <button
           type="button"
-          className="assistant-card__main"
+          className="assistant-card__main" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="main"
           onClick={() => setDetails(true)}
           aria-label={`${assistant.name}, ${source}`}
         />
@@ -85,7 +87,7 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
           contentAlign="start"
           className="assistant-card__header"
           leading={(
-            <span className="assistant-card__avatar">
+            <span className="assistant-card__avatar" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="avatar">
               <AssistantAvatar
                 stableKey={`${assistant.owner.publicKey}/${assistant.assistantId}`}
                 name={assistant.name}
@@ -94,9 +96,9 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
             </span>
           )}
           title={(
-            <span className="assistant-card__title-row">
+            <span className="assistant-card__title-row" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="title">
               <OverflowText className="assistant-card__name">{assistant.name}</OverflowText>
-              <span className="shared-assistant-card__badge">
+              <span className="shared-assistant-card__badge" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="badge">
                 <StatusPill tone={revoked ? 'warning' : 'info'}>
                   {revoked ? t('nursery.sharedWithMe.revoked') : t('nursery.sharedWithMe.badge')}
                 </StatusPill>
@@ -104,13 +106,13 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
             </span>
           )}
           description={(
-            <span className="assistant-card__metadata">
+            <span className="assistant-card__metadata" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="metadata">
               <OverflowText className="assistant-card__vibe">{source}</OverflowText>
             </span>
           )}
         />
         <CardFooter align="end" className="assistant-card__footer">
-          <span className="assistant-card__footer-actions">
+          <span className="assistant-card__footer-actions" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="actions">
             <Tooltip content={t('nursery.sharedWithMe.remove')}>
               <IconButton
                 size="sm"
@@ -136,19 +138,19 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
           </DialogHeader>
           <DialogBody className="shared-assistant-card__details" data-testid="shared-assistant-details">
             {assistant.description ? <p>{assistant.description}</p> : null}
-            <p className="shared-assistant-card__meta">
+            <p className="shared-assistant-card__meta" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="meta">
               {t('nursery.sharedWithMe.source', {
                 name: assistant.owner.displayName,
                 device: assistant.owner.deviceName,
                 code: assistant.owner.fingerprint,
               })}
             </p>
-            <p className="shared-assistant-card__meta">
+            <p className="shared-assistant-card__meta" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="meta">
               {t('nursery.sharedWithMe.addedAt', {
                 time: formatDate(new Date(assistant.grantedAt), { year: 'numeric', month: 'short', day: 'numeric' }),
               })}
             </p>
-            <p className="shared-assistant-card__meta">
+            <p className="shared-assistant-card__meta" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="meta">
               {revoked ? t('nursery.sharedWithMe.revokedHint') : t('nursery.discover.privacy')}
             </p>
           </DialogBody>
