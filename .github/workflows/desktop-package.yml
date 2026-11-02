@@ -49,6 +49,15 @@ on:
         required: false
         default: false
         type: boolean
+      relay_url:
+        description: "Self-hosted Relay the Desktop build signs in to, e.g. http://172.16.21.153:9701. Empty uses the official Relay."
+        required: false
+        default: ""
+        type: string
+
+env:
+  # Compiled into Desktop builds; empty keeps the official Relay.
+  OPENBITFUN_RELAY_URL: ${{ inputs.relay_url || '' }}
 
 permissions:
   actions: read

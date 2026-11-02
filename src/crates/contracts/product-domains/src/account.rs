@@ -3,7 +3,15 @@
 use serde::{Deserialize, Serialize};
 
 /// Versioned hosted Relay deployment for the GitHub account/device-key protocol.
-pub const DEFAULT_RELAY_URL: &str = "https://remote.openbitfun.com/v/1.0.2";
+pub const OFFICIAL_RELAY_URL: &str = "https://remote.openbitfun.com/v/1.0.2";
+
+/// Relay this build signs in to. A build for a self-hosted Relay sets
+/// `OPENBITFUN_RELAY_URL` at compile time; every other build uses the official
+/// deployment, including when the variable is empty.
+pub const DEFAULT_RELAY_URL: &str = match option_env!("OPENBITFUN_RELAY_URL") {
+    Some(url) if !url.is_empty() => url,
+    _ => OFFICIAL_RELAY_URL,
+};
 
 /// Control-contract protocol number reported to the Relay alongside the build
 /// string when a device registers or opens its realtime connection.

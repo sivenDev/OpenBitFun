@@ -17,29 +17,44 @@ pub const MASTER_KEY_LEN: usize = 32;
 /// with the new deployment instead of replaying its token or deleting the record.
 ///
 /// Every official release lives under `https://remote.openbitfun.com/v/<version>`;
-/// any such endpoint other than the one this build targets is retired.
+/// any such endpoint other than the one this build targets is retired. A build
+/// for a self-hosted Relay therefore retires every official endpoint.
 pub fn is_retired_official_relay(value: &str) -> bool {
-    let current = reqwest::Url::parse(openbitfun_product_domains::account::DEFAULT_RELAY_URL)
+    is_official_relay_retired_by(
+        value,
+        openbitfun_product_domains::account::DEFAULT_RELAY_URL,
+    )
+}
+
+fn is_official_relay_retired_by(value: &str, current: &str) -> bool {
+    let official = reqwest::Url::parse(openbitfun_product_domains::account::OFFICIAL_RELAY_URL)
         .expect("official relay endpoint is a valid URL");
+    let current =
+        reqwest::Url::parse(current).expect("relay endpoint of this build is a valid URL");
     reqwest::Url::parse(value).is_ok_and(|url| {
         url.scheme() == "https"
-            && url.host_str() == current.host_str()
+            && url.host_str() == official.host_str()
             && url.username().is_empty()
             && url.password().is_none()
             && url.port().is_none()
             && url.query().is_none()
             && url.fragment().is_none()
-            && is_retired_official_version_path(url.path(), current.path())
+            && is_official_version_path(url.path())
+            && !is_same_endpoint(&url, &current)
     })
 }
 
-fn is_retired_official_version_path(path: &str, current: &str) -> bool {
-    let path = path.trim_end_matches('/');
-    let current = current.trim_end_matches('/');
-    path != current
-        && path
-            .strip_prefix("/v/")
-            .is_some_and(|version| !version.is_empty() && !version.contains('/'))
+fn is_official_version_path(path: &str) -> bool {
+    path.trim_end_matches('/')
+        .strip_prefix("/v/")
+        .is_some_and(|version| !version.is_empty() && !version.contains('/'))
+}
+
+fn is_same_endpoint(url: &reqwest::Url, other: &reqwest::Url) -> bool {
+    url.scheme() == other.scheme()
+        && url.host_str() == other.host_str()
+        && url.port_or_known_default() == other.port_or_known_default()
+        && url.path().trim_end_matches('/') == other.path().trim_end_matches('/')
 }
 
 /// A host announced that one of its streams changed. Hints are lossy wake-ups;
@@ -1200,6 +1215,30 @@ mod tests {
             "https://relay.example.com/#fragment",
         ] {
             assert!(AccountClient::endpoint(invalid, "/api/devices").is_err());
+        }
+    }
+
+    #[test]
+    fn a_build_for_a_self_hosted_relay_retires_every_official_endpoint() {
+        let current = "http://172.16.21.153:9701";
+        for official in [
+            "https://remote.openbitfun.com/v/1.0.2",
+            "https://remote.openbitfun.com/v/1.0.1/",
+        ] {
+            assert!(
+                is_official_relay_retired_by(official, current),
+                "{official}"
+            );
+        }
+        for endpoint in [
+            current,
+            "http://172.16.21.153:9701/",
+            "https://custom.example/v/1.0.0",
+        ] {
+            assert!(
+                !is_official_relay_retired_by(endpoint, current),
+                "{endpoint}"
+            );
         }
     }
 

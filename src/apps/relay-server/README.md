@@ -38,8 +38,12 @@ Relay URL. A private Relay therefore needs a matching client build.
 
 1. Fork this workspace and read `CONTRIBUTING.md`. Build the Relay and mobile
    controller from the same revision. Keep your fork's changes in source control.
-2. Select your HTTPS endpoint in `product-domains/src/account.rs`, then align
-   the frontend constants in `src/web-ui/src/infrastructure/remote-connect/remoteConnectionState.ts`
+2. Select your HTTPS endpoint. Desktop and CLI builds take it from the
+   `OPENBITFUN_RELAY_URL` environment variable at compile time (the Desktop
+   Package workflow exposes it as the `relay_url` input); without it they use
+   `OFFICIAL_RELAY_URL` in `product-domains/src/account.rs`. A build for your
+   Relay signs in again there instead of reusing an official-Relay session.
+   Then align the frontend constants in `src/web-ui/src/infrastructure/remote-connect/remoteConnectionState.ts`
    and `src/mobile-web/src/services/pairingLink.ts`. Native clients have
    matching constants in KMP `core-transport/AccountDeviceLink.kt` and HarmonyOS
    `services/AccountDeviceLink.ets`; update the HarmonyOS account-link parser too.
