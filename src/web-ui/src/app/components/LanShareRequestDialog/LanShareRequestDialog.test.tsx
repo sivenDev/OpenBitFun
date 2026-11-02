@@ -69,6 +69,8 @@ const setRequests = (requests: ShareRequest[]) =>
 const button = (part: string) =>
   document.querySelector<HTMLButtonElement>(`[data-testid="lan-share-request-${part}"]`)!;
 const click = (part: string) => act(async () => { button(part).click(); });
+/** Waits until the answers can be used. */
+const arm = () => act(async () => { vi.advanceTimersByTime(1_000); });
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -112,17 +114,38 @@ describe('confirming a request to use a shared assistant', () => {
 
   it('asks about queued requests one at a time', async () => {
     await render();
-    await setRequests([request('a', 'Ann'), request('b', 'Bo', 50)]);
+    await setRequests([request('a', 'Ann'), request('b', 'Bo', 60)]);
     expect(document.body.textContent).toContain('nursery.share.request.queued 1');
-    mocks.requests.mockResolvedValue([request('b', 'Bo', 50)]);
+    await arm();
+    mocks.requests.mockResolvedValue([request('b', 'Bo', 60)]);
     await click('decline');
     expect(mocks.decide).toHaveBeenCalledWith('a', 'decline');
     expect(document.body.textContent).toContain("Bo's Mac");
     expect(document.body.textContent).not.toContain('nursery.share.request.queued');
-    expect(button('allow').textContent).toContain('nursery.share.request.allow 50');
+    expect(button('allow').textContent).toContain('nursery.share.request.allow 59');
 
+    await arm();
     await click('block');
     expect(mocks.decide).toHaveBeenCalledWith('b', 'block');
+  });
+
+  it('never takes a click meant for the previous request as an answer to the next', async () => {
+    await render();
+    await setRequests([request('a', 'Ann'), request('b', 'Bo')]);
+    // Nothing can be answered before the request could be read.
+    expect(button('allow').disabled).toBe(true);
+    await click('allow');
+    expect(mocks.decide).not.toHaveBeenCalled();
+
+    await arm();
+    mocks.requests.mockResolvedValue([request('b', 'Bo')]);
+    await click('allow');
+    expect(mocks.decide).toHaveBeenCalledWith('a', 'allow');
+    // The second click of a double click lands on Bo's request.
+    expect(document.body.textContent).toContain("Bo's Mac");
+    expect(button('allow').disabled).toBe(true);
+    await click('allow');
+    expect(mocks.decide).toHaveBeenCalledTimes(1);
   });
 
   it('cannot be answered once the time is up, and says it was declined', async () => {

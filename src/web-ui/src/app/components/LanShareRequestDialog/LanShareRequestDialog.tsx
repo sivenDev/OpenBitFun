@@ -19,6 +19,12 @@ import './LanShareRequestDialog.scss';
 
 const log = createLogger('LanShareRequestDialog');
 const TICK_MS = 250;
+/**
+ * How long the answers stay disabled after a request appears, so a click
+ * meant for the previous request, or a request swapped in by a flood, is
+ * never taken as consent.
+ */
+const ARM_DELAY_MS = 1000;
 
 /**
  * Asks the owner about each request from another device, one at a time,
@@ -63,28 +69,36 @@ const LanShareRequestDialog: React.FC = () => {
 
   const request = requests.find((candidate) => !answered.current.has(candidate.requestId));
 
+  const shownId = request?.requestId;
+  const [shown, setShown] = useState<{ requestId?: string; at: number }>({ at: 0 });
+
   useEffect(() => {
-    if (!request) return undefined;
-    setNow(Date.now());
+    if (!shownId) return undefined;
+    const at = Date.now();
+    setShown({ requestId: shownId, at });
+    setNow(at);
     const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
     return () => window.clearInterval(timer);
-  }, [request]);
+  }, [shownId]);
 
   if (!request) return null;
   const seconds = secondsLeft(request.deadlineMs, now);
   const waiting = requests.filter((candidate) => !answered.current.has(candidate.requestId)).length - 1;
+  const armed = shown.requestId === request.requestId && now - shown.at >= ARM_DELAY_MS;
+  const locked = !armed || answering !== null || seconds === 0;
 
-  const answer = async (choice: ShareAnswer) => {
-    if (answering) return;
+  const answer = async (requestId: string, choice: ShareAnswer) => {
+    // A click rendered for another request, or before this one could be read.
+    if (answering || requestId !== shownId || !armed || answered.current.has(requestId)) return;
     setAnswering(choice);
     try {
-      await lanShareAPI.decide(request.requestId, choice);
-      answered.current.add(request.requestId);
+      await lanShareAPI.decide(requestId, choice);
+      answered.current.add(requestId);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      log.warn('Share request not answered', { requestId: request.requestId, error: reason });
+      log.warn('Share request not answered', { requestId, error: reason });
       notification.error(t('nursery.share.request.failed', { reason }));
-      answered.current.add(request.requestId);
+      answered.current.add(requestId);
     } finally {
       setAnswering(null);
       void useLanShareStore.getState().refreshRequests();
@@ -93,11 +107,12 @@ const LanShareRequestDialog: React.FC = () => {
 
   return (
     <Dialog
+      key={request.requestId}
       open
       size="sm"
       role="alertdialog"
       closeOnPointerOutside={false}
-      onOpenChange={() => { void answer('decline'); }}
+      onOpenChange={() => { void answer(request.requestId, 'decline'); }}
     >
       <DialogHeader>
         <DialogHeading>
@@ -125,9 +140,9 @@ const LanShareRequestDialog: React.FC = () => {
           size="sm"
           variant="text"
           tone="danger"
-          disabled={answering !== null || seconds === 0}
+          disabled={locked}
           loading={answering === 'block'}
-          onClick={() => { void answer('block'); }}
+          onClick={() => { void answer(request.requestId, 'block'); }}
           data-testid="lan-share-request-block"
         >
           {t('nursery.share.request.block')}
@@ -136,9 +151,9 @@ const LanShareRequestDialog: React.FC = () => {
           <Button
             size="sm"
             variant="fill"
-            disabled={answering !== null || seconds === 0}
+            disabled={locked}
             loading={answering === 'decline'}
-            onClick={() => { void answer('decline'); }}
+            onClick={() => { void answer(request.requestId, 'decline'); }}
             data-testid="lan-share-request-decline"
           >
             {t('nursery.share.request.decline')}
@@ -146,9 +161,9 @@ const LanShareRequestDialog: React.FC = () => {
           <Button
             size="sm"
             variant="primary"
-            disabled={answering !== null || seconds === 0}
+            disabled={locked}
             loading={answering === 'allow'}
-            onClick={() => { void answer('allow'); }}
+            onClick={() => { void answer(request.requestId, 'allow'); }}
             data-testid="lan-share-request-allow"
           >
             {t('nursery.share.request.allow', { seconds })}
