@@ -31,6 +31,7 @@ import {
   DELEGATED_TASKS_REFRESH_MS,
   readDelegatedTasks,
 } from '@/infrastructure/api/service-api/delegatedTaskReads';
+import { onSignedInAccountChanged } from '@/infrastructure/account-identity/accountChanges';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
@@ -174,6 +175,11 @@ export const AgentDelegationConfig: React.FC = () => {
     if (supported) void load();
     return () => { activeRef.current = false; };
   }, [load, supported]);
+
+  // Signing in, out or into another account changes everything shown here.
+  useEffect(() => onSignedInAccountChanged(() => {
+    if (supported) void load();
+  }), [load, supported]);
 
   // Accounts can be given assistants from their own rows too.
   useEffect(() => onDelegationGrantsChanged(source => {

@@ -193,7 +193,7 @@ export class AccountIdentityService {
         });
         if (broadcastChange
           && previous.resolved
-          && identityKey(previous.me) !== identityKey(me)) {
+          && accountIdentityKey(previous.me) !== accountIdentityKey(me)) {
           void this.publishIdentityChanged();
         }
         return me;
@@ -387,7 +387,8 @@ function asAccountIdentityError(error: unknown): AccountIdentityError {
   );
 }
 
-function identityKey(me: MarketMe | null): string {
+/** Stable key of the signed-in account, empty when signed out. */
+export function accountIdentityKey(me: MarketMe | null): string {
   return me ? `${me.user.accountId || me.user.githubId}:${me.user.login}` : '';
 }
 

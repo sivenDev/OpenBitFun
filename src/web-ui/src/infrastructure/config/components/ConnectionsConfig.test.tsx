@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   listOpenAgents: vi.fn(),
   tauri: vi.fn(),
   peer: vi.fn(),
+  accountChanged: [] as (() => void)[],
 }));
 import runtimeCopy from '@/locales/en-US/settings/runtime.json';
 
@@ -61,6 +62,12 @@ vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerD
 vi.mock('@/shared/notification-system', () => ({ notificationService: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/shared/utils/nativeClipboard', () => ({ writeNativeClipboardText: vi.fn().mockResolvedValue(true) }));
 vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ error: vi.fn() }) }));
+vi.mock('@/infrastructure/account-identity/accountChanges', () => ({
+  onSignedInAccountChanged: (listener: () => void) => {
+    mocks.accountChanged.push(listener);
+    return () => undefined;
+  },
+}));
 vi.mock('./common', () => ({
   ConfigPageSection: ({ title, description, extra, children }: {
     title: string; description?: string; extra?: React.ReactNode; children: React.ReactNode;
@@ -124,7 +131,9 @@ describe('ConnectionsConfig', () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    Object.values(mocks).forEach(mock => mock.mockReset());
+    const { accountChanged, ...fns } = mocks;
+    Object.values(fns).forEach(mock => mock.mockReset());
+    accountChanged.length = 0;
     mocks.tauri.mockReturnValue(true);
     mocks.peer.mockReturnValue({ peerMode: { active: false } });
     mocks.overview.mockResolvedValue(overview());
@@ -197,6 +206,17 @@ describe('ConnectionsConfig', () => {
     mocks.overview.mockRejectedValue(new Error('not logged in'));
     await render();
     expect(container.textContent).toContain('connections.signedOut');
+  });
+
+  it('shows the account as soon as it signs in', async () => {
+    mocks.overview.mockRejectedValue(new Error('not logged in'));
+    await render();
+    expect(container.textContent).toContain('connections.signedOut');
+
+    mocks.overview.mockResolvedValue(overview({ connections: [connection()] }));
+    await act(async () => { mocks.accountChanged.forEach(listener => listener()); });
+    expect(container.textContent).not.toContain('connections.signedOut');
+    expect(container.textContent).toContain('Bea');
   });
 
   it('creates an invite and shows its link', async () => {

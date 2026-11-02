@@ -33,6 +33,7 @@ const translate = (key: string, values?: Record<string, string>) => {
   }
   return values ? `${key}:${Object.values(values).join('|')}` : key;
 };
+vi.mock('@/infrastructure/account-identity/accountChanges', () => ({ onSignedInAccountChanged: () => () => undefined }));
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({ useI18n: () => ({ t: translate }) }));
 vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/infrastructure/api/service-api/DelegationAPI')>()),

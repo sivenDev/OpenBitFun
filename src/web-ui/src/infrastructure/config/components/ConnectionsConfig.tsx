@@ -17,6 +17,7 @@ import {
   notifyDelegationGrantsChanged,
   onDelegationGrantsChanged,
 } from '@/infrastructure/api/service-api/delegationGrantChanges';
+import { onSignedInAccountChanged } from '@/infrastructure/account-identity/accountChanges';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { isTauriRuntime } from '@/infrastructure/runtime';
@@ -104,6 +105,11 @@ export const ConnectionsConfig: React.FC = () => {
     if (supported) void load();
     return () => { activeRef.current = false; };
   }, [load, supported]);
+
+  // Signing in, out or into another account changes everything shown here.
+  useEffect(() => onSignedInAccountChanged(() => {
+    if (supported) void load();
+  }), [load, supported]);
 
   // Assistants are opened to accounts on their own cards.
   useEffect(() => onDelegationGrantsChanged(source => {
