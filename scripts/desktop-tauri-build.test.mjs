@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
   configureDesktopWebFontProfile,
   configureWindowsSigning,
+  prepareCliExecutor,
   prepareMacOSFlashgrepForSigning,
   prepareTauriConfig,
   requestsMacosBundle,
@@ -591,6 +592,99 @@ test('a distribution build carries its own version', () => {
   } finally {
     if (previous === undefined) delete process.env.OPENBITFUN_BUILD_VERSION;
     else process.env.OPENBITFUN_BUILD_VERSION = previous;
+    rmSync(fixture, { force: true, recursive: true });
+  }
+});
+
+function withCargoTargetDir(directory, body) {
+  const previous = process.env.CARGO_TARGET_DIR;
+  process.env.CARGO_TARGET_DIR = directory;
+  try {
+    return body();
+  } finally {
+    if (previous === undefined) delete process.env.CARGO_TARGET_DIR;
+    else process.env.CARGO_TARGET_DIR = previous;
+  }
+}
+
+test('Desktop bundles carry the CLI executor as a sidecar', () => {
+  const fixture = join(tmpdir(), `openbitfun-cli-executor-${process.pid}-${Date.now()}`);
+  const desktopDir = join(fixture, 'desktop');
+  const targetDir = join(fixture, 'target');
+  mkdirSync(desktopDir, { recursive: true });
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push({ command, args, env: options.env });
+    const binary = join(targetDir, 'aarch64-apple-darwin', 'release', 'openbitfun');
+    mkdirSync(join(binary, '..'), { recursive: true });
+    writeFileSync(binary, 'cli');
+    return { status: 0 };
+  };
+  try {
+    const executor = withCargoTargetDir(targetDir, () => prepareCliExecutor({
+      desktopDir, target: 'aarch64-apple-darwin', run,
+    }));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, 'cargo');
+    assert.deepEqual(calls[0].args.slice(0, 2), ['build', '--locked']);
+    assert.ok(calls[0].args.includes('--release'));
+    assert.deepEqual(calls[0].args.slice(-2), ['--target', 'aarch64-apple-darwin']);
+    assert.equal(executor.sidecar, join(desktopDir, 'gen', 'cli', 'openbitfun-aarch64-apple-darwin'));
+    assert.equal(readFileSync(executor.sidecar, 'utf8'), 'cli');
+
+    const baseConfig = join(fixture, 'tauri.conf.json');
+    writeFileSync(baseConfig, JSON.stringify({ bundle: { resources: {}, externalBin: ['existing'] } }));
+    const generated = prepareTauriConfig(baseConfig, {
+      desktopDir, flashgrepBinary: join(fixture, 'flashgrep'), cliExecutor: executor,
+    });
+    assert.deepEqual(JSON.parse(readFileSync(generated, 'utf8')).bundle.externalBin,
+      ['existing', 'gen/cli/openbitfun']);
+  } finally {
+    rmSync(fixture, { force: true, recursive: true });
+  }
+});
+
+test('a bundle-only build requires the CLI executor to exist already', () => {
+  const fixture = join(tmpdir(), `openbitfun-cli-bundle-only-${process.pid}-${Date.now()}`);
+  mkdirSync(fixture, { recursive: true });
+  let ran = false;
+  try {
+    assert.throws(
+      () => withCargoTargetDir(join(fixture, 'target'), () => prepareCliExecutor({
+        desktopDir: join(fixture, 'desktop'),
+        target: 'x86_64-apple-darwin',
+        bundleOnly: true,
+        run: () => { ran = true; return { status: 0 }; },
+      })),
+      /CLI executor is missing for --bundle-only/,
+    );
+    assert.equal(ran, false);
+    assert.equal(existsSync(join(fixture, 'desktop', 'gen', 'cli')), false);
+  } finally {
+    rmSync(fixture, { force: true, recursive: true });
+  }
+});
+
+test('the bundled CLI executor is built with the CLI product environment', () => {
+  const fixture = join(tmpdir(), `openbitfun-cli-product-${process.pid}-${Date.now()}`);
+  let environment;
+  // The fake build fails, so nothing is written into the product cache.
+  const run = (command, args, options) => {
+    environment = options.env;
+    return { status: 1 };
+  };
+  try {
+    assert.throws(() => prepareCliExecutor({
+      desktopDir: join(fixture, 'desktop'),
+      target: 'x86_64-apple-darwin',
+      productConfig: join(ROOT, 'products', 'fixtures', 'acme', 'product.jsonc'),
+      run,
+    }), /CLI executor build failed/);
+    assert.equal(environment.OPENBITFUN_PRODUCT_BINARY_NAME, 'acme');
+    assert.equal(environment.OPENBITFUN_PRODUCT_DISPLAY_NAME, 'Acme CLI');
+    // The executor reads the same data namespace as the desktop app.
+    assert.equal(environment.OPENBITFUN_DATA_NAMESPACE, 'acme');
+  } finally {
     rmSync(fixture, { force: true, recursive: true });
   }
 });

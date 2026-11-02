@@ -177,25 +177,43 @@ async fn invoke_cli(executable: &Path, verb: &str, args: Value) -> anyhow::Resul
 }
 
 fn discover_cli() -> Option<PathBuf> {
+    let executable_dir = std::env::current_exe()
+        .ok()
+        .and_then(|current| current.parent().map(Path::to_path_buf));
+    cli_candidates(
+        executable_dir.as_deref(),
+        dirs::home_dir().as_deref(),
+        std::env::var_os("PATH").as_deref(),
+    )
+    .into_iter()
+    .find_map(resolve_cli_candidate)
+}
+
+/// Where the executor is looked for, in order. The copy shipped next to the
+/// desktop executable comes first, so an installed app answers with its own
+/// version; a separately installed CLI is the fallback.
+fn cli_candidates(
+    executable_dir: Option<&Path>,
+    home: Option<&Path>,
+    path: Option<&std::ffi::OsStr>,
+) -> Vec<PathBuf> {
     let executable_name = if cfg!(windows) {
         "openbitfun.exe"
     } else {
         "openbitfun"
     };
     let mut candidates = Vec::new();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(directory) = executable_dir {
+        candidates.push(directory.join(executable_name));
+    }
+    if let Some(home) = home {
         candidates.push(home.join(".local").join("bin").join(executable_name));
     }
-    if let Ok(current) = std::env::current_exe() {
-        if let Some(parent) = current.parent() {
-            candidates.push(parent.join(executable_name));
-        }
-    }
-    if let Some(path) = std::env::var_os("PATH") {
+    if let Some(path) = path {
         candidates
-            .extend(std::env::split_paths(&path).map(|directory| directory.join(executable_name)));
+            .extend(std::env::split_paths(path).map(|directory| directory.join(executable_name)));
     }
-    candidates.into_iter().find_map(resolve_cli_candidate)
+    candidates
 }
 
 fn resolve_cli_candidate(candidate: PathBuf) -> Option<PathBuf> {
@@ -243,6 +261,32 @@ mod tests {
                 assert_eq!(op.peer, PeerStance::HostControlPlane, "{}", op.id);
             }
         }
+    }
+
+    #[test]
+    fn the_bundled_executor_is_preferred_over_installed_ones() {
+        let name = if cfg!(windows) {
+            "openbitfun.exe"
+        } else {
+            "openbitfun"
+        };
+        let app = Path::new("/Applications/OpenBitFun.app/Contents/MacOS");
+        let home = Path::new("/Users/someone");
+        let path = std::env::join_paths(["/opt/bin", "/usr/local/bin"]).expect("PATH");
+
+        assert_eq!(
+            cli_candidates(Some(app), Some(home), Some(path.as_os_str())),
+            vec![
+                app.join(name),
+                home.join(".local").join("bin").join(name),
+                Path::new("/opt/bin").join(name),
+                Path::new("/usr/local/bin").join(name),
+            ]
+        );
+        assert_eq!(
+            cli_candidates(None, Some(home), None),
+            vec![home.join(".local").join("bin").join(name)]
+        );
     }
 
     #[cfg(unix)]

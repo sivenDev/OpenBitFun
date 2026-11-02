@@ -13,6 +13,7 @@ import {
   statSync,
   writeFileSync,
 } from 'fs';
+import { cliBuildPlan } from './cli-product.mjs';
 import { ensureFlashgrepBinary } from './prepare-flashgrep-resource.mjs';
 import { prepareMiniAppShell } from './prepare-miniapp-shell.mjs';
 import { extractProductConfigArg } from './product-customization/cli.mjs';
@@ -58,6 +59,14 @@ async function main() {
     target: optionValue(forward, '--target'),
     profile: forward.includes('--debug') ? 'debug' : optionValue(forward, '--profile') || 'release',
   });
+  // Debug builds are never distributed. Release `--no-bundle` builds still
+  // need the executor, because CI bundles them later with `--bundle-only`.
+  const cliExecutor = forward.includes('--debug') ? undefined : prepareCliExecutor({
+    desktopDir,
+    target: optionValue(forward, '--target'),
+    productConfig,
+    bundleOnly,
+  });
   const flashgrepBinary = prepareMacOSFlashgrepForSigning(
     ensureFlashgrepBinary({ target: optionValue(forward, '--target') || rustHostTargetTriple() }),
     desktopDir,
@@ -75,6 +84,7 @@ async function main() {
     desktopDir,
     flashgrepBinary,
     miniappShell,
+    cliExecutor,
     resolution,
     releaseChannel,
   });
@@ -334,9 +344,70 @@ export function configureWindowsSigning(config, env = process.env, platform = pr
   };
 }
 
+export const CLI_EXECUTOR_NAME = 'openbitfun';
+
+/**
+ * Builds the `openbitfun` CLI for the desktop target and stages it as a Tauri
+ * sidecar. The desktop answers Dispatch jobs and shared-assistant tasks by
+ * running this executor, so an installed app must not depend on a separately
+ * installed CLI. The CLI keeps its own product environment, not Desktop's.
+ */
+export function prepareCliExecutor({
+  root = ROOT,
+  desktopDir,
+  target,
+  productConfig,
+  bundleOnly = false,
+  env = process.env,
+  run = spawnSync,
+  platform = process.platform,
+  hostTriple = rustHostTargetTriple,
+}) {
+  const resolution = resolveProductDefinition({ rootDir: root, productConfig, member: 'cli' });
+  const triple = target || hostTriple();
+  const triples = triple === 'universal-apple-darwin'
+    ? ['aarch64-apple-darwin', 'x86_64-apple-darwin'] : [target];
+  const extension = triple.includes('windows') ? '.exe' : '';
+  const binaries = triples.map((buildTarget) => {
+    const plan = cliBuildPlan(resolution, 'build', buildTarget ? ['--target', buildTarget] : [], platform);
+    if (!bundleOnly) {
+      const result = run('cargo', [plan.cargoArgs[0], '--locked', ...plan.cargoArgs.slice(1)], {
+        cwd: root, env: { ...env, ...plan.environment }, shell: false, windowsHide: true, stdio: 'inherit',
+      });
+      if (result.error || result.status !== 0) {
+        throw new Error(`CLI executor build failed: ${result.error?.message || result.status}`);
+      }
+    }
+    if (!existsSync(plan.internalBinaryPath)) {
+      throw new Error(bundleOnly
+        ? `CLI executor is missing for --bundle-only: ${plan.internalBinaryPath}. Run a full build first.`
+        : `CLI executor was not produced: ${plan.internalBinaryPath}`);
+    }
+    return plan.internalBinaryPath;
+  });
+  const sidecarDir = join(desktopDir, 'gen', 'cli');
+  mkdirSync(sidecarDir, { recursive: true });
+  const sidecarBase = join(sidecarDir, CLI_EXECUTOR_NAME);
+  const sidecar = `${sidecarBase}-${triple}${extension}`;
+  if (binaries.length > 1) {
+    const result = run('lipo', ['-create', ...binaries, '-output', sidecar], {
+      cwd: root, shell: false, windowsHide: true, stdio: 'inherit',
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error(`CLI executor lipo failed: ${result.error?.message || result.status}`);
+    }
+  } else {
+    copyFileSync(binaries[0], sidecar);
+  }
+  chmodSync(sidecar, statSync(sidecar).mode | 0o111);
+  const bytes = statSync(sidecar).size;
+  console.log(`[cli-executor] ${triple}: ${(bytes / 1048576).toFixed(2)} MiB`);
+  return { sidecarBase, sidecar, bytes, target: triple };
+}
+
 export function prepareTauriConfig(
   baseConfigPath,
-  { desktopDir, flashgrepBinary, miniappShell, resolution, releaseChannel }
+  { desktopDir, flashgrepBinary, miniappShell, cliExecutor, resolution, releaseChannel }
 ) {
   const config = JSON.parse(readFileSync(baseConfigPath, 'utf8'));
   if (resolution) {
@@ -354,6 +425,10 @@ export function prepareTauriConfig(
   if (miniappShell) {
     config.bundle.externalBin = [...(config.bundle.externalBin || []),
       toTauriPath(relative(desktopDir, miniappShell.sidecarBase))];
+  }
+  if (cliExecutor) {
+    config.bundle.externalBin = [...(config.bundle.externalBin || []),
+      toTauriPath(relative(desktopDir, cliExecutor.sidecarBase))];
   }
   injectTargetFlashgrepResource(config, desktopDir, flashgrepBinary);
   // The DeepSeek bridge is not a compile-time resource: cargo check and

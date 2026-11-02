@@ -55,6 +55,9 @@ pub mod git;
 #[cfg(feature = "hook-import")]
 pub mod hook_import;
 
+#[cfg(feature = "lan-share")]
+pub mod lan_share;
+
 #[cfg(feature = "mcp")]
 pub mod mcp;
 

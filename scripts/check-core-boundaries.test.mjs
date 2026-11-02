@@ -3362,6 +3362,7 @@ test('services integrations WebSocket TLS stays attached to reviewed realtime ow
       features: [],
     }]),
     features: {
+      'lan-share': ['dep:tokio-tungstenite'],
       'remote-connect': [
         'dep:tokio-tungstenite',
         'tokio-tungstenite?/rustls-tls-native-roots',

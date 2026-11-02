@@ -2,7 +2,7 @@
 id: "F002-10"
 title: "局域网共享助理的基础：设备共享身份、Bonjour 发现、加密通道，安装包内带执行器"
 type: "feature"
-status: "draft"
+status: "complete"
 summary: "提供与账号无关的设备共享身份、局域网内的 Bonjour 广播与发现、端到端加密的设备直连通道与能力协商，并让桌面安装包自带外部任务执行器（修复 B004）。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-02"
@@ -21,10 +21,11 @@ parent: "F002"
 - **设备共享身份**：
   - 每台设备生成并持久保存一对 X25519 共享身份密钥，与账号、中继无关，不登录也存在。
   - 显示名默认取本机用户全名，可以修改；设备名取主机名。
-  - 指纹短码：由公钥派生的 6 位短码，便于人工核对。
+  - 指纹短码：由公钥派生的 6 位短码，便于人工核对；只用于显示，不用于校验。
+  - 设备 id 由公钥派生，任何设备都不能用自己的密钥冒用别人的设备 id。
 - **Bonjour 广播与发现**：
   - 用纯 Rust 的 `mdns-sd` 广播与浏览 `_openbitfun._tcp`。
-  - TXT 只含：协议版本、设备 id、设备名、显示名、指纹短码。
+  - TXT 只含：协议版本、设备 id、设备名、显示名、完整共享公钥（指纹短码由它派生）。
   - 广播与浏览都由调用方显式开启和停止：不共享时不广播；只在需要时浏览。
   - 浏览结果是对端的增减事件。
 - **局域网通道**：
@@ -36,7 +37,7 @@ parent: "F002"
     - 握手超时；
     - 单帧大小上限；
     - 未完成握手的连接数上限；
-    - 对端公钥与 TXT 广播的指纹不一致时拒绝。
+    - 对端公钥与 TXT 广播的公钥不一致时拒绝；设备 id 与公钥不对应时拒绝。
 - **安装包内带执行器（B004）**：
   - 桌面打包时为同一目标构建 `openbitfun` CLI，作为 sidecar 放进安装包（macOS 在 `Contents/MacOS/`）。
   - 桌面端查找执行器时优先使用安装包内的版本，其次才是 `~/.local/bin` 与 `PATH`。
@@ -97,7 +98,13 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-services-integrations --no-default-features --features lan-share --lib lan_share::`
 - `pnpm run check:core-boundaries`
 
-- [ ] 设备共享身份可生成、持久、读回一致；损坏文件明确报错且不被覆盖；文件权限为 0600
+- [x] 设备共享身份可生成、持久、读回一致；损坏文件明确报错且不被覆盖；文件权限为 0600
+  - 证据（2026-11-02）：
+    - `lan_share::identity`：`ShareIdentity::load_or_create` 不存在时生成并经 `remote_persistence::write_private_bytes` 原子写入；读不了时报错「unreadable; move it away」，文件保持原样。
+    - 显示名默认取账号全名（Unix 读 passwd 的 GECOS 字段，工作区没有 `whoami`，改用已有的可选依赖 `libc`），取不到时用登录名，再退回设备名；指纹 6 位，字母表去掉 0/1/I/O。
+    - 安全复审（自动安全检查）指出：6 位短码约 30 位熵，若用它钉住对端公钥，局域网内可暴力生成同码密钥冒充。已改为：TXT 广播完整公钥并在连接时逐字节比对；设备 id 由公钥的 SHA-256 派生，广播与握手都校验二者对应；短码只用于显示。RFC D1 措辞同步澄清。
+    - `lan_share::` 单元测试 16 项通过：持久与 0600、改名保存、损坏文件不覆盖、指纹格式、私有地址判定、广播或握手中设备 id 与公钥不对应即拒绝等。
+    - 边界：`lan-share` 登记进 `scripts/core-boundaries` 的 Tokio 能力、tokio-tungstenite（无 TLS）、可选依赖归属与测试目标清单；`pnpm run check:core-boundaries` 通过，`node --test scripts/check-core-boundaries.test.mjs` 156 项通过（夹具加入 `lan-share` 作为已审查的 WebSocket 归属）。
 
 ## Task 2: Bonjour 广播与发现
 
@@ -110,8 +117,8 @@ parent: "F002"
 
 **Change Map:**
 - `discovery.rs`：
-  - 服务类型 `_openbitfun._tcp.local.`；TXT 键 `v`、`id`、`name`、`owner`、`fp`。
-  - 浏览时丢弃缺键、超长、版本不识别或指纹格式错误的记录；忽略本机自己的广播。
+  - 服务类型 `_openbitfun._tcp.local.`；TXT 键 `v`、`id`、`name`、`owner`、`pk`。
+  - 浏览时丢弃缺键、超长、版本号无法解析、公钥格式错误或设备 id 与公钥不对应的记录；忽略本机自己的广播。
   - 对端以设备 id 去重，携带解析出的地址与端口。
 - 示例程序：在一台机器上同时广播与浏览，打印发现的对端，并对第一个对端发起一次通道握手与加密往返（Task 3 完成后接上），用于两台 Mac 的手工验证。
 
@@ -119,7 +126,11 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-services-integrations --no-default-features --features lan-share --lib lan_share::discovery`
 - 手工：两台 Mac 运行 `lan_share_probe`（x64 版交叉编译后拷贝），互相在 10 秒内出现；停止一方后另一方收到移除事件
 
-- [ ] TXT 编解码与过滤规则有单元测试；两台 Mac 互相发现并收到移除事件
+- [x] TXT 编解码与过滤规则有单元测试；两台 Mac 互相发现并收到移除事件
+  - 证据（2026-11-02）：
+    - 单元测试覆盖合法记录、更高协议版本（保留并标为不兼容）、缺键 / 设备 id 与实例名或公钥不符 / 公钥格式错 / 版本非数字 / 名称超长或为空 / 无私有地址 / 端口 0 均丢弃。
+    - 真机首轮发现 Bonjour 刷新记录时同一设备会重复报告「发现」，新增 `PeerSet` 按设备 id 去重（仅新设备或信息变化时报告），有单元测试。
+    - 两台 Mac（本机 arm64 macOS 27，172.16.21.153；shimo x64 macOS 12.7.6，172.16.22.255），均未登录、互不依赖中继，`lan_share_probe` 同时运行：本机 0.1 秒、对端 2.9 秒看到对方的设备名、显示名与指纹；本机停止广播约 1 秒后对端收到移除事件；第二次运行沿用已保存的身份（id 与指纹不变）。改为完整公钥钉住后复测：本机 0.0 秒、对端 2.9 秒互相发现，停止后约 1 秒收到移除事件。
 
 ## Task 3: 加密的局域网通道与能力协商
 
@@ -134,7 +145,7 @@ parent: "F002"
 - `handshake.rs`：
   - hello 帧明文交换协议版本、能力、设备 id、共享公钥、临时公钥；
   - 会话密钥 = HKDF-SHA256(静态 DH ‖ 临时 DH，salt = 双方临时公钥，info = 域标签与双方设备 id)，每个方向一把；
-  - 校验对端公钥与发现时的指纹一致（发起方提供期望指纹时）。
+  - 校验对端公钥与发现时广播的公钥完全一致（发起方提供期望公钥时），且设备 id 由该公钥派生。
 - `channel.rs`：
   - 监听只绑定私有网段网卡地址，测试可以注入回环地址；拒绝非私有地址的入站连接。
   - 帧：AES-256-GCM，nonce 由方向与递增计数器组成，计数器不连续即断开。
@@ -148,7 +159,12 @@ parent: "F002"
 - 手工：两台 Mac 用 `lan_share_probe` 完成握手与一次加密往返
 - `pnpm run lint:rs`
 
-- [ ] 握手、加密往返与推送通过；篡改、重放、错误公钥、缺少能力、超时、超大帧、非私有地址被拒绝，且原因明确；两台 Mac 真机往返成功
+- [x] 握手、加密往返与推送通过；篡改、重放、错误公钥、缺少能力、超时、超大帧、非私有地址被拒绝，且原因明确；两台 Mac 真机往返成功
+  - 证据（2026-11-02）：
+    - `lan_share_contracts` 7 项通过（连续 5 轮稳定）：双向请求、推送、关闭后调用返回 `Closed`；对端公钥与期望公钥不同 `PeerKeyMismatch`；缺少能力两侧分别得到 `NeedsUpdate` / `PeerNeedsUpdate`；对端不说话 `Timeout`；未完成握手的连接占满名额时新连接被拒、超时后恢复；超大请求 `TooLarge`、超大响应以明确错误返回且连接仍可用；非私有地址的连接与监听被拒绝。
+    - 单元测试覆盖帧篡改、重放与乱序、跨会话帧、与自身身份握手。
+    - 两台 Mac 真机：按广播的完整公钥钉住后完成加密往返，本机→对端 2–3 ms，对端→本机 66–129 ms。
+    - `cargo clippy -p openbitfun-services-integrations --no-default-features --features lan-share --lib --tests --examples` 新代码无告警（唯一告警是 `openbitfun-core-types` 中已有的 `derivable_impls`）；未跑全工作区 `pnpm run lint:rs`。
 
 ## Task 4: 安装包内带执行器
 
@@ -170,7 +186,13 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-desktop --lib api::dispatch_host`
 - 手工：按 1.0.8-plus 的方式打 arm64 与 x64 dmg；在没有 `~/.local/bin/openbitfun` 的两台 Mac 上安装，`Contents/MacOS/openbitfun dispatch probe` 输出能力声明；记录 dmg 体积变化
 
-- [ ] 安装包内带执行器且被优先使用；只装 dmg 的 Mac 能回答 `probe`；`Info.plist` 声明本地网络用途；体积变化已记录
+- [x] 安装包内带执行器且被优先使用；只装 dmg 的 Mac 能回答 `probe`；`Info.plist` 声明本地网络用途；体积变化已记录
+  - 证据（2026-11-02）：
+    - `node --test scripts/desktop-tauri-build.test.mjs` 27 项通过；`cargo test --locked -p openbitfun-desktop --lib api::dispatch_host` 4 项通过，其中 `the_bundled_executor_is_preferred_over_installed_ones` 覆盖查找顺序（可执行文件所在目录、`~/.local/bin`、`PATH`）。桌面端在运行中实际选用安装包内执行器，留到 F002-11/12 的真机验收中经外部任务再次确认。
+    - 按 1.0.8-plus 的方式打包：arm64 与 x64 的 `Contents/MacOS/` 都有 `openbitfun`（arm64 113,951,952 字节，x64 129,725,456 字节），`codesign --verify --deep --strict` 通过；两个包的 `Info.plist` 都含 `NSLocalNetworkUsageDescription` 与 `NSBonjourServices` = `_openbitfun._tcp`。
+    - 本机（arm64，未装 CLI）从挂载的 dmg 运行 `Contents/MacOS/openbitfun dispatch probe`：能力中有 `agent_delegation_v1`。
+    - 另一台 Mac（x64，macOS 12.7.6，无 `~/.local/bin/openbitfun`、`PATH` 中无 `openbitfun`）安装 x64 dmg 后运行同一命令：`x86_64`、`cliVersion` 1.0.8、含 `agent_delegation_v1`；应用启动后保持运行。
+    - dmg 体积：arm64 122,587,788 → 172,480,684 字节（+49.9 MB，+40.7%）；x64 132,169,409 → 188,165,531 字节（+56.0 MB，+42.4%）。
 
 ## 风险
 

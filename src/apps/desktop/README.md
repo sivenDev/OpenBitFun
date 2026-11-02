@@ -215,6 +215,14 @@ Direct Cargo Desktop builds need the same preparation once. Packaging uses
 Tauri's `externalBin` for platform placement and signing; raw builds require the
 adjacent `openbitfun-miniapp-shell` executable (`.exe` on Windows).
 
+Release packaging also bundles the `openbitfun` CLI as an `externalBin`
+(`Contents/MacOS/openbitfun` on macOS), built with the CLI product environment.
+The desktop answers dispatch jobs by running this executor, so an install from
+the installer alone can execute them. It looks for the executor next to its own
+executable first, then in `~/.local/bin`, then on `PATH`. `--bundle-only`
+requires the executor from an earlier release build and fails if it is missing;
+`--debug` builds skip it.
+
 An independent window displays its own Agent permission requests through the
 shared runtime mailbox. Legacy MiniApps that call `agent.cancelStaleRuns` on every
 reload must use explicit per-turn cancellation instead in managed instances;

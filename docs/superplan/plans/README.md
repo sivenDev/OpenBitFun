@@ -4,9 +4,9 @@
 
 ## Status
 
-| Type | Plans | Draft | Complete | Superseded |
+| Type | Plans | Approved | Complete | Superseded |
 | --- | --- | --- | --- | --- |
-| `feature` | 14 | 1 | 4 | 9 |
+| `feature` | 17 | 3 | 5 | 9 |
 
 ## Plan Groups
 
@@ -27,4 +27,7 @@
 | `F002-07` | [AI协作：只开放助理与连接的信任级别](features/F002/07-open-assistants.md) | `superseded` | 2026-10-31 |
 | `F002-08` | [AI协作：外部任务受阻时如实告知，超出额度时排队](features/F002/08-waiting-and-queueing.md) | `superseded` | 2026-11-01 |
 | `F002-09` | [AI协作：接回以前的外部任务、按授权保留会话，并删除兼容代码](features/F002/09-resume-and-retention.md) | `superseded` | 2026-11-01 |
-| `F002-10` | [局域网共享助理的基础：设备共享身份、Bonjour 发现、加密通道，安装包内带执行器](features/F002/10-lan-foundation.md) | `draft` | 2026-11-02 |
+| `F002-10` | [局域网共享助理的基础：设备共享身份、Bonjour 发现、加密通道，安装包内带执行器](features/F002/10-lan-foundation.md) | `complete` | 2026-11-02 |
+| `F002-11` | [共享与申请：共享设置、发现面板、倒计时确认框、授权按设备公钥，删除第 5 版 AI协作](features/F002/11-share-and-request.md) | `approved` | 2026-11-02 |
+| `F002-12` | [使用共享的助理：直接对话、对话列表、审批与排队状态、离线展示](features/F002/12-use-shared-assistants.md) | `approved` | 2026-11-02 |
+| `F002-13` | [助理之间相互调用：「助理」类目的子智能体、本机助理任务会话、调用链环检测、不可用时如实列出](features/F002/13-assistants-call-each-other.md) | `approved` | 2026-11-02 |

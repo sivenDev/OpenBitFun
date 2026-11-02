@@ -280,6 +280,7 @@ rand = "0.8"
 # Device/Network info (Remote Connect)
 mac_address = "1.1"
 local-ip-address = "0.6"
+mdns-sd = { version = "0.21", default-features = false }
 hostname = "0.4"
 
 # QR code generation

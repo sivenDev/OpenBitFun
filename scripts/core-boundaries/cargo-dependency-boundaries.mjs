@@ -160,6 +160,9 @@ const SERVICES_INTEGRATIONS_TOKIO_FEATURES = new Map([
   ['skillhub', ['fs', 'io-util']],
   ['plugin-source', ['fs', 'rt', 'sync', 'time']],
   ['hook-import', ['fs', 'sync']],
+  // LAN sharing: Bonjour browse task plus the direct WebSocket listener and
+  // client; no processes and no filesystem IO beyond the private identity file.
+  ['lan-share', ['macros', 'net', 'rt', 'sync', 'time']],
   ['remote-connect', ['fs', 'io-util', 'net', 'process', 'rt', 'sync', 'time']],
   ['remote-ssh', ['fs', 'io-util', 'macros', 'net', 'process', 'rt', 'sync', 'time']],
   ['remote-ssh-concrete', ['fs', 'io-util', 'macros', 'net', 'process', 'rt', 'sync', 'time']],
@@ -612,6 +615,9 @@ const THIRD_PARTY_CAPABILITY_PROFILES = new Map([
       ['openbitfun-services-integrations', dependencyProfile([], {
         optional: true,
         ownerFeatureCapabilities: new Map([
+          // Plain WebSocket on private addresses; frames are end-to-end
+          // encrypted by the LAN sharing handshake, so no TLS capability.
+          ['lan-share', []],
           ['remote-connect', ['rustls-tls-native-roots']],
           ['speech-realtime', ['rustls-tls-native-roots']],
         ]),

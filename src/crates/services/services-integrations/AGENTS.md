@@ -46,6 +46,12 @@ slices that are outside pure product logic but still platform-neutral.
   by Remote Connect, remote SSH, and offline migration. Keep it free of network,
   SSH transport, and runtime orchestration dependencies so owner readers and
   writers can validate staged data without enabling those heavier families.
+- The `lan-share` feature owns local-network sharing primitives: the
+  account-independent sharing identity (`~/.openbitfun/lan-share/identity.json`,
+  never overwritten when unreadable), Bonjour advertising and browsing of
+  `_openbitfun._tcp`, and the direct channel (private addresses only, X25519 +
+  HKDF session keys, per-direction frame counters, capability negotiation).
+  Sharing, requests, and grants are product semantics assembled above it.
 - `remote_connect::connections` owns cross-account pairing: fingerprints,
   invite links, connection keys (device X25519 plus HKDF bound to the
   connection id, never the account keys), the local connection store, and the
@@ -149,6 +155,8 @@ cargo test --locked -p openbitfun-services-integrations --no-default-features --
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::relay_client::tests::
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::host_stream::tests::
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::host_stream_subscriber::tests::
+cargo test --locked -p openbitfun-services-integrations --no-default-features --features lan-share --lib lan_share::
+cargo test --locked -p openbitfun-services-integrations --no-default-features --features lan-share --test lan_share_contracts
 cargo test -p openbitfun-services-integrations --no-default-features --features file-watch --test file_watch_contracts
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features workspace-search --test workspace_search_contracts
 cargo test --locked -p openbitfun-services-integrations --no-default-features --features deep-research --lib deep_research::tests::

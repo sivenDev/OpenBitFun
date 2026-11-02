@@ -4,5 +4,11 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>OpenBitFun uses the microphone for voice input and local speech transcription.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>OpenBitFun uses the local network to find devices that share assistants and to connect to them directly.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_openbitfun._tcp</string>
+  </array>
 </dict>
 </plist>

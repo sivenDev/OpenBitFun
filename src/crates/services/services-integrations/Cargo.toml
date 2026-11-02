@@ -44,6 +44,7 @@ hex = { workspace = true, optional = true }
 minisign-verify = { version = "0.2", optional = true }
 libc = { workspace = true, optional = true }
 local-ip-address = { workspace = true, optional = true }
+mdns-sd = { workspace = true, optional = true, features = ["async", "logging"] }
 mac_address = { workspace = true, optional = true }
 md5 = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
@@ -383,6 +384,36 @@ remote-ssh-concrete = [
     "uuid",
     "windows",
 ]
+# Local-network assistant sharing: an account-independent device identity,
+# Bonjour advertising and browsing, and an end-to-end encrypted direct
+# channel between devices. Product semantics live in Core and the hosts.
+lan-share = [
+    "remote-persistence",
+    "fs2",
+    "openbitfun-services-core/product-identity",
+    "windows",
+    "anyhow",
+    "async-trait",
+    "base64",
+    "dirs",
+    "futures-util",
+    "hostname",
+    "libc",
+    "local-ip-address",
+    "rand",
+    "sha2",
+    "thiserror",
+    "aes-gcm",
+    "x25519-dalek",
+    "dep:hkdf",
+    "dep:mdns-sd",
+    "dep:tokio-tungstenite",
+    "tokio/macros",
+    "tokio/net",
+    "tokio/rt",
+    "tokio/sync",
+    "tokio/time",
+]
 remote-persistence = [
     "fs2",
     "aes-gcm",
@@ -519,6 +550,16 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "test-
 # emitted product events.
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+
+[[test]]
+name = "lan_share_contracts"
+path = "tests/lan_share_contracts.rs"
+required-features = ["lan-share"]
+
+[[example]]
+name = "lan_share_probe"
+path = "examples/lan_share_probe.rs"
+required-features = ["lan-share"]
 
 [[test]]
 name = "script_tool_runtime"

@@ -54,6 +54,7 @@ export const servicesIntegrationsIntegrationTestTargets = [
   { name: 'file_watch_contracts', path: 'tests/file_watch_contracts.rs' },
   { name: 'function_agent_contracts', path: 'tests/function_agent_contracts.rs' },
   { name: 'git_contracts', path: 'tests/git_contracts.rs' },
+  { name: 'lan_share_contracts', path: 'tests/lan_share_contracts.rs' },
   { name: 'mcp_contracts', path: 'tests/mcp_contracts.rs' },
   { name: 'mcp_streamable_http_contracts', path: 'tests/mcp_streamable_http_contracts.rs' },
   { name: 'remote_connect_contracts', path: 'tests/remote_connect_contracts.rs' },
