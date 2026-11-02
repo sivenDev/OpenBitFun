@@ -11,6 +11,8 @@ export interface OpenAgent {
   displayName: string;
   description?: string;
   sameAccountDevices: string[];
+  /** Days the tasks of same-account devices are kept after their last turn; absent means 7. */
+  sessionRetentionDays?: number;
   /** Cross-account connections granted one by one; absent when none. */
   connections?: ConnectionGrant[];
 }
@@ -21,10 +23,15 @@ export interface ConnectionLimits {
   maxConcurrentJobs?: number;
   /** Minutes one turn may run before it is stopped (1-1440). */
   maxJobMinutes?: number;
+  /** Days the connection's tasks and their sessions are kept after their last turn; absent means 7. */
+  sessionRetentionDays?: number;
 }
 
 export const MAX_CONNECTION_CONCURRENT_JOBS = 100;
 export const MAX_CONNECTION_JOB_MINUTES = 24 * 60;
+export const DEFAULT_SESSION_RETENTION_DAYS = 7;
+/** The retention periods an owner can choose, in days. */
+export const SESSION_RETENTION_DAY_CHOICES = [1, 7, 30, 90] as const;
 
 /** One cross-account connection an open agent is granted to. */
 export interface ConnectionGrant extends ConnectionLimits {

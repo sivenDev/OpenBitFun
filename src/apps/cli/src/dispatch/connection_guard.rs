@@ -389,6 +389,7 @@ mod tests {
             ConnectionLimits {
                 max_concurrent_jobs: Some(1),
                 max_job_minutes: None,
+                ..ConnectionLimits::default()
             },
         )
         .await;
@@ -455,6 +456,7 @@ mod tests {
             ConnectionLimits {
                 max_concurrent_jobs: Some(1),
                 max_job_minutes: None,
+                ..ConnectionLimits::default()
             },
         )
         .await;
@@ -488,6 +490,7 @@ mod tests {
             ConnectionLimits {
                 max_concurrent_jobs: None,
                 max_job_minutes: Some(5),
+                ..ConnectionLimits::default()
             },
         )
         .await;

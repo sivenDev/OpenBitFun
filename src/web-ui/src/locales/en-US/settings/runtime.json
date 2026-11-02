@@ -139,8 +139,8 @@
     "grantFailed": "Could not grant",
     "withdrawFailed": "Could not withdraw",
     "limits": {
-      "title": "Limits",
-      "description": "Leave empty for no limit.",
+      "title": "Limits and retention",
+      "description": "Leave empty for no limit. Sessions of this device's tasks are deleted after the chosen period.",
       "invalid": "1–100 tasks at once, 1–1440 minutes per turn.",
       "jobsLabel": "Tasks at once",
       "minutesLabel": "Minutes per turn",
@@ -148,9 +148,12 @@
       "anyJobs": "Any number of tasks",
       "minutes": "{{count}} minutes per turn",
       "anyMinutes": "No time limit",
-      "edit": "Limits",
-      "save": "Save limits",
-      "saveFailed": "Could not save limits"
+      "edit": "Limits and retention",
+      "save": "Save limits and retention",
+      "saveFailed": "Could not save limits and retention",
+      "retentionLabel": "Keep sessions",
+      "retentionChoice": "{{count}} days",
+      "retention": "Sessions kept {{count}} days"
     },
     "openedToAccounts": "Open",
     "closeConfirmTitle": "Stop opening {{name}}?",

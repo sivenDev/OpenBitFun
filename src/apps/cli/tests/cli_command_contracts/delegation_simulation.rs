@@ -1099,12 +1099,27 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             &connection_id,
             "--max-jobs",
             "1",
+            "--retention-days",
+            "30",
         ],
     );
     assert!(
-        ok && output.contains("at most 1 task(s) at once"),
+        ok && output.contains("at most 1 task(s) at once")
+            && output.contains("sessions kept 30 day(s)"),
         "{output}"
     );
+    // Only the offered periods are accepted.
+    let (ok, output) = delegation_cli(
+        &target,
+        &[
+            "grant-connection",
+            OPEN_AGENT_ID,
+            &connection_id,
+            "--retention-days",
+            "2",
+        ],
+    );
+    assert!(!ok, "{output}");
     let (held, _) = submit_message_over_connection(&rpc, &connection_id)
         .await
         .expect("first task");
@@ -1122,18 +1137,26 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             )
             .await
             .expect("observe over the connection");
-        if let Some(prompt) = page["pendingPermissions"].get(0) {
+        // Reading a file outside the task's directory can also ask about
+        // that directory first; the read itself is the prompt that matters.
+        let read = page["pendingPermissions"]
+            .as_array()
+            .and_then(|prompts| prompts.iter().find(|prompt| prompt["action"] == "read"));
+        if let Some(prompt) = read {
             break prompt.clone();
         }
         assert!(!terminal(&page), "the task ended without asking: {page}");
         assert!(Instant::now() < deadline, "the task never asked: {page}");
         tokio::time::sleep(Duration::from_millis(300)).await;
     };
-    assert_eq!(asked["action"], "read", "{asked}");
     assert_eq!(asked["resources"], json!([]), "{asked}");
     let owner_view = owner_dispatch(&target, "status", &json!({ "jobId": held }));
-    let resources = owner_view["pendingPermissions"][0]["resources"].to_string();
-    assert!(resources.contains("USER.md"), "{owner_view}");
+    let owner_read = owner_view["pendingPermissions"]
+        .as_array()
+        .and_then(|prompts| prompts.iter().find(|prompt| prompt["action"] == "read"))
+        .map(|prompt| prompt["resources"].to_string())
+        .unwrap_or_default();
+    assert!(owner_read.contains("USER.md"), "{owner_view}");
     let (queued, _) = submit_message_over_connection(&rpc, &connection_id)
         .await
         .expect("a task over the limit is accepted");

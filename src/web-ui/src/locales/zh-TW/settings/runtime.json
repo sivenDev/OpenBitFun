@@ -139,8 +139,8 @@
     "grantFailed": "授權失敗",
     "withdrawFailed": "收回授權失敗",
     "limits": {
-      "title": "限制",
-      "description": "留空表示不限。",
+      "title": "限制與保留",
+      "description": "留空表示不限制。該裝置任務的會話在所選時長後刪除。",
       "invalid": "同時任務 1–100 個，每輪 1–1440 分鐘。",
       "jobsLabel": "同時任務數",
       "minutesLabel": "每輪分鐘數",
@@ -148,9 +148,12 @@
       "anyJobs": "任務數不限",
       "minutes": "每輪 {{count}} 分鐘",
       "anyMinutes": "不限時長",
-      "edit": "限制",
-      "save": "儲存限制",
-      "saveFailed": "儲存限制失敗"
+      "edit": "限制與保留",
+      "save": "儲存限制與保留",
+      "saveFailed": "儲存限制與保留失敗",
+      "retentionLabel": "會話保留",
+      "retentionChoice": "{{count}} 天",
+      "retention": "會話保留 {{count}} 天"
     },
     "openedToAccounts": "已開放",
     "closeConfirmTitle": "停止開放「{{name}}」？",

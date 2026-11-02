@@ -118,7 +118,13 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/infrastructure/config/components`；`pnpm run type-check:web`；`pnpm run lint:web`；`pnpm run i18n:audit`
 - `cargo check -p openbitfun-desktop --lib`
 
-- [ ] 授权可设置保留天数，清理按授权执行，均有测试
+- [x] 授权可设置保留天数，清理按授权执行，均有测试
+  - 证据（2026-11-01）：
+    - `ConnectionLimits.session_retention_days`（每个连接授权）与 `OpenAgent.session_retention_days`（同账号设备），可选 1、7、30、90 天，未设置为 7 天；`session_retention_days` 按任务来源查找，授权或开放项已删除时为 7 天。
+    - 目标端清理（`DelegatedRetention`）：经授权的任务按其授权天数清理，并删除该任务的独立目录与会话目录（`project_runtime_root`）；开放清单读不了时本轮不清理委派任务；普通任务仍为 30 天。
+    - CLI `delegation open|grant-connection --retention-days`，列表显示「sessions kept N day(s)」；AI协作页「限制与保留」中选择保留天数。
+    - 测试：core `delegation` 31 项（新增 `sessions_are_kept_as_long_as_each_grant_says`）；CLI `dispatch::` 117 + 1 项（新增 `delegated_tasks_are_kept_as_long_as_their_grant_says`）；CLI 合约 `delegation` 4 项（`--retention-days 30` 生效、`2` 被拒）；Web UI `config/components` 538 项（保留天数选项与保存）；`type-check:web`、`i18n:audit`、`lint:web`（无新增告警）通过。
+    - 同时修复：Dispatch 权限邮箱在写入临时文件时被并发读取会整体报错（`origin/main` 同样存在），读取时跳过尚未发布的 `.*.tmp`，新增 `a_permission_being_written_does_not_break_the_mailbox`；合约测试按 `read` 提示查找，不依赖两条提示的先后。跨账号合约测试连续 9 次通过。
 
 ## Task 3: 发起方接回以前的外部任务
 

@@ -207,6 +207,7 @@ pub(super) mod test_support {
                     display_name: id.to_string(),
                     description: None,
                     same_account_devices: devices.iter().map(|d| d.to_string()).collect(),
+                    session_retention_days: None,
                     connections: Vec::new(),
                 },
                 true,

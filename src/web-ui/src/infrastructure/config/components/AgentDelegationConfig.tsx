@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Input } from '@openbitfun/ui';
+import { Button, Checkbox, Input, Select } from '@openbitfun/ui';
 import {
   ALL_SAME_ACCOUNT_DEVICES,
   ASSISTANT_AGENT_TYPE_PREFIX,
   delegationAPI,
   MAX_CONNECTION_CONCURRENT_JOBS,
   MAX_CONNECTION_JOB_MINUTES,
+  DEFAULT_SESSION_RETENTION_DAYS,
+  SESSION_RETENTION_DAY_CHOICES,
   type ConnectionGrant,
   type ConnectionLimits,
   type DelegatedTask,
@@ -67,6 +69,8 @@ interface LoadedState {
 interface LimitsDraft {
   maxJobs: string;
   maxMinutes: string;
+  /** Days the connection's sessions are kept, one of the offered choices. */
+  retentionDays: number;
 }
 
 /** Granting one opened assistant to more devices of other accounts, each on its own. */
@@ -98,7 +102,7 @@ function draftLimits(draft: LimitsDraft): ConnectionLimits | null {
   const maxConcurrentJobs = parseLimit(draft.maxJobs, MAX_CONNECTION_CONCURRENT_JOBS);
   const maxJobMinutes = parseLimit(draft.maxMinutes, MAX_CONNECTION_JOB_MINUTES);
   if (maxConcurrentJobs === null || maxJobMinutes === null) return null;
-  return { maxConcurrentJobs, maxJobMinutes };
+  return { maxConcurrentJobs, maxJobMinutes, sessionRetentionDays: draft.retentionDays };
 }
 
 /** The open-agent id other devices call an assistant by, from its directory. */
@@ -222,7 +226,10 @@ export const AgentDelegationConfig: React.FC = () => {
     const minutes = grant.maxJobMinutes !== undefined
       ? t('agentDelegation.limits.minutes', { count: String(grant.maxJobMinutes) })
       : t('agentDelegation.limits.anyMinutes');
-    return `${jobs} · ${minutes}`;
+    const retention = t('agentDelegation.limits.retention', {
+      count: String(grant.sessionRetentionDays ?? DEFAULT_SESSION_RETENTION_DAYS),
+    });
+    return `${jobs} · ${minutes} · ${retention}`;
   };
 
   /** Runs an owner action, reports its failure, and reloads the page. */
@@ -308,6 +315,18 @@ export const AgentDelegationConfig: React.FC = () => {
             aria-label={t('agentDelegation.limits.minutesLabel')}
             placeholder={t('agentDelegation.limits.minutesLabel')}
             onChange={event => onChange({ ...value, maxMinutes: event.target.value })} />
+          <div className="openbitfun-runtime-settings__compact-select">
+            <Select size="sm" value={String(value.retentionDays)} disabled={busy}
+              aria-label={t('agentDelegation.limits.retentionLabel')}
+              options={SESSION_RETENTION_DAY_CHOICES.map(days => ({
+                value: String(days),
+                label: t('agentDelegation.limits.retentionChoice', { count: String(days) }),
+              }))}
+              onValueChange={next => onChange({
+                ...value,
+                retentionDays: Number(Array.isArray(next) ? next[0] : next),
+              })} />
+          </div>
         </div>
       </ConfigPageRow>
     );
@@ -377,6 +396,7 @@ export const AgentDelegationConfig: React.FC = () => {
                   connectionId: item.connectionId,
                   maxJobs: item.maxConcurrentJobs?.toString() ?? '',
                   maxMinutes: item.maxJobMinutes?.toString() ?? '',
+                  retentionDays: item.sessionRetentionDays ?? DEFAULT_SESSION_RETENTION_DAYS,
                 })}>
                 {t('agentDelegation.limits.edit')}
               </Button>

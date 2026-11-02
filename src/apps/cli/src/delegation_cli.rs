@@ -7,6 +7,7 @@ use clap::Subcommand;
 use openbitfun_core::service::delegation::{
     assistant_agent_type, assistant_directory, local_assistants, ConnectionLimits,
     ConnectionTrustStore, DelegationTrust, OpenAgent, OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
+    DEFAULT_SESSION_RETENTION_DAYS,
 };
 use openbitfun_core::service::delegation_audit::{DelegationAuditEvent, DelegationAuditLog};
 use std::collections::BTreeMap;
@@ -46,6 +47,10 @@ pub(crate) enum DelegationAction {
         /// Allow every device of this account
         #[arg(long, conflicts_with = "devices")]
         all_devices: bool,
+        /// Days the tasks of these devices, and their sessions, are kept after
+        /// their last turn ends: 1, 7 (the default), 30 or 90
+        #[arg(long)]
+        retention_days: Option<u32>,
         /// Confirm that delegated tasks may call external agents with this
         /// device's own login or credentials
         #[arg(long)]
@@ -72,6 +77,11 @@ pub(crate) enum DelegationAction {
         /// Remove both limits
         #[arg(long, conflicts_with_all = ["max_jobs", "max_minutes"])]
         no_limits: bool,
+        /// Days this connection's tasks, and their sessions, are kept after
+        /// their last turn ends: 1, 7 (the default), 30 or 90. Granting again
+        /// without it keeps the current period.
+        #[arg(long)]
+        retention_days: Option<u32>,
     },
     /// Show the tasks other accounts delegated to this device
     Audit {
@@ -195,6 +205,7 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
             description,
             devices,
             all_devices,
+            retention_days,
             accept_usage,
         } => {
             if !accept_usage {
@@ -211,6 +222,7 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 } else {
                     devices
                 },
+                session_retention_days: retention_days,
                 connections: Vec::new(),
             };
             let agent = store
@@ -233,17 +245,26 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
             max_jobs,
             max_minutes,
             no_limits,
+            retention_days,
         } => {
             let connection = openbitfun_core::service::remote_connect::connection_rpc::grantable_connection(
                 &openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()?,
                 &connection_id,
             )?;
             let mut agent = store.grant_connection(&id, &connection_id).await?;
+            let current = agent
+                .connection_grant(&connection_id)
+                .map(|grant| grant.limits)
+                .unwrap_or_default();
+            let mut limits = current;
             if no_limits || max_jobs.is_some() || max_minutes.is_some() {
-                let limits = ConnectionLimits {
-                    max_concurrent_jobs: max_jobs,
-                    max_job_minutes: max_minutes,
-                };
+                limits.max_concurrent_jobs = max_jobs;
+                limits.max_job_minutes = max_minutes;
+            }
+            if retention_days.is_some() {
+                limits.session_retention_days = retention_days;
+            }
+            if limits != current {
                 agent = store
                     .set_connection_limits(&id, &connection_id, limits)
                     .await?;
@@ -335,6 +356,13 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
     Ok(())
 }
 
+fn describe_retention(days: Option<u32>) -> String {
+    format!(
+        "sessions kept {} day(s)",
+        days.unwrap_or(DEFAULT_SESSION_RETENTION_DAYS)
+    )
+}
+
 fn describe_limits(limits: ConnectionLimits) -> String {
     let jobs = limits
         .max_concurrent_jobs
@@ -346,7 +374,10 @@ fn describe_limits(limits: ConnectionLimits) -> String {
         .map_or("no time limit".to_string(), |minutes| {
             format!("{minutes} minute(s) per turn")
         });
-    format!("{jobs}, {minutes}")
+    format!(
+        "{jobs}, {minutes}, {}",
+        describe_retention(limits.session_retention_days)
+    )
 }
 
 /// What the owner confirms before opening an assistant.
@@ -362,11 +393,12 @@ fn print_agents(agents: &[OpenAgent], trust: &BTreeMap<String, DelegationTrust>)
     }
     for agent in agents {
         println!(
-            "- {}: {} (assistant: {}, devices: {})",
+            "- {}: {} (assistant: {}, devices: {}, {})",
             escape_terminal_text(&agent.id),
             escape_terminal_text(&agent.display_name),
             escape_terminal_text(assistant_directory(&agent.agent_type).unwrap_or_default()),
-            describe_devices(&agent.same_account_devices)
+            describe_devices(&agent.same_account_devices),
+            describe_retention(agent.session_retention_days)
         );
         for grant in &agent.connections {
             println!(

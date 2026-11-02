@@ -398,6 +398,10 @@ pub struct OpenAgent {
     /// allows every device of this account.
     #[serde(default)]
     pub same_account_devices: Vec<String>,
+    /// Days the tasks of same-account devices are kept after their last turn
+    /// ends; unset means [`DEFAULT_SESSION_RETENTION_DAYS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_retention_days: Option<u32>,
     /// Cross-account connections allowed to delegate, granted one by one.
     /// Managed only through [`OpenAgentStore::grant_connection`] and
     /// [`OpenAgentStore::revoke_connection`]; reopening the same agent keeps
@@ -426,11 +430,53 @@ pub struct ConnectionLimits {
     /// Minutes one turn of a task may run before it is stopped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_job_minutes: Option<u32>,
+    /// Days this connection's tasks, and their sessions, are kept after
+    /// their last turn ends; unset means [`DEFAULT_SESSION_RETENTION_DAYS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_retention_days: Option<u32>,
 }
 
 /// Bounds the owner can set, so a typo cannot disable a limit.
 pub const MAX_CONNECTION_CONCURRENT_JOBS: u32 = 100;
 pub const MAX_CONNECTION_JOB_MINUTES: u32 = 24 * 60;
+/// How long a delegated task and its session are kept after its last turn
+/// ends, unless the grant says otherwise.
+pub const DEFAULT_SESSION_RETENTION_DAYS: u32 = 7;
+/// The retention periods an owner can choose, in days.
+pub const SESSION_RETENTION_DAY_CHOICES: [u32; 4] = [1, 7, 30, 90];
+
+fn validate_session_retention(days: Option<u32>) -> Result<(), String> {
+    match days {
+        Some(days) if !SESSION_RETENTION_DAY_CHOICES.contains(&days) => Err(format!(
+            "sessions are kept for one of {SESSION_RETENTION_DAY_CHOICES:?} days"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Who a delegated task came from, for its retention period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelegationRequester<'a> {
+    Device(&'a str),
+    Connection(&'a str),
+}
+
+/// Days the task of `requester` to `open_agent_id` is kept after its last
+/// turn ends. A task whose grant or open agent is gone keeps the default.
+pub fn session_retention_days(
+    agents: &[OpenAgent],
+    open_agent_id: &str,
+    requester: DelegationRequester<'_>,
+) -> u32 {
+    let agent = agents.iter().find(|agent| agent.id == open_agent_id);
+    let days = match requester {
+        DelegationRequester::Device(_) => agent.and_then(|agent| agent.session_retention_days),
+        DelegationRequester::Connection(connection_id) => agent
+            .and_then(|agent| agent.connection_grant(connection_id))
+            .and_then(|grant| grant.limits.session_retention_days),
+    };
+    days.unwrap_or(DEFAULT_SESSION_RETENTION_DAYS)
+}
 
 impl ConnectionLimits {
     fn validate(&self) -> Result<(), String> {
@@ -448,7 +494,7 @@ impl ConnectionLimits {
                 ));
             }
         }
-        Ok(())
+        validate_session_retention(self.session_retention_days)
     }
 }
 
@@ -494,6 +540,7 @@ impl OpenAgent {
         if self.display_name.trim().is_empty() {
             return Err("open agent requires a display name".to_string());
         }
+        validate_session_retention(self.session_retention_days)?;
         if self
             .same_account_devices
             .iter()
@@ -572,6 +619,26 @@ impl OpenAgentStore {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Every opened assistant, read without the store lock for callers that
+    /// cannot wait, such as the dispatch retention cleanup. Writes replace the
+    /// file atomically, so the read sees one whole version.
+    pub fn agents_now(&self) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
+        let document: OpenAgentsDocument = match std::fs::read(&self.path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+                OpenAgentStoreError::Invalid(format!("open agents unreadable: {error}"))
+            })?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                OpenAgentsDocument::default()
+            }
+            Err(error) => {
+                return Err(OpenAgentStoreError::Invalid(format!(
+                    "read open agents: {error}"
+                )))
+            }
+        };
+        Ok(document.entries)
     }
 
     /// Every opened assistant.
@@ -947,6 +1014,7 @@ mod tests {
             display_name: "Helper".to_string(),
             description: None,
             same_account_devices: devices.iter().map(|device| device.to_string()).collect(),
+            session_retention_days: None,
             connections: Vec::new(),
         }
     }
@@ -1079,6 +1147,7 @@ mod tests {
         let limits = ConnectionLimits {
             max_concurrent_jobs: Some(2),
             max_job_minutes: Some(30),
+            ..ConnectionLimits::default()
         };
         // Limits apply only to an existing grant.
         assert!(store
@@ -1097,10 +1166,12 @@ mod tests {
             ConnectionLimits {
                 max_concurrent_jobs: Some(0),
                 max_job_minutes: None,
+                ..ConnectionLimits::default()
             },
             ConnectionLimits {
                 max_concurrent_jobs: None,
                 max_job_minutes: Some(MAX_CONNECTION_JOB_MINUTES + 1),
+                ..ConnectionLimits::default()
             },
         ] {
             assert!(store
@@ -1111,6 +1182,71 @@ mod tests {
         // Stored flat beside the connection id.
         let raw = std::fs::read_to_string(store.path()).unwrap();
         assert!(raw.contains("\"maxConcurrentJobs\":2"), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn sessions_are_kept_as_long_as_each_grant_says() {
+        let (store, _dir) = store();
+        store
+            .store_entry(OpenAgent {
+                session_retention_days: Some(30),
+                ..agent("helper", &["laptop"])
+            })
+            .await
+            .unwrap();
+        store.grant_connection("helper", "conn-1").await.unwrap();
+        store.grant_connection("helper", "conn-2").await.unwrap();
+        store
+            .set_connection_limits(
+                "helper",
+                "conn-1",
+                ConnectionLimits {
+                    session_retention_days: Some(1),
+                    ..ConnectionLimits::default()
+                },
+            )
+            .await
+            .unwrap();
+        let agents = store.agents_now().unwrap();
+        let days = |requester| session_retention_days(&agents, "helper", requester);
+        assert_eq!(days(DelegationRequester::Device("laptop")), 30);
+        assert_eq!(days(DelegationRequester::Connection("conn-1")), 1);
+        // A grant without a period, a withdrawn grant and a closed agent keep
+        // the default.
+        assert_eq!(
+            days(DelegationRequester::Connection("conn-2")),
+            DEFAULT_SESSION_RETENTION_DAYS
+        );
+        assert_eq!(
+            days(DelegationRequester::Connection("conn-gone")),
+            DEFAULT_SESSION_RETENTION_DAYS
+        );
+        assert_eq!(
+            session_retention_days(&agents, "closed", DelegationRequester::Device("laptop")),
+            DEFAULT_SESSION_RETENTION_DAYS
+        );
+
+        // Only the offered periods are accepted.
+        for invalid in [0, 2, 365] {
+            assert!(store
+                .set_connection_limits(
+                    "helper",
+                    "conn-1",
+                    ConnectionLimits {
+                        session_retention_days: Some(invalid),
+                        ..ConnectionLimits::default()
+                    },
+                )
+                .await
+                .is_err());
+            assert!(store
+                .store_entry(OpenAgent {
+                    session_retention_days: Some(invalid),
+                    ..agent("helper", &["laptop"])
+                })
+                .await
+                .is_err());
+        }
     }
 
     #[tokio::test]

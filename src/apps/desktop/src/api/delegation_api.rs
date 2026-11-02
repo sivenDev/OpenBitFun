@@ -96,6 +96,7 @@ pub async fn delegation_open_agent(
         display_name: request.display_name.trim().to_string(),
         description,
         same_account_devices: request.same_account_devices,
+        session_retention_days: None,
         connections: Vec::new(),
     };
     OpenAgentStore::for_product_home(&path_manager)

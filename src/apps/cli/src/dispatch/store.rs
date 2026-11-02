@@ -212,6 +212,96 @@ struct RepoCacheRetentionRecord {
     last_used_at: String,
 }
 
+/// What the retention cleanup knows about delegated tasks: how long their
+/// grants keep them, and where their directories and sessions live.
+#[derive(Default)]
+pub(crate) struct DelegatedRetention {
+    /// Opened assistants; `None` when they cannot be read, so delegated tasks
+    /// wait for a later cleanup instead of using a guessed period.
+    agents: Option<Vec<openbitfun_core::service::delegation::OpenAgent>>,
+    /// Parent of delegated task directories; nothing outside it is removed.
+    task_root: Option<PathBuf>,
+    /// The session directory of a task directory.
+    session_root: Option<Box<dyn Fn(&Path) -> PathBuf>>,
+}
+
+impl DelegatedRetention {
+    fn for_product_home(path_manager: openbitfun_core::infrastructure::PathManager) -> Self {
+        use openbitfun_core::service::delegation::{delegation_workspaces_root, OpenAgentStore};
+        let agents = match OpenAgentStore::for_product_home(&path_manager).agents_now() {
+            Ok(agents) => Some(agents),
+            Err(error) => {
+                tracing::warn!(
+                    "Keeping delegated tasks past retention, open agents unreadable: error={error}"
+                );
+                None
+            }
+        };
+        Self {
+            agents,
+            task_root: Some(delegation_workspaces_root(&path_manager)),
+            session_root: Some(Box::new(move |task_dir: &Path| {
+                path_manager.project_runtime_root(task_dir)
+            })),
+        }
+    }
+
+    /// Days `job` is kept after its last turn ends, or `None` to keep it for
+    /// now.
+    fn retention_days(&self, job: &DispatchJobRecord) -> Option<i64> {
+        use openbitfun_core::service::delegation::{session_retention_days, DelegationRequester};
+        let Some(delegation) = &job.request.delegation else {
+            return Some(TERMINAL_JOB_RETENTION_DAYS);
+        };
+        let agents = match &self.agents {
+            Some(agents) => agents.as_slice(),
+            None => return None,
+        };
+        let requester = match &job.request.source_connection_id {
+            Some(connection_id) => DelegationRequester::Connection(connection_id),
+            None => DelegationRequester::Device(
+                job.request.source_device_id.as_deref().unwrap_or_default(),
+            ),
+        };
+        Some(i64::from(session_retention_days(
+            agents,
+            &delegation.open_agent_id,
+            requester,
+        )))
+    }
+
+    /// Removes an expired delegated task's own directory and its session.
+    fn remove_task_directories(&self, workspace_path: &str) -> Result<()> {
+        let Some(task_root) = &self.task_root else {
+            return Ok(());
+        };
+        let task_dir = Path::new(workspace_path);
+        if !task_dir.starts_with(task_root) || task_dir == task_root.as_path() {
+            return Ok(());
+        }
+        let mut directories = vec![task_dir.to_path_buf()];
+        if let Some(session_root) = &self.session_root {
+            directories.push(session_root(task_dir));
+        }
+        for directory in directories {
+            match fs::symlink_metadata(&directory) {
+                Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {
+                    fs::remove_dir_all(&directory).with_context(|| {
+                        format!("remove expired delegated task {}", directory.display())
+                    })?;
+                }
+                Ok(_) => tracing::warn!(
+                    "Skipping unsafe expired delegated task path: {}",
+                    directory.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct DispatchStore {
     root: PathBuf,
@@ -223,7 +313,8 @@ impl DispatchStore {
         let path_manager = openbitfun_core::infrastructure::PathManager::new()
             .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
         let store = Self::open(path_manager.product_home_dir().join("dispatch"))?;
-        if let Err(error) = store.maybe_collect_expired_terminal_jobs() {
+        let delegated = DelegatedRetention::for_product_home(path_manager);
+        if let Err(error) = store.maybe_collect_expired_terminal_jobs(&delegated) {
             tracing::warn!("Dispatch retention cleanup failed: {error:#}");
         }
         Ok(store)
@@ -1263,7 +1354,7 @@ impl DispatchStore {
         Ok(self.worktrees_root().join(repo_key).join(directory_name))
     }
 
-    fn maybe_collect_expired_terminal_jobs(&self) -> Result<()> {
+    fn maybe_collect_expired_terminal_jobs(&self, delegated: &DelegatedRetention) -> Result<()> {
         let marker = self.root.join(RETENTION_GC_MARKER);
         if fs::metadata(&marker)
             .and_then(|metadata| metadata.modified())
@@ -1282,11 +1373,22 @@ impl DispatchStore {
         {
             return Ok(());
         }
-        self.collect_expired_terminal_jobs(chrono::Utc::now())?;
+        self.collect_expired_jobs(chrono::Utc::now(), delegated)?;
         atomic_write(&marker, chrono::Utc::now().to_rfc3339().as_bytes())
     }
 
+    #[cfg(test)]
     fn collect_expired_terminal_jobs(&self, now: chrono::DateTime<chrono::Utc>) -> Result<usize> {
+        self.collect_expired_jobs(now, &DelegatedRetention::default())
+    }
+
+    /// Removes terminal jobs kept longer than their retention period: 30 days
+    /// for ordinary jobs, and for a delegated task the period its grant sets.
+    fn collect_expired_jobs(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        delegated: &DelegatedRetention,
+    ) -> Result<usize> {
         let jobs_root = self.root.join("jobs");
         let mut removed = 0;
         for entry in fs::read_dir(&jobs_root)
@@ -1328,7 +1430,20 @@ impl DispatchStore {
             else {
                 continue;
             };
-            if now.signed_duration_since(finished_at).num_days() < TERMINAL_JOB_RETENTION_DAYS {
+            let job_record: DispatchJobRecord = match read_json(&job_dir.join(JOB_RECORD_FILE)) {
+                Ok(record) => record,
+                Err(error) => {
+                    tracing::warn!(
+                        "Skipping dispatch job with unreadable workspace binding during retention cleanup: job_id={} error={error:#}",
+                        job_id
+                    );
+                    continue;
+                }
+            };
+            let Some(retention_days) = delegated.retention_days(&job_record) else {
+                continue;
+            };
+            if now.signed_duration_since(finished_at).num_days() < retention_days {
                 continue;
             }
             let Some(operation_lock) =
@@ -1340,16 +1455,6 @@ impl DispatchStore {
                 JobLock::try_exclusive(&self.workspace_git_operation_lock_path(&job_id)?)?
             else {
                 continue;
-            };
-            let job_record: DispatchJobRecord = match read_json(&job_dir.join(JOB_RECORD_FILE)) {
-                Ok(record) => record,
-                Err(error) => {
-                    tracing::warn!(
-                        "Skipping dispatch job with unreadable workspace binding during retention cleanup: job_id={} error={error:#}",
-                        job_id
-                    );
-                    continue;
-                }
             };
             let Some(workspace_runtime_lock) = WorkspaceLock::try_acquire(
                 &self.workspace_lock_path(&job_record.request.workspace_path),
@@ -1410,6 +1515,9 @@ impl DispatchStore {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
+            }
+            if job_record.request.delegation.is_some() {
+                delegated.remove_task_directories(&job_record.request.workspace_path)?;
             }
             drop(workspace_runtime_lock);
             drop(git_operation_lock);
@@ -2019,6 +2127,9 @@ where
     let mut values = Vec::new();
     for entry in entries {
         let entry = entry?;
+        if is_unpublished_write(&entry) {
+            continue;
+        }
         let metadata = fs::symlink_metadata(entry.path())?;
         if metadata.file_type().is_symlink()
             || !metadata.is_file()
@@ -2034,6 +2145,15 @@ where
     Ok(values)
 }
 
+/// A temporary file [`atomic_write`] has not renamed into place yet. Readers
+/// list a mailbox without the job lock, so they can see one mid-write.
+fn is_unpublished_write(entry: &fs::DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .is_some_and(|name| name.starts_with('.') && name.ends_with(".tmp"))
+}
+
 fn mailbox_usage(directory: &Path) -> Result<(usize, u64)> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -2047,6 +2167,9 @@ fn mailbox_usage(directory: &Path) -> Result<(usize, u64)> {
     let mut bytes = 0_u64;
     for entry in entries {
         let entry = entry?;
+        if is_unpublished_write(&entry) {
+            continue;
+        }
         let metadata = fs::symlink_metadata(entry.path())?;
         if metadata.file_type().is_symlink()
             || !metadata.is_file()
@@ -2298,7 +2421,8 @@ fn retryable_retention_rename_error(error: &std::io::Error) -> bool {
 mod tests {
     use super::*;
     use crate::dispatch::protocol::{
-        DispatchApprovalPolicy, DispatchSetupAuditEvent, DispatchSubmitRequest,
+        DispatchApprovalPolicy, DispatchDelegation, DispatchDelegationSource,
+        DispatchSetupAuditEvent, DispatchSubmitRequest,
     };
     use openbitfun_agent_runtime::sdk::{PermissionRequestSource, PermissionRequestSourceKind};
     use serde_json::Map;
@@ -3477,6 +3601,138 @@ mod tests {
         );
         assert!(openbitfun_home.join("dispatch/jobs").is_dir());
         assert!(openbitfun_home.join("dispatch/workspaces").is_dir());
+    }
+
+    #[test]
+    fn a_permission_being_written_does_not_break_the_mailbox() {
+        let (_dir, store) = store();
+        store
+            .create_job(request("job-1"), "Task".to_string())
+            .expect("create job");
+        store
+            .save_pending_permission("job-1", &permission_request("job-1"))
+            .expect("record permission");
+        let pending = store
+            .job_dir("job-1")
+            .expect("job path")
+            .join(PENDING_PERMISSIONS_DIR);
+        // What atomic_write leaves while it writes the next request.
+        fs::write(pending.join(".next.json.0123.tmp"), b"{\"partial").expect("temporary file");
+        let listed = store.list_pending_permissions("job-1").expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(mailbox_usage(&pending).expect("usage").0, 1);
+        // Anything else that is not a request still makes the mailbox invalid.
+        fs::write(pending.join("stray.txt"), b"x").expect("stray file");
+        assert!(store.list_pending_permissions("job-1").is_err());
+    }
+
+    #[test]
+    fn delegated_tasks_are_kept_as_long_as_their_grant_says() {
+        use openbitfun_core::service::delegation::{ConnectionGrant, ConnectionLimits, OpenAgent};
+
+        let (dir, store) = store();
+        let task_root = dir.path().join("delegation").join("workspaces");
+        let sessions_root = dir.path().join("projects");
+        let now = chrono::Utc::now();
+        let finish = |job_id: &str, days_ago: i64| {
+            store
+                .mark_state(job_id, DispatchJobState::Succeeded, None, None)
+                .expect("mark terminal");
+            let mut state = store.load_state(job_id).expect("state");
+            state.finished_at = Some((now - chrono::Duration::days(days_ago)).to_rfc3339());
+            atomic_write_json(
+                &store.job_dir(job_id).expect("job path").join(STATE_FILE),
+                &state,
+            )
+            .expect("age terminal state");
+        };
+        let delegated = |job_id: &str, connection_id: Option<&str>| {
+            let mut request = request(job_id);
+            let task_dir = task_root.join("helper").join("requester").join(job_id);
+            create_private_dir(&task_dir).expect("task dir");
+            create_private_dir(&sessions_root.join(job_id)).expect("session dir");
+            request.workspace_path = task_dir.to_string_lossy().into_owned();
+            request.delegation = Some(DispatchDelegation {
+                open_agent_id: "helper".to_string(),
+                source: DispatchDelegationSource::default(),
+            });
+            request.source_connection_id = connection_id.map(str::to_string);
+            request.source_device_id = connection_id.is_none().then(|| "laptop".to_string());
+            store.create_job(request, "Task".to_string()).expect("create job");
+        };
+        // conn-1 keeps sessions 1 day, conn-2 has no period (7 days), and
+        // same-account devices keep them 30 days.
+        let agents = vec![OpenAgent {
+            id: "helper".to_string(),
+            agent_type: "assistant:workspace".to_string(),
+            display_name: "Helper".to_string(),
+            description: None,
+            same_account_devices: vec!["laptop".to_string()],
+            session_retention_days: Some(30),
+            connections: vec![
+                ConnectionGrant {
+                    connection_id: "conn-1".to_string(),
+                    limits: ConnectionLimits {
+                        session_retention_days: Some(1),
+                        ..ConnectionLimits::default()
+                    },
+                },
+                ConnectionGrant {
+                    connection_id: "conn-2".to_string(),
+                    limits: ConnectionLimits::default(),
+                },
+            ],
+        }];
+        delegated("delegation-short", Some("conn-1"));
+        finish("delegation-short", 2);
+        delegated("delegation-default", Some("conn-2"));
+        finish("delegation-default", 2);
+        delegated("delegation-default-old", Some("conn-2"));
+        finish("delegation-default-old", 8);
+        delegated("delegation-device", None);
+        finish("delegation-device", 8);
+        delegated("delegation-withdrawn", Some("conn-gone"));
+        finish("delegation-withdrawn", 8);
+        store
+            .create_job(request("ordinary"), "Task".to_string())
+            .expect("create job");
+        finish("ordinary", 8);
+
+        let sessions = sessions_root.clone();
+        let retention = DelegatedRetention {
+            agents: Some(agents),
+            task_root: Some(task_root.clone()),
+            session_root: Some(Box::new(move |task_dir: &Path| {
+                sessions.join(task_dir.file_name().unwrap())
+            })),
+        };
+        // Unreadable open agents keep every delegated task for now.
+        let unreadable = DelegatedRetention {
+            agents: None,
+            ..DelegatedRetention::default()
+        };
+        assert_eq!(store.collect_expired_jobs(now, &unreadable).unwrap(), 0);
+
+        assert_eq!(store.collect_expired_jobs(now, &retention).unwrap(), 3);
+        for (job_id, kept) in [
+            ("delegation-short", false),
+            ("delegation-default", true),
+            ("delegation-default-old", false),
+            ("delegation-device", true),
+            ("delegation-withdrawn", false),
+            ("ordinary", true),
+        ] {
+            assert_eq!(store.load_job(job_id).is_ok(), kept, "{job_id}");
+            if job_id.starts_with("delegation-") {
+                let task_dir = task_root.join("helper").join("requester").join(job_id);
+                assert_eq!(task_dir.exists(), kept, "{job_id} task directory");
+                assert_eq!(
+                    sessions_root.join(job_id).exists(),
+                    kept,
+                    "{job_id} session"
+                );
+            }
+        }
     }
 
     #[test]

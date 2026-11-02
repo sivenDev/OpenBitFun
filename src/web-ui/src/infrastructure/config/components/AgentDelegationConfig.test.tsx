@@ -71,8 +71,8 @@ vi.mock('@openbitfun/ui', () => ({
   Input: ({ size: _size, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { size?: string }) => <input {...props} />,
   Checkbox: ({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) =>
     <label><input type="checkbox" {...props} />{label}</label>,
-  Select: ({ value, options, onValueChange }: { value: string; options: { value: string; label: string }[]; onValueChange: (value: string) => void }) =>
-    <select value={value} onChange={(event) => onValueChange(event.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>,
+  Select: ({ value, options, onValueChange, 'aria-label': label }: { value: string; options: { value: string; label: string }[]; onValueChange: (value: string) => void; 'aria-label'?: string }) =>
+    <select aria-label={label} value={value} onChange={(event) => onValueChange(event.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>,
 }));
 
 describe('AgentDelegationConfig', () => {
@@ -208,6 +208,9 @@ describe('AgentDelegationConfig', () => {
     // Each grant is named by whom it goes to.
     expect(container.querySelector('[data-row="agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1"]')!.textContent)
       .toContain('agentDelegation.grantedWith:agentDelegation.limits.anyJobs');
+    // Sessions are kept 7 days unless the owner chooses another period.
+    expect(container.querySelector('[data-row="agentDelegation.connectionLabel:Peer conn-1|user-conn-1|Desk conn-1"]')!.textContent)
+      .toContain('agentDelegation.limits.retention:7');
     expect(container.querySelector('[data-row="agentDelegation.connectionMissing:conn-gone"]')).not.toBeNull();
     // Limits are set per device, after it is granted.
     mocks.limits.mockResolvedValue({});
@@ -215,8 +218,16 @@ describe('AgentDelegationConfig', () => {
     await typeInto('agentDelegation.limits.jobsLabel', '0');
     expect(button('agentDelegation.limits.save')!.disabled).toBe(true);
     await typeInto('agentDelegation.limits.jobsLabel', '2');
+    const retention = container.querySelector('select[aria-label="agentDelegation.limits.retentionLabel"]') as HTMLSelectElement;
+    expect(Array.from(retention.options).map(option => option.value)).toEqual(['1', '7', '30', '90']);
+    expect(retention.value).toBe('7');
+    await act(async () => {
+      retention.value = '30';
+      retention.dispatchEvent(new Event('change', { bubbles: true }));
+    });
     await click('agentDelegation.limits.save');
-    expect(mocks.limits).toHaveBeenCalledWith('workspace', 'conn-1', { maxConcurrentJobs: 2, maxJobMinutes: undefined });
+    expect(mocks.limits).toHaveBeenCalledWith('workspace', 'conn-1',
+      { maxConcurrentJobs: 2, maxJobMinutes: undefined, sessionRetentionDays: 30 });
     mocks.revoke.mockResolvedValue(true);
     await click('agentDelegation.withdraw');
     expect(mocks.revoke).toHaveBeenCalledWith('workspace', 'conn-1');
