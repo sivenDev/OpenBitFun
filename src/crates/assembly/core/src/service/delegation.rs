@@ -1,15 +1,12 @@
 //! Assistants this device opens to other devices for delegated dispatch jobs.
 //!
 //! Only assistants are opened. Each delegated task is a message task that runs
-//! as the assistant in a directory of its own. Entries an earlier build stored
-//! for agent modes or external agents are kept on disk, reported as no longer
-//! supported, and treated as closed.
+//! as the assistant in a directory of its own.
 //!
 //! The open list is device-local: it lives beside the dispatch data rather than
 //! in the shared configuration document, so a configuration backup restored on
-//! another device never opens agents there. Entries are stored raw and parsed
-//! one by one; an entry this build cannot read is kept on disk, reported with a
-//! reason, and treated as closed.
+//! another device never opens agents there. A list this build cannot read is
+//! reported and never overwritten.
 
 use std::path::{Path, PathBuf};
 
@@ -385,28 +382,6 @@ impl DelegatedTurnFacts {
     }
 }
 
-/// What a delegated job may do on this device.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DelegationTaskKind {
-    /// A question or lookup: the task's text and its answer.
-    Message,
-    /// Any other kind, such as the coding tasks an earlier build accepted or
-    /// one a newer build writes; never granted by this one.
-    #[serde(other)]
-    Unknown,
-}
-
-impl DelegationTaskKind {
-    /// The wire name, or `None` for a kind this build does not grant.
-    pub fn wire_name(self) -> Option<&'static str> {
-        match self {
-            Self::Message => Some("message"),
-            Self::Unknown => None,
-        }
-    }
-}
-
 /// One assistant this device opens to other devices.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -419,7 +394,6 @@ pub struct OpenAgent {
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub task_kinds: Vec<DelegationTaskKind>,
     /// Same-account devices allowed to delegate; [`ALL_SAME_ACCOUNT_DEVICES`]
     /// allows every device of this account.
     #[serde(default)]
@@ -479,10 +453,6 @@ impl ConnectionLimits {
 }
 
 impl OpenAgent {
-    pub fn allows_task_kind(&self, kind: DelegationTaskKind) -> bool {
-        kind != DelegationTaskKind::Unknown && self.task_kinds.contains(&kind)
-    }
-
     pub fn is_granted_to_device(&self, device_id: &str) -> bool {
         !device_id.trim().is_empty()
             && self
@@ -518,20 +488,8 @@ impl OpenAgent {
             ));
         }
         let agent_type = self.agent_type.trim();
-        // Earlier builds also opened agent modes and external agents; only
-        // assistants are opened now.
-        if !agent_type.starts_with(ASSISTANT_AGENT_TYPE_PREFIX) {
-            return Err(format!(
-                "{NO_LONGER_SUPPORTED}: '{agent_type}' is not an assistant"
-            ));
-        }
         if assistant_directory(agent_type).is_none() {
             return Err(format!("'{agent_type}' does not name an assistant"));
-        }
-        // An assistant answers questions in a directory of each task's own;
-        // a kind a newer build adds is kept but never granted here.
-        if !self.task_kinds.contains(&DelegationTaskKind::Message) {
-            return Err("an opened assistant accepts message tasks".to_string());
         }
         if self.display_name.trim().is_empty() {
             return Err("open agent requires a display name".to_string());
@@ -562,66 +520,13 @@ impl OpenAgent {
     }
 }
 
-/// Leads the problem of an entry an earlier build opened for an agent mode
-/// or an external agent.
-pub const NO_LONGER_SUPPORTED: &str = "no longer supported";
-
-/// One stored entry, readable or not.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenAgentRecord {
-    /// Present when this build can read and accept the entry.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<OpenAgent>,
-    /// Why the entry is treated as closed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub problem: Option<String>,
-    /// The stored entry when it is unreadable, so management surfaces can
-    /// still show and close it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub raw: Option<Value>,
-}
-
-impl OpenAgentRecord {
-    fn parse(raw: Value) -> Self {
-        let parsed = serde_json::from_value::<OpenAgent>(raw.clone())
-            .map_err(|error| format!("unreadable entry: {error}"))
-            .and_then(|agent| agent.validate().map(|()| agent));
-        match parsed {
-            Ok(agent) => Self {
-                agent: Some(agent),
-                problem: None,
-                raw: None,
-            },
-            Err(problem) => Self {
-                agent: None,
-                problem: Some(problem),
-                raw: Some(raw),
-            },
-        }
-    }
-
-    /// The entry id, even for an unreadable entry that stores one.
-    pub fn id(&self) -> Option<&str> {
-        self.agent
-            .as_ref()
-            .map(|agent| agent.id.as_str())
-            .or_else(|| {
-                self.raw
-                    .as_ref()
-                    .and_then(|raw| raw.get("id"))
-                    .and_then(Value::as_str)
-            })
-    }
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenAgentsDocument {
     #[serde(default)]
     schema_version: u32,
     #[serde(default)]
-    entries: Vec<Value>,
+    entries: Vec<OpenAgent>,
 }
 
 /// Why a delegated job is refused.
@@ -629,17 +534,8 @@ struct OpenAgentsDocument {
 pub enum DelegationRefusal {
     #[error("open agent '{0}' does not exist on this device")]
     UnknownOpenAgent(String),
-    /// The entry is stored but this build does not accept it, such as an
-    /// agent mode or an external agent an earlier build opened.
-    #[error("open agent '{0}' is no longer open on this device")]
-    NoLongerOpen(String),
     #[error("open agent '{0}' is not granted to the requesting device")]
     NotGranted(String),
-    #[error("open agent '{open_agent_id}' accepts only message tasks")]
-    TaskKindNotAllowed {
-        open_agent_id: String,
-        kind: DelegationTaskKind,
-    },
     #[error("the requesting device is unknown")]
     MissingRequester,
     #[error("open agent '{0}' is not granted to this connection")]
@@ -678,50 +574,42 @@ impl OpenAgentStore {
         &self.path
     }
 
-    /// Every stored entry, including ones treated as closed.
-    pub async fn records(&self) -> Result<Vec<OpenAgentRecord>, OpenAgentStoreError> {
+    /// Every opened assistant.
+    pub async fn agents(&self) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
         let document: OpenAgentsDocument = JsonFileStore
             .read_locked_optional(&self.path)
             .await?
             .unwrap_or_default();
-        Ok(document
-            .entries
-            .into_iter()
-            .map(OpenAgentRecord::parse)
-            .collect())
+        for agent in &document.entries {
+            agent.validate().map_err(|problem| {
+                OpenAgentStoreError::Invalid(format!("open agent '{}': {problem}", agent.id))
+            })?;
+        }
+        Ok(document.entries)
     }
 
-    /// The readable entry `open_agent_id`, or why it cannot take a task.
+    /// The entry `open_agent_id`, or why it cannot take a task.
     async fn open_agent(
         &self,
         open_agent_id: &str,
     ) -> Result<Result<OpenAgent, DelegationRefusal>, OpenAgentStoreError> {
-        let record = self
-            .records()
+        Ok(self
+            .agents()
             .await?
             .into_iter()
-            .find(|record| record.id() == Some(open_agent_id));
-        Ok(match record {
-            Some(OpenAgentRecord {
-                agent: Some(agent), ..
-            }) => Ok(agent),
-            Some(_) => Err(DelegationRefusal::NoLongerOpen(open_agent_id.to_string())),
-            None => Err(DelegationRefusal::UnknownOpenAgent(
-                open_agent_id.to_string(),
-            )),
-        })
+            .find(|agent| agent.id == open_agent_id)
+            .ok_or_else(|| DelegationRefusal::UnknownOpenAgent(open_agent_id.to_string())))
     }
 
-    /// Readable entries granted to `device_id`.
+    /// Entries granted to `device_id`.
     pub async fn granted_to_device(
         &self,
         device_id: &str,
     ) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
         Ok(self
-            .records()
+            .agents()
             .await?
             .into_iter()
-            .filter_map(|record| record.agent)
             .filter(|agent| agent.is_granted_to_device(device_id))
             .collect())
     }
@@ -731,7 +619,6 @@ impl OpenAgentStore {
         &self,
         device_id: &str,
         open_agent_id: &str,
-        kind: DelegationTaskKind,
     ) -> Result<Result<OpenAgent, DelegationRefusal>, OpenAgentStoreError> {
         if device_id.trim().is_empty() {
             return Ok(Err(DelegationRefusal::MissingRequester));
@@ -743,25 +630,18 @@ impl OpenAgentStore {
         if !agent.is_granted_to_device(device_id) {
             return Ok(Err(DelegationRefusal::NotGranted(agent.id)));
         }
-        if !agent.allows_task_kind(kind) {
-            return Ok(Err(DelegationRefusal::TaskKindNotAllowed {
-                open_agent_id: agent.id,
-                kind,
-            }));
-        }
         Ok(Ok(agent))
     }
 
-    /// Readable entries granted to the cross-account connection.
+    /// Entries granted to the cross-account connection.
     pub async fn granted_to_connection(
         &self,
         connection_id: &str,
     ) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
         Ok(self
-            .records()
+            .agents()
             .await?
             .into_iter()
-            .filter_map(|record| record.agent)
             .filter(|agent| agent.is_granted_to_connection(connection_id))
             .collect())
     }
@@ -772,7 +652,6 @@ impl OpenAgentStore {
         &self,
         connection_id: &str,
         open_agent_id: &str,
-        kind: DelegationTaskKind,
     ) -> Result<Result<OpenAgent, DelegationRefusal>, OpenAgentStoreError> {
         if connection_id.trim().is_empty() {
             return Ok(Err(DelegationRefusal::MissingRequester));
@@ -783,12 +662,6 @@ impl OpenAgentStore {
         };
         if !agent.is_granted_to_connection(connection_id) {
             return Ok(Err(DelegationRefusal::NotGrantedToConnection(agent.id)));
-        }
-        if !agent.allows_task_kind(kind) {
-            return Ok(Err(DelegationRefusal::TaskKindNotAllowed {
-                open_agent_id: agent.id,
-                kind,
-            }));
         }
         Ok(Ok(agent))
     }
@@ -860,10 +733,9 @@ impl OpenAgentStore {
     }
 
     async fn readable(&self, open_agent_id: &str) -> Result<OpenAgent, OpenAgentStoreError> {
-        self.records()
+        self.agents()
             .await?
             .into_iter()
-            .filter_map(|record| record.agent)
             .find(|agent| agent.id == open_agent_id)
             .ok_or_else(|| {
                 OpenAgentStoreError::Invalid(format!(
@@ -879,27 +751,17 @@ impl OpenAgentStore {
             openbitfun_core_types::agent_identity::canonical_agent_id(agent.agent_type.trim())
                 .to_string();
         agent.connections = self
-            .records()
+            .agents()
             .await?
             .into_iter()
-            .filter_map(|record| record.agent)
             .find(|stored| stored.id == agent.id && stored.agent_type == agent.agent_type)
             .map(|stored| stored.connections)
             .unwrap_or_default();
         self.write_entry(agent).await
     }
 
-    async fn write_entry(&self, mut agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
-        let mut task_kinds = Vec::new();
-        for kind in agent.task_kinds {
-            if kind != DelegationTaskKind::Unknown && !task_kinds.contains(&kind) {
-                task_kinds.push(kind);
-            }
-        }
-        agent.task_kinds = task_kinds;
+    async fn write_entry(&self, agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
         agent.validate().map_err(OpenAgentStoreError::Invalid)?;
-        let raw = serde_json::to_value(&agent)
-            .map_err(|error| OpenAgentStoreError::Invalid(error.to_string()))?;
         JsonFileStore
             .update_locked(
                 &self.path,
@@ -909,10 +771,10 @@ impl OpenAgentStore {
                     match document
                         .entries
                         .iter_mut()
-                        .find(|entry| entry.get("id").and_then(Value::as_str) == Some(&agent.id))
+                        .find(|entry| entry.id == agent.id)
                     {
-                        Some(entry) => *entry = raw,
-                        None => document.entries.push(raw),
+                        Some(entry) => *entry = agent,
+                        None => document.entries.push(agent),
                     }
                 },
             )
@@ -950,7 +812,6 @@ impl OpenAgentStore {
                 "opening an assistant requires confirming that its tasks may use external agents with this device's own login or credentials".to_string(),
             ));
         }
-        agent.task_kinds = vec![DelegationTaskKind::Message];
         if agent.display_name.trim().is_empty() {
             agent.display_name = assistant_directory(&agent.agent_type)
                 .unwrap_or_default()
@@ -960,7 +821,7 @@ impl OpenAgentStore {
         Ok(agent)
     }
 
-    /// Closes the entry with `id`, readable or not. Returns whether one existed.
+    /// Closes the entry with `id`. Returns whether one existed.
     pub async fn close(&self, id: &str) -> Result<bool, OpenAgentStoreError> {
         let (removed, _) = JsonFileStore
             .update_locked(
@@ -968,9 +829,7 @@ impl OpenAgentStore {
                 OpenAgentsDocument::default(),
                 |document: &mut OpenAgentsDocument| {
                     let before = document.entries.len();
-                    document
-                        .entries
-                        .retain(|entry| OpenAgentRecord::parse(entry.clone()).id() != Some(id));
+                    document.entries.retain(|entry| entry.id != id);
                     before != document.entries.len()
                 },
             )
@@ -979,11 +838,8 @@ impl OpenAgentStore {
     }
 }
 
-/// How far this device's owner trusts each cross-account connection.
-///
-/// Kept in its own file so an earlier build that rewrites the open list
-/// never drops it. A connection without an entry, or with a level this build
-/// does not know, is trusted normally.
+/// How far this device's owner trusts each cross-account connection. A
+/// connection without an entry is trusted normally.
 #[derive(Debug, Clone)]
 pub struct ConnectionTrustStore {
     path: PathBuf,
@@ -996,7 +852,7 @@ struct ConnectionTrustDocument {
     schema_version: u32,
     /// Connection id to level; only levels other than normal are stored.
     #[serde(default)]
-    connections: serde_json::Map<String, Value>,
+    connections: std::collections::BTreeMap<String, DelegationTrust>,
 }
 
 impl ConnectionTrustStore {
@@ -1024,10 +880,7 @@ impl ConnectionTrustStore {
         Ok(document
             .connections
             .into_iter()
-            .filter_map(|(connection_id, level)| {
-                let level = level.as_str().and_then(DelegationTrust::parse)?;
-                (level != DelegationTrust::Normal).then_some((connection_id, level))
-            })
+            .filter(|(_, level)| *level != DelegationTrust::Normal)
             .collect())
     }
 
@@ -1070,10 +923,9 @@ impl ConnectionTrustStore {
                             document.connections.remove(connection_id);
                         }
                         level => {
-                            document.connections.insert(
-                                connection_id.to_string(),
-                                Value::String(level.as_str().to_string()),
-                            );
+                            document
+                                .connections
+                                .insert(connection_id.to_string(), level);
                         }
                     }
                 },
@@ -1094,7 +946,6 @@ mod tests {
             agent_type: "assistant:workspace".to_string(),
             display_name: "Helper".to_string(),
             description: None,
-            task_kinds: vec![DelegationTaskKind::Message],
             same_account_devices: devices.iter().map(|device| device.to_string()).collect(),
             connections: Vec::new(),
         }
@@ -1111,19 +962,16 @@ mod tests {
     #[tokio::test]
     async fn nothing_is_open_by_default() {
         let (store, _dir) = store();
-        assert!(store.records().await.unwrap().is_empty());
+        assert!(store.agents().await.unwrap().is_empty());
         assert!(store.granted_to_device("laptop").await.unwrap().is_empty());
         assert_eq!(
-            store
-                .authorize("laptop", "helper", DelegationTaskKind::Message)
-                .await
-                .unwrap(),
+            store.authorize("laptop", "helper").await.unwrap(),
             Err(DelegationRefusal::UnknownOpenAgent("helper".to_string()))
         );
     }
 
     #[tokio::test]
-    async fn grants_are_per_device_and_per_task_kind() {
+    async fn grants_are_per_device() {
         let (store, _dir) = store();
         store
             .store_entry(agent("helper", &["laptop"]))
@@ -1151,33 +999,13 @@ mod tests {
             .collect();
         assert_eq!(phone, vec!["everyone"]);
 
-        assert!(store
-            .authorize("laptop", "helper", DelegationTaskKind::Message)
-            .await
-            .unwrap()
-            .is_ok());
+        assert!(store.authorize("laptop", "helper").await.unwrap().is_ok());
         assert_eq!(
-            store
-                .authorize("phone", "helper", DelegationTaskKind::Message)
-                .await
-                .unwrap(),
+            store.authorize("phone", "helper").await.unwrap(),
             Err(DelegationRefusal::NotGranted("helper".to_string()))
         );
         assert_eq!(
-            store
-                .authorize("laptop", "helper", DelegationTaskKind::Unknown)
-                .await
-                .unwrap(),
-            Err(DelegationRefusal::TaskKindNotAllowed {
-                open_agent_id: "helper".to_string(),
-                kind: DelegationTaskKind::Unknown,
-            })
-        );
-        assert_eq!(
-            store
-                .authorize("", "everyone", DelegationTaskKind::Message)
-                .await
-                .unwrap(),
+            store.authorize("", "everyone").await.unwrap(),
             Err(DelegationRefusal::MissingRequester)
         );
     }
@@ -1196,7 +1024,7 @@ mod tests {
             .is_empty());
         assert_eq!(
             store
-                .authorize_connection("conn-1", "helper", DelegationTaskKind::Message)
+                .authorize_connection("conn-1", "helper")
                 .await
                 .unwrap(),
             Err(DelegationRefusal::NotGrantedToConnection(
@@ -1214,27 +1042,14 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(store
-            .authorize_connection("conn-1", "reviewer", DelegationTaskKind::Message)
+            .authorize_connection("conn-1", "reviewer")
             .await
             .unwrap()
             .is_ok());
-        assert_eq!(
-            store
-                .authorize_connection("conn-1", "reviewer", DelegationTaskKind::Unknown)
-                .await
-                .unwrap(),
-            Err(DelegationRefusal::TaskKindNotAllowed {
-                open_agent_id: "reviewer".to_string(),
-                kind: DelegationTaskKind::Unknown,
-            })
-        );
         // A connection grant never admits a same-account device, and the
         // device id "conn-1" is not the connection.
         assert_eq!(
-            store
-                .authorize("conn-1", "reviewer", DelegationTaskKind::Message)
-                .await
-                .unwrap(),
+            store.authorize("conn-1", "reviewer").await.unwrap(),
             Err(DelegationRefusal::NotGranted("reviewer".to_string()))
         );
 
@@ -1293,12 +1108,9 @@ mod tests {
                 .await
                 .is_err());
         }
-        // Stored flat beside the connection id; a grant without them reads.
+        // Stored flat beside the connection id.
         let raw = std::fs::read_to_string(store.path()).unwrap();
         assert!(raw.contains("\"maxConcurrentJobs\":2"), "{raw}");
-        let legacy: ConnectionGrant =
-            serde_json::from_value(serde_json::json!({ "connectionId": "conn-2" })).unwrap();
-        assert_eq!(legacy.limits, ConnectionLimits::default());
     }
 
     #[tokio::test]
@@ -1333,25 +1145,16 @@ mod tests {
             .await
             .unwrap();
         store
-            .store_entry(OpenAgent {
-                task_kinds: vec![
-                    DelegationTaskKind::Message,
-                    DelegationTaskKind::Unknown,
-                    DelegationTaskKind::Message,
-                ],
-                ..agent("helper", &["phone"])
-            })
+            .store_entry(agent("helper", &["phone"]))
             .await
             .unwrap();
-        let records = store.records().await.unwrap();
-        assert_eq!(records.len(), 1);
-        let reopened = records[0].agent.as_ref().unwrap();
-        assert_eq!(reopened.same_account_devices, vec!["phone"]);
-        assert_eq!(reopened.agent_type, "assistant:workspace");
-        assert_eq!(reopened.task_kinds, vec![DelegationTaskKind::Message]);
+        let agents = store.agents().await.unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].same_account_devices, vec!["phone"]);
+        assert_eq!(agents[0].agent_type, "assistant:workspace");
         assert!(store.close("helper").await.unwrap());
         assert!(!store.close("helper").await.unwrap());
-        assert!(store.records().await.unwrap().is_empty());
+        assert!(store.agents().await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1378,17 +1181,13 @@ mod tests {
                 agent_type: "remote:device/helper".to_string(),
                 ..agent("x", &["laptop"])
             },
-            OpenAgent {
-                task_kinds: vec![DelegationTaskKind::Unknown],
-                ..agent("x", &["laptop"])
-            },
         ] {
             assert!(matches!(
                 store.store_entry(invalid).await,
                 Err(OpenAgentStoreError::Invalid(_))
             ));
         }
-        assert!(store.records().await.unwrap().is_empty());
+        assert!(store.agents().await.unwrap().is_empty());
     }
 
     #[test]
@@ -1423,7 +1222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn assistants_open_only_with_confirmation_and_only_for_message_tasks() {
+    async fn assistants_open_only_with_confirmation() {
         let (store, dir) = store();
         let path_manager = PathManager::with_user_root_for_tests(dir.path().join("user"));
         let base = path_manager.assistant_workspace_base_dir(None);
@@ -1450,37 +1249,14 @@ mod tests {
             )
             .await
             .is_err());
-        // Opening ignores any other requested task kind.
         let opened = store
-            .open_assistant(
-                &base,
-                OpenAgent {
-                    task_kinds: vec![DelegationTaskKind::Unknown],
-                    ..entry.clone()
-                },
-                true,
-            )
+            .open_assistant(&base, entry.clone(), true)
             .await
             .unwrap();
-        assert_eq!(opened.task_kinds, vec![DelegationTaskKind::Message]);
         assert_eq!(opened.display_name, "workspace-ann");
 
-        let granted = store
-            .authorize("laptop", "ann", DelegationTaskKind::Message)
-            .await
-            .unwrap()
-            .unwrap();
+        let granted = store.authorize("laptop", "ann").await.unwrap().unwrap();
         assert_eq!(granted.agent_type, "assistant:workspace-ann");
-        assert_eq!(
-            store
-                .authorize("laptop", "ann", DelegationTaskKind::Unknown)
-                .await
-                .unwrap(),
-            Err(DelegationRefusal::TaskKindNotAllowed {
-                open_agent_id: "ann".to_string(),
-                kind: DelegationTaskKind::Unknown,
-            })
-        );
     }
 
     #[test]
@@ -1555,126 +1331,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unreadable_entries_are_kept_closed_and_reported() {
-        let (store, _dir) = store();
-        tokio::fs::create_dir_all(store.path().parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(
-            store.path(),
-            serde_json::to_vec(&json!({
-                "schemaVersion": 1,
-                "entries": [
-                    { "id": "future", "agentType": "agentic", "displayName": "Future",
-                      "taskKinds": ["telepathy"], "sameAccountDevices": ["*"] },
-                    { "id": "broken", "taskKinds": "message" },
-                    { "id": "helper", "agentType": "assistant:workspace", "displayName": "Helper",
-                      "taskKinds": ["message", "telepathy"], "sameAccountDevices": ["*"],
-                      "addedLater": true }
-                ]
-            }))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-
-        let records = store.records().await.unwrap();
-        assert_eq!(records.len(), 3);
-        assert!(records[0].agent.is_none() && records[0].problem.is_some());
-        assert!(records[1].agent.is_none() && records[1].problem.is_some());
-        assert_eq!(
-            records[2].agent.as_ref().unwrap().agent_type,
-            "assistant:workspace"
-        );
-        let granted: Vec<_> = store
-            .granted_to_device("laptop")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|agent| agent.id)
-            .collect();
-        assert_eq!(granted, vec!["helper"]);
-
-        // Editing one entry keeps the unreadable ones on disk.
-        store
-            .store_entry(agent("another", &["laptop"]))
-            .await
-            .unwrap();
-        assert_eq!(store.records().await.unwrap().len(), 4);
-        // An unreadable entry can still be closed by id.
-        assert!(store.close("broken").await.unwrap());
-        assert_eq!(store.records().await.unwrap().len(), 3);
-    }
-
-    #[tokio::test]
-    async fn modes_and_external_agents_an_earlier_build_opened_are_kept_but_closed() {
-        let (store, _dir) = store();
-        tokio::fs::create_dir_all(store.path().parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(
-            store.path(),
-            serde_json::to_vec(&json!({
-                "schemaVersion": 1,
-                "entries": [
-                    { "id": "helper", "agentType": "agentic", "displayName": "Helper",
-                      "taskKinds": ["message", "coding"], "sameAccountDevices": ["*"],
-                      "messageWorkspace": "/srv/notes" },
-                    { "id": "codex", "agentType": "acp:codex", "displayName": "Codex",
-                      "taskKinds": ["message"], "sameAccountDevices": ["*"],
-                      "connections": [{ "connectionId": "conn-1" }] },
-                ]
-            }))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-
-        let records = store.records().await.unwrap();
-        assert_eq!(records.len(), 2);
-        for record in &records {
-            assert!(record.agent.is_none());
-            assert!(
-                record
-                    .problem
-                    .as_deref()
-                    .is_some_and(|problem| problem.starts_with(NO_LONGER_SUPPORTED)),
-                "{record:?}"
-            );
-        }
-        assert!(store.granted_to_device("laptop").await.unwrap().is_empty());
-        assert!(store
-            .granted_to_connection("conn-1")
-            .await
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            store
-                .authorize("laptop", "helper", DelegationTaskKind::Message)
-                .await
-                .unwrap(),
-            Err(DelegationRefusal::NoLongerOpen("helper".to_string()))
-        );
-        assert_eq!(
-            store
-                .authorize_connection("conn-1", "codex", DelegationTaskKind::Message)
-                .await
-                .unwrap(),
-            Err(DelegationRefusal::NoLongerOpen("codex".to_string()))
-        );
-        // The owner removes them; nothing else rewrites them.
-        assert!(store.close("codex").await.unwrap());
-        assert_eq!(store.records().await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
     async fn an_unparseable_file_is_never_overwritten() {
         let (store, _dir) = store();
         tokio::fs::create_dir_all(store.path().parent().unwrap())
             .await
             .unwrap();
         tokio::fs::write(store.path(), b"{ not json").await.unwrap();
-        assert!(store.records().await.is_err());
+        assert!(store.agents().await.is_err());
         assert!(store
             .store_entry(agent("helper", &["laptop"]))
             .await
@@ -1698,28 +1361,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_or_unreadable_trust_reads_as_normal_and_is_never_overwritten() {
+    async fn unreadable_trust_reads_as_normal_and_is_never_overwritten() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("connection-trust.json");
         let store = ConnectionTrustStore::new(path.clone());
-        // A level a newer build wrote is kept and read as normal.
-        tokio::fs::write(
-            &path,
-            serde_json::to_vec(&serde_json::json!({
-                "schemaVersion": 2,
-                "connections": { "conn-1": "partial", "conn-2": "full" },
-                "futureField": true
-            }))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(store.level("conn-1").await, DelegationTrust::Normal);
+        store.set("conn-2", DelegationTrust::Full).await.unwrap();
         assert_eq!(store.level("conn-2").await, DelegationTrust::Full);
-        store.set("conn-3", DelegationTrust::Full).await.unwrap();
-        let written: Value =
-            serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
-        assert_eq!(written["connections"]["conn-1"], "partial");
 
         tokio::fs::write(&path, b"{ not json").await.unwrap();
         assert_eq!(store.level("conn-2").await, DelegationTrust::Normal);

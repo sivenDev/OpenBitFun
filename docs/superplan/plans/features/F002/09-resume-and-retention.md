@@ -2,7 +2,7 @@
 id: "F002-09"
 title: "AI协作：接回以前的外部任务、按授权保留会话，并删除兼容代码"
 type: "feature"
-status: "draft"
+status: "in_progress"
 summary: "发起设备可以在新的对话中接回自己以前派给远程助理的任务并延续原会话；目标端按授权配置外部任务会话的保留时长（默认 7 天）；删除 AI协作对它更早开发版本的兼容代码。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-01"
@@ -90,7 +90,11 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/infrastructure/config/components`；`pnpm run type-check:web`；`pnpm run i18n:audit`
 - 检查：在 AI协作相关文件中搜索 `serde(other)`、`legacy`、`earlier build`、`no longer supported`、`DelegationTaskKind`、`Coding`，不再出现兼容用法
 
-- [ ] AI协作的兼容代码删除，现有行为与测试保持通过
+- [x] AI协作的兼容代码删除，现有行为与测试保持通过
+  - 证据（2026-11-01）：
+    - 删除：`DelegationTaskKind`、开放项 `task_kinds`、协议 `DispatchDelegationTaskKind` 与编码任务拒绝；`NO_LONGER_SUPPORTED`、`OpenAgentRecord` 与逐条原样保存（开放清单改为 `Vec<OpenAgent>`，含非助理条目时整体报错、不改写文件）；审计 `Unknown` 事件与 `taskKind`、可缺失的信任与对端字段；`RemoteAgentJobState`、`RemoteAgentHoldReason`、`DispatchHoldReason` 的 `Unknown`；连接信任未知值；出站记录游标默认值；目录对旧目标的非助理过滤与 `taskKinds`；Web UI「已不支持 / 无法读取」区块、相关文案与宽松类型；对应的旧记录测试。`detached-task-dispatch.md` 的委派一节按当前设计重写。
+    - 保留：对已发布版本的能力协商与「设备需要更新」；连接文件与审计日志对损坏条目的保留；普通 Dispatch 的兼容。
+    - core（`delegation remote_agent background_outcomes agent_wait`）83 项、runtime-ports 8 + 6 项、`remote_connect::connections` 10 项、CLI `dispatch::` 115 + 1 项、CLI 合约 `delegation` 4 项、Web UI `config/components` 538 项通过；`type-check:web`、`i18n:audit` 通过；桌面 `cargo check --lib --tests` 通过。
 
 ## Task 2: 按授权保留外部任务会话
 

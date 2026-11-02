@@ -10,7 +10,7 @@ use openbitfun_core::service::remote_connect::connections::ConnectionStore;
 
 use openbitfun_core::service::delegation::DelegationTrust;
 
-use super::protocol::{DispatchDelegationTaskKind, DispatchJobState, DispatchSubmitRequest};
+use super::protocol::{DispatchJobState, DispatchSubmitRequest};
 
 fn default_log() -> Option<DelegationAuditLog> {
     openbitfun_core::infrastructure::PathManager::new()
@@ -55,12 +55,7 @@ pub(super) fn entry(
             .map(|p| p.peer_device_name.clone())
             .unwrap_or_default(),
         open_agent_id: delegation.open_agent_id.clone(),
-        task_kind: match delegation.task_kind {
-            DispatchDelegationTaskKind::Message => "message",
-            DispatchDelegationTaskKind::Coding => "coding",
-        }
-        .to_string(),
-        trust: Some(trust.as_str().to_string()),
+        trust: trust.as_str().to_string(),
         external_agents,
         state: state.map(|state| {
             match state {

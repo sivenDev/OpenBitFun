@@ -2,9 +2,6 @@ import { api } from './ApiClient';
 import type { DispatchStatusResponse } from '@/features/dispatch/types';
 import { createTauriCommandError } from '../errors/TauriCommandError';
 
-/** Task kinds a delegated job may run. Unknown kinds from newer builds are kept as strings. */
-export type DelegationTaskKind = 'message' | 'coding' | (string & {});
-
 /** Grants every device of this account. */
 export const ALL_SAME_ACCOUNT_DEVICES = '*';
 
@@ -13,8 +10,6 @@ export interface OpenAgent {
   agentType: string;
   displayName: string;
   description?: string;
-  taskKinds: DelegationTaskKind[];
-  messageWorkspace?: string;
   sameAccountDevices: string[];
   /** Cross-account connections granted one by one; absent when none. */
   connections?: ConnectionGrant[];
@@ -39,8 +34,7 @@ export interface ConnectionGrant extends ConnectionLimits {
 /** A cross-account task event in this device's audit log. */
 export interface DelegationAuditEntry {
   at: string;
-  /** `submitted`, `finished`, or `unknown` for an event from a newer build. */
-  event: 'submitted' | 'finished' | 'unknown' | (string & {});
+  event: 'submitted' | 'finished';
   jobId: string;
   connectionId: string;
   peerUserId: string;
@@ -48,9 +42,8 @@ export interface DelegationAuditEntry {
   peerDeviceId: string;
   peerDeviceName: string;
   openAgentId: string;
-  taskKind: DelegationTaskKind;
-  /** How far this device trusted the connection; absent in entries of earlier builds. */
-  trust?: DelegationTrust;
+  /** How far this device trusted the connection. */
+  trust: DelegationTrust;
   /** External agents (`acp:<id>`) the task started. */
   externalAgents?: string[];
   /** The job state a finished entry ended in. */
@@ -58,8 +51,8 @@ export interface DelegationAuditEntry {
   detail?: string;
 }
 
-/** How far tasks from a connection are trusted; unknown levels from newer builds read as normal. */
-export type DelegationTrust = 'normal' | 'full' | (string & {});
+/** How far tasks from a connection are trusted. */
+export type DelegationTrust = 'normal' | 'full';
 
 /** The `assistant:` prefix of the agent type that opens an assistant. */
 export const ASSISTANT_AGENT_TYPE_PREFIX = 'assistant:';
@@ -76,7 +69,7 @@ export interface LocalAssistant {
 /** Who delegated a task to an assistant here. */
 export interface DelegatedTaskSource {
   /** `device` for a device of this account, `connection` for another account. */
-  kind: 'device' | 'connection' | (string & {});
+  kind: 'device' | 'connection';
   deviceId?: string;
   deviceName?: string;
   connectionId?: string;
@@ -114,24 +107,11 @@ export interface DelegatedTaskStatus {
   lastError?: string;
 }
 
-/** Whether an open-agent entry opens an assistant; other entries are no longer supported. */
-export function isAssistantAgentType(agentType: string): boolean {
-  return agentType.startsWith(ASSISTANT_AGENT_TYPE_PREFIX)
-    && agentType.slice(ASSISTANT_AGENT_TYPE_PREFIX.length).trim() !== '';
-}
-
 /** One line of the audit log; `entry` is absent when the line cannot be read. */
 export interface DelegationAuditRecord {
   entry?: DelegationAuditEntry;
   problem?: string;
   raw?: string;
-}
-
-/** One stored entry; `agent` is absent when this build cannot read it. */
-export interface OpenAgentRecord {
-  agent?: OpenAgent;
-  problem?: string;
-  raw?: Record<string, unknown>;
 }
 
 /** Opens an assistant (`assistant:<directory>`) to other devices. */
@@ -145,17 +125,11 @@ export interface OpenAgentRequest {
   usageConfirmed: boolean;
 }
 
-export function openAgentRecordId(record: OpenAgentRecord): string | null {
-  if (record.agent) return record.agent.id;
-  const id = record.raw?.id;
-  return typeof id === 'string' ? id : null;
-}
-
 /** Device-local list of assistants opened to other devices and accounts. */
 class DelegationAPI {
-  async listOpenAgents(): Promise<OpenAgentRecord[]> {
+  async listOpenAgents(): Promise<OpenAgent[]> {
     try {
-      return await api.invoke<OpenAgentRecord[]>('delegation_list_open_agents');
+      return await api.invoke<OpenAgent[]>('delegation_list_open_agents');
     } catch (error) {
       throw createTauriCommandError('delegation_list_open_agents', error);
     }

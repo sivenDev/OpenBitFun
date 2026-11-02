@@ -81,8 +81,8 @@ pub enum RemoteAgentUnavailableReason {
     Incompatible,
     /// The device is online but did not answer in time or refused the query.
     Unreachable,
-    /// The device answered, but cannot run the agent it opened right now,
-    /// such as an external agent that is no longer enabled there.
+    /// The device answered, but cannot run the assistant it opened right
+    /// now, such as one that was removed.
     AgentUnavailable,
 }
 
@@ -180,9 +180,6 @@ pub enum RemoteAgentJobState {
     Succeeded,
     Failed,
     Cancelled,
-    /// A state from a newer target; treated as still running.
-    #[serde(other)]
-    Unknown,
 }
 
 impl RemoteAgentJobState {
@@ -208,9 +205,6 @@ pub enum RemoteAgentHoldReason {
     /// The connection already runs as many tasks with the agent as the
     /// device's owner allows.
     ConnectionLimit,
-    /// A reason from a newer device.
-    #[serde(other)]
-    Unknown,
 }
 
 /// One page of a job's event log after `cursor`.

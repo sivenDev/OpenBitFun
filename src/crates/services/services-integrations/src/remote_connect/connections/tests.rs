@@ -267,32 +267,6 @@ fn store_never_overwrites_a_file_it_cannot_parse() {
 }
 
 #[test]
-fn older_records_without_optional_fields_still_load() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = ConnectionStore::at(dir.path().join("connections.json"));
-    let legacy = json!({
-        "connections": [{
-            "connectionId": "conn-1",
-            "relayUrl": "https://relay.example",
-            "localDeviceId": "device-a",
-            "role": "acceptor",
-            "status": "active",
-            "peerUserId": "user-b",
-            "peerDisplayName": "Bea",
-            "peerDeviceId": "device-b",
-            "peerDeviceName": "Laptop",
-            "createdAt": 1,
-            "fieldFromNewerBuild": {"kept": true},
-        }],
-    });
-    std::fs::write(store.path(), legacy.to_string()).unwrap();
-    let stored = store.load().unwrap();
-    assert_eq!(stored.records.len(), 1);
-    assert_eq!(stored.records[0].role, ConnectionRole::Acceptor);
-    assert_eq!(stored.records[0].unusable_reason(), Some("not_verified"));
-}
-
-#[test]
 fn reconcile_follows_status_and_disables_on_key_change() {
     let dir = tempfile::tempdir().unwrap();
     let store = ConnectionStore::at(dir.path().join("connections.json"));

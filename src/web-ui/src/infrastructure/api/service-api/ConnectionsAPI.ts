@@ -1,8 +1,7 @@
 import { api } from './ApiClient';
 import { createTauriCommandError } from '../errors/TauriCommandError';
 
-/** `inviter` or `acceptor`; unknown roles from newer builds are kept as strings. */
-export type ConnectionRole = 'inviter' | 'acceptor' | (string & {});
+export type ConnectionRole = 'inviter' | 'acceptor';
 
 /** One connection with a device of another account, as this device stores it. */
 export interface ConnectionSummary {

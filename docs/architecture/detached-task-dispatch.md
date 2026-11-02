@@ -458,51 +458,47 @@ mutation capability exists.
 
 ### Agent delegation catalog
 
-A device can open selected local agent modes to other devices of the same account.
-The open list is device-local (`<product_home>/delegation/open-agents.json`), empty by
-default, and managed with `openbitfun delegation list|open|close` or the desktop
-Permissions settings; it never travels with exported configuration. Each entry names
-the agent mode, the allowed task kinds (`message`, `coding`), an optional message
-workspace, and the granted device ids (`*` for every device of the account).
-Unreadable entries stay on disk, are reported, and count as closed.
+A device can open its assistants to other devices of the same account and to paired
+devices of other accounts. The open list is device-local
+(`<product_home>/delegation/open-agents.json`), empty by default, and managed with
+`openbitfun delegation list|open|close|grant-connection|revoke-connection` or the
+desktop AI collaboration page; it never travels with exported configuration. Each entry
+names the assistant (`assistant:<directory>`), a display name and description, the
+granted same-account device ids (`*` for every device of the account), and the granted
+connections with their limits. A list this build cannot read is reported and never
+overwritten.
 
 `dispatch_target_catalog` (CLI verb `catalog`) returns the entries granted to the
-requesting device: id, agent mode, display name, description, and task kinds. A
-delegated submission must name that agent mode. Target paths and the
-grants of other devices are not returned. The requester is the reserved
-`__sourceDeviceId` argument, which only the receiving host sets from the
-relay-authenticated sender (`bind_dispatch_source_device` in `dispatch_contract.rs`);
-a value in the incoming payload is discarded, and other target verbs never receive it.
-Without a bound requester the verb fails. The optional `agent_delegation_v1`
-capability gates delegated use; it is not a submission requirement and does not change
-the protocol version.
+requesting device or connection: id, assistant, display name, description, and why it
+is unavailable when its assistant is gone. A delegated submission must name that
+assistant. Target paths and the grants of others are not returned. The requester is the
+reserved `__sourceDeviceId` (or `__sourceConnectionId`) argument, which only the
+receiving host sets from the relay-authenticated sender (`bind_dispatch_source_device`
+in `dispatch_contract.rs`); a value in the incoming payload is discarded, and other
+target verbs never receive it. Without a bound requester the verb fails. The optional
+`agent_delegation_v1` capability (plus `cross_account_delegation_v1` for connections)
+gates delegated use; released builds do not advertise it and are shown as needing an
+update. It is not a submission requirement and does not change the protocol version.
 
 Delegated submission adds an optional `delegation` field to `submit`:
-`{ openAgentId, taskKind: "message" | "coding", source? }`, where `source` (session id,
-agent type, display name) is requester-reported display context only. Hosts bind
-`__sourceDeviceId` into a submission only when it carries `delegation`, so an older
-local runner that refuses unknown fields keeps accepting ordinary jobs. The target
-admits a delegated job before creating anything: the open agent must exist, be granted
-to the bound device, and allow the task kind; the request's agent must equal the open
-agent's; and the approval policy must be `remote`. Message tasks must leave
-`workspacePath` empty and run in the open agent's bound directory or in a private
-`<product_home>/delegation/workspaces/<openAgentId>/<device>` directory. Coding tasks
-must name a worktree under the target's own dispatch worktree root. The source is kept
-in the job record and in the `dispatchDelegation` turn context; it is deliberately not
-added to `list` entries, which older controllers parse strictly.
+`{ openAgentId, source? }`, where `source` (session id, agent type, display name) is
+requester-reported display context only. Hosts bind `__sourceDeviceId` into a
+submission only when it carries `delegation`, so a released local runner that refuses
+unknown fields keeps accepting ordinary jobs. The target admits a delegated job before
+creating anything: the open agent must exist and be granted to the bound device or
+connection; the request's agent must equal the open agent's; the approval policy must be
+`remote`; and `workspacePath` must be empty. The task runs as the assistant in a private
+`<product_home>/delegation/workspaces/<openAgentId>/<requester>/<job>` directory. The
+source is kept in the job record and in the `dispatchDelegation` turn context; it is
+deliberately not added to `list` entries, which released controllers parse strictly.
 
 On the requesting side, a `remote:<deviceId>/<openAgentId>` subagent drives the job
 (`RemoteAgentDirectory` in `service/dispatch/remote_agents.rs`). Job ids start with
-`delegation-`. A message job writes no outbound record; its link (device, job, session,
-cursor, task kind) lives in the coordination database's `remote_job` column, which a
-restarted requester reads to observe it again. A coding job reuses the device dispatch
-baseline: it creates a managed baseline worktree of the requesting session's local Git
-workspace (committed `HEAD` only), provisions the target from it, and records an
-outbound record that owns the baseline claim. When a turn succeeds the result is synced
-with a fast-forward into that worktree; a baseline that gained its own commits is left
-untouched and the subagent reports the sync failure with its answer. Delegated jobs are
-left out of the Dispatch panel's job list and target-job adoption, so only the
-delegating subagent observes them.
+`delegation-`. A delegated job writes no outbound record; its link (device, job,
+session, cursor) lives in the coordination database's `remote_job` column, which a
+restarted requester reads to observe it again. Delegated jobs are left out of the
+Dispatch panel's job list and target-job adoption, so only the delegating subagent
+observes them.
 
 A cross-account grant may limit how many tasks its connection runs at once with an
 open agent. The target accepts a task over the limit and keeps it `queued`: its worker
@@ -510,7 +506,6 @@ waits for a place before it marks the job running, counting running jobs of the 
 connection and open agent plus jobs that began to wait earlier, under the connection's
 admission lock. While it waits, `status` carries an optional
 `hold: { reason: "connectionLimit", limit, sinceMs }`; cancellation and a withdrawn grant
-still end the waiting job. Older requesters ignore `hold`; requesters read an unknown
-reason as queued. The requester reports a queued job, and a cross-account job that waits
+still end the waiting job. The requester reports a queued job, and a cross-account job that waits
 for its target owner's approval, to the delegating agent: `AgentWait` returns early once
 per hold with status `blocked`, listing what each task waits for and what unblocks it.

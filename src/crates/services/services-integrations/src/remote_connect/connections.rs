@@ -372,8 +372,7 @@ pub enum ConnectionRole {
     Acceptor,
 }
 
-/// One connection as this device remembers it. Fields added later must have
-/// defaults; older builds ignore fields they do not know.
+/// One connection as this device remembers it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionRecord {

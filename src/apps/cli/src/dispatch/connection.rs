@@ -14,9 +14,8 @@ use serde_json::Value;
 
 use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_CONNECTION_ARG;
 
-use openbitfun_core::service::delegation::{DelegationTaskKind, OpenAgentStore};
+use openbitfun_core::service::delegation::OpenAgentStore;
 
-use super::protocol::DispatchDelegationTaskKind;
 use super::store::{DispatchJobRecord, DispatchStore};
 
 /// The connection a call is bound to, if any.
@@ -146,15 +145,8 @@ async fn ensure_still_granted(
         .delegation
         .as_ref()
         .context("a cross-account job has no delegation")?;
-    if delegation.task_kind != DispatchDelegationTaskKind::Message {
-        bail!("this device accepts only message tasks");
-    }
     grants
-        .authorize_connection(
-            connection_id,
-            &delegation.open_agent_id,
-            DelegationTaskKind::Message,
-        )
+        .authorize_connection(connection_id, &delegation.open_agent_id)
         .await
         .context("read agents opened to other devices")?
         .map(|_| ())
@@ -166,7 +158,7 @@ mod tests {
     use super::*;
     use crate::dispatch::protocol::{
         DispatchApprovalPolicy, DispatchDelegation, DispatchDelegationSource,
-        DispatchDelegationTaskKind, DispatchSubmitRequest, DISPATCH_PROTOCOL_VERSION,
+        DispatchSubmitRequest, DISPATCH_PROTOCOL_VERSION,
     };
     use serde_json::json;
 
@@ -186,7 +178,6 @@ mod tests {
             setup_audit: Vec::new(),
             delegation: Some(DispatchDelegation {
                 open_agent_id: "helper".to_string(),
-                task_kind: DispatchDelegationTaskKind::Message,
                 source: DispatchDelegationSource::default(),
             }),
             source_device_id: None,

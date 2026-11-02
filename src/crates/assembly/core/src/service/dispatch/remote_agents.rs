@@ -40,8 +40,6 @@ const CATALOG_CACHE_TTL: Duration = Duration::from_secs(30);
 const DEVICE_QUERY_TIMEOUT: Duration = Duration::from_secs(8);
 /// Delegated jobs always ask the target owner for approval.
 const DELEGATED_APPROVAL_POLICY: &str = "remote";
-/// The only task kind a delegated job carries; targets still read the field.
-const DELEGATED_TASK_KIND: &str = "message";
 
 /// One other device of the signed-in account.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,17 +328,7 @@ impl RemoteAgentDirectory {
             .await
             .map_err(|error| CatalogError::Unreachable(format!("{error:#}")))?;
         serde_json::from_value::<DispatchCatalogResponse>(catalog)
-            // Only assistants are opened; an older target may still list
-            // agent modes or external agents, which are not delegated to.
-            .map(|catalog| {
-                catalog
-                    .agents
-                    .into_iter()
-                    .filter(|agent| {
-                        crate::service::delegation::assistant_directory(&agent.agent_type).is_some()
-                    })
-                    .collect()
-            })
+            .map(|catalog| catalog.agents)
             .map_err(|error| {
                 CatalogError::Incompatible(format!(
                     "{} returned an unreadable agent catalog: {error}",
@@ -504,7 +492,6 @@ fn delegation_block(request: &openbitfun_runtime_ports::RemoteAgentSubmitRequest
     }
     json!({
         "openAgentId": request.address.open_agent_id,
-        "taskKind": DELEGATED_TASK_KIND,
         "source": source,
     })
 }
@@ -582,15 +569,6 @@ fn descriptors_for(device_id: &str, catalog: &DeviceCatalog) -> Vec<RemoteAgentD
         .agents
         .iter()
         .filter_map(|agent| {
-            // Delegated jobs are message tasks; an entry that does not take
-            // them cannot be delegated to.
-            if !agent
-                .task_kinds
-                .iter()
-                .any(|kind| kind == DELEGATED_TASK_KIND)
-            {
-                return None;
-            }
             Some(RemoteAgentDescriptor {
                 address: RemoteAgentAddress {
                     device_id: device_id.to_string(),
@@ -709,9 +687,9 @@ mod tests {
         })
     }
 
-    fn catalog(id: &str, kinds: &[&str]) -> Value {
+    fn catalog(id: &str) -> Value {
         json!({ "agents": [{
-            "id": id, "agentType": "assistant:workspace", "displayName": "Helper", "taskKinds": kinds
+            "id": id, "agentType": "assistant:workspace", "displayName": "Helper"
         }]})
     }
 
@@ -744,8 +722,8 @@ mod tests {
                 ("old", probe(&[])),
             ]),
             catalogs: HashMap::from([
-                ("laptop", catalog("helper", &["message", "telepathy"])),
-                ("old", catalog("never-asked", &["message"])),
+                ("laptop", catalog("helper")),
+                ("old", catalog("never-asked")),
             ]),
             catalog_calls: AtomicUsize::new(0),
             job_calls: Mutex::new(Vec::new()),
@@ -770,17 +748,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_assistants_are_listed_and_unavailable_ones_say_why() {
-        let older = json!({ "agents": [
-            { "id": "helper", "agentType": "assistant:workspace", "displayName": "Helper", "taskKinds": ["message"] },
+    async fn unavailable_assistants_say_why() {
+        let listed_catalog = json!({ "agents": [
+            { "id": "helper", "agentType": "assistant:workspace", "displayName": "Helper" },
             { "id": "coder", "agentType": "assistant:workspace-coder", "displayName": "Coder",
-              "taskKinds": ["message"], "unavailable": "the assistant was removed" },
-            { "id": "mode", "agentType": "Standard", "displayName": "Mode", "taskKinds": ["message"] },
-            { "id": "codex", "agentType": "acp:codex", "displayName": "Codex", "taskKinds": ["message", "coding"] },
+              "unavailable": "the assistant was removed" },
         ]});
         let targets = Targets::new(
             HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
-            HashMap::from([("laptop", older)]),
+            HashMap::from([("laptop", listed_catalog)]),
         );
         let (directory, _, _) = directory(targets, vec![device("laptop", true)]);
         let agents = directory.list(RemoteAgentListing::Refreshed).await;
@@ -807,7 +783,7 @@ mod tests {
     async fn cached_listings_reuse_answers_and_keep_offline_agents_with_a_reason() {
         let targets = Targets {
             probes: HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
-            catalogs: HashMap::from([("laptop", catalog("helper", &["message"]))]),
+            catalogs: HashMap::from([("laptop", catalog("helper"))]),
             catalog_calls: AtomicUsize::new(0),
             job_calls: Mutex::new(Vec::new()),
         };
@@ -921,7 +897,7 @@ mod tests {
         ];
         let devices = Targets::new(
             HashMap::from([("laptop", probe(delegation))]),
-            HashMap::from([("laptop", catalog("helper", &["message"]))]),
+            HashMap::from([("laptop", catalog("helper"))]),
         );
         let connections = Arc::new(Connections {
             peers: vec![peer("c-new"), peer("c-old")],
@@ -931,8 +907,8 @@ mod tests {
                     ("c-old", probe(delegation)),
                 ]),
                 HashMap::from([
-                    ("c-new", catalog("helper", &["message", "coding"])),
-                    ("c-old", catalog("never-asked", &["message"])),
+                    ("c-new", catalog("helper")),
+                    ("c-old", catalog("never-asked")),
                 ]),
             ),
         });
@@ -1053,7 +1029,7 @@ mod tests {
                         DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY,
                     ]),
                 )]),
-                HashMap::from([("c-new", catalog("helper", &["message"]))]),
+                HashMap::from([("c-new", catalog("helper"))]),
             ),
         });
         let directory = RemoteAgentDirectory::new(
@@ -1071,7 +1047,7 @@ mod tests {
         use openbitfun_runtime_ports::RemoteAgentDelegationPort;
         let targets = Targets::new(
             HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
-            HashMap::from([("laptop", catalog("helper", &["message"]))]),
+            HashMap::from([("laptop", catalog("helper"))]),
         );
         let (directory, _, targets) = directory(targets, vec![device("laptop", true)]);
 
@@ -1088,7 +1064,6 @@ mod tests {
         assert_eq!(payload["workspacePath"], "");
         assert_eq!(payload["approvalPolicy"], "remote");
         assert_eq!(payload["delegation"]["openAgentId"], "helper");
-        assert_eq!(payload["delegation"]["taskKind"], "message");
         assert_eq!(payload["delegation"]["source"]["sessionId"], "parent");
         assert_eq!(payload["title"], "Notes");
 
@@ -1112,7 +1087,7 @@ mod tests {
         use openbitfun_runtime_ports::RemoteAgentDelegationPort;
         let targets = Targets::new(
             HashMap::from([("laptop", probe(&[DISPATCH_AGENT_DELEGATION_CAPABILITY]))]),
-            HashMap::from([("laptop", catalog("helper", &["message"]))]),
+            HashMap::from([("laptop", catalog("helper"))]),
         );
         let (directory, _, targets) = directory(targets, vec![device("laptop", true)]);
 

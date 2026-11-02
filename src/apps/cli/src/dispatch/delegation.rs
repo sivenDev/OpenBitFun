@@ -9,11 +9,11 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use openbitfun_core::service::delegation::{
-    assistant_directory, delegation_workspaces_root, DelegationTaskKind, OpenAgentStore,
+    assistant_directory, delegation_workspaces_root, OpenAgentStore,
 };
 use sha2::{Digest, Sha256};
 
-use super::protocol::{DispatchApprovalPolicy, DispatchDelegationTaskKind, DispatchSubmitRequest};
+use super::protocol::{DispatchApprovalPolicy, DispatchSubmitRequest};
 use super::store::create_private_dir;
 
 const MAX_SOURCE_FIELD_CHARS: usize = 256;
@@ -95,20 +95,11 @@ pub(super) async fn admit(
     if request.approval_policy != DispatchApprovalPolicy::Remote {
         bail!("delegated dispatch jobs require the remote approval policy");
     }
-    // An earlier requester build could also send coding tasks.
-    if delegation.task_kind != DispatchDelegationTaskKind::Message {
-        bail!("this device accepts only message tasks");
-    }
-    let kind = DelegationTaskKind::Message;
     let agent = match &requester {
-        Requester::Device(device_id) => {
-            store
-                .authorize(device_id, &delegation.open_agent_id, kind)
-                .await
-        }
+        Requester::Device(device_id) => store.authorize(device_id, &delegation.open_agent_id).await,
         Requester::Connection(connection_id) => {
             store
-                .authorize_connection(connection_id, &delegation.open_agent_id, kind)
+                .authorize_connection(connection_id, &delegation.open_agent_id)
                 .await
         }
     }
@@ -194,7 +185,7 @@ fn device_directory_name(device_id: &str) -> String {
 /// Opens assistants for tests of the dispatch target.
 #[cfg(test)]
 pub(super) mod test_support {
-    use openbitfun_core::service::delegation::{DelegationTaskKind, OpenAgent, OpenAgentStore};
+    use openbitfun_core::service::delegation::{OpenAgent, OpenAgentStore};
     use std::path::Path;
 
     /// Opens the assistant `directory` under `assistants` as `id`, creating
@@ -215,7 +206,6 @@ pub(super) mod test_support {
                     agent_type: format!("assistant:{directory}"),
                     display_name: id.to_string(),
                     description: None,
-                    task_kinds: vec![DelegationTaskKind::Message],
                     same_account_devices: devices.iter().map(|d| d.to_string()).collect(),
                     connections: Vec::new(),
                 },
@@ -269,7 +259,7 @@ mod tests {
         fixture
     }
 
-    fn delegated(open_agent_id: &str, kind: DispatchDelegationTaskKind) -> DispatchSubmitRequest {
+    fn delegated(open_agent_id: &str) -> DispatchSubmitRequest {
         DispatchSubmitRequest {
             protocol_version:
                 openbitfun_services_core::dispatch_contract::DISPATCH_PROTOCOL_VERSION,
@@ -286,7 +276,6 @@ mod tests {
             setup_audit: Vec::new(),
             delegation: Some(DispatchDelegation {
                 open_agent_id: open_agent_id.to_string(),
-                task_kind: kind,
                 source: DispatchDelegationSource::default(),
             }),
             source_device_id: Some("laptop".to_string()),
@@ -310,7 +299,7 @@ mod tests {
         open_assistant(&fixture, "ann", "workspace-ann").await;
         let assistant_root = fixture.roots.assistants.join("workspace-ann");
         let ask = |job_id: &str| {
-            let mut request = delegated("ann", DispatchDelegationTaskKind::Message);
+            let mut request = delegated("ann");
             request.job_id = job_id.to_string();
             request.agent_type = "assistant:workspace-ann".to_string();
             request
@@ -365,7 +354,7 @@ mod tests {
     async fn connections_use_their_own_grants_directory_and_no_model_choice() {
         let fixture = fixture().await;
         let over = |connection: &str| {
-            let mut request = delegated("helper", DispatchDelegationTaskKind::Message);
+            let mut request = delegated("helper");
             request.source_device_id = None;
             request.source_connection_id = Some(connection.to_string());
             request.model = Some("big-model".to_string());
@@ -421,36 +410,30 @@ mod tests {
     async fn refusals_name_the_reason_and_create_nothing() {
         let fixture = fixture().await;
 
-        let mut stranger = delegated("helper", DispatchDelegationTaskKind::Message);
+        let mut stranger = delegated("helper");
         stranger.source_device_id = Some("phone".to_string());
         assert!(admit_error(&fixture, stranger)
             .await
             .contains("not granted"));
 
-        let missing = delegated("nobody", DispatchDelegationTaskKind::Message);
+        let missing = delegated("nobody");
         assert!(admit_error(&fixture, missing)
             .await
             .contains("does not exist"));
 
-        // An earlier requester build could send coding tasks.
-        let coding = delegated("helper", DispatchDelegationTaskKind::Coding);
-        assert!(admit_error(&fixture, coding)
-            .await
-            .contains("accepts only message tasks"));
-
-        let mut wrong_agent = delegated("helper", DispatchDelegationTaskKind::Message);
+        let mut wrong_agent = delegated("helper");
         wrong_agent.agent_type = "Standard".to_string();
         assert!(admit_error(&fixture, wrong_agent)
             .await
             .contains("runs agent 'assistant:workspace'"));
 
-        let mut unattended = delegated("helper", DispatchDelegationTaskKind::Message);
+        let mut unattended = delegated("helper");
         unattended.approval_policy = DispatchApprovalPolicy::Auto;
         assert!(admit_error(&fixture, unattended)
             .await
             .contains("remote approval policy"));
 
-        let mut anonymous = delegated("helper", DispatchDelegationTaskKind::Message);
+        let mut anonymous = delegated("helper");
         anonymous.source_device_id = None;
         assert!(admit_error(&fixture, anonymous)
             .await
@@ -461,26 +444,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn modes_an_earlier_build_opened_are_no_longer_open() {
-        let fixture = fixture().await;
-        let raw = serde_json::json!({
-            "schemaVersion": 1,
-            "entries": [{ "id": "mode", "agentType": "Standard", "displayName": "Mode",
-                          "taskKinds": ["message"], "sameAccountDevices": ["laptop"] }]
-        });
-        std::fs::write(fixture.store.path(), serde_json::to_vec(&raw).unwrap()).unwrap();
-        let mut request = delegated("mode", DispatchDelegationTaskKind::Message);
-        request.agent_type = "Standard".to_string();
-        assert!(admit_error(&fixture, request)
-            .await
-            .contains("no longer open"));
-        assert!(!fixture.roots.message_workspaces.exists());
-    }
-
-    #[tokio::test]
     async fn ordinary_jobs_cannot_claim_a_source_device() {
         let fixture = fixture().await;
-        let mut ordinary = delegated("helper", DispatchDelegationTaskKind::Message);
+        let mut ordinary = delegated("helper");
         ordinary.delegation = None;
         ordinary.workspace_path = "/repo".to_string();
         assert!(admit_error(&fixture, ordinary.clone())

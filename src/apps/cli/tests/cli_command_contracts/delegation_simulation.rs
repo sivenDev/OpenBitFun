@@ -628,7 +628,6 @@ impl RequesterRpc {
                     "title": "Simulated delegation",
                     "delegation": {
                         "openAgentId": OPEN_AGENT_ID,
-                        "taskKind": "message",
                         "source": { "sessionId": "requester-session", "agentType": "Standard" },
                     },
                 }),
@@ -750,7 +749,6 @@ async fn submit_message_over_connection(
                 "model": "requester-chosen-model",
                 "delegation": {
                     "openAgentId": OPEN_AGENT_ID,
-                    "taskKind": "message",
                     "source": { "sessionId": "requester-session", "agentType": "Standard" },
                 },
             }),
@@ -1153,7 +1151,10 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             break page;
         }
         assert_eq!(page["state"], "queued", "the task did not wait: {page}");
-        assert!(Instant::now() < deadline, "the task never said why it waits: {page}");
+        assert!(
+            Instant::now() < deadline,
+            "the task never said why it waits: {page}"
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     };
     assert_eq!(waiting["state"], "queued", "{waiting}");
@@ -1219,10 +1220,17 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
             .collect()
     };
     assert_eq!(events.len(), 6, "{audit}");
-    for (job, end) in [(&held, "failed"), (&queued, "failed"), (&delivered, "succeeded")] {
+    for (job, end) in [
+        (&held, "failed"),
+        (&queued, "failed"),
+        (&delivered, "succeeded"),
+    ] {
         assert_eq!(
             of(job),
-            vec![("submitted".into(), "".into()), ("finished".into(), end.into())],
+            vec![
+                ("submitted".into(), "".into()),
+                ("finished".into(), end.into())
+            ],
             "{audit}"
         );
     }
@@ -1358,32 +1366,6 @@ async fn devices_of_different_accounts_pair_and_call_over_a_connection() {
         error
             .to_string()
             .contains("not accepted over a cross-account connection"),
-        "{error}"
-    );
-    // An earlier requester's coding task is refused by name.
-    let error = rpc
-        .invoke_connection(
-            &connection_id,
-            "dispatch_target_submit",
-            json!({
-                "protocolVersion": DISPATCH_PROTOCOL_VERSION,
-                "jobId": "delegation-coding",
-                "sessionId": uuid::Uuid::new_v4().to_string(),
-                "workspacePath": "",
-                "agentType": ASSISTANT_TYPE,
-                "prompt": "Change the repository",
-                "approvalPolicy": "remote",
-                "delegation": {
-                    "openAgentId": OPEN_AGENT_ID,
-                    "taskKind": "coding",
-                    "source": { "sessionId": "requester-session", "agentType": "Standard" },
-                },
-            }),
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        error.to_string().contains("accepts only message tasks"),
         "{error}"
     );
     // The tasks ran as B1's assistant.
@@ -1668,19 +1650,6 @@ fn only_assistants_open_and_only_after_confirming_external_agent_use() {
         .concat())
     };
 
-    // Agent modes and external agents are not opened any more.
-    for removed in [
-        &["--agent", "Standard"][..],
-        &["--agent", "acp:claude-code"][..],
-    ] {
-        let output = run(&[
-            &["delegation", "open", "helper", "--all-devices"][..],
-            removed,
-        ]
-        .concat());
-        assert!(!output.status.success());
-    }
-
     let unconfirmed = open(&[]);
     assert!(!unconfirmed.status.success());
     let stdout = String::from_utf8_lossy(&unconfirmed.stdout);
@@ -1706,11 +1675,8 @@ fn only_assistants_open_and_only_after_confirming_external_agent_use() {
 
     let listed = run(&["delegation", "list", "--json"]);
     assert!(listed.status.success());
-    let records: Value = serde_json::from_slice(&listed.stdout).expect("list JSON");
-    assert_eq!(
-        records[0]["agent"]["agentType"], ASSISTANT_TYPE,
-        "{records}"
-    );
+    let agents: Value = serde_json::from_slice(&listed.stdout).expect("list JSON");
+    assert_eq!(agents[0]["agentType"], ASSISTANT_TYPE, "{agents}");
 }
 
 /// Runs one simulated device on another machine against a simulation

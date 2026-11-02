@@ -826,7 +826,6 @@ fn turn_metadata(
             "sourceDeviceId": request.source_device_id,
             "sourceConnectionId": request.source_connection_id,
             "openAgentId": delegation.open_agent_id,
-            "taskKind": delegation.task_kind,
             "source": delegation.source,
         });
         if let Some(object) = facts.as_object_mut() {
@@ -912,8 +911,7 @@ mod tests {
 
     fn job(agent_type: &str, delegated: bool) -> super::super::store::DispatchJobRecord {
         use super::super::protocol::{
-            DispatchDelegation, DispatchDelegationSource, DispatchDelegationTaskKind,
-            DispatchSubmitRequest,
+            DispatchDelegation, DispatchDelegationSource, DispatchSubmitRequest,
         };
         super::super::store::DispatchJobRecord {
             protocol_version:
@@ -935,7 +933,6 @@ mod tests {
                 setup_audit: Vec::new(),
                 delegation: delegated.then(|| DispatchDelegation {
                     open_agent_id: "codex".to_string(),
-                    task_kind: DispatchDelegationTaskKind::Message,
                     source: DispatchDelegationSource::default(),
                 }),
                 source_device_id: delegated.then(|| "laptop".to_string()),

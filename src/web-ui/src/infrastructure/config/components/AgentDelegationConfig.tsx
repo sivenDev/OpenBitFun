@@ -4,16 +4,13 @@ import {
   ALL_SAME_ACCOUNT_DEVICES,
   ASSISTANT_AGENT_TYPE_PREFIX,
   delegationAPI,
-  isAssistantAgentType,
   MAX_CONNECTION_CONCURRENT_JOBS,
   MAX_CONNECTION_JOB_MINUTES,
-  openAgentRecordId,
   type ConnectionGrant,
   type ConnectionLimits,
   type DelegatedTask,
   type LocalAssistant,
   type OpenAgent,
-  type OpenAgentRecord,
 } from '@/infrastructure/api/service-api/DelegationAPI';
 import {
   connectionsAPI,
@@ -59,7 +56,7 @@ interface OpenDraft {
 
 interface LoadedState {
   assistants: LocalAssistant[];
-  records: OpenAgentRecord[];
+  agents: OpenAgent[];
   devices: AccountDeviceInfo[];
   /** Connections with devices of other accounts, revoked ones excluded. */
   connections: ConnectionSummary[];
@@ -141,10 +138,10 @@ export const AgentDelegationConfig: React.FC = () => {
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const [assistants, records, devices, currentDevice, connections, tasks] = await Promise.all([
+      const [assistants, agents, devices, currentDevice, connections, tasks] = await Promise.all([
         delegationAPI.listAssistants(),
         delegationAPI.listOpenAgents(),
-        // Devices only name what an earlier build opened to this account's devices.
+        // Devices only name the devices of this account an assistant is opened to.
         remoteConnectAPI.accountListDevices().catch(() => [] as AccountDeviceInfo[]),
         remoteConnectAPI.getDeviceInfo().catch(() => null),
         // Connections are optional: without them there is nobody to open an assistant to.
@@ -157,7 +154,7 @@ export const AgentDelegationConfig: React.FC = () => {
       if (!activeRef.current) return;
       setState({
         assistants,
-        records,
+        agents,
         devices: devices.filter(device => device.device_id !== currentDevice?.device_id),
         connections,
         tasks,
@@ -475,15 +472,12 @@ export const AgentDelegationConfig: React.FC = () => {
 
   /** One card per assistant: which devices can use it; its tasks are sessions under it. */
   const renderAssistant = (assistant: LocalAssistant) => {
-    const agent = state?.records
-      .map(record => record.agent)
-      .find((item): item is OpenAgent => item?.agentType === assistant.agentType);
+    const agent = state?.agents.find(item => item.agentType === assistant.agentType);
     const granted = agent?.connections?.map(item => item.connectionId) ?? [];
     const name = assistantName(assistant);
     const description = [
       !agent
         ? t('agentDelegation.notOpened')
-        // An earlier build could open an assistant to this account's devices.
         : agent.sameAccountDevices.length === 0
           ? t('agentDelegation.openedToAccounts')
           : t('agentDelegation.openedTo', { devices: describeDevices(agent) }),
@@ -530,27 +524,6 @@ export const AgentDelegationConfig: React.FC = () => {
     );
   };
 
-  /** Entries an earlier build opened that are not assistants, or cannot be read. */
-  const renderUnsupported = (record: OpenAgentRecord, index: number) => {
-    const id = openAgentRecordId(record);
-    return (
-      <ConfigPageRow key={id ?? `unreadable-${index}`} balanced
-        label={record.agent?.displayName || id || t('agentDelegation.unreadableName')}
-        description={record.agent
-          ? t('agentDelegation.unsupportedEntry')
-          : t('agentDelegation.unreadable', { problem: record.problem ?? '' })}
-        align="center">
-        {id && (
-          <Button type="button" size="sm" variant="outline" disabled={busy}
-            onClick={() => void run(async () => { await delegationAPI.closeAgent(id); },
-              'Failed to delete unsupported open-agent entry', t('agentDelegation.closeFailed'))}>
-            {t('agentDelegation.delete')}
-          </Button>
-        )}
-      </ConfigPageRow>
-    );
-  };
-
   const renderNotice = (content: React.ReactNode) => (
     <ConfigPageSection title={t('agentDelegation.sectionTitle')} description={t('agentDelegation.sectionDescription')}>
       {content}
@@ -575,15 +548,7 @@ export const AgentDelegationConfig: React.FC = () => {
   if (state.assistants.length === 0) {
     return renderNotice(<ConfigPageRow label={t('agentDelegation.noAssistants')} align="center"><span /></ConfigPageRow>);
   }
-  const unsupported = state.records.filter(record => !record.agent || !isAssistantAgentType(record.agent.agentType));
-  return <>
-    {state.assistants.map(renderAssistant)}
-    {unsupported.length > 0 && (
-      <ConfigPageSection title={t('agentDelegation.unsupportedTitle')}>
-        {unsupported.map(renderUnsupported)}
-      </ConfigPageSection>
-    )}
-  </>;
+  return <>{state.assistants.map(renderAssistant)}</>;
 };
 
 export default AgentDelegationConfig;

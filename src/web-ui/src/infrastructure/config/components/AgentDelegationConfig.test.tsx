@@ -116,10 +116,8 @@ describe('AgentDelegationConfig', () => {
     await act(async () => input.click());
   };
   const opened = (connections: string[] = [], agentType = 'assistant:workspace') => ({
-    agent: {
-      id: 'workspace', agentType, displayName: 'Nova', taskKinds: ['message'], sameAccountDevices: ['laptop'],
-      connections: connections.map(connectionId => ({ connectionId })),
-    },
+    id: 'workspace', agentType, displayName: 'Nova', sameAccountDevices: ['laptop'],
+    connections: connections.map(connectionId => ({ connectionId })),
   });
   const connection = (connectionId: string, overrides: Record<string, unknown> = {}) => ({
     connectionId, role: 'inviter', status: 'active', usable: true, awaitingConfirmation: false,
@@ -178,21 +176,10 @@ describe('AgentDelegationConfig', () => {
     expect(button('agentDelegation.save')).toBeUndefined();
   });
 
-  it('marks entries of earlier builds as no longer supported and deletes them', async () => {
-    mocks.list.mockResolvedValue([
-      { problem: 'unreadable entry: unknown variant', raw: { id: 'future' } },
-      { agent: { id: 'coder', agentType: 'acp:claude-code', displayName: 'Coder', taskKinds: ['coding'], sameAccountDevices: ['*'] } },
-      opened(),
-    ]);
-    mocks.close.mockResolvedValue(true);
+  it('names the devices of this account an assistant is opened to', async () => {
+    mocks.list.mockResolvedValue([opened()]);
     await render();
-    expect(container.querySelector('[data-row="Coder"]')!.textContent).toContain('agentDelegation.unsupportedEntry');
-    expect(container.textContent).toContain('agentDelegation.unreadable:unreadable entry: unknown variant');
     expect(container.querySelector('[data-section="Nova"]')!.textContent).toContain('agentDelegation.openedTo:Laptop');
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-row="Coder"] button')!.click());
-    expect(mocks.close).toHaveBeenCalledWith('coder');
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-row="future"] button')!.click());
-    expect(mocks.close).toHaveBeenCalledWith('future');
   });
 
   it('grants an opened assistant to more devices, each on its own, and withdraws it', async () => {

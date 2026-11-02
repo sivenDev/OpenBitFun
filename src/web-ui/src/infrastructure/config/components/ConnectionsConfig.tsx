@@ -10,7 +10,6 @@ import {
 } from '@/infrastructure/api/service-api/ConnectionsAPI';
 import {
   delegationAPI,
-  isAssistantAgentType,
   type DelegationTrust,
   type OpenAgent,
 } from '@/infrastructure/api/service-api/DelegationAPI';
@@ -81,16 +80,13 @@ export const ConnectionsConfig: React.FC = () => {
 
   const load = useCallback(async () => {
     try {
-      const [overview, trust, records] = await Promise.all([
+      const [overview, trust, assistants] = await Promise.all([
         connectionsAPI.overview(),
         // Without trust records every connection is trusted normally.
         delegationAPI.listConnectionTrust().catch(() => ({} as Record<string, DelegationTrust>)),
         // Without opened assistants no account can use one.
-        delegationAPI.listOpenAgents().catch(() => []),
+        delegationAPI.listOpenAgents().catch(() => [] as OpenAgent[]),
       ]);
-      const assistants = records
-        .map(record => record.agent)
-        .filter((agent): agent is OpenAgent => !!agent && isAssistantAgentType(agent.agentType));
       if (activeRef.current) setState({ kind: 'ready', overview, trust, assistants });
     } catch (error) {
       if (!activeRef.current) return;

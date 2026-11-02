@@ -210,11 +210,6 @@ async fn catalog_from(
             agent_type: agent.agent_type,
             display_name: agent.display_name,
             description: agent.description,
-            task_kinds: agent
-                .task_kinds
-                .into_iter()
-                .filter_map(|kind| kind.wire_name().map(str::to_string))
-                .collect(),
             unavailable,
         });
     }
@@ -1351,7 +1346,6 @@ mod tests {
             .map(|agent| agent.id.as_str())
             .collect();
         assert_eq!(ids, vec!["for-laptop", "for-all"]);
-        assert_eq!(laptop.agents[0].task_kinds, vec!["message"]);
         assert_eq!(laptop.agents[0].agent_type, "assistant:workspace");
         assert_eq!(laptop.agents[0].unavailable, None);
         // Target paths never leave the target.
@@ -1435,7 +1429,6 @@ mod tests {
             if connection.is_some() {
                 request.delegation = Some(protocol::DispatchDelegation {
                     open_agent_id: "helper".to_string(),
-                    task_kind: protocol::DispatchDelegationTaskKind::Message,
                     source: Default::default(),
                 });
                 request.assistant_workspace = Some("/home/me/personal_assistant/workspace".into());

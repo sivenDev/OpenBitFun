@@ -6,8 +6,7 @@ use anyhow::{anyhow, bail, Result};
 use clap::Subcommand;
 use openbitfun_core::service::delegation::{
     assistant_agent_type, assistant_directory, local_assistants, ConnectionLimits,
-    ConnectionTrustStore, DelegationTaskKind, DelegationTrust, OpenAgent, OpenAgentRecord,
-    OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
+    ConnectionTrustStore, DelegationTrust, OpenAgent, OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES,
 };
 use openbitfun_core::service::delegation_audit::{DelegationAuditEvent, DelegationAuditLog};
 use std::collections::BTreeMap;
@@ -16,9 +15,9 @@ use crate::plugin_diagnostics::escape_terminal_text;
 
 #[derive(Subcommand)]
 pub(crate) enum DelegationAction {
-    /// List opened assistants, including entries this build no longer accepts
+    /// List opened assistants
     List {
-        /// Print the stored entries as JSON
+        /// Print the opened assistants as JSON
         #[arg(long)]
         json: bool,
     },
@@ -52,7 +51,7 @@ pub(crate) enum DelegationAction {
         #[arg(long)]
         accept_usage: bool,
     },
-    /// Close an opened assistant, or remove an entry no longer supported
+    /// Close an opened assistant
     Close { id: String },
     /// Grant an opened assistant to a paired device of another account
     /// (see `openbitfun connections list`)
@@ -128,11 +127,11 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
     let trust = ConnectionTrustStore::for_product_home(&path_manager);
     match action {
         DelegationAction::List { json } => {
-            let records = store.records().await?;
+            let agents = store.agents().await?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&records)?);
+                println!("{}", serde_json::to_string_pretty(&agents)?);
             } else {
-                print_records(&records, &trust.levels().await.unwrap_or_default());
+                print_agents(&agents, &trust.levels().await.unwrap_or_default());
             }
         }
         DelegationAction::TrustConnection {
@@ -207,7 +206,6 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                 agent_type: assistant_agent_type(directory.trim()),
                 display_name: name.unwrap_or_default(),
                 description,
-                task_kinds: vec![DelegationTaskKind::Message],
                 same_account_devices: if all_devices {
                     vec![ALL_SAME_ACCOUNT_DEVICES.to_string()]
                 } else {
@@ -299,13 +297,11 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                     DelegationAuditEvent::Finished => {
                         format!("finished {}", entry.state.as_deref().unwrap_or("?"))
                     }
-                    DelegationAuditEvent::Unknown => "other event".to_string(),
                 };
                 println!(
-                    "- {} {} {} task {} for {} ({}), device {}, via {} with {}",
+                    "- {} {} task {} for {} ({}), device {}, via {} with {}",
                     escape_terminal_text(&entry.at),
                     event,
-                    escape_terminal_text(&entry.task_kind),
                     escape_terminal_text(&entry.job_id),
                     escape_terminal_text(&entry.peer_display_name),
                     escape_terminal_text(&entry.peer_user_id),
@@ -313,9 +309,7 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                     escape_terminal_text(&entry.connection_id),
                     escape_terminal_text(&entry.open_agent_id),
                 );
-                if let Some(trust) = &entry.trust {
-                    println!("  trust: {}", escape_terminal_text(trust));
-                }
+                println!("  trust: {}", escape_terminal_text(&entry.trust));
                 if !entry.external_agents.is_empty() {
                     println!(
                         "  external agents: {}",
@@ -361,44 +355,30 @@ const ASSISTANT_USAGE_NOTICE: &str = "Delegated tasks run this assistant on this
      that uses your quota with their providers, so check that their terms of service allow this use. \
      A Claude subscription login is for your own everyday use; an API key is recommended for delegated tasks.";
 
-fn print_records(records: &[OpenAgentRecord], trust: &BTreeMap<String, DelegationTrust>) {
-    if records.is_empty() {
+fn print_agents(agents: &[OpenAgent], trust: &BTreeMap<String, DelegationTrust>) {
+    if agents.is_empty() {
         println!("No assistants are open to other devices.");
         return;
     }
-    for record in records {
-        match (&record.agent, &record.problem) {
-            (Some(agent), _) => {
-                println!(
-                    "- {}: {} (assistant: {}, devices: {})",
-                    escape_terminal_text(&agent.id),
-                    escape_terminal_text(&agent.display_name),
-                    escape_terminal_text(
-                        assistant_directory(&agent.agent_type).unwrap_or_default()
-                    ),
-                    describe_devices(&agent.same_account_devices)
-                );
-                for grant in &agent.connections {
-                    println!(
-                        "  granted to connection: {} ({}, trust: {})",
-                        escape_terminal_text(&grant.connection_id),
-                        describe_limits(grant.limits),
-                        trust
-                            .get(&grant.connection_id)
-                            .copied()
-                            .unwrap_or_default()
-                            .as_str()
-                    );
-                }
-            }
-            (None, problem) => {
-                let id = record.id().unwrap_or("<no id>");
-                println!(
-                    "- {}: closed, {}",
-                    escape_terminal_text(id),
-                    escape_terminal_text(problem.as_deref().unwrap_or("unreadable entry"))
-                );
-            }
+    for agent in agents {
+        println!(
+            "- {}: {} (assistant: {}, devices: {})",
+            escape_terminal_text(&agent.id),
+            escape_terminal_text(&agent.display_name),
+            escape_terminal_text(assistant_directory(&agent.agent_type).unwrap_or_default()),
+            describe_devices(&agent.same_account_devices)
+        );
+        for grant in &agent.connections {
+            println!(
+                "  granted to connection: {} ({}, trust: {})",
+                escape_terminal_text(&grant.connection_id),
+                describe_limits(grant.limits),
+                trust
+                    .get(&grant.connection_id)
+                    .copied()
+                    .unwrap_or_default()
+                    .as_str()
+            );
         }
     }
 }

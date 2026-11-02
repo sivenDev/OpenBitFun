@@ -150,20 +150,10 @@ pub(crate) struct DispatchSubmitRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DispatchDelegation {
     pub(crate) open_agent_id: String,
-    pub(crate) task_kind: DispatchDelegationTaskKind,
     /// Requester-reported context, shown to the owner and never used for
     /// authorization.
     #[serde(default)]
     pub(crate) source: DispatchDelegationSource,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum DispatchDelegationTaskKind {
-    /// No code is transferred; the job runs in a target-owned directory.
-    Message,
-    /// Sent only by earlier requesters; this device refuses it.
-    Coding,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -742,8 +732,6 @@ pub(crate) enum DispatchHoldReason {
     /// The connection already runs as many tasks with this agent as its
     /// owner allows.
     ConnectionLimit,
-    #[serde(other)]
-    Unknown,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]

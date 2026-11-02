@@ -315,16 +315,13 @@ describe('ConnectionsConfig', () => {
 
   it('names the opened assistants each account can use, without choosing them here', async () => {
     mocks.overview.mockResolvedValue(overview({ connections: [connection()] }));
-    const agent = (id: string, name: string, connections: string[]) => ({ agent: {
-      id, agentType: `assistant:${id}`, displayName: name, taskKinds: ['message'], sameAccountDevices: [],
+    const agent = (id: string, name: string, connections: string[]) => ({
+      id, agentType: `assistant:${id}`, displayName: name, sameAccountDevices: [],
       connections: connections.map(connectionId => ({ connectionId })),
-    } });
+    });
     mocks.listOpenAgents.mockResolvedValue([
       agent('workspace', 'Nova', ['conn-1']),
       agent('workspace-work', 'Atlas', []),
-      // Entries that are not assistants are never named.
-      { agent: { id: 'coder', agentType: 'acp:claude-code', displayName: 'Coder', taskKinds: [], sameAccountDevices: [],
-        connections: [{ connectionId: 'conn-1' }] } },
     ]);
     await render();
     expect(container.querySelector('[data-row="connections.peerDevice:Bea|B1 Desktop"] small')!.textContent)

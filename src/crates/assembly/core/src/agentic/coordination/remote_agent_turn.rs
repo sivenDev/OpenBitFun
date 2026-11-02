@@ -50,7 +50,6 @@ pub(crate) struct RemoteJobLink {
     #[serde(flatten)]
     pub(crate) job: RemoteAgentJob,
     /// Event cursor where the task's own turn begins on the target.
-    #[serde(default)]
     pub(crate) cursor: u64,
 }
 
@@ -634,9 +633,6 @@ fn queued_reason(device_name: &str, hold: &RemoteAgentJobHold) -> String {
         openbitfun_runtime_ports::RemoteAgentHoldReason::ConnectionLimit => format!(
             "Queued on {device_name}: its owner allows {allowed} at a time from this connection, and that many are running.\nUnblock: one of them finishes, or the owner of {device_name} raises the limit. The task starts on its own."
         ),
-        openbitfun_runtime_ports::RemoteAgentHoldReason::Unknown => format!(
-            "Queued on {device_name}; it starts when the device allows it.\nUnblock: the device starts it on its own."
-        ),
     }
 }
 
@@ -673,7 +669,11 @@ impl HoldTracker {
     /// session when the job starts to queue.
     fn observe(&mut self, snapshot: &RemoteAgentJobSnapshot) -> Option<ExternalAgentTurnEvent> {
         let holds = self.store.remote_holds();
-        if let Some(hold) = snapshot.hold.as_ref().filter(|_| !snapshot.state.is_terminal()) {
+        if let Some(hold) = snapshot
+            .hold
+            .as_ref()
+            .filter(|_| !snapshot.state.is_terminal())
+        {
             holds.set(&self.session_id, queued_reason(&self.device_name, hold));
             let started = !self.queued;
             self.queued = true;

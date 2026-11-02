@@ -6,8 +6,8 @@ use openbitfun_runtime_ports::{
     remote_connection_target, remote_target_connection, PortError, PortErrorKind, PortResult,
     RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentDelegationPort, RemoteAgentDescriptor,
     RemoteAgentHoldReason, RemoteAgentJob, RemoteAgentJobHold, RemoteAgentJobSnapshot,
-    RemoteAgentJobState, RemoteAgentListing,
-    RemoteAgentSource, RemoteAgentSubmitRequest, RemoteAgentUnavailableReason,
+    RemoteAgentJobState, RemoteAgentListing, RemoteAgentSource, RemoteAgentSubmitRequest,
+    RemoteAgentUnavailableReason,
 };
 use serde_json::json;
 use std::sync::Mutex;
@@ -60,7 +60,6 @@ fn availability_and_descriptors_use_stable_wire_names() {
     };
     let value = serde_json::to_value(&descriptor).unwrap();
     assert_eq!(value["address"]["openAgentId"], "helper");
-    assert!(value.get("taskKinds").is_none());
     assert_eq!(value["availability"]["state"], "unavailable");
     assert_eq!(value["availability"]["reason"], "offline");
     assert!(!descriptor.availability.is_available());
@@ -71,7 +70,7 @@ fn availability_and_descriptors_use_stable_wire_names() {
 }
 
 #[test]
-fn connection_agents_name_their_account_and_older_descriptors_have_none() {
+fn connection_agents_name_their_account() {
     let address = RemoteAgentAddress {
         device_id: remote_connection_target("c0ffee"),
         open_agent_id: "helper".to_string(),
@@ -84,24 +83,10 @@ fn connection_agents_name_their_account_and_older_descriptors_have_none() {
     assert_eq!(remote_target_connection(&address.device_id), Some("c0ffee"));
     assert_eq!(remote_target_connection("laptop"), None);
     assert_eq!(remote_target_connection("conn:"), None);
-
-    // A descriptor written before accounts were added still reads.
-    let legacy: RemoteAgentDescriptor = serde_json::from_value(json!({
-        "address": { "deviceId": "laptop", "openAgentId": "helper" },
-        "deviceName": "Laptop",
-        "agentType": "Standard",
-        "displayName": "Helper",
-        "taskKinds": ["message"],
-        "availability": { "state": "available" },
-    }))
-    .unwrap();
-    assert_eq!(legacy.account, None);
-    let value = serde_json::to_value(&legacy).unwrap();
-    assert!(value.get("account").is_none());
 }
 
 #[test]
-fn snapshots_read_target_status_payloads_and_newer_states() {
+fn snapshots_read_target_status_payloads() {
     // A target status response carries fields this port does not model.
     let snapshot: RemoteAgentJobSnapshot = serde_json::from_value(json!({
         "state": "running",
@@ -117,7 +102,6 @@ fn snapshots_read_target_status_payloads_and_newer_states() {
     assert_eq!(snapshot.state, RemoteAgentJobState::Running);
     assert_eq!(snapshot.cursor, 7);
     assert_eq!(snapshot.events.len(), 1);
-    // An older device never says why a job waits.
     assert_eq!(snapshot.hold, None);
 
     let queued: RemoteAgentJobSnapshot = serde_json::from_value(json!({
@@ -133,18 +117,11 @@ fn snapshots_read_target_status_payloads_and_newer_states() {
             limit: Some(2),
         })
     );
-    let unknown: RemoteAgentJobSnapshot = serde_json::from_value(json!({
-        "state": "queued",
-        "cursor": 0,
-        "hold": {"reason": "somethingNewer", "sinceMs": 1}
-    }))
-    .unwrap();
-    assert_eq!(unknown.hold.unwrap().reason, RemoteAgentHoldReason::Unknown);
-
-    let newer: RemoteAgentJobSnapshot =
-        serde_json::from_value(json!({"state": "paused", "cursor": 0})).unwrap();
-    assert_eq!(newer.state, RemoteAgentJobState::Unknown);
-    assert!(!newer.state.is_terminal());
+    assert!(serde_json::from_value::<RemoteAgentJobSnapshot>(
+        json!({"state": "paused", "cursor": 0})
+    )
+    .is_err());
+    assert!(!RemoteAgentJobState::Queued.is_terminal());
     assert!(RemoteAgentJobState::Cancelled.is_terminal());
 }
 

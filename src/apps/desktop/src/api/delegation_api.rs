@@ -5,8 +5,7 @@
 
 use openbitfun_core::infrastructure::PathManager;
 use openbitfun_core::service::delegation::{
-    ConnectionLimits, ConnectionTrustStore, DelegationTaskKind, DelegationTrust, OpenAgent,
-    OpenAgentRecord, OpenAgentStore,
+    ConnectionLimits, ConnectionTrustStore, DelegationTrust, OpenAgent, OpenAgentStore,
 };
 use openbitfun_core::service::delegation_audit::{DelegationAuditLog, DelegationAuditRecord};
 use serde::Deserialize;
@@ -74,9 +73,9 @@ fn open_agent_store() -> Result<OpenAgentStore, String> {
 }
 
 #[tauri::command]
-pub async fn delegation_list_open_agents() -> Result<Vec<OpenAgentRecord>, String> {
+pub async fn delegation_list_open_agents() -> Result<Vec<OpenAgent>, String> {
     open_agent_store()?
-        .records()
+        .agents()
         .await
         .map_err(|error| error.to_string())
 }
@@ -96,7 +95,6 @@ pub async fn delegation_open_agent(
         agent_type: request.agent_type,
         display_name: request.display_name.trim().to_string(),
         description,
-        task_kinds: vec![DelegationTaskKind::Message],
         same_account_devices: request.same_account_devices,
         connections: Vec::new(),
     };

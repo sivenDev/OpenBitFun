@@ -10,13 +10,10 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use openbitfun_core::service::delegation::{ConnectionLimits, DelegationTaskKind, OpenAgentStore};
+use openbitfun_core::service::delegation::{ConnectionLimits, OpenAgentStore};
 use openbitfun_core::service::remote_connect::connections::ConnectionStore;
 
-use super::protocol::{
-    DispatchDelegationTaskKind, DispatchHold, DispatchHoldReason, DispatchJobState,
-    DispatchSubmitRequest,
-};
+use super::protocol::{DispatchHold, DispatchHoldReason, DispatchJobState, DispatchSubmitRequest};
 use super::store::{DispatchJobRecord, DispatchStore, WorkspaceLock};
 
 /// How often a running cross-account turn checks its guard.
@@ -62,14 +59,6 @@ impl RelayRefresh {
 pub(super) const GRANT_WITHDRAWN: &str =
     "The owner of the target device withdrew this connection's access to the agent";
 pub(super) const CONNECTION_REVOKED: &str = "The connection to the target device was revoked";
-
-fn task_kind(kind: DispatchDelegationTaskKind) -> DelegationTaskKind {
-    match kind {
-        DispatchDelegationTaskKind::Message => DelegationTaskKind::Message,
-        // Coding tasks of an earlier build are no longer granted.
-        DispatchDelegationTaskKind::Coding => DelegationTaskKind::Unknown,
-    }
-}
 
 /// The limits the owner set on `open_agent_id` for `connection_id`.
 async fn limits_for(
@@ -164,7 +153,7 @@ pub(super) async fn wait_for_place(
         }
         // A task waiting for a grant the owner withdrew never starts.
         if let Ok(Err(_)) = grants
-            .authorize_connection(connection_id, &delegation.open_agent_id, task_kind(delegation.task_kind))
+            .authorize_connection(connection_id, &delegation.open_agent_id)
             .await
         {
             store.clear_hold(job_id);
@@ -177,7 +166,14 @@ pub(super) async fn wait_for_place(
         };
         let admission = store.lock_connection_admission(connection_id)?;
         let waited_since = since_ms.unwrap_or_else(now_ms);
-        if has_place(store, job_id, waited_since, connection_id, &delegation.open_agent_id, max)? {
+        if has_place(
+            store,
+            job_id,
+            waited_since,
+            connection_id,
+            &delegation.open_agent_id,
+            max,
+        )? {
             store.clear_hold(job_id);
             return Ok(Some(admission));
         }
@@ -208,7 +204,6 @@ pub(super) struct ConnectionGuard {
     connections: ConnectionStore,
     connection_id: String,
     open_agent_id: String,
-    kind: DelegationTaskKind,
     started: Instant,
     turn_limit: Option<Duration>,
     relay: Option<RelayRefresh>,
@@ -234,7 +229,6 @@ impl ConnectionGuard {
             connections,
             connection_id: connection_id.clone(),
             open_agent_id: delegation.open_agent_id.clone(),
-            kind: task_kind(delegation.task_kind),
             started: Instant::now(),
             relay,
             last_refresh: std::sync::Mutex::new(Instant::now()),
@@ -275,7 +269,7 @@ impl ConnectionGuard {
     pub(super) async fn stop_reason(&self, now: Instant) -> Option<String> {
         match self
             .grants
-            .authorize_connection(&self.connection_id, &self.open_agent_id, self.kind)
+            .authorize_connection(&self.connection_id, &self.open_agent_id)
             .await
         {
             Ok(Ok(_)) => {}
@@ -334,7 +328,6 @@ mod tests {
             setup_audit: Vec::new(),
             delegation: Some(DispatchDelegation {
                 open_agent_id: "helper".to_string(),
-                task_kind: DispatchDelegationTaskKind::Message,
                 source: DispatchDelegationSource::default(),
             }),
             source_device_id: None,
@@ -407,7 +400,9 @@ mod tests {
         create(&store, "delegation-other", "conn-2");
 
         // The first task takes the only place.
-        let place = wait_for_place(&store, &grants, "delegation-1").await.unwrap();
+        let place = wait_for_place(&store, &grants, "delegation-1")
+            .await
+            .unwrap();
         assert!(place.is_some());
         store
             .mark_state("delegation-1", DispatchJobState::Running, None, None)
@@ -425,7 +420,9 @@ mod tests {
         )
         .await;
         assert!(waiting.is_err(), "the second task started over the limit");
-        let hold = store.read_hold("delegation-2").expect("a waiting task says why");
+        let hold = store
+            .read_hold("delegation-2")
+            .expect("a waiting task says why");
         assert_eq!(hold.reason, DispatchHoldReason::ConnectionLimit);
         assert_eq!(hold.limit, Some(1));
 
@@ -433,8 +430,18 @@ mod tests {
         store
             .mark_state("delegation-1", DispatchJobState::Succeeded, None, None)
             .unwrap();
-        assert!(!has_place(&store, "delegation-3", hold.since_ms + 1, "conn-1", "helper", 1).unwrap());
-        let place = wait_for_place(&store, &grants, "delegation-2").await.unwrap();
+        assert!(!has_place(
+            &store,
+            "delegation-3",
+            hold.since_ms + 1,
+            "conn-1",
+            "helper",
+            1
+        )
+        .unwrap());
+        let place = wait_for_place(&store, &grants, "delegation-2")
+            .await
+            .unwrap();
         assert!(place.is_some());
         assert_eq!(store.read_hold("delegation-2"), None);
     }

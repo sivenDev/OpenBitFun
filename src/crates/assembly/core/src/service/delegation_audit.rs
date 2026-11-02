@@ -1,9 +1,9 @@
 //! Target-side record of tasks other accounts delegated to this device.
 //!
 //! Each cross-account task appends one entry when it is admitted and one when
-//! it ends. The log is append-only JSON lines under the product home and is
-//! read tolerantly: an unreadable line is kept and reported, never dropped,
-//! so the owner can see that something was there.
+//! it ends. The log is append-only JSON lines under the product home. A
+//! damaged line is kept and reported, never dropped, so the owner can see
+//! that something was there.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,9 +20,6 @@ pub enum DelegationAuditEvent {
     Submitted,
     /// The task's turn ended; `state` says how.
     Finished,
-    /// An event from a newer build.
-    #[serde(other)]
-    Unknown,
 }
 
 /// One cross-account task event.
@@ -34,21 +31,14 @@ pub struct DelegationAuditEntry {
     pub event: DelegationAuditEvent,
     pub job_id: String,
     pub connection_id: String,
-    #[serde(default)]
     pub peer_user_id: String,
-    #[serde(default)]
     pub peer_display_name: String,
-    #[serde(default)]
     pub peer_device_id: String,
-    #[serde(default)]
     pub peer_device_name: String,
     pub open_agent_id: String,
-    /// Always written: earlier builds require it when they read the log.
-    pub task_kind: String,
     /// How far the owner trusted the connection when the event happened:
-    /// `normal` or `full`. Absent in entries an earlier build wrote.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trust: Option<String>,
+    /// `normal` or `full`.
+    pub trust: String,
     /// External agents (`acp:<client>`) the task started, on `finished`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_agents: Vec<String>,
@@ -157,8 +147,7 @@ mod tests {
             peer_device_id: "device-b".to_string(),
             peer_device_name: "B1 Desktop".to_string(),
             open_agent_id: "helper".to_string(),
-            task_kind: "message".to_string(),
-            trust: Some("normal".to_string()),
+            trust: "normal".to_string(),
             external_agents: Vec::new(),
             state: state.map(str::to_string),
             detail: None,
@@ -166,65 +155,33 @@ mod tests {
     }
 
     #[test]
-    fn entries_an_earlier_build_wrote_read_without_trust() {
-        let earlier: DelegationAuditEntry = serde_json::from_value(serde_json::json!({
-            "at": "2026-10-30T10:00:00Z",
-            "event": "finished",
-            "jobId": "delegation-1",
-            "connectionId": "conn-1",
-            "openAgentId": "helper",
-            "taskKind": "coding",
-            "state": "succeeded",
-        }))
-        .unwrap();
-        assert_eq!(earlier.trust, None);
-        assert!(earlier.external_agents.is_empty());
-
-        let mut current = entry(DelegationAuditEvent::Finished, Some("succeeded"));
-        current.external_agents = vec!["acp:codex".to_string()];
-        let written = serde_json::to_value(&current).unwrap();
-        assert_eq!(written["trust"], "normal");
-        assert_eq!(written["externalAgents"], serde_json::json!(["acp:codex"]));
-        // Earlier builds require the task kind.
-        assert_eq!(written["taskKind"], "message");
-    }
-
-    #[test]
-    fn entries_are_appended_and_unreadable_lines_are_kept() {
+    fn entries_are_appended_and_damaged_lines_are_kept() {
         let dir = tempfile::tempdir().unwrap();
         let log = DelegationAuditLog::new(dir.path().join("delegation").join("audit.jsonl"));
         assert!(log.read().unwrap().is_empty());
         log.append(&entry(DelegationAuditEvent::Submitted, None))
             .unwrap();
-        // A damaged line and an event from a newer build.
+        // A damaged line.
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .open(log.path())
             .unwrap();
         writeln!(file, "{{not json").unwrap();
-        let mut newer = serde_json::to_value(entry(DelegationAuditEvent::Submitted, None)).unwrap();
-        newer["event"] = "paused".into();
-        newer["futureField"] = true.into();
-        writeln!(file, "{newer}").unwrap();
-        log.append(&entry(DelegationAuditEvent::Finished, Some("succeeded")))
-            .unwrap();
+        let mut current = entry(DelegationAuditEvent::Finished, Some("succeeded"));
+        current.external_agents = vec!["acp:codex".to_string()];
+        log.append(&current).unwrap();
 
         let records = log.read().unwrap();
-        assert_eq!(records.len(), 4);
+        assert_eq!(records.len(), 3);
         assert_eq!(
             records[0].entry.as_ref().unwrap().event,
             DelegationAuditEvent::Submitted
         );
         assert!(records[1].problem.is_some());
         assert_eq!(records[1].raw.as_deref(), Some("{not json"));
-        assert_eq!(
-            records[2].entry.as_ref().unwrap().event,
-            DelegationAuditEvent::Unknown
-        );
-        assert_eq!(
-            records[3].entry.as_ref().unwrap().state.as_deref(),
-            Some("succeeded")
-        );
+        let finished = records[2].entry.as_ref().unwrap();
+        assert_eq!(finished.state.as_deref(), Some("succeeded"));
+        assert_eq!(finished.external_agents, vec!["acp:codex"]);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

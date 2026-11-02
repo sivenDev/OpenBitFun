@@ -161,13 +161,6 @@ fn job_links_round_trip_and_reject_unreadable_values() {
     assert_eq!(value["deviceId"], "laptop");
     assert_eq!(value["cursor"], 4);
     assert_eq!(RemoteJobLink::parse(&encoded), Some(link()));
-    // A link written without a cursor starts at the beginning.
-    let legacy = r#"{"deviceId":"laptop","jobId":"delegation-1","sessionId":"job-session"}"#;
-    let legacy = RemoteJobLink::parse(legacy).unwrap();
-    assert_eq!(legacy.cursor, 0);
-    // A coding task an earlier build recorded is still observed.
-    let coding = r#"{"deviceId":"laptop","jobId":"delegation-1","sessionId":"job-session","cursor":4,"taskKind":"coding"}"#;
-    assert_eq!(RemoteJobLink::parse(coding), Some(link()));
     assert_eq!(RemoteJobLink::parse("not json"), None);
 }
 
