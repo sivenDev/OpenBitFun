@@ -267,12 +267,21 @@ are not the default Core precheck. For documentation-only changes, run
 For assistant discovery, opened-state persistence, and reopening by workspace ID:
 `cargo test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::workspace::service::tests::assistant_`.
 
-For shared assistants (the share store, tenant workspaces and their pruning) and
-the trust and session scope of tasks from other devices:
+For shared assistants (the share store, tenant workspaces and their pruning, the
+request queue, assistants shared with this device) and the trust and session
+scope of tasks from other devices:
 
 ```bash
 cargo test --locked -p openbitfun-core --no-default-features --features local-storage --lib service::lan_share
 cargo test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib service::delegation
+```
+
+For the LAN share host (listening and advertising by the share store, the
+channel methods, decision and withdrawal pushes, the Discover session), two
+hosts run the whole flow on the loopback address:
+
+```bash
+cargo test --locked -p openbitfun-core --features lan-share --test lan_share_flow
 ```
 
 For local/SSH workspace identity collisions, SSH connection rebinding, committed

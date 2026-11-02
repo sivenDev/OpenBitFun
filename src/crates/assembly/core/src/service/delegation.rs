@@ -160,6 +160,57 @@ pub const NORMAL_TRUST_DENIED_SUBAGENTS: [&str; 2] = ["ComputerUse", "OpenBitFun
 const NORMAL_TRUST_REFUSAL: &str = "is not available to a task from a device this assistant is \
      shared with: the owner shares it at normal trust";
 
+/// What a normal-trust task from another device reads only with the
+/// owner's approval each time.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OwnerPrivatePaths {
+    /// Always asked: the assistant's `USER.md` and the memory directories.
+    pub always: Vec<PathBuf>,
+    /// Asked unless the read stays inside `open`: this app's data directory,
+    /// which holds other devices' workspaces, every conversation, the task
+    /// logs and the sharing keys.
+    pub guarded: Vec<PathBuf>,
+    /// The task's own places inside `guarded`: its tenant workspace and the
+    /// storage of its sessions, and the assistant's workspace.
+    pub open: Vec<PathBuf>,
+}
+
+impl OwnerPrivatePaths {
+    pub fn is_empty(&self) -> bool {
+        self.always.is_empty() && self.guarded.is_empty()
+    }
+
+    /// The same paths passed through `map`, such as to canonicalize them.
+    pub fn map(&self, map: impl Fn(&Path) -> PathBuf) -> Self {
+        let all = |paths: &[PathBuf]| paths.iter().map(|path| map(path)).collect();
+        Self {
+            always: all(&self.always),
+            guarded: all(&self.guarded),
+            open: all(&self.open),
+        }
+    }
+
+    /// The protected paths a read of `target` reaches; with `searches`, also
+    /// those a search from `target` would walk into.
+    pub fn touched(&self, target: &Path, searches: bool) -> Vec<PathBuf> {
+        let mut touched: Vec<PathBuf> = self
+            .always
+            .iter()
+            .filter(|path| target.starts_with(path) || (searches && path.starts_with(target)))
+            .cloned()
+            .collect();
+        let inside_open = self.open.iter().any(|open| target.starts_with(open));
+        for guarded in &self.guarded {
+            let reads_inside = target.starts_with(guarded) && !inside_open;
+            let walks_into = searches && guarded.starts_with(target) && guarded != target;
+            if reads_inside || walks_into {
+                touched.push(guarded.clone());
+            }
+        }
+        touched
+    }
+}
+
 /// Turn context keys that carry the facts of a delegated turn. The target's
 /// worker writes them into the `dispatchDelegation` turn metadata; the kernel
 /// copies them into the turn and every subagent it starts.
@@ -318,21 +369,28 @@ impl DelegatedTurnFacts {
     }
 
     /// What a normal-trust task reads only with the owner's approval each
-    /// time: the assistant's `USER.md` and the memory directories. Empty at
-    /// full trust.
-    pub fn owner_private_paths(&self) -> Vec<PathBuf> {
+    /// time. Empty at full trust.
+    pub fn owner_private_paths(&self) -> OwnerPrivatePaths {
         if self.includes_private_context() {
-            return Vec::new();
+            return OwnerPrivatePaths::default();
         }
-        let mut paths = Vec::new();
+        let mut paths = OwnerPrivatePaths::default();
         if let Some(assistant) = &self.assistant_workspace {
-            paths.push(assistant.join("USER.md"));
+            paths.always.push(assistant.join("USER.md"));
+            paths.open.push(assistant.clone());
         }
         if let Ok(path_manager) = crate::infrastructure::try_get_path_manager_arc() {
-            paths.push(path_manager.memories_root_dir());
+            paths.always.push(path_manager.memories_root_dir());
             if let Some(database_dir) = path_manager.memories_database_file().parent() {
-                paths.push(database_dir.to_path_buf());
+                paths.always.push(database_dir.to_path_buf());
             }
+            paths.guarded.push(path_manager.product_home_dir());
+            if let Some(tenant) = &self.tenant_workspace {
+                paths.open.push(path_manager.project_runtime_root(tenant));
+            }
+        }
+        if let Some(tenant) = &self.tenant_workspace {
+            paths.open.push(tenant.clone());
         }
         paths
     }
@@ -511,13 +569,61 @@ mod tests {
         assert!(normal.subagent_refusal("ComputerUse").is_some());
         assert!(normal.subagent_refusal("OpenBitFun").is_some());
         assert!(normal.subagent_refusal("Explore").is_none());
-        assert!(normal.owner_private_paths().contains(&PathBuf::from(
+        assert!(normal.owner_private_paths().always.contains(&PathBuf::from(
             "/home/me/personal_assistant/workspace/USER.md"
         )));
 
         let full = delegated_facts(DelegationTrust::Full);
         assert!(full.subagent_refusal("ComputerUse").is_none());
         assert!(full.owner_private_paths().is_empty());
+    }
+
+    #[test]
+    fn a_tenant_reads_other_tenants_and_conversations_only_with_approval() {
+        let home = PathBuf::from("/home/me/.openbitfun");
+        let tenant = home.join("delegation/tenants/workspace/0123");
+        let assistant = home.join("personal_assistant/workspace");
+        let own_sessions = home.join("projects/tenant-0123");
+        let paths = OwnerPrivatePaths {
+            always: vec![assistant.join("USER.md"), home.join("memories")],
+            guarded: vec![home.clone()],
+            open: vec![tenant.clone(), own_sessions.clone(), assistant.clone()],
+        };
+        let touched = |target: PathBuf, searches: bool| paths.touched(&target, searches);
+        // Its own workspace, its own sessions and the assistant's files.
+        for own in [
+            tenant.join("notes.md"),
+            own_sessions.join("sessions/s1/turns.json"),
+            assistant.join("SOUL.md"),
+        ] {
+            assert!(touched(own.clone(), false).is_empty(), "{own:?}");
+        }
+        assert!(touched(tenant.clone(), true).is_empty());
+        // Another device's workspace, other conversations, task logs and keys.
+        for other in [
+            home.join("delegation/tenants/workspace/4567/USER.md"),
+            home.join("projects/owner-key/sessions/s9/turns.json"),
+            home.join("dispatch/jobs/delegation-9/events.jsonl"),
+            home.join("lan-share/identity.json"),
+        ] {
+            assert_eq!(
+                touched(other.clone(), false),
+                vec![home.clone()],
+                "{other:?}"
+            );
+        }
+        // The owner's profile and memories always ask, even inside the assistant.
+        assert_eq!(
+            touched(assistant.join("USER.md"), false),
+            vec![assistant.join("USER.md")]
+        );
+        assert_eq!(
+            touched(assistant.clone(), true),
+            vec![assistant.join("USER.md")]
+        );
+        // A search from above the data directory walks into it.
+        assert!(touched(PathBuf::from("/home/me"), true).contains(&home));
+        assert!(touched(PathBuf::from("/home/me/projects/app"), true).is_empty());
     }
 
     #[test]

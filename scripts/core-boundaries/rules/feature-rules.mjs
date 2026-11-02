@@ -208,6 +208,7 @@ export const optionalDependencyFeatureOwnerRules = [
           'file-watch',
           'function-agents',
           'git',
+          'lan-share',
           'mcp-runtime',
           'model-catalog',
           'plugin-source',

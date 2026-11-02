@@ -621,7 +621,8 @@ fn is_owner_private_request(request: &PermissionRequest) -> bool {
 }
 
 /// The extra approval a normal-trust delegated task needs before a file
-/// tool reads the owner's `USER.md` or memory: when the target is inside
+/// tool reads the owner's `USER.md` or memory, or this app's data outside
+/// the task's own tenant workspace and sessions: when the target is inside
 /// one of them, or a search would walk into one.
 fn owner_private_read_intents(
     tool_name: &str,
@@ -660,9 +661,9 @@ fn owner_private_read_intents(
     };
     let target = canonical(&PathBuf::from(&resolved.resolved_path));
     let touched: Vec<String> = protected
-        .iter()
-        .map(|path| canonical(path))
-        .filter(|path| target.starts_with(path) || (searches && path.starts_with(&target)))
+        .map(canonical)
+        .touched(&target, searches)
+        .into_iter()
         .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect();
     if touched.is_empty() {
@@ -678,7 +679,7 @@ fn owner_private_read_intents(
         (
             "riskDescription",
             serde_json::Value::String(
-                "A task another account delegated here wants to read your profile or memory."
+                "A task from a device you share an assistant with wants to read your profile, memory, or data of other conversations."
                     .to_string(),
             ),
         ),

@@ -440,3 +440,251 @@ async fn workspaces_without_a_grant_go_once_their_sessions_are_gone() {
     assert!(prune_tenants(&path_manager, &store).await.is_err());
     assert!(granted_dir.exists());
 }
+
+mod request_queue {
+    use super::super::protocol::{Access, RequestState};
+    use super::super::requests::{Opened, RequestQueue, RequestRefusal};
+    use super::{key, peer};
+
+    const WINDOW: u64 = 60_000;
+    const COOLDOWN: u64 = 60_000;
+
+    fn pending(opened: Result<Opened, RequestRefusal>) -> String {
+        match opened {
+            Ok(Opened::Pending(request)) => request.request_id,
+            other => panic!("expected an open request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn one_open_request_per_device_and_assistant_until_it_runs_out() {
+        let mut queue = RequestQueue::new(WINDOW, COOLDOWN);
+        let first = pending(queue.open(peer(1, "Ann"), "workspace", false, 1_000));
+        // Asking again answers with the open request.
+        assert_eq!(
+            queue.open(peer(1, "Ann"), "workspace", false, 2_000),
+            Err(RequestRefusal::AlreadyPending {
+                request_id: first.clone(),
+                deadline_ms: 61_000,
+            })
+        );
+        // Another assistant or another device is a separate request.
+        pending(queue.open(peer(1, "Ann"), "workspace-notes", false, 2_000));
+        pending(queue.open(peer(2, "Bo"), "workspace", false, 2_000));
+        assert_eq!(queue.pending().len(), 3);
+
+        assert!(queue.expire(60_999).is_empty());
+        let expired = queue.expire(61_000);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].request_id, first);
+        assert_eq!(queue.status(&key(1), &first).state, RequestState::Declined);
+        assert_eq!(
+            queue.access(&key(1), "workspace", 61_000),
+            Some(Access::Cooling {
+                retry_at_ms: 121_000
+            })
+        );
+        assert_eq!(
+            queue.open(peer(1, "Ann"), "workspace", false, 91_000),
+            Err(RequestRefusal::Cooling {
+                retry_at_ms: 121_000,
+                seconds: 30,
+            })
+        );
+        pending(queue.open(peer(1, "Ann"), "workspace", false, 121_000));
+    }
+
+    #[test]
+    fn a_decline_cools_down_and_an_allow_does_not() {
+        let mut queue = RequestQueue::new(WINDOW, COOLDOWN);
+        let declined = pending(queue.open(peer(1, "Ann"), "workspace", false, 0));
+        let allowed = pending(queue.open(peer(2, "Bo"), "workspace", false, 0));
+
+        assert!(queue.decide(&declined, false, 5_000).is_some());
+        assert!(
+            queue.decide(&declined, true, 6_000).is_none(),
+            "answered once"
+        );
+        assert!(queue.decide(&allowed, true, 5_000).is_some());
+
+        assert_eq!(queue.status(&key(2), &allowed).state, RequestState::Granted);
+        assert_eq!(queue.access(&key(2), "workspace", 5_000), None);
+        assert!(matches!(
+            queue.open(peer(1, "Ann"), "workspace", false, 6_000),
+            Err(RequestRefusal::Cooling { .. })
+        ));
+        assert!(queue.pending().is_empty());
+    }
+
+    #[test]
+    fn a_blocked_device_is_declined_without_asking() {
+        let mut queue = RequestQueue::new(WINDOW, COOLDOWN);
+        let Ok(Opened::Declined { request_id }) = queue.open(peer(1, "Ann"), "workspace", true, 0)
+        else {
+            panic!("a blocked device's request is declined at once");
+        };
+        assert!(queue.pending().is_empty());
+        assert_eq!(
+            queue.status(&key(1), &request_id).state,
+            RequestState::Declined
+        );
+    }
+
+    #[test]
+    fn a_device_sees_only_its_own_requests() {
+        let mut queue = RequestQueue::new(WINDOW, COOLDOWN);
+        let request = pending(queue.open(peer(1, "Ann"), "workspace", false, 0));
+        let status = queue.status(&key(1), &request);
+        assert_eq!(status.state, RequestState::Pending);
+        assert_eq!(status.deadline_ms, Some(60_000));
+        assert_eq!(queue.status(&key(2), &request).state, RequestState::Unknown);
+        queue.decide(&request, true, 1_000);
+        assert_eq!(queue.status(&key(2), &request).state, RequestState::Unknown);
+    }
+
+    #[test]
+    fn stopping_a_share_ends_its_requests_without_a_cooldown() {
+        let mut queue = RequestQueue::new(WINDOW, COOLDOWN);
+        let request = pending(queue.open(peer(1, "Ann"), "workspace", false, 0));
+        pending(queue.open(peer(1, "Ann"), "workspace-notes", false, 0));
+        let withdrawn = queue.withdraw_assistant("workspace", 1_000);
+        assert_eq!(withdrawn.len(), 1);
+        assert_eq!(queue.pending().len(), 1);
+        assert_eq!(
+            queue.status(&key(1), &request).state,
+            RequestState::Declined
+        );
+        assert_eq!(queue.access(&key(1), "workspace", 1_000), None);
+    }
+}
+
+mod shared_with_me_store {
+    use super::super::protocol::{Access, CatalogAssistant};
+    use super::super::shared_with_me::{SharedWithMeState, SharedWithMeStore};
+    use super::{key, peer};
+
+    fn assistant(id: &str, name: &str, access: Access) -> CatalogAssistant {
+        CatalogAssistant {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            access,
+        }
+    }
+
+    #[tokio::test]
+    async fn grants_follow_the_owners_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SharedWithMeStore::new(dir.path().join("shared-with-me.json"));
+        let owner = peer(7, "Owner");
+        store
+            .add_grant(
+                owner.clone(),
+                &assistant("workspace", "Writer", Access::Granted),
+                Some("192.168.1.7:5000".to_string()),
+            )
+            .await
+            .unwrap();
+        store
+            .add_grant(
+                owner.clone(),
+                &assistant("workspace-notes", "Notes", Access::Granted),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // The owner renamed one and no longer grants the other.
+        let changed = store
+            .sync_with_catalog(
+                &key(7),
+                &[
+                    assistant("workspace", "Editor", Access::Granted),
+                    assistant("workspace-notes", "Notes", Access::Available),
+                ],
+                Some("192.168.1.8:5000".to_string()),
+            )
+            .await
+            .unwrap();
+        assert!(changed);
+        let mine = store.assistants().await.unwrap();
+        assert_eq!(mine[0].name, "Editor");
+        assert_eq!(mine[0].state, SharedWithMeState::Available);
+        assert_eq!(mine[0].last_address.as_deref(), Some("192.168.1.8:5000"));
+        assert_eq!(mine[1].state, SharedWithMeState::Revoked);
+
+        // A withdrawal pushed by the owner.
+        assert!(store.mark_revoked(&key(7), "workspace").await.unwrap());
+        assert!(!store.mark_revoked(&key(7), "workspace").await.unwrap());
+        // Another owner's key changes nothing.
+        assert!(!store
+            .mark_revoked(&key(8), "workspace-notes")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_removal_is_kept_until_the_owner_hears_of_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SharedWithMeStore::new(dir.path().join("shared-with-me.json"));
+        store
+            .add_grant(
+                peer(7, "Owner"),
+                &assistant("workspace", "Writer", Access::Granted),
+                None,
+            )
+            .await
+            .unwrap();
+        let removed = store.remove(&key(7), "workspace", true).await.unwrap();
+        assert!(removed.is_some());
+        assert!(store.assistants().await.unwrap().is_empty());
+        assert_eq!(store.pending_removals().await.unwrap().len(), 1);
+        assert!(store
+            .remove(&key(7), "workspace", true)
+            .await
+            .unwrap()
+            .is_none());
+
+        store.removal_delivered(&key(7), "workspace").await.unwrap();
+        assert!(store.pending_removals().await.unwrap().is_empty());
+
+        // A new grant replaces a removal not yet delivered.
+        store
+            .add_grant(
+                peer(7, "Owner"),
+                &assistant("workspace", "Writer", Access::Granted),
+                None,
+            )
+            .await
+            .unwrap();
+        store.remove(&key(7), "workspace", true).await.unwrap();
+        store
+            .add_grant(
+                peer(7, "Owner"),
+                &assistant("workspace", "Writer", Access::Granted),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(store.pending_removals().await.unwrap().is_empty());
+        assert_eq!(store.assistants().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_file_is_reported_and_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shared-with-me.json");
+        std::fs::write(&path, b"{ not json").unwrap();
+        let store = SharedWithMeStore::new(path.clone());
+        assert!(store.assistants().await.is_err());
+        assert!(store
+            .add_grant(
+                peer(7, "Owner"),
+                &assistant("workspace", "Writer", Access::Granted),
+                None,
+            )
+            .await
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{ not json");
+    }
+}

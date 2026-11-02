@@ -471,6 +471,22 @@ shared assistant (its directory, the name other devices see, trust, session rete
 days, concurrent tasks) with the devices granted it and the devices blocked from asking.
 Devices are named by their LAN sharing public key; the device id is derived from it.
 
+The share host (`openbitfun-core` `service/lan_share/host.rs`, feature `lan-share`)
+listens and advertises over Bonjour only while an assistant is shared. Channels require
+the `assistant_share_v1` capability. A device holding no grant may call `catalog`
+(every shared assistant with this device's standing: available, pending until a
+deadline, granted, or cooling down), `request`, and `request_status` for its own
+requests; `remove` needs a grant. The owner has 60 seconds to answer a request; one
+request per device and assistant is open at a time, an unanswered or declined one is
+followed by a 60-second cooldown, and a blocked device is declined without asking.
+Decisions and withdrawals are pushed at once over the asking device's channel
+(`decision`, `revoked`); a device that is not connected learns from its next catalog.
+The requesting side browses only while the Discover panel is open, connects with the
+advertised key pinned, and keeps what it was granted in
+`<product_home>/lan-share/shared-with-me.json`; a removal is kept there until the owner
+hears of it. The host announces changes as `lan_share://requests`, `lan_share://shared`,
+`lan_share://shared_with_me` and `lan_share://discovered`.
+
 `dispatch_target_catalog` (CLI verb `catalog`) returns the shared assistants granted to
 the requesting device: id, assistant, display name, and why it is unavailable when its
 assistant is gone. A delegated submission must name that assistant. Target paths and the
@@ -497,7 +513,11 @@ that device's own `USER.md`. All of that device's tasks and sessions live there,
 assistant can read its earlier conversations with that device; at normal trust
 `SessionHistory` and `SessionControl list` reach only that workspace. Identity and
 persona come read-only from the assistant's own workspace; the owner's `USER.md` and
-memories never enter, and tenant sessions never feed the owner's memories. The source
+memories never enter, and tenant sessions never feed the owner's memories. At normal
+trust a file read under the app's data directory asks the owner each time unless it
+stays in the task's tenant workspace, the storage of its own sessions, or the
+assistant's workspace, so other devices' workspaces, other conversations, task logs and
+the sharing keys are not read silently; the owner's `USER.md` and memories always ask. The source
 is kept in the job record and in the `dispatchDelegation` turn context.
 
 Each finished task is kept for the share's retention period (the default when the

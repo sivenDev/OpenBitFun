@@ -481,6 +481,12 @@ remote-workspace = [
     "openbitfun-services-integrations/remote-ssh",
 ]
 tool-packs = ["dep:openbitfun-tool-packs"]
+# Sharing assistants on the local network: the share host, the request
+# queue, and the Discover session (F002 RFC v6).
+lan-share = [
+    "dep:openbitfun-services-integrations",
+    "openbitfun-services-integrations/lan-share",
+]
 # Deprecated compatibility feature. Tauri integration is desktop-owned now;
 # keep the public feature name as a no-op for downstream manifests.
 tauri-support = []
@@ -495,6 +501,10 @@ tokio-tungstenite = { workspace = true }
 openbitfun-runtime-services = { path = "../../execution/runtime-services", features = ["test-support"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+
+[[test]]
+name = "lan_share_flow"
+required-features = ["lan-share"]
 
 [[test]]
 name = "git_contracts"
