@@ -55,10 +55,6 @@ on:
         default: ""
         type: string
 
-env:
-  # Compiled into Desktop builds; empty keeps the official Relay.
-  OPENBITFUN_RELAY_URL: ${{ inputs.relay_url || '' }}
-
 permissions:
   actions: read
   contents: write
@@ -78,6 +74,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       upload_to_release: ${{ steps.meta.outputs.upload_to_release }}
+      relay_url: ${{ steps.meta.outputs.relay_url }}
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
       release_channel: ${{ steps.meta.outputs.release_channel }}
       relay_image_only: ${{ steps.meta.outputs.relay_image_only }}
@@ -100,6 +97,7 @@ jobs:
           INPUT_RELEASE_CHANNEL: ${{ inputs.release_channel }}
           INPUT_UPLOAD_TO_RELEASE: ${{ inputs.upload_to_release }}
           INPUT_RELAY_IMAGE_ONLY: ${{ inputs.relay_image_only }}
+          INPUT_RELAY_URL: ${{ inputs.relay_url }}
         run: |
           set -euo pipefail
 
@@ -160,12 +158,27 @@ jobs:
           fi
           CHECKOUT_REF="${CHECKOUT_SHA}"
 
+          # A self-hosted Relay build is for testing only: it never reaches a
+          # release or the updater, and its address is a plain http(s) origin.
+          RELAY_URL="${INPUT_RELAY_URL:-}"
+          if [[ -n "${RELAY_URL}" ]]; then
+            if [[ "${UPLOAD}" == "true" ]]; then
+              echo "relay_url builds cannot be published; dispatch without upload_to_release." >&2
+              exit 1
+            fi
+            if ! [[ "${RELAY_URL}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]]; then
+              echo "relay_url must be an http(s) address without credentials, query, or fragment." >&2
+              exit 1
+            fi
+          fi
+
           echo "version=$VERSION"          >> "$GITHUB_OUTPUT"
           echo "release_tag=$TAG"          >> "$GITHUB_OUTPUT"
           echo "upload_to_release=$UPLOAD" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=$CHECKOUT_REF" >> "$GITHUB_OUTPUT"
           echo "release_channel=$CHANNEL"  >> "$GITHUB_OUTPUT"
           echo "relay_image_only=${INPUT_RELAY_IMAGE_ONLY:-false}" >> "$GITHUB_OUTPUT"
+          echo "relay_url=${RELAY_URL}"     >> "$GITHUB_OUTPUT"
 
       - name: Select Desktop package platforms
         id: platforms
@@ -210,6 +223,8 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=6144
       OPENBITFUN_ENABLE_UPDATER_ARTIFACTS: ${{ needs.prepare.outputs.upload_to_release }}
+      # Compiled in; empty keeps the official Relay. Refused for published builds.
+      OPENBITFUN_RELAY_URL: ${{ needs.prepare.outputs.relay_url }}
       OPENBITFUN_RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
       TAURI_UPDATER_ENDPOINT: ${{ github.repository != 'GCWing/OpenBitFun' && (needs.prepare.outputs.release_channel == 'beta' && format('https://github.com/{0}/releases/download/channel-v1-beta/latest-v1.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest-v1.json', github.repository)) || '' }}
       TAURI_UPDATER_FALLBACK_ENDPOINT: ${{ github.repository != 'GCWing/OpenBitFun' && (needs.prepare.outputs.release_channel == 'beta' && format('https://github.com/{0}/releases/download/channel-v1-beta/latest-v1.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest-v1.json', github.repository)) || '' }}
