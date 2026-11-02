@@ -529,17 +529,6 @@ impl AccountRuntime {
         })
     }
 
-    /// This device as the owner of cross-account connections.
-    pub async fn connection_context(&self) -> Result<super::connection_rpc::ConnectionContext> {
-        let (session, relay_url) = self.read_account_context().await?;
-        let local_device_id = super::connection_rpc::authenticated_device_id(&session)?;
-        Ok(super::connection_rpc::ConnectionContext {
-            session,
-            relay_url,
-            local_device_id,
-        })
-    }
-
     pub async fn relay_capabilities(&self) -> Result<Vec<String>> {
         let generation = self.account_context_generation();
         let (_, relay_url) = self.read_account_context_for_generation(generation).await?;

@@ -19,7 +19,6 @@ import {
   BarChart3,
   CalendarClock,
   Cable,
-  Network,
 } from 'lucide-react';
 import type { SceneTabDef, SceneTabIcon, SceneTabId } from '../components/SceneBar/types';
 import { getSceneViewId } from '../components/SceneBar/types';
@@ -150,15 +149,6 @@ export const SCENE_TAB_REGISTRY: SceneTabDef[] = [
     label: 'Task Board',
     labelKey: 'scenes.todos',
     Icon: CalendarClock,
-    pinned: false,
-    singleton: true,
-    defaultOpen: false,
-  },
-  {
-    id: 'ai-collaboration' as SceneTabId,
-    label: 'AI Collaboration',
-    labelKey: 'scenes.aiCollaboration',
-    Icon: Network,
     pinned: false,
     singleton: true,
     defaultOpen: false,

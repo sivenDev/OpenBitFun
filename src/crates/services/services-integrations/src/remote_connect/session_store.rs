@@ -134,11 +134,6 @@ pub fn clear_session() {
     }
 }
 
-/// Cross-account connections of this device, next to the account session.
-pub fn connections_file_path() -> Result<PathBuf> {
-    Ok(session_store_directory()?.join("connections.json"))
-}
-
 // ── Credential hint (non-secret: username + relay_url) ─────────────────
 // Shared by Desktop and CLI so login forms pre-fill the same values.
 

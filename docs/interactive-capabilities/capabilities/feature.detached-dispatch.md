@@ -19,8 +19,8 @@ Dispatch durable work to another OpenBitFun host; the controller may disconnect 
 
 - **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 列出可派发目标并探测版本、连接和运行能力
   - List dispatch targets and probe their version, connectivity, and runtime capabilities
-- **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权
-  - Choose which local agents to open to other devices of this account, granted per device and task kind
+- **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 查看其他设备交给本机助理的任务，并在本机审批
+  - See the tasks other devices gave this device's assistants, and approve them here
 - **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 为目标主机配置运行环境并安装或更新 OpenBitFun CLI
   - Provision the target runtime and install or update the OpenBitFun CLI
 - **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 在提交任务前同步目标所需的模型配置

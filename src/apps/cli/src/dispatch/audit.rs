@@ -6,7 +6,6 @@
 use openbitfun_core::service::delegation_audit::{
     DelegationAuditEntry, DelegationAuditEvent, DelegationAuditLog,
 };
-use openbitfun_core::service::remote_connect::connections::ConnectionStore;
 
 use openbitfun_core::service::delegation::DelegationTrust;
 
@@ -21,7 +20,6 @@ fn default_log() -> Option<DelegationAuditLog> {
 /// The entry for `request`, or none when it did not come over a connection.
 pub(super) fn entry(
     request: &DispatchSubmitRequest,
-    connections: Option<&ConnectionStore>,
     event: DelegationAuditEvent,
     trust: DelegationTrust,
     external_agents: Vec<String>,
@@ -30,30 +28,16 @@ pub(super) fn entry(
 ) -> Option<DelegationAuditEntry> {
     let connection_id = request.source_connection_id.as_ref()?;
     let delegation = request.delegation.as_ref()?;
-    let peer = connections
-        .and_then(|store| store.load().ok())
-        .and_then(|stored| stored.find(connection_id).cloned());
     Some(DelegationAuditEntry {
         at: chrono::Utc::now().to_rfc3339(),
         event,
         job_id: request.job_id.clone(),
         connection_id: connection_id.clone(),
-        peer_user_id: peer
-            .as_ref()
-            .map(|p| p.peer_user_id.clone())
-            .unwrap_or_default(),
-        peer_display_name: peer
-            .as_ref()
-            .map(|p| p.peer_display_name.clone())
-            .unwrap_or_default(),
-        peer_device_id: peer
-            .as_ref()
-            .map(|p| p.peer_device_id.clone())
-            .unwrap_or_default(),
-        peer_device_name: peer
-            .as_ref()
-            .map(|p| p.peer_device_name.clone())
-            .unwrap_or_default(),
+        // Who the requester is comes from the share grant (F002-11 Task 2).
+        peer_user_id: String::new(),
+        peer_display_name: String::new(),
+        peer_device_id: String::new(),
+        peer_device_name: String::new(),
         open_agent_id: delegation.open_agent_id.clone(),
         trust: trust.as_str().to_string(),
         external_agents,
@@ -84,16 +68,7 @@ pub(super) async fn record(
         return;
     }
     let trust = super::worker::delegation_trust(request).await;
-    let connections = ConnectionStore::open_default().ok();
-    let Some(entry) = entry(
-        request,
-        connections.as_ref(),
-        event,
-        trust,
-        external_agents,
-        state,
-        detail,
-    ) else {
+    let Some(entry) = entry(request, event, trust, external_agents, state, detail) else {
         return;
     };
     let Some(log) = default_log() else {

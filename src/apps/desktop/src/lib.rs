@@ -705,7 +705,6 @@ pub async fn run() {
             openbitfun_acp::client::AcpExternalAgentExecutor::new(acp_client_service),
         ));
     }
-    coordinator.set_remote_agent_port(api::remote_agent_delegation::remote_agent_port());
     coordinator.resume_remote_background_tasks();
 
     // A Turn that is still executing exists nowhere durable but this log: the
@@ -1906,13 +1905,6 @@ pub async fn run() {
             api::remote_connect_api::account_get_credential_hint,
             api::remote_connect_api::account_token_expired,
             api::remote_connect_api::account_list_devices,
-            api::connections_api::connections_overview,
-            api::connections_api::connections_create_invite,
-            api::connections_api::connections_preview_invite,
-            api::connections_api::connections_accept_invite,
-            api::connections_api::connections_confirm,
-            api::connections_api::connections_revoke,
-            api::connections_api::connections_withdraw_invite,
             api::remote_connect_api::account_update_device_alias,
             api::remote_connect_api::account_relay_capabilities,
             api::remote_connect_api::account_delete_device,
@@ -2074,14 +2066,6 @@ pub async fn run() {
             api::ssh_api::ssh_list_port_forwards,
             api::ssh_api::ssh_list_remote_listening_ports,
             // Detached task dispatch (controller-side SSH transport)
-            api::delegation_api::delegation_list_open_agents,
-            api::delegation_api::delegation_open_agent,
-            api::delegation_api::delegation_close_agent,
-            api::delegation_api::delegation_grant_connection,
-            api::delegation_api::delegation_revoke_connection,
-            api::delegation_api::delegation_set_connection_limits,
-            api::delegation_api::delegation_list_connection_trust,
-            api::delegation_api::delegation_set_connection_trust,
             api::delegation_tasks_api::delegation_list_assistants,
             api::delegation_tasks_api::delegation_list_tasks,
             api::delegation_tasks_api::delegation_task_status,

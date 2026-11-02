@@ -132,10 +132,6 @@ shlex = { workspace = true }
 hex = { workspace = true }
 openbitfun-core = { path = "../../crates/assembly/core", features = ["test-support"] }
 tokio = { workspace = true, features = ["io-util", "net"] }
-# delegation_simulation: an in-process Relay and the account RPC a desktop requester uses.
-axum = { workspace = true }
-openbitfun-relay-service = { path = "../../crates/services/relay-service" }
-openbitfun-services-integrations = { path = "../../crates/services/services-integrations", features = ["remote-connect"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Console"] }

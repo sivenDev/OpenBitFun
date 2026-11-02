@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "bdbf3f113645efbead8f3f370145a0ca2b88097369499150166d87b8a86871c4",
-  "commandCount": 726,
+  "catalogDigest": "e729efc8e95c12755d3bc69c658cacc304f04f68b8affd655f0545cfa365e8ce",
+  "commandCount": 711,
   "coverage": {
-    "commandCount": 726,
-    "documentedCommandCount": 666,
+    "commandCount": 711,
+    "documentedCommandCount": 651,
     "implementationCommandCount": 60,
     "implementationDigest": "5047b674e890f899e65baf9235e9df4bd912fa28f44eb10a656e079a1b89974d"
   },
@@ -1611,118 +1611,6 @@
       "remoteWorkspacePolicy": "LocalOnly"
     },
     {
-      "id": "connections_accept_invite",
-      "moduleId": "connections",
-      "capabilityId": "feature.remote-connect",
-      "capabilityIds": [
-        "feature.remote-connect"
-      ],
-      "documentedItemIds": [
-        "feature.remote-connect:connections"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::connections_api::connections_accept_invite",
-      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
-      "signature": "fn connections_accept_invite( request: InviteLinkRequest, ) -> Result<ConnectionSummary, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "connections_confirm",
-      "moduleId": "connections",
-      "capabilityId": "feature.remote-connect",
-      "capabilityIds": [
-        "feature.remote-connect"
-      ],
-      "documentedItemIds": [
-        "feature.remote-connect:connections"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::connections_api::connections_confirm",
-      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
-      "signature": "fn connections_confirm( request: ConfirmConnectionRequest, ) -> Result<ConnectionSummary, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "connections_create_invite",
-      "moduleId": "connections",
-      "capabilityId": "feature.remote-connect",
-      "capabilityIds": [
-        "feature.remote-connect"
-      ],
-      "documentedItemIds": [
-        "feature.remote-connect:connections"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::connections_api::connections_create_invite",
-      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
-      "signature": "fn connections_create_invite(request: CreateInviteRequest) -> Result<Value, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "connections_overview",
-      "moduleId": "connections",
-      "capabilityId": "feature.remote-connect",
-      "capabilityIds": [
-        "feature.remote-connect"
-      ],
-      "documentedItemIds": [
-        "feature.remote-connect:connections"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::connections_api::connections_overview",
-      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
-      "signature": "fn connections_overview() -> Result<ConnectionsOverview, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "connections_preview_invite",
-      "moduleId": "connections",
-      "capabilityId": "feature.remote-connect",
-      "capabilityIds": [
-        "feature.remote-connect"
-      ],
-      "documentedItemIds": [
-        "feature.remote-connect:connections"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::connections_api::connections_preview_invite",
-      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
-      "signature": "fn connections_preview_invite( request: InviteLinkRequest, ) -> Result<InvitePreviewView, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "connections_revoke",
-      "moduleId": "connections",
-      "capabilityId": "feature.remote-connect",
-      "capabilityIds": [
-        "feature.remote-connect"
-      ],
-      "documentedItemIds": [
-        "feature.remote-connect:connections"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::connections_api::connections_revoke",
-      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
-      "signature": "fn connections_revoke(request: ConnectionIdRequest) -> Result<(), String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "connections_withdraw_invite",
-      "moduleId": "connections",
-      "capabilityId": "feature.remote-connect",
-      "capabilityIds": [
-        "feature.remote-connect"
-      ],
-      "documentedItemIds": [
-        "feature.remote-connect:connections"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::connections_api::connections_withdraw_invite",
-      "sourceFile": "src/apps/desktop/src/api/connections_api.rs",
-      "signature": "fn connections_withdraw_invite(request: InviteIdRequest) -> Result<(), String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
       "id": "control_background_command",
       "moduleId": "agentic",
       "capabilityId": "feature.ai-assistant",
@@ -2017,44 +1905,12 @@
         "feature.detached-dispatch"
       ],
       "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
+        "feature.detached-dispatch:delegated-tasks"
       ],
       "visibility": "documented",
       "rustPath": "api::delegation_api::delegation_audit_list",
       "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
       "signature": "fn delegation_audit_list( request: DelegationAuditListRequest, ) -> Result<Vec<DelegationAuditRecord>, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_close_agent",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_close_agent",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_close_agent(request: DelegationCloseAgentRequest) -> Result<bool, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_grant_connection",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_grant_connection",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_grant_connection( request: DelegationConnectionGrantRequest, ) -> Result<OpenAgent, String>",
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
@@ -2065,44 +1921,12 @@
         "feature.detached-dispatch"
       ],
       "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
+        "feature.detached-dispatch:delegated-tasks"
       ],
       "visibility": "documented",
       "rustPath": "api::delegation_tasks_api::delegation_list_assistants",
       "sourceFile": "src/apps/desktop/src/api/delegation_tasks_api.rs",
       "signature": "fn delegation_list_assistants() -> Result<Vec<LocalAssistant>, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_list_connection_trust",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_list_connection_trust",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_list_connection_trust() -> Result<BTreeMap<String, DelegationTrust>, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_list_open_agents",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_list_open_agents",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_list_open_agents() -> Result<Vec<OpenAgentRecord>, String>",
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
@@ -2113,76 +1937,12 @@
         "feature.detached-dispatch"
       ],
       "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
+        "feature.detached-dispatch:delegated-tasks"
       ],
       "visibility": "documented",
       "rustPath": "api::delegation_tasks_api::delegation_list_tasks",
       "sourceFile": "src/apps/desktop/src/api/delegation_tasks_api.rs",
       "signature": "fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_open_agent",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_open_agent",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_open_agent( request: DelegationOpenAgentRequest, ) -> Result<OpenAgent, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_revoke_connection",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_revoke_connection",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_revoke_connection( request: DelegationConnectionRevokeRequest, ) -> Result<bool, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_set_connection_limits",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_set_connection_limits",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_set_connection_limits( request: DelegationConnectionLimitsRequest, ) -> Result<OpenAgent, String>",
-      "remoteWorkspacePolicy": "WorkspaceAgnostic"
-    },
-    {
-      "id": "delegation_set_connection_trust",
-      "moduleId": "delegation",
-      "capabilityId": "feature.detached-dispatch",
-      "capabilityIds": [
-        "feature.detached-dispatch"
-      ],
-      "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
-      ],
-      "visibility": "documented",
-      "rustPath": "api::delegation_api::delegation_set_connection_trust",
-      "sourceFile": "src/apps/desktop/src/api/delegation_api.rs",
-      "signature": "fn delegation_set_connection_trust( request: DelegationConnectionTrustRequest, ) -> Result<(), String>",
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
@@ -2193,7 +1953,7 @@
         "feature.detached-dispatch"
       ],
       "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
+        "feature.detached-dispatch:delegated-tasks"
       ],
       "visibility": "documented",
       "rustPath": "api::delegation_tasks_api::delegation_task_answer",
@@ -2209,7 +1969,7 @@
         "feature.detached-dispatch"
       ],
       "documentedItemIds": [
-        "feature.detached-dispatch:open-agents"
+        "feature.detached-dispatch:delegated-tasks"
       ],
       "visibility": "documented",
       "rustPath": "api::delegation_tasks_api::delegation_task_status",

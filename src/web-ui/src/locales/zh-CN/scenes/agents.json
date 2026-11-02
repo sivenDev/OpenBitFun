@@ -297,9 +297,7 @@
       "unreachable": "设备无响应",
       "agentUnavailable": "该设备上的智能体当前不可用",
       "device": "位于 {{device}}",
-      "managedOnDevice": "{{device}} 向本设备开放了这个智能体，请在 {{device}} 上修改或关闭。",
-      "account": "账号 {{name}}（{{user}}）",
-      "accountTooltip": "这个智能体属于其他账号。它在对方设备上的操作由对方审批，对方可以随时收回。"
+      "managedOnDevice": "{{device}} 向本设备开放了这个智能体，请在 {{device}} 上修改或关闭。"
     },
     "deleteConfirm": "确定删除自定义智能体「{{name}}」？此操作不可恢复。",
     "deleteSuccess": "已删除「{{name}}」",

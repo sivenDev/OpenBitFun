@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "bdbf3f113645efbead8f3f370145a0ca2b88097369499150166d87b8a86871c4",
-  "count": 215,
+  "catalogDigest": "e729efc8e95c12755d3bc69c658cacc304f04f68b8affd655f0545cfa365e8ce",
+  "count": 214,
   "reasonCounts": {
     "externalAuth": 4,
     "secretEntry": 5,
-    "unstructuredInteraction": 181,
+    "unstructuredInteraction": 180,
     "visualSelection": 25
   },
   "entries": [
@@ -2069,28 +2069,6 @@
     },
     {
       "capabilityId": "feature.remote-connect",
-      "itemId": "connections",
-      "titleZh": "与其他账号的设备配对、核对指纹、查看与撤销连接",
-      "titleEn": "Pair with devices of other accounts, check fingerprints, and view or revoke connections",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“与其他账号的设备配对、核对指纹、查看与撤销连接”需要两个人通过可信渠道交换邀请并当面核对指纹，智能体不能代替任一方确认。连接使用本机的账户身份，不随 Peer Device 切换到目标主机；Relay 不支持跨账号路由时入口明确显示不可用。智能体打开连接管理入口，由用户完成后续交互。",
-      "reasonEn": "“Pair with devices of other accounts, check fingerprints, and view or revoke connections” requires two people to exchange an invite over a trusted channel and compare fingerprints; the Agent cannot confirm for either side. Connections use this device's account identity, not the selected Peer host; when the Relay cannot route between accounts the entry explicitly shows it as unavailable. The Agent opens connection management and leaves subsequent interaction to the user.",
-      "presentationTarget": {
-        "kind": "event",
-        "eventName": "openbitfun:open-remote-connect"
-      },
-      "evidence": [
-        "command:connections_overview",
-        "command:connections_create_invite",
-        "command:connections_preview_invite",
-        "command:connections_accept_invite",
-        "command:connections_confirm",
-        "command:connections_revoke",
-        "command:connections_withdraw_invite"
-      ]
-    },
-    {
-      "capabilityId": "feature.remote-connect",
       "itemId": "peer-device",
       "titleZh": "进入 Peer Device Mode，把另一台 OpenBitFun 设备作为命令与事件数据面",
       "titleEn": "Enter Peer Device Mode and use another OpenBitFun device as the command and event data plane",
@@ -2130,12 +2108,12 @@
     },
     {
       "capabilityId": "feature.detached-dispatch",
-      "itemId": "open-agents",
-      "titleZh": "选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权",
-      "titleEn": "Choose which local agents to open to other devices of this account, granted per device and task kind",
+      "itemId": "delegated-tasks",
+      "titleZh": "查看其他设备交给本机助理的任务，并在本机审批",
+      "titleEn": "See the tasks other devices gave this device's assistants, and approve them here",
       "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“选择把哪些本机智能体开放给同账号的其他设备，并按设备与任务类型授权”是由设备主人亲自做出的授权决定，需要核对设备与工作区；智能体会打开精确入口，并把授权选择保留在用户可见界面。",
-      "reasonEn": "“Choose which local agents to open to other devices of this account, granted per device and task kind” is an access grant the device owner makes in person after checking devices and workspaces; the Agent opens the exact entry and keeps the grant choice visible to the user.",
+      "reasonZh": "“查看其他设备交给本机助理的任务，并在本机审批”中的审批是设备主人亲自做出的决定；智能体会打开精确入口，并把审批选择保留在用户可见界面。",
+      "reasonEn": "“See the tasks other devices gave this device's assistants, and approve them here” involves approvals the device owner makes in person; the Agent opens the exact entry and keeps the approval choice visible to the user.",
       "presentationTarget": {
         "kind": "event",
         "eventName": "openbitfun:open-remote-connect",
@@ -2144,14 +2122,6 @@
         }
       },
       "evidence": [
-        "command:delegation_list_open_agents",
-        "command:delegation_open_agent",
-        "command:delegation_close_agent",
-        "command:delegation_grant_connection",
-        "command:delegation_revoke_connection",
-        "command:delegation_set_connection_limits",
-        "command:delegation_list_connection_trust",
-        "command:delegation_set_connection_trust",
         "command:delegation_list_assistants",
         "command:delegation_list_tasks",
         "command:delegation_task_status",

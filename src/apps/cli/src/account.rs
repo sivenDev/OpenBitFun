@@ -212,10 +212,7 @@ impl CliAccountRoutingHost {
                     tracing::debug!("Stopping stale device routing event loop");
                     break;
                 }
-                if matches!(
-                    &event,
-                    RelayEvent::DeviceMessageReceived { .. } | RelayEvent::ConnectionRequest { .. }
-                ) {
+                if matches!(&event, RelayEvent::DeviceMessageReceived { .. }) {
                     let routing = routing.clone();
                     let client = client.clone();
                     let token = expected_token.clone();
@@ -563,46 +560,6 @@ impl CliAccountRoutingHost {
             }
             RelayEvent::Error { message } => {
                 tracing::warn!("Device routing error: {message}")
-            }
-            RelayEvent::ConnectionRequest {
-                connection_id,
-                command,
-                source_account_id,
-                source_device_id,
-                correlation_id,
-                encrypted_data,
-                nonce,
-            } => {
-                use openbitfun_core::service::remote_connect::connection_rpc::{
-                    serve_connection_request, IncomingConnectionRequest,
-                };
-                let Ok(context) = runtime.connection_context().await else {
-                    return;
-                };
-                if context.session.token != expected_token
-                    || !self
-                        .routing_loop_is_current(account_generation, relay_client)
-                        .await
-                {
-                    return;
-                }
-                // The dispatch runner answers only for agents granted to the
-                // calling connection.
-                serve_connection_request(
-                    relay_client,
-                    &context,
-                    IncomingConnectionRequest {
-                        connection_id,
-                        command,
-                        source_account_id,
-                        source_device_id,
-                        encrypted_data,
-                        nonce,
-                    },
-                    &correlation_id,
-                    &crate::peer_host::ConnectionDispatchHandler,
-                )
-                .await;
             }
             RelayEvent::AuthError { .. } => unreachable!("AuthError handled before routing lease"),
             _ => {}

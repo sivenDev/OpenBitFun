@@ -18,7 +18,6 @@ mod account_transport_tests;
 
 pub mod admin;
 mod admission;
-mod connections;
 pub mod db;
 pub mod page_data;
 pub mod page_execution;
@@ -1192,7 +1191,6 @@ pub fn build_relay_router_with_page_data_origins_and_page_auth(
             post(routes::auth::provision_device),
         )
         .merge(routes::devices::device_router())
-        .merge(connections::router())
         .merge(routes::pages::pages_router());
     let router = realtime::mount(router, state.clone())
         .layer(axum::middleware::from_fn_with_state(

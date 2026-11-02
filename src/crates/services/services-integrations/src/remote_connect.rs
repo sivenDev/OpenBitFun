@@ -10,7 +10,6 @@
 pub mod account;
 pub mod bot;
 mod chat_projection;
-pub mod connections;
 pub mod device;
 pub mod device_crypto;
 pub mod encryption;

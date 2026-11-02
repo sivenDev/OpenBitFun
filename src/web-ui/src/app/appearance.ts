@@ -43,7 +43,6 @@ export const workbenchAppearanceDescriptor: AppearanceSurfaceDescriptor = {
         'insights',
         'shell',
         'todos',
-        'ai-collaboration',
         'ecosystem-compatibility',
       ],
     },

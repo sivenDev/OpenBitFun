@@ -28,7 +28,6 @@ export type SceneTabId =
   | 'browser'
   | 'assistant'
   | 'todos'
-  | 'ai-collaboration'
   | 'insights'
   | 'shell'
   | `content:${string}`

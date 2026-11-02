@@ -35,7 +35,6 @@ macro_rules! json_event {
     };
 }
 json_event!(RpcCall, "rpc-call", HasAck<JsonAck>);
-json_event!(ConnectionRpcCall, "connection-rpc-call", HasAck<JsonAck>);
 json_event!(RpcRegister, "rpc-register", HasAck<JsonAck>);
 json_event!(RpcRequest, "rpc-request", HasAck<JsonAck>);
 json_event!(AuthOk, "auth-ok", NoAck);
@@ -144,29 +143,6 @@ impl RealtimeConnection {
             if ack.payload.0["ok"] != true {
                 bail!("Relay RPC registration rejected");
             }
-            // Calls from paired devices of other accounts. Optional: a Relay
-            // without cross-account routing never sends them. The replay
-            // guard starts before any call can be routed here.
-            super::connections::replay_guard();
-            let method = format!(
-                "{}:{}",
-                connection.device_id,
-                super::connections::CONNECTION_INVOKE_METHOD
-            );
-            let registered = match connection
-                .sender
-                .emit(RpcRegister(json!({ "method": method })))
-                .await
-            {
-                Ok(pending) => pending
-                    .timeout(Duration::from_secs(10))
-                    .await
-                    .is_ok_and(|ack| ack.payload.0["ok"] == true),
-                Err(_) => false,
-            };
-            if !registered {
-                log::info!("Relay did not accept cross-account connection calls");
-            }
         }
         Ok(connection)
     }
@@ -259,51 +235,6 @@ impl RealtimeSender {
         let result = ack.payload.0;
         if result["ok"] != true {
             bail!("{}", result["error"].as_str().unwrap_or("Relay RPC failed"));
-        }
-        self.payloads
-            .resolve(
-                result
-                    .get("result")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Relay RPC response missing result"))?,
-            )
-            .await
-    }
-    /// Call the other end of a cross-account connection. `params` is already
-    /// encrypted with the connection key; a Relay refusal keeps its reason.
-    pub async fn connection_call(
-        &self,
-        connection_id: &str,
-        command: &str,
-        params: Value,
-    ) -> Result<Value> {
-        let params = self.payloads.upload_if_large(params).await?;
-        let ack = tokio::time::timeout(Duration::from_secs(125), async {
-            self.sender
-                .emit(ConnectionRpcCall(json!({
-                    "connectionId": connection_id,
-                    "command": command,
-                    "params": params,
-                    "timeoutMs": 120_000,
-                })))
-                .await?
-                .timeout(Duration::from_secs(123))
-                .await
-                .map_err(anyhow::Error::from)
-        })
-        .await
-        .map_err(|_| anyhow!("Relay RPC timed out; delivery outcome is unknown"))??;
-        let result = ack.payload.0;
-        if result["ok"] != true {
-            let message = result["error"].as_str().unwrap_or("Relay RPC failed");
-            return Err(match result["reason"].as_str() {
-                Some(reason) => super::connections::RouteRefusal {
-                    reason: reason.to_owned(),
-                    message: message.to_owned(),
-                }
-                .into(),
-                None => anyhow!("{message}"),
-            });
         }
         self.payloads
             .resolve(

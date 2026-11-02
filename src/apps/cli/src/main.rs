@@ -16,7 +16,6 @@ mod agent;
 #[allow(dead_code)]
 mod chat_state;
 mod config;
-mod connections_cli;
 mod daemon;
 mod delegation_cli;
 mod diagnostics;
@@ -388,13 +387,7 @@ enum Commands {
         action: DispatchAction,
     },
 
-    /// Pair this device with devices of other accounts
-    Connections {
-        #[command(subcommand)]
-        action: connections_cli::ConnectionsAction,
-    },
-
-    /// Manage the agents this device opens to other devices
+    /// Inspect this device's assistants and the tasks delegated to them
     Delegation {
         #[command(subcommand)]
         action: delegation_cli::DelegationAction,
@@ -1599,10 +1592,6 @@ async fn run_cli() -> Result<()> {
             root_handlers::handle_dispatch_action(action).await?;
         }
 
-        Some(Commands::Connections { action }) => {
-            connections_cli::run(action).await?;
-        }
-
         Some(Commands::Delegation { action }) => {
             delegation_cli::run(action).await?;
         }
@@ -2289,43 +2278,21 @@ mod dispatch_command_tests {
             Cli::try_parse_from(["openbitfun", "config", "show"]).expect("parse config");
         assert!(!is_dispatch_command(&unrelated.command));
 
-        // Opening an assistant always names who may delegate; there is no
-        // implicit grant, and only assistants are opened.
-        let open_args = [
-            "openbitfun",
-            "delegation",
-            "open",
-            "helper",
-            "--assistant",
-            "workspace",
-        ];
-        assert!(Cli::try_parse_from(open_args).is_err());
-        assert!(Cli::try_parse_from(
-            [&open_args[..], &["--device", "laptop", "--all-devices"]].concat()
-        )
-        .is_err());
+        let audit = Cli::try_parse_from(["openbitfun", "delegation", "audit", "--json"])
+            .expect("parse delegation audit");
+        assert!(!is_dispatch_command(&audit.command));
+        // Sharing is done in the desktop app; the CLI neither opens nor
+        // grants assistants.
         for removed in [
-            &["--agent", "Standard"][..],
-            &["--task-kind", "coding"][..],
-            &["--workspace", "/tmp"][..],
+            "open",
+            "close",
+            "list",
+            "grant-connection",
+            "trust-connection",
         ] {
-            assert!(
-                Cli::try_parse_from([&open_args[..], &["--all-devices"], removed].concat())
-                    .is_err()
-            );
+            assert!(Cli::try_parse_from(["openbitfun", "delegation", removed, "helper"]).is_err());
         }
-        let open = Cli::try_parse_from([&open_args[..], &["--all-devices"]].concat())
-            .expect("parse delegation open");
-        assert!(matches!(
-            open.command,
-            Some(Commands::Delegation {
-                action: crate::delegation_cli::DelegationAction::Open {
-                    all_devices: true,
-                    ..
-                }
-            })
-        ));
-        assert!(!is_dispatch_command(&open.command));
+        assert!(Cli::try_parse_from(["openbitfun", "connections", "list"]).is_err());
 
         let help = Cli::command().render_long_help().to_string();
         assert!(help.contains("dispatch"));

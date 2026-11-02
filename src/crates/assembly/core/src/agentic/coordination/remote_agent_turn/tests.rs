@@ -1,7 +1,7 @@
 use super::*;
-use openbitfun_agent_runtime::permission::PermissionRequestManager;
 use openbitfun_runtime_ports::{
-    PermissionReply, PortError, PortResult, RemoteAgentDescriptor, RemoteAgentListing,
+    PermissionReply, PermissionRequestSource, PermissionRequestSourceKind, PortError, PortResult,
+    RemoteAgentDescriptor, RemoteAgentListing,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -16,7 +16,6 @@ struct ScriptedDevice {
     answers: Mutex<Vec<(String, PermissionReply)>>,
     cancel_seen: tokio::sync::Notify,
     answer_seen: tokio::sync::Notify,
-    continued: Mutex<Vec<String>>,
 }
 
 impl ScriptedDevice {
@@ -74,11 +73,10 @@ impl RemoteAgentDelegationPort for ScriptedDevice {
 
     async fn continue_job(
         &self,
-        job: &RemoteAgentJob,
+        _job: &RemoteAgentJob,
         _turn_id: &str,
         _prompt: String,
     ) -> PortResult<()> {
-        self.continued.lock().unwrap().push(job.job_id.clone());
         Ok(())
     }
 }
@@ -127,8 +125,6 @@ fn link() -> RemoteJobLink {
             session_id: "job-session".to_string(),
         },
         cursor: 4,
-        agent_type: "remote:laptop/helper".to_string(),
-        summary: "Review the parser".to_string(),
     }
 }
 
@@ -234,27 +230,6 @@ impl JobPageSink for ResumedNoop {
     async fn on_page(&mut self, _: &RemoteAgentJobSnapshot, _: Vec<ExternalAgentTurnEvent>) {}
 }
 
-fn test_permission_manager() -> Arc<PermissionRequestManager> {
-    let root = std::env::temp_dir().join(format!(
-        "openbitfun-remote-agent-permission-test-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let store = Arc::new(
-        openbitfun_services_core::permission_store::ProjectPermissionSqliteStore::new(
-            root.join("permissions"),
-        ),
-    );
-    Arc::new(PermissionRequestManager::new(
-        store.clone(),
-        store,
-        Arc::new(
-            openbitfun_runtime_services::test_support::FakeRuntimePort::new(
-                openbitfun_runtime_ports::RuntimeServiceCapability::Clock,
-            ),
-        ),
-    ))
-}
-
 fn target_prompt(request_id: &str) -> PermissionRequest {
     PermissionRequest {
         request_id: request_id.to_string(),
@@ -277,123 +252,23 @@ fn target_prompt(request_id: &str) -> PermissionRequest {
     }
 }
 
-#[tokio::test]
-async fn target_prompts_are_asked_here_and_answered_on_the_device() {
-    let manager = test_permission_manager();
-    let device = ScriptedDevice::with_pages(Vec::new());
-    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
-    let cancel = CancellationToken::new();
-    let mut forwarder = PromptForwarder {
-        route: Some(ForwardRoute {
-            manager: manager.clone(),
-            project_id: "local-project".to_string(),
-            project_path: "/local/workspace".to_string(),
-            delegation: None,
-            session_id: "child".to_string(),
-            turn_id: "child-turn".to_string(),
-            agent_type: "remote:laptop/helper".to_string(),
-            device_id: "laptop".to_string(),
-            device_name: "Laptop".to_string(),
-            job: link().job,
-            port,
-            cancel: cancel.clone(),
-        }),
-        forwarded: HashMap::new(),
-        owner_wait: None,
-    };
-    // A job of this account waits on nobody else.
-    assert!(forwarder
-        .owner_wait_note(&[target_prompt("target-1")])
-        .is_none());
-
-    forwarder
-        .sync(&[target_prompt("target-1")], "child-round".to_string())
-        .await;
-    // Seeing the same prompt again files nothing new.
-    forwarder
-        .sync(&[target_prompt("target-1")], "child-round".to_string())
-        .await;
-    let pending = manager.pending_requests();
-    assert_eq!(pending.len(), 1);
-    let local = &pending[0];
-    assert_eq!(local.session_id, "child");
-    assert_eq!(local.round_id, "child-round");
-    assert_eq!(local.project_id, "local-project");
-    assert!(
-        local.save_resources.is_empty(),
-        "a target resource never becomes a local grant"
-    );
-    assert_eq!(local.display_metadata["remoteDeviceId"], "laptop");
-    assert_eq!(local.display_metadata["remoteDeviceName"], "Laptop");
-
-    manager
-        .reply(
-            &local.request_id,
-            PermissionReply::Once,
-            openbitfun_runtime_ports::PermissionReplySource::User,
-        )
-        .await
-        .unwrap();
-    device.answer_seen.notified().await;
-    assert_eq!(
-        *device.answers.lock().unwrap(),
-        vec![("target-1".to_string(), PermissionReply::Once)]
-    );
-
-    // A prompt answered on the device itself is withdrawn here.
-    forwarder
-        .sync(&[target_prompt("target-2")], "child-round".to_string())
-        .await;
-    assert_eq!(manager.pending_requests().len(), 1);
-    forwarder.sync(&[], String::new()).await;
-    assert!(manager.pending_requests().is_empty());
-    cancel.cancel();
-}
-
-#[tokio::test]
-async fn prompts_of_another_accounts_job_wait_for_its_owner_and_are_never_filed_here() {
-    let manager = test_permission_manager();
-    let device = ScriptedDevice::with_pages(Vec::new());
-    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
-    let cancel = CancellationToken::new();
-    let mut job = link().job;
-    job.device_id = openbitfun_runtime_ports::remote_connection_target("c1");
-    let mut forwarder = PromptForwarder::new(
-        None,
-        PromptScope {
-            session_id: "child",
-            turn_id: "child-turn",
-            agent_type: "remote:conn:c1/helper",
-            cancel: &cancel,
-        },
-        &job,
-        &port,
-        "B1 Desktop".to_string(),
-    );
-
-    let note = forwarder.owner_wait_note(&[target_prompt("target-1")]);
+#[test]
+fn prompts_wait_for_the_owner_and_are_noted_once() {
+    let mut wait = OwnerWait::new("B1 Desktop".to_string());
+    let note = wait.note(&[target_prompt("target-1")]);
     assert!(
         matches!(&note, Some(ExternalAgentTurnEvent::Thought { text }) if *text == owner_approval_note("B1 Desktop")),
         "{note:?}"
     );
     // The same prompt is noted once; a new one is noted again.
-    assert!(forwarder
-        .owner_wait_note(&[target_prompt("target-1")])
-        .is_none());
-    assert!(forwarder
-        .owner_wait_note(&[target_prompt("target-1"), target_prompt("target-2")])
+    assert!(wait.note(&[target_prompt("target-1")]).is_none());
+    assert!(wait
+        .note(&[target_prompt("target-1"), target_prompt("target-2")])
         .is_some());
-
-    forwarder
-        .sync(&[target_prompt("target-1")], "child-round".to_string())
-        .await;
-    assert!(manager.pending_requests().is_empty());
-    assert!(device.answers.lock().unwrap().is_empty());
-    cancel.cancel();
 }
 
 #[tokio::test]
-async fn a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits_on() {
+async fn a_task_resumed_after_restart_waits_for_the_owner_without_answering() {
     let root = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(CoordinationStore::new(
         root.path().join("coordination.sqlite"),
@@ -411,18 +286,13 @@ async fn a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits
         )
         .await
         .expect("register delegated task");
-    let manager = test_permission_manager();
     let mut waiting = page(RemoteAgentJobState::Running, 3, Vec::new());
     waiting.pending_permissions = vec![target_prompt("target-1")];
-    let device = ScriptedDevice::with_pages(vec![Ok(waiting.clone()), Ok(waiting)]);
+    let device = ScriptedDevice::with_pages(vec![
+        Ok(waiting),
+        Ok(page(RemoteAgentJobState::Succeeded, 4, Vec::new())),
+    ]);
     let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
-    let route = ExternalAgentPermissionRoute {
-        manager: manager.clone(),
-        project_id: "local-project".to_string(),
-        project_path: "/local/workspace".to_string(),
-        delegation: None,
-        policy: None,
-    };
     let cancel = CancellationToken::new();
     let mut sink = ResumedTaskSink::new(
         ResumedTask {
@@ -434,7 +304,6 @@ async fn a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits
             session_id: "child",
             turn_id: "child-turn",
             agent_type: "remote:laptop/helper",
-            permissions: Some(&route),
         },
         &link(),
         &port,
@@ -442,42 +311,12 @@ async fn a_task_resumed_after_restart_forwards_the_prompt_its_device_still_waits
     )
     .await;
 
-    let observation = tokio::spawn(async move {
-        let end = observe_job(&port, &link(), &cancel, &mut sink).await;
-        sink.finish().await;
-        end
-    });
-    let local = loop {
-        if let Some(request) = manager.pending_requests().pop() {
-            break request;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    };
-    assert_eq!(local.session_id, "child");
-    assert_eq!(local.agent_id, "remote:laptop/helper");
-    assert_eq!(local.display_metadata["remoteDeviceId"], "laptop");
-    manager
-        .reply(
-            &local.request_id,
-            PermissionReply::Once,
-            openbitfun_runtime_ports::PermissionReplySource::User,
-        )
-        .await
-        .unwrap();
-    device.answer_seen.notified().await;
-    assert_eq!(
-        *device.answers.lock().unwrap(),
-        vec![("target-1".to_string(), PermissionReply::Once)]
-    );
-
-    device
-        .pages
-        .lock()
-        .unwrap()
-        .push_back(Ok(page(RemoteAgentJobState::Succeeded, 4, Vec::new())));
-    let (end, _) = observation.await.expect("observation finishes");
+    let (end, _) = observe_job(&port, &link(), &cancel, &mut sink).await;
+    sink.finish().await;
     assert!(matches!(end, RemoteJobEnd::Succeeded { .. }));
-    assert!(manager.pending_requests().is_empty());
+    // The owner answered on the device; nothing was answered from here.
+    assert!(device.answers.lock().unwrap().is_empty());
+    assert_eq!(store.remote_holds().note("child"), None);
 }
 
 #[test]
@@ -486,9 +325,7 @@ fn the_parent_hears_why_a_job_waits_on_its_device() {
     let store = Arc::new(CoordinationStore::new(
         root.path().join("coordination.sqlite"),
     ));
-    let mut other_account = link().job;
-    other_account.device_id = openbitfun_runtime_ports::remote_connection_target("c1");
-    let mut holds = HoldTracker::new(store.clone(), "child", &other_account, "B1".to_string());
+    let mut holds = HoldTracker::new(store.clone(), "child", "B1".to_string());
 
     // Queued on the device: the child session says so once, the parent
     // learns the limit and that it starts on its own.
@@ -507,8 +344,7 @@ fn the_parent_hears_why_a_job_waits_on_its_device() {
     assert!(reason.contains("allows 1 task(s) at a time"), "{reason}");
     assert!(reason.contains("Unblock:"), "{reason}");
 
-    // Running and asking the other account's owner: the parent learns who
-    // must act.
+    // Running and asking the device's owner: the parent learns who must act.
     let mut asking = page(RemoteAgentJobState::Running, 1, Vec::new());
     asking.pending_permissions = vec![target_prompt("target-1")];
     assert!(holds.observe(&asking).is_none());
@@ -519,196 +355,7 @@ fn the_parent_hears_why_a_job_waits_on_its_device() {
     holds.observe(&page(RemoteAgentJobState::Running, 2, Vec::new()));
     assert_eq!(store.remote_holds().note("child"), None);
 
-    // A job of this account asks this host, so its prompts hold nothing.
-    let mut own = HoldTracker::new(store.clone(), "own", &link().job, "A2".to_string());
-    own.observe(&asking);
-    assert_eq!(store.remote_holds().note("own"), None);
     holds.observe(&queued);
     holds.finish();
     assert_eq!(store.remote_holds().note("child"), None);
-}
-
-/// A delegated turn of `child` in `parent`, as the coordinator starts it.
-async fn delegated_turn(
-    store: &Arc<CoordinationStore>,
-    device: &Arc<ScriptedDevice>,
-    parent: &str,
-    child: &str,
-    turn_id: &str,
-    resume_task_id: Option<&str>,
-) -> OpenBitFunResult<ExecutionResult> {
-    store
-        .register_background_task(
-            super::super::coordination_store::BackgroundTaskRegistration {
-                parent_session_id: parent.to_string(),
-                requested_agent_id: None,
-                child_session_id: child.to_string(),
-                parent_dialog_turn_id: format!("{parent}-turn"),
-                parent_tool_call_id: format!("{turn_id}-call"),
-                child_dialog_turn_id: turn_id.to_string(),
-            },
-        )
-        .await
-        .expect("register delegated task");
-    let port: Arc<dyn RemoteAgentDelegationPort> = device.clone();
-    run_remote_agent_turn(RemoteAgentTurn {
-        port: Some(port),
-        coordination_store: Arc::clone(store),
-        event_queue: Arc::new(crate::agentic::events::EventQueue::new(
-            crate::agentic::events::EventQueueConfig::default(),
-        )),
-        agent_type: "remote:laptop/helper".to_string(),
-        parent_session_id: parent.to_string(),
-        session_id: child.to_string(),
-        dialog_turn_id: turn_id.to_string(),
-        prompt: "Go on".to_string(),
-        source: RemoteAgentSource {
-            session_id: parent.to_string(),
-            agent_type: "Claw".to_string(),
-            display_name: None,
-        },
-        permissions: None,
-        cancel_token: CancellationToken::new(),
-        resume_task_id: resume_task_id.map(str::to_string),
-    })
-    .await
-}
-
-/// Records `link` as the delegated job of an ended task of `child`.
-async fn earlier_task(store: &CoordinationStore, parent: &str, child: &str, link: &RemoteJobLink) {
-    let turn_id = format!("{child}-earlier");
-    let task = store
-        .register_background_task(
-            super::super::coordination_store::BackgroundTaskRegistration {
-                parent_session_id: parent.to_string(),
-                requested_agent_id: None,
-                child_session_id: child.to_string(),
-                parent_dialog_turn_id: format!("{parent}-turn"),
-                parent_tool_call_id: format!("{turn_id}-call"),
-                child_dialog_turn_id: turn_id.clone(),
-            },
-        )
-        .await
-        .expect("register earlier task");
-    store
-        .set_remote_job(parent, &turn_id, link.encode())
-        .await
-        .expect("record earlier job");
-    store
-        .update_task_status(
-            task.task_pk,
-            super::super::coordination_store::BackgroundTaskStatus::Completed,
-            None,
-            None,
-        )
-        .await
-        .expect("end earlier task");
-}
-
-#[tokio::test]
-async fn a_later_conversation_resumes_an_earlier_task_and_takes_it_over() {
-    let root = tempfile::tempdir().expect("temp dir");
-    let store = Arc::new(CoordinationStore::new(
-        root.path().join("coordination.sqlite"),
-    ));
-    earlier_task(&store, "first", "first-child", &link()).await;
-
-    // The parent sees the task under its agent only.
-    let tasks = earlier_tasks::earlier_remote_tasks(&store).await.unwrap();
-    let note = earlier_tasks::describe_earlier_tasks(&tasks, "remote:laptop/helper")
-        .expect("listed under its agent");
-    assert!(note.contains("`delegation-1`") && note.contains("Review the parser"), "{note}");
-    assert!(earlier_tasks::describe_earlier_tasks(&tasks, "remote:laptop/other").is_none());
-
-    // Unknown tasks and tasks of another agent are refused before the device
-    // is asked.
-    let device = ScriptedDevice::with_pages(Vec::new());
-    let error = delegated_turn(&store, &device, "second", "second-child", "t-0", Some("delegation-9"))
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("no earlier task"), "{error}");
-    assert!(device.continued.lock().unwrap().is_empty());
-
-    // The device still runs it (another host continued it): not resumed.
-    let device = ScriptedDevice::with_pages(vec![Ok(page(RemoteAgentJobState::Running, 4, Vec::new()))]);
-    let error = delegated_turn(&store, &device, "second", "second-child", "t-1", Some("delegation-1"))
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("still running on its device"), "{error}");
-    assert!(device.continued.lock().unwrap().is_empty());
-
-    // Resumed: the device continues the same job from where it ended.
-    let device = ScriptedDevice::with_pages(vec![
-        Ok(page(RemoteAgentJobState::Succeeded, 4, Vec::new())),
-        Ok(page(RemoteAgentJobState::Succeeded, 6, Vec::new())),
-    ]);
-    delegated_turn(&store, &device, "second", "second-child", "t-2", Some("delegation-1"))
-        .await
-        .expect("resumed turn");
-    assert_eq!(*device.continued.lock().unwrap(), vec!["delegation-1"]);
-    assert_eq!(*device.observed_cursors.lock().unwrap(), vec![4, 4]);
-    let task = earlier_tasks::earlier_remote_task(&store, "delegation-1")
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(task.owned_by("second-child"));
-    assert_eq!(task.link.cursor, 6);
-    assert_eq!(task.link.summary, "Review the parser");
-
-    // The earlier conversation can no longer continue it, the resuming one can.
-    let device = ScriptedDevice::with_pages(vec![Ok(page(RemoteAgentJobState::Succeeded, 8, Vec::new()))]);
-    let error = delegated_turn(&store, &device, "first", "first-child", "t-3", None)
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("resumed in another conversation"), "{error}");
-    delegated_turn(&store, &device, "second", "second-child", "t-4", None)
-        .await
-        .expect("follow-up in the resuming conversation");
-    assert_eq!(*device.continued.lock().unwrap(), vec!["delegation-1"]);
-    assert_eq!(*device.observed_cursors.lock().unwrap(), vec![6]);
-}
-
-#[tokio::test]
-async fn a_task_still_running_here_is_not_resumed() {
-    let root = tempfile::tempdir().expect("temp dir");
-    let store = Arc::new(CoordinationStore::new(
-        root.path().join("coordination.sqlite"),
-    ));
-    store
-        .register_background_task(
-            super::super::coordination_store::BackgroundTaskRegistration {
-                parent_session_id: "first".to_string(),
-                requested_agent_id: None,
-                child_session_id: "first-child".to_string(),
-                parent_dialog_turn_id: "first-turn".to_string(),
-                parent_tool_call_id: "call".to_string(),
-                child_dialog_turn_id: "running-turn".to_string(),
-            },
-        )
-        .await
-        .unwrap();
-    store
-        .set_remote_job("first", "running-turn", link().encode())
-        .await
-        .unwrap();
-    let tasks = earlier_tasks::earlier_remote_tasks(&store).await.unwrap();
-    assert!(earlier_tasks::describe_earlier_tasks(&tasks, "remote:laptop/helper")
-        .unwrap()
-        .contains("still running"));
-
-    let device = ScriptedDevice::with_pages(Vec::new());
-    let error = delegated_turn(&store, &device, "second", "second-child", "t-1", Some("delegation-1"))
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("still running in another conversation"), "{error}");
-    assert!(device.observed_cursors.lock().unwrap().is_empty());
-}
-
-#[test]
-fn summaries_are_one_short_line() {
-    assert_eq!(earlier_tasks::summarize_prompt("  Fix\n the   bug "), "Fix the bug");
-    let long = "word ".repeat(40);
-    let summary = earlier_tasks::summarize_prompt(&long);
-    assert_eq!(summary.chars().count(), 103);
-    assert!(summary.ends_with("..."));
 }

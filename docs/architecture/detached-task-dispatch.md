@@ -379,8 +379,7 @@ with their cursor, and caches written before title projection replay once after
 an upgrade to recover the title event. This changes controller presentation only;
 it does not rename the target-owned job or session.
 
-Target and outbound records are retained for 30 days after terminal state (delegated
-jobs follow their grant; see the agent delegation catalog), as
+Target and outbound records are retained for 30 days after terminal state, as
 are the cached transcripts, which are also dropped as soon as a projection is
 deleted or archived. Garbage collection never removes queued or running jobs.
 Target cleanup is limited to the job's managed worktree and private transfer
@@ -459,15 +458,13 @@ mutation capability exists.
 
 ### Agent delegation catalog
 
-A device can open its assistants to other devices of the same account and to paired
-devices of other accounts. The open list is device-local
-(`<product_home>/delegation/open-agents.json`), empty by default, and managed with
-`openbitfun delegation list|open|close|grant-connection|revoke-connection` or the
-desktop AI collaboration page; it never travels with exported configuration. Each entry
-names the assistant (`assistant:<directory>`), a display name and description, the
-granted same-account device ids (`*` for every device of the account), and the granted
-connections with their limits. A list this build cannot read is reported and never
-overwritten.
+A device shares its assistants with devices on the same local network; sharing,
+discovery and access requests are designed in `docs/superplan/rfcs/F002.md` (v6) and
+need no account or Relay. The target-side admission lists are device-local under
+`<product_home>/delegation/`, empty by default, and never travel with exported
+configuration. A list this build cannot read is reported and never overwritten.
+`openbitfun delegation assistants|audit` inspects a headless host; sharing itself is
+managed in the desktop app.
 
 `dispatch_target_catalog` (CLI verb `catalog`) returns the entries granted to the
 requesting device or connection: id, assistant, display name, description, and why it
@@ -477,8 +474,7 @@ reserved `__sourceDeviceId` (or `__sourceConnectionId`) argument, which only the
 receiving host sets from the relay-authenticated sender (`bind_dispatch_source_device`
 in `dispatch_contract.rs`); a value in the incoming payload is discarded, and other
 target verbs never receive it. Without a bound requester the verb fails. The optional
-`agent_delegation_v1` capability (plus `cross_account_delegation_v1` for connections)
-gates delegated use; released builds do not advertise it and are shown as needing an
+`agent_delegation_v1` capability gates delegated use; released builds do not advertise it and are shown as needing an
 update. It is not a submission requirement and does not change the protocol version.
 
 Delegated submission adds an optional `delegation` field to `submit`:
@@ -494,29 +490,14 @@ source is kept in the job record and in the `dispatchDelegation` turn context; i
 deliberately not added to `list` entries, which released controllers parse strictly.
 
 On the requesting side, a `remote:<deviceId>/<openAgentId>` subagent drives the job
-(`RemoteAgentDirectory` in `service/dispatch/remote_agents.rs`). Job ids start with
+(the `RemoteAgentDelegationPort` the host registers; with none registered the
+list of remote assistants is empty). Every prompt such a job raises is answered by
+the owner of the device it runs on, never by the requester. Job ids start with
 `delegation-`. A delegated job writes no outbound record; its link (device, job,
 session, cursor) lives in the coordination database's `remote_job` column, which a
 restarted requester reads to observe it again. Delegated jobs are left out of the
 Dispatch panel's job list and target-job adoption, so only the delegating subagent
 observes them.
-
-A delegated job belongs to the conversation that last continued it: the newest
-background task carrying its link. The Task catalog lists, under each remote agent, the
-five most recent jobs this host delegated to it (job id, dates, the start of the first
-prompt). Spawning a remote agent with `resume_task_id` continues one of them in the
-current conversation: the job must have ended both here and on its device, and the turn
-is an ordinary `continue`, so the device admits it only for the same requester (device or
-connection) while the grant holds and the job is kept. The resuming conversation then
-owns the job; a follow-up from the earlier conversation is refused and says why. A job
-the device has since deleted, or a revoked connection, fails the resume with the
-device's error.
-
-A delegated job's retention is chosen per grant: 1, 7 (the default), 30, or 90 days after
-its last turn (`sessionRetentionDays` on a connection grant, `sessionRetentionDays` on the
-open agent for same-account devices). A job whose grant is gone uses 7 days. Its expiry
-also removes its private directory and the session stored for it. When the open list
-cannot be read, delegated jobs are skipped for that round.
 
 A cross-account grant may limit how many tasks its connection runs at once with an
 open agent. The target accepts a task over the limit and keeps it `queued`: its worker

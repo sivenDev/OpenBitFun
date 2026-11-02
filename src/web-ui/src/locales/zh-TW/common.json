@@ -79,7 +79,6 @@
       "persona": "智能成員",
       "assistant": "智能助理",
       "todos": "任務看板",
-      "aiCollaboration": "AI協作",
       "longTermTracking": "長期跟蹤",
       "agents": "智能體",
       "skills": "技能",
@@ -93,7 +92,6 @@
     "tooltips": {
       "persona": "智能成員 — 展開查看基於角色和記憶的成員會話",
       "todos": "任務看板 — 管理全部任務",
-      "aiCollaboration": "AI協作 — 把我的助理開放給其他裝置和帳號",
       "longTermTracking": "長期跟蹤 — 持續任務與長期對話",
       "agents": "它能調用哪些智能體",
       "skills": "它懂什麼專項知識 — 技能知識檔案",
@@ -504,7 +502,8 @@
         "fromAccount": "來自 {{name}}",
         "fromDevice": "來自 {{device}}",
         "waiting": "等待審核 {{count}} 項",
-        "untitled": "未命名任務"
+        "untitled": "未命名任務",
+        "unavailable": "這個外部任務的會話已無法使用"
       }
     },
     "scheduledJobs": {
@@ -1692,7 +1691,6 @@
     "insights": "洞察",
     "assistant": "$t(shared:agents.Claw)",
     "todos": "任務看板",
-    "aiCollaboration": "AI協作",
     "shell": "Shell",
     "panelView": "面板視圖"
   },
@@ -2281,9 +2279,5 @@
     "createProject": "建立專案",
     "assistantError": "無法建立助理，請稍後重試。",
     "back": "返回選擇"
-  },
-  "aiCollaboration": {
-    "title": "AI協作",
-    "subtitle": "讓其他帳號的裝置使用你的助理"
   }
 }

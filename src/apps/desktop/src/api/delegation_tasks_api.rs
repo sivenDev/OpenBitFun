@@ -11,7 +11,6 @@ use openbitfun_core::infrastructure::PathManager;
 use openbitfun_core::service::delegation::{
     local_assistants, LocalAssistant, DELEGATED_JOB_ID_PREFIX,
 };
-use openbitfun_core::service::remote_connect::connections::ConnectionStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -88,9 +87,6 @@ pub async fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String> {
     let listed = super::dispatch_host::run_local("list", serde_json::json!({}))
         .await
         .map_err(|error| format!("{error:#}"))?;
-    let connections = ConnectionStore::open_default()
-        .and_then(|store| store.load())
-        .ok();
     let device_names = tokio::time::timeout(
         DEVICE_NAMES_TIMEOUT,
         super::remote_connect_api::account_list_devices(),
@@ -111,15 +107,6 @@ pub async fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String> {
             let mut source = DelegatedTaskSource::default();
             if let Some(connection_id) = text(delegation, "sourceConnectionId") {
                 source.kind = "connection";
-                if let Some(peer) = connections
-                    .as_ref()
-                    .and_then(|stored| stored.find(&connection_id))
-                {
-                    source.device_id = Some(peer.peer_device_id.clone());
-                    source.device_name = Some(peer.peer_device_name.clone());
-                    source.account_name = Some(peer.peer_display_name.clone());
-                    source.account_user_id = Some(peer.peer_user_id.clone());
-                }
                 source.connection_id = Some(connection_id);
             } else {
                 source.kind = "device";

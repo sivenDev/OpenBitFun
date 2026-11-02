@@ -587,53 +587,6 @@ pub fn wrap_peer_aware_emitter(
     Arc::new(PeerAwareEmitter::new(inner))
 }
 
-/// The routing owner's relay client, while that owner is current.
-async fn device_relay_client_with_routing_lease(
-    owner: &DeviceRoutingOwner,
-) -> Option<Arc<openbitfun_core::service::remote_connect::RelayClient>> {
-    if !device_routing_owner_is_current(owner).await {
-        return None;
-    }
-    let holder = owner.route.service().read().await;
-    let client = holder
-        .as_ref()?
-        .device_relay_client_if_connection(owner.service_connection_id)
-        .await?;
-    device_routing_owner_is_current(owner)
-        .await
-        .then_some(client)
-}
-
-/// This device's own routing socket and identity, which calls over a
-/// cross-account connection must use: the Relay routes them only from the
-/// device socket.
-pub(crate) async fn current_connection_context() -> Result<
-    (
-        Arc<openbitfun_core::service::remote_connect::RelayClient>,
-        openbitfun_core::service::remote_connect::connection_rpc::ConnectionContext,
-    ),
-    String,
-> {
-    let owner = current_device_routing_owner_snapshot()
-        .ok_or_else(|| "this device is not connected to its account relay".to_string())?;
-    let relay = device_relay_client_with_routing_lease(&owner)
-        .await
-        .ok_or_else(|| "this device is not connected to its account relay".to_string())?;
-    let (session, relay_url) =
-        read_account_context_for_generation(owner.account_generation).await?;
-    let local_device_id =
-        openbitfun_core::service::remote_connect::connection_rpc::authenticated_device_id(&session)
-            .map_err(|error| error.to_string())?;
-    Ok((
-        relay,
-        openbitfun_core::service::remote_connect::connection_rpc::ConnectionContext {
-            session,
-            relay_url,
-            local_device_id,
-        },
-    ))
-}
-
 async fn send_device_message_with_routing_lease(
     owner: &DeviceRoutingOwner,
     target_device_id: &str,
@@ -1035,6 +988,7 @@ async fn account_context_matches(generation: u64, token: &str) -> bool {
     token_matches && account_context_is_current(generation)
 }
 
+#[cfg(test)]
 fn with_device_routing_state<T>(update: impl FnOnce(&mut DeviceRoutingState) -> T) -> T {
     with_route_state(RelayRoute::Official, update)
 }
@@ -1229,6 +1183,7 @@ fn device_routing_owner_for_account_on_route(
     })
 }
 
+#[cfg(test)]
 fn current_device_routing_owner_snapshot() -> Option<DeviceRoutingOwner> {
     with_device_routing_state(|state| state.owner.clone()).filter(|owner| {
         account_context_is_current(owner.account_generation)
@@ -2705,7 +2660,6 @@ async fn connect_route_devices(route: RelayRoute) -> Result<Vec<OnlineDeviceInfo
     let event_relay_url = relay_url.clone();
     let event_session = session.clone();
     let event_owner = routing_owner.clone();
-    let event_device_id = auth_device_id.clone();
     tokio::spawn(async move {
         use openbitfun_core::service::remote_connect::relay_client::RelayEvent;
         'routing_events: while let Some(event) = event_rx.recv().await {
@@ -3040,47 +2994,6 @@ async fn connect_route_devices(route: RelayRoute) -> Result<Vec<OnlineDeviceInfo
                     if route == RelayRoute::Official {
                         emit_device_presence(&[]);
                     }
-                }
-                RelayEvent::ConnectionRequest {
-                    connection_id,
-                    command,
-                    source_account_id,
-                    source_device_id,
-                    correlation_id,
-                    encrypted_data,
-                    nonce,
-                } => {
-                    use openbitfun_core::service::remote_connect::connection_rpc::{
-                        serve_connection_request, ConnectionContext, IncomingConnectionRequest,
-                    };
-                    let Some(relay) = device_relay_client_with_routing_lease(&event_owner).await
-                    else {
-                        break 'routing_events;
-                    };
-                    let context = ConnectionContext {
-                        session: event_session.clone(),
-                        relay_url: event_relay_url.clone(),
-                        local_device_id: event_device_id.clone(),
-                    };
-                    // The dispatch runner answers only for agents granted to
-                    // the calling connection.
-                    tokio::spawn(async move {
-                        serve_connection_request(
-                            &relay,
-                            &context,
-                            IncomingConnectionRequest {
-                                connection_id,
-                                command,
-                                source_account_id,
-                                source_device_id,
-                                encrypted_data,
-                                nonce,
-                            },
-                            &correlation_id,
-                            &crate::api::dispatch_host::ConnectionDispatchHandler,
-                        )
-                        .await;
-                    });
                 }
                 RelayEvent::Reconnected => {
                     let Some(_routing_effect) = lock_current_device_routing(&event_owner).await

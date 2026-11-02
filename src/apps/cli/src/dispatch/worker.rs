@@ -513,20 +513,8 @@ async fn connection_guard_for(
     job: &super::store::DispatchJobRecord,
 ) -> Option<connection_guard::ConnectionGuard> {
     job.request.source_connection_id.as_ref()?;
-    let stores = super::delegation::open_agent_store().and_then(|grants| {
-        openbitfun_core::service::remote_connect::connections::ConnectionStore::open_default()
-            .map(|connections| (grants, connections))
-    });
-    let guarded = match stores {
-        Ok((grants, connections)) => {
-            connection_guard::ConnectionGuard::for_job(
-                job,
-                grants,
-                connections,
-                connection_guard::RelayRefresh::signed_in(),
-            )
-            .await
-        }
+    let guarded = match super::delegation::open_agent_store() {
+        Ok(grants) => connection_guard::ConnectionGuard::for_job(job, grants).await,
         Err(error) => Err(error),
     };
     match guarded {

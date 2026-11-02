@@ -791,54 +791,8 @@ describeWithJsdom('AgentsScene', () => {
       .toBe('agentsOverview.remote.device');
     expect(dialog?.querySelector('[data-testid="agent-detail-remote-availability"]')?.textContent)
       .toBe('agentsOverview.remote.offline');
-    // An agent of this account names no other account.
-    expect(dialog?.querySelector('[data-testid="agent-detail-remote-account"]')).toBeNull();
     // The device that opened the agent manages it; nothing here edits it.
     expect(dialog?.querySelector('[data-testid="agent-detail-manage-acp"]')).toBeNull();
     expect(dialog?.querySelector('[aria-label="agentsOverview.manageExternalAgent"]')).toBeNull();
-  });
-  it('names the other account of an agent reached over a connection', async () => {
-    const remoteAgent = {
-      key: 'remote:conn:c1/helper',
-      id: 'remote:conn:c1/helper',
-      name: 'Helper',
-      description: 'Agent Helper that Bea opened to this device from another account.',
-      isReadonly: false,
-      isReview: false,
-      toolCount: 0,
-      defaultTools: [],
-      defaultEnabled: true,
-      effectiveEnabled: true,
-      source: 'external',
-      subagentSource: 'external',
-      externalProviderLabel: 'Bea · B1 Desktop',
-      supportsFollowUp: true,
-      executionKind: 'remote',
-      remoteAgent: {
-        deviceId: 'conn:c1',
-        deviceName: 'B1 Desktop',
-        openAgentId: 'helper',
-        agentType: 'assistant:workspace',
-        availability: { state: 'available' },
-        account: { userId: '2002', displayName: 'Bea' },
-      },
-      agentKind: 'subagent' as const,
-      capabilities: [],
-    };
-    mockAgentsList({ allAgents: [remoteAgent], filteredAgents: [remoteAgent] });
-    const { default: AgentsScene } = await import('./AgentsScene');
-
-    await act(async () => {
-      root.render(<AgentsScene />);
-    });
-    await act(async () => {
-      Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === remoteAgent.name)
-        ?.click();
-    });
-
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    expect(dialog?.querySelector('[data-testid="agent-detail-remote-account"]')?.textContent)
-      .toBe('agentsOverview.remote.account');
   });
 });

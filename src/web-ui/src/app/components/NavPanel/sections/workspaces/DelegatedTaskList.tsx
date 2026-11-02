@@ -4,6 +4,7 @@ import { openDelegatedTask } from '@/flow_chat/session-drivers/delegated/openDel
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
 import { isSessionNavRowActive } from '@/app/components/NavPanel/sections/sessions/sessionNavSelection';
 import { createLogger } from '@/shared/utils/logger';
+import { notificationService } from '@/shared/notification-system';
 import { ASSISTANT_AGENT_TYPE_PREFIX, type DelegatedTask } from '@/infrastructure/api/service-api/DelegationAPI';
 import { useI18n } from '@/infrastructure/i18n';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
@@ -29,8 +30,8 @@ function runsAs(task: DelegatedTask, rootPath: string): boolean {
 
 /**
  * Tasks other devices and accounts delegated to this assistant, listed under
- * its own sessions with their source. They are reviewed and approved on the
- * AI collaboration page or in the task's session, which opens read-only.
+ * its own sessions with their source. They are reviewed and approved in the
+ * task's session, which opens read-only.
  * A connected peer's assistants are not this device's,
  * so nothing is listed in Peer Device Mode. With `waitingOnly`, only tasks
  * that wait for the owner, and the one being viewed, are listed, so they
@@ -125,10 +126,10 @@ export default function DelegatedTaskList({
             title={detail}
             onClick={() => {
               void openDelegatedTask(task, workspace.rootPath, workspace.id)
-                .then(opened => { if (!opened) useSceneStore.getState().openScene('ai-collaboration'); })
+                .then(opened => { if (!opened) notificationService.warning(t('nav.sessions.delegated.unavailable')); })
                 .catch(error => {
                   log.warn('Failed to open a delegated task', { jobId: task.jobId, error });
-                  useSceneStore.getState().openScene('ai-collaboration');
+                  notificationService.warning(t('nav.sessions.delegated.unavailable'));
                 });
             }}
           >

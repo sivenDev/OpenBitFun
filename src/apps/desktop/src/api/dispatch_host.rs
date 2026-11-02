@@ -37,30 +37,6 @@ pub(crate) async fn dispatch(
     invoke_cli(&executable, verb, args).await
 }
 
-/// Runs a target command that arrived over the cross-account connection
-/// `connection_id`, bound to that connection. Commands a connection may not
-/// send are refused before the runner starts.
-pub(crate) async fn dispatch_for_connection(
-    command: &str,
-    args: Value,
-    connection_id: &str,
-) -> anyhow::Result<Value> {
-    let verb = target_cli_verb(command)
-        .ok_or_else(|| anyhow!("Unknown detached dispatch target command '{command}'"))?;
-    let args = openbitfun_services_core::dispatch_contract::bind_dispatch_source_connection(
-        command,
-        args,
-        connection_id,
-    )
-    .map_err(anyhow::Error::msg)?;
-    let executable = discover_cli().ok_or_else(|| {
-        anyhow!(
-            "OpenBitFun CLI dispatch runner is not installed on this device; install `openbitfun` in ~/.local/bin or PATH"
-        )
-    })?;
-    invoke_cli(&executable, verb, args).await
-}
-
 /// Runs `openbitfun dispatch <verb>` as this device's owner: no source is
 /// bound, so the runner answers for every job on this device.
 pub(crate) async fn run_local(verb: &'static str, args: Value) -> anyhow::Result<Value> {
@@ -70,26 +46,6 @@ pub(crate) async fn run_local(verb: &'static str, args: Value) -> anyhow::Result
         )
     })?;
     invoke_cli(&executable, verb, args).await
-}
-
-/// Answers dispatch calls from paired devices of other accounts. What each
-/// connection may reach is decided by the runner from this device's grants.
-pub(crate) struct ConnectionDispatchHandler;
-
-#[async_trait::async_trait]
-impl openbitfun_core::service::remote_connect::connection_rpc::ConnectionRequestHandler
-    for ConnectionDispatchHandler
-{
-    async fn handle(
-        &self,
-        caller: &openbitfun_core::service::remote_connect::connection_rpc::ConnectionCaller,
-        command: &str,
-        args: Value,
-    ) -> Result<Value, String> {
-        dispatch_for_connection(command, args, &caller.connection_id)
-            .await
-            .map_err(|error| format!("{error:#}"))
-    }
 }
 
 pub(crate) fn is_target_command(command: &str) -> bool {

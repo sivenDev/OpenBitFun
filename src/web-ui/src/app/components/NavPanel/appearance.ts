@@ -26,7 +26,7 @@ export const navPanelAppearanceDescriptor: AppearanceSurfaceDescriptor = {
   ],
   facets: [
     { id: 'layer', attribute: 'data-openbitfun-layer', values: ['main', 'scene'] },
-    { id: 'action', attribute: 'data-openbitfun-action', values: ['new-session', 'smart-members', 'long-term-tracking', 'todos', 'ai-collaboration', 'extensions', 'agents', 'skills', 'ecosystem-compatibility', 'session-filter', 'assistant-manager', 'personal-overview'] },
+    { id: 'action', attribute: 'data-openbitfun-action', values: ['new-session', 'smart-members', 'long-term-tracking', 'todos', 'extensions', 'agents', 'skills', 'ecosystem-compatibility', 'session-filter', 'assistant-manager', 'personal-overview'] },
     { id: 'section', attribute: 'data-openbitfun-section', values: ['smart-members', 'workspace', 'sessions'] },
   ],
   states: [

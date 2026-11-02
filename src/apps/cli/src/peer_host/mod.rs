@@ -16,9 +16,7 @@ mod state;
 mod workspace_dto;
 
 pub(crate) use bootstrap::ensure_peer_host_ready;
-pub(crate) use dispatch::{
-    handle_device_event_command, handle_host_invoke, ConnectionDispatchHandler,
-};
+pub(crate) use dispatch::{handle_device_event_command, handle_host_invoke};
 
 /// Fan out an `account://settings-applied` DeviceEvent to attached Peer Mode
 /// controllers so they refresh their config cache after this host's settings

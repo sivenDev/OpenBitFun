@@ -29,8 +29,6 @@ Connect to this host from mobile, a bot, or another OpenBitFun device to inspect
   - Sign in with GitHub, sign out, and inspect identity status
 - **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 列出、连接、查看设备型号与系统、设置别名和删除同账户设备
   - List, connect, inspect model and OS, set aliases, and remove same-account devices
-- **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 与其他账号的设备配对、核对指纹、查看与撤销连接
-  - Pair with devices of other accounts, check fingerprints, and view or revoke connections
 - **智能体可定位入口，需交互完成 / Agent opens; interaction required** · 进入 Peer Device Mode，把另一台 OpenBitFun 设备作为命令与事件数据面
   - Enter Peer Device Mode and use another OpenBitFun device as the command and event data plane
 

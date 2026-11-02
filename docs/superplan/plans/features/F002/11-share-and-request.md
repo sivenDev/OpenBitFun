@@ -2,7 +2,7 @@
 id: "F002-11"
 title: "共享与申请：共享设置、发现面板、倒计时确认框、授权按设备公钥，删除第 5 版 AI协作"
 type: "feature"
-status: "approved"
+status: "in_progress"
 summary: "主人在「助理」页共享助理并设置信任程度、保留天数与同时任务数；使用者在「发现」面板看到局域网内的共享助理并申请；主人收到 60 秒倒计时确认框，结果经局域网直接推送；授权按使用者设备的共享公钥保存，可撤销、可移除。同时删除第 5 版的 AI协作页、账号连接与中继跨账号能力。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-02"
@@ -128,9 +128,23 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/app/scenes/agents src/app/components/NavPanel/sections/workspaces`
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`
 - `pnpm run check:core-boundaries`
-- `rg -n "cross_account_routing_v1|connections_create_invite|AiCollaboration|ConnectionTrustStore|OpenAgentStore" src docs/architecture docs/interactive-capabilities` 无结果
+- `rg -n "cross_account_routing_v1|connections_create_invite|AiCollaboration" src docs/architecture docs/interactive-capabilities` 无结果（`ConnectionTrustStore|OpenAgentStore` 的检查移到 Task 2）
 
-- [ ] 第 5 版界面、连接、中继跨账号与经中继的远程助理已删除；保留的外部任务能力测试通过
+- [x] 第 5 版界面、连接、中继跨账号与经中继的远程助理已删除；保留的外部任务能力测试通过
+  - 证据（2026-11-02）：
+    - 中继 `cargo test --locked -p openbitfun-relay-service` 125 项通过；`services-integrations --features remote-connect --lib remote_connect::` 175 项通过；`runtime-ports --test remote_agent_port_contracts` 5 项通过。
+    - core（按 `src/crates/assembly/core/AGENTS.md` 的 feature 组合）：`agentic::coordination::` 278、`agentic::tools::implementations::task::tests` 83、`agentic::agents::registry::` 63、`service::dispatch::` 56、`service::remote_connect::` 100、`service::delegation` 17，全部通过。
+    - CLI：`--bin openbitfun dispatch::` 117 项、`dispatch_commands_parse_and_internal_worker_is_hidden`、`--test cli_command_contracts dispatch_probe_cli::` 通过。
+    - 桌面：`cargo check --locked -p openbitfun-desktop --tests` 无新告警；`--lib -- remote_workspace_policy dispatch_host peer_host_invoke` 28 项通过（含每个命令恰有一行注册表）；`openbitfun-product-domains --no-default-features remote_surface` 20 项通过。
+    - Web UI：`type-check:web` 通过；agents、NavPanel workspaces、dispatch 三处 33 个文件 290 项通过；`lint:web` 0 错误；`i18n:audit`、`theme:color-audit:all` 通过。
+    - `capabilities:generate` 后 `capabilities:check` 通过（711 个命令）；`check:core-boundaries`、`node --test scripts/check-core-boundaries.test.mjs`（156 项）、`check:repo-hygiene` 通过。
+    - `rg` 检查：`cross_account_routing_v1|connections_create_invite|AiCollaboration` 在 `src docs/architecture docs/interactive-capabilities` 中无结果。
+  - 与计划的差异：
+    - 保留 `agentic/agents/registry/remote_agents.rs` 与智能体页的远程助理显示：它是 `RemoteAgentDelegationPort` 的传输无关投影，F002-12/13 的局域网端口直接复用；没有注册端口时列表为空（桌面不再注册经中继的端口）。
+    - `OpenAgentStore`、`ConnectionTrustStore`、`ConnectionGrant`、`ConnectionLimits`，CLI 目标端准入 `dispatch::{delegation,connection,connection_guard,audit}`，`bind_dispatch_source_connection` 与 Web UI `DelegatedTaskSource.kind` 留到 Task 2：Task 2 正是围绕共享存储改写这些文件，在这里先删需要一个用完即弃的替身。Task 1 已删去其中依赖连接记录与中继的部分（中继刷新、连接记录查询、按连接撤销）。
+    - 经中继的远程任务改为只由设备主人审批：发起方不再在本机登记或转发审批，只提示「等待对方设备主人审批」（`OwnerWait`）。
+    - 中继上的两账号模拟（`delegation_simulation.rs`、`scripts/dev/sim-devices.mjs`、桌面 `remote_agent_delegation/simulation_tests.rs`）只覆盖被删除的路径，一并删除；保留的 `dispatch probe` 能力检查移到 `dispatch_probe_cli.rs`，CLI 的 `axum`、`openbitfun-relay-service`、`openbitfun-services-integrations` 开发依赖随之删除。
+    - `openbitfun delegation` 只保留 `assistants` 与 `audit`（RFC D11：CLI 主机不提供共享入口）。
 
 ## Task 2: 共享存储与目标端按设备公钥准入
 
@@ -164,6 +178,7 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-cli --bin openbitfun dispatch::`
 - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
 - `pnpm run check:core-boundaries`
+- `rg -n "ConnectionTrustStore|OpenAgentStore|sourceConnectionId|bind_dispatch_source_connection" src docs/architecture` 无结果
 
 - [ ] 共享存储的设置、授权、撤销、屏蔽有测试；租户工作空间（同设备共用、不同设备隔离、删除时机）、人设继承与租户 `USER.md`、会话工具只作用于本租户有测试；未授权 / 已屏蔽 / 已撤销的公钥被拒绝且原因明确；排队、信任、保留、审计按共享生效；撤销与停止共享会停止进行中的任务
 

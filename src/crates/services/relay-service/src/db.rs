@@ -268,9 +268,6 @@ async fn connect_with_presence_reset(db_path: &str, reset_presence: bool) -> Res
     .await
     .map_err(|e| anyhow!("index auth token request ids: {e}"))?;
     sqlx::raw_sql(REGISTRATION_QUOTAS).execute(&pool).await?;
-    // After the account-scoping rebuild: connection records refer to the
-    // final `devices` key and carry a trigger on it.
-    crate::connections::ensure_schema(&pool).await?;
     let now = Utc::now().timestamp();
     sqlx::query("DELETE FROM auth_tokens WHERE expires_at <= ?")
         .bind(now)

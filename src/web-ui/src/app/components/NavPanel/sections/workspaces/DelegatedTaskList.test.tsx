@@ -9,7 +9,7 @@ import type { WorkspaceInfo } from '@/shared/types';
 const view = vi.hoisted(() => ({ activeTabId: 'session' as string | null, activeSessionId: null as string | null }));
 const mocks = vi.hoisted(() => ({
   listTasks: vi.fn(),
-  openScene: vi.fn(),
+  warn: vi.fn(),
   openTask: vi.fn(),
   tauri: vi.fn(),
   peer: vi.fn(),
@@ -20,11 +20,9 @@ vi.mock('@/infrastructure/api/service-api/DelegationAPI', async (importOriginal)
   delegationAPI: { listTasks: mocks.listTasks },
 }));
 vi.mock('@/app/stores/sceneStore', () => ({
-  useSceneStore: Object.assign(
-    (select: (state: { activeTabId: string | null }) => unknown) => select({ activeTabId: view.activeTabId }),
-    { getState: () => ({ openScene: mocks.openScene }) },
-  ),
+  useSceneStore: (select: (state: { activeTabId: string | null }) => unknown) => select({ activeTabId: view.activeTabId }),
 }));
+vi.mock('@/shared/notification-system', () => ({ notificationService: { warning: mocks.warn } }));
 vi.mock('@/flow_chat/store/FlowChatStore', () => ({
   flowChatStore: { subscribe: () => () => undefined, getState: () => ({ activeSessionId: view.activeSessionId }) },
 }));
@@ -89,12 +87,12 @@ describe('DelegatedTaskList', () => {
     mocks.openTask.mockResolvedValue(true);
     await act(async () => (rows()[0] as HTMLButtonElement).click());
     expect(mocks.openTask).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'a' }), ROOT, expect.any(String));
-    expect(mocks.openScene).not.toHaveBeenCalled();
+    expect(mocks.warn).not.toHaveBeenCalled();
 
-    // Without a session to open, the AI collaboration page shows the task.
+    // Without a session to open, the row says so.
     mocks.openTask.mockResolvedValue(false);
     await act(async () => (rows()[1] as HTMLButtonElement).click());
-    expect(mocks.openScene).toHaveBeenCalledWith('ai-collaboration');
+    expect(mocks.warn).toHaveBeenCalledWith('nav.sessions.delegated.unavailable');
   });
 
   it('marks the task whose session is shown as selected', async () => {

@@ -6,8 +6,6 @@ mod controller;
 mod device_controller;
 #[cfg(feature = "agent-runtime")]
 mod preparation;
-#[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
-mod remote_agents;
 mod target;
 
 use std::path::{Path, PathBuf};
@@ -49,11 +47,6 @@ pub use device_controller::{
 pub use openbitfun_services_core::dispatch_contract::{
     DispatchAccountDaemonIdentity, DispatchAccountDaemonProvisionRequest,
     DISPATCH_ACCOUNT_DAEMON_PROVISIONING_SCHEMA_VERSION,
-};
-#[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
-pub use remote_agents::{
-    AccountDevice, AccountDeviceDirectory, ConnectionDispatchRpc, ConnectionPeer, GoneConnection,
-    RemoteAgentDirectory,
 };
 pub use target::{DispatchTarget, DispatchTargetRequest, DispatchWorkspaceDelivery};
 

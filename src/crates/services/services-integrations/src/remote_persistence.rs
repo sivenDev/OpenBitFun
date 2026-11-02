@@ -867,24 +867,6 @@ fn decrypt_vault_entry(key: &[u8; 32], ciphertext: &str) -> Result<String> {
     String::from_utf8(plaintext).context("decode SSH password vault entry")
 }
 
-/// Reads the cross-account connections file. A file that is not JSON is
-/// returned as `Some(Err(..))` so the caller can keep it and report it.
-pub fn read_connection_store(
-    path: &Path,
-) -> Result<Option<std::result::Result<serde_json::Value, String>>> {
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).map_err(|error| {
-            format!("connections file is not valid JSON: {error}")
-        }))),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
-    }
-}
-
-pub fn write_connection_store(path: &Path, value: &serde_json::Value) -> Result<()> {
-    write_json_atomic(path, value, true)
-}
-
 pub fn read_context_tokens(path: &Path) -> Result<Option<BTreeMap<String, String>>> {
     let value: Option<BTreeMap<String, String>> = read_optional_json(path)?;
     if value.as_ref().is_some_and(|tokens| {

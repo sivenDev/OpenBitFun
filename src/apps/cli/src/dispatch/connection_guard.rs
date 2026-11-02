@@ -4,14 +4,13 @@
 //! The owner sets a connection's limits on its grant. A task over the number
 //! of tasks running at once is accepted and waits, queued, until one of them
 //! ends; waiting tasks start in the order they began to wait. The length of a
-//! turn, the grant, and the connection itself are checked while the turn
-//! runs, so a revoked connection or grant stops work already in progress.
+//! turn and the grant are checked while the turn runs, so a withdrawn grant
+//! stops work already in progress.
 
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use openbitfun_core::service::delegation::{ConnectionLimits, OpenAgentStore};
-use openbitfun_core::service::remote_connect::connections::ConnectionStore;
 
 use super::protocol::{DispatchHold, DispatchHoldReason, DispatchJobState, DispatchSubmitRequest};
 use super::store::{DispatchJobRecord, DispatchStore, WorkspaceLock};
@@ -24,41 +23,9 @@ const PLACE_INTERVAL: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(2)
 };
-/// How often the guard refreshes this device's connection records from the
-/// Relay, so a revocation by the other side also stops running work.
-const RELAY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
-
-/// What the guard needs to read the Relay's view of this device's
-/// connections.
-pub(super) struct RelayRefresh {
-    pub(super) relay_url: String,
-    pub(super) session: openbitfun_core::service::remote_connect::AccountSession,
-    pub(super) device_id: String,
-}
-
-impl RelayRefresh {
-    /// The signed-in account of this device, if any.
-    pub(super) fn signed_in() -> Option<Self> {
-        use openbitfun_core::service::remote_connect::{connection_rpc, session_store};
-        let loaded = session_store::load_session_detailed().ok().flatten()?;
-        let session = openbitfun_core::service::remote_connect::AccountSession::new(
-            loaded.token,
-            loaded.user_id,
-            loaded.master_key,
-        );
-        let device_id = connection_rpc::authenticated_device_id(&session).ok()?;
-        Some(Self {
-            relay_url: loaded.relay_url,
-            session,
-            device_id,
-        })
-    }
-}
-
 /// Why a running cross-account job stopped, as its requester reads it.
 pub(super) const GRANT_WITHDRAWN: &str =
     "The owner of the target device withdrew this connection's access to the agent";
-pub(super) const CONNECTION_REVOKED: &str = "The connection to the target device was revoked";
 
 /// The limits the owner set on `open_agent_id` for `connection_id`.
 async fn limits_for(
@@ -201,13 +168,10 @@ pub(super) async fn wait_for_place(
 /// Watches one turn of a cross-account job.
 pub(super) struct ConnectionGuard {
     grants: OpenAgentStore,
-    connections: ConnectionStore,
     connection_id: String,
     open_agent_id: String,
     started: Instant,
     turn_limit: Option<Duration>,
-    relay: Option<RelayRefresh>,
-    last_refresh: std::sync::Mutex<Instant>,
 }
 
 impl ConnectionGuard {
@@ -215,8 +179,6 @@ impl ConnectionGuard {
     pub(super) async fn for_job(
         job: &DispatchJobRecord,
         grants: OpenAgentStore,
-        connections: ConnectionStore,
-        relay: Option<RelayRefresh>,
     ) -> Result<Option<Self>> {
         let (Some(connection_id), Some(delegation)) =
             (&job.request.source_connection_id, &job.request.delegation)
@@ -226,43 +188,13 @@ impl ConnectionGuard {
         let limits = limits_for(&grants, connection_id, &delegation.open_agent_id).await?;
         Ok(Some(Self {
             grants,
-            connections,
             connection_id: connection_id.clone(),
             open_agent_id: delegation.open_agent_id.clone(),
             started: Instant::now(),
-            relay,
-            last_refresh: std::sync::Mutex::new(Instant::now()),
             turn_limit: limits
                 .max_job_minutes
                 .map(|minutes| Duration::from_secs(u64::from(minutes) * 60)),
         }))
-    }
-
-    /// Brings this device's records up to date with the Relay now and then;
-    /// a Relay that cannot be reached changes nothing.
-    async fn refresh_from_relay(&self, now: Instant) {
-        let Some(relay) = &self.relay else {
-            return;
-        };
-        {
-            let mut last = self
-                .last_refresh
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if now.duration_since(*last) < RELAY_REFRESH_INTERVAL {
-                return;
-            }
-            *last = now;
-        }
-        let client = openbitfun_core::service::remote_connect::connections::ConnectionsClient {
-            relay_url: &relay.relay_url,
-            session: &relay.session,
-            local_device_id: &relay.device_id,
-            store: &self.connections,
-        };
-        if let Err(error) = client.list().await {
-            tracing::debug!("Connection refresh unavailable for a cross-account job: {error:#}");
-        }
     }
 
     /// Why the turn must stop now, if it must.
@@ -276,21 +208,6 @@ impl ConnectionGuard {
             Ok(Err(_)) => return Some(GRANT_WITHDRAWN.to_string()),
             // An unreadable list is not a withdrawal; the next check retries.
             Err(error) => tracing::warn!("Delegation grant check unavailable: {error}"),
-        }
-        self.refresh_from_relay(now).await;
-        // A file or record that cannot be read is not a revocation either.
-        if let Ok(stored) = self.connections.load() {
-            let unreadable = stored.file_unreadable()
-                || stored.unreadable.iter().any(|entry| {
-                    entry.connection_id.as_deref() == Some(self.connection_id.as_str())
-                });
-            let revoked = !unreadable
-                && stored.find(&self.connection_id).is_none_or(|record| {
-                    record.status == "revoked" || record.disabled_reason.is_some()
-                });
-            if revoked {
-                return Some(CONNECTION_REVOKED.to_string());
-            }
         }
         if let Some(limit) = self.turn_limit {
             if now.duration_since(self.started) >= limit {
@@ -352,25 +269,6 @@ mod tests {
             .await
             .unwrap();
         grants
-    }
-
-    fn connections(dir: &std::path::Path, status: &str) -> ConnectionStore {
-        let store = ConnectionStore::at(dir.join("connections.json"));
-        std::fs::write(
-            store.path(),
-            serde_json::to_vec(&serde_json::json!({
-                "version": 1,
-                "connections": [{
-                    "connectionId": "conn-1", "relayUrl": "https://relay", "localDeviceId": "me",
-                    "role": "inviter", "status": status, "peerUserId": "2002",
-                    "peerDisplayName": "Bea", "peerDeviceId": "device-b",
-                    "peerDeviceName": "B1 Desktop", "pinnedPublicKey": "key", "createdAt": 1,
-                }],
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-        store
     }
 
     fn create(store: &DispatchStore, job_id: &str, connection_id: &str) {
@@ -482,7 +380,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn running_turns_stop_on_withdrawal_revocation_or_time_limit() {
+    async fn running_turns_stop_on_withdrawal_or_time_limit() {
         let dir = tempfile::tempdir().unwrap();
         let store = DispatchStore::open(dir.path().join("dispatch")).unwrap();
         let grants = grants(
@@ -499,15 +397,10 @@ mod tests {
             .create_job_with_intent(job.clone(), job, "one".to_string())
             .unwrap();
         let record = store.load_job("delegation-1").unwrap();
-        let guard = ConnectionGuard::for_job(
-            &record,
-            grants.clone(),
-            connections(dir.path(), "active"),
-            None,
-        )
-        .await
-        .unwrap()
-        .expect("a connection job is guarded");
+        let guard = ConnectionGuard::for_job(&record, grants.clone())
+            .await
+            .unwrap()
+            .expect("a connection job is guarded");
         let now = guard.started;
         assert_eq!(guard.stop_reason(now).await, None);
         let late = guard
@@ -515,20 +408,6 @@ mod tests {
             .await
             .unwrap();
         assert!(late.contains("5-minute limit"), "{late}");
-
-        let revoked = ConnectionGuard::for_job(
-            &record,
-            grants.clone(),
-            connections(dir.path(), "revoked"),
-            None,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(
-            revoked.stop_reason(now).await.as_deref(),
-            Some(CONNECTION_REVOKED)
-        );
 
         grants.revoke_connection("helper", "conn-1").await.unwrap();
         assert_eq!(
@@ -543,11 +422,9 @@ mod tests {
             .create_job_with_intent(local.clone(), local, "local".to_string())
             .unwrap();
         let local = store.load_job("delegation-local").unwrap();
-        assert!(
-            ConnectionGuard::for_job(&local, grants, connections(dir.path(), "active"), None)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(ConnectionGuard::for_job(&local, grants)
+            .await
+            .unwrap()
+            .is_none());
     }
 }

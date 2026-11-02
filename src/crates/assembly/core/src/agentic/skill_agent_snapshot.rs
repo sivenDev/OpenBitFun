@@ -491,7 +491,6 @@ mod tests {
                 display_name: "Helper".to_string(),
                 description: None,
                 availability: openbitfun_runtime_ports::RemoteAgentAvailability::Available,
-                account: None,
             }]
         }
 

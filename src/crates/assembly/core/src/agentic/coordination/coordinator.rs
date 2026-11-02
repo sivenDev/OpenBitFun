@@ -2670,10 +2670,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         }
     }
 
-    pub(crate) fn coordination_store(&self) -> Arc<super::coordination_store::CoordinationStore> {
-        self.background_subagent_outcomes.coordination_store()
-    }
-
     pub fn remote_agent_port(
         &self,
     ) -> Option<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>> {
@@ -2738,8 +2734,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 "Observing a delegated background task again after restart: bg_task_id={}, job_id={}",
                 record.bg_task_id, link.job.job_id
             );
-            // The child session carries the workspace and delegation a
-            // forwarded prompt is filed under, as for the live turn.
+            // The child session names the agent the task runs as.
             let session_loaded = coordinator
                 .ensure_subagent_session_loaded_for_reuse(
                     &record.child_session_id,
@@ -2748,31 +2743,15 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 .await;
             if let Err(error) = &session_loaded {
                 warn!(
-                    "Delegated task session unavailable after restart; its prompts cannot be answered here: session_id={}, error={}",
+                    "Delegated task session unavailable after restart: session_id={}, error={}",
                     record.child_session_id, error
                 );
             }
-            let (agent_type, permissions) = match coordinator
+            let agent_type = coordinator
                 .session_manager
                 .get_session(&record.child_session_id)
-            {
-                Some(session) => {
-                    let workspace = Self::build_workspace_binding(&session.config).await;
-                    let continuation = coordinator
-                        .load_persisted_subagent_continuation_context(&session)
-                        .await;
-                    (
-                        session.agent_type.clone(),
-                        ExternalAgentPermissionRoute::for_workspace(
-                            coordinator.tool_pipeline.permission_request_manager(),
-                            workspace.as_ref(),
-                            continuation.permission_delegation,
-                            None,
-                        ),
-                    )
-                }
-                None => (record.agent_id.clone(), None),
-            };
+                .map(|session| session.agent_type.clone())
+                .unwrap_or_else(|| record.agent_id.clone());
             let cancel = CancellationToken::new();
             let mut sink = super::remote_agent_turn::ResumedTaskSink::new(
                 super::remote_agent_turn::ResumedTask {
@@ -2782,7 +2761,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     session_id: &record.child_session_id,
                     turn_id: &record.child_dialog_turn_id,
                     agent_type: &agent_type,
-                    permissions: permissions.as_ref(),
                 },
                 &link,
                 &port,
@@ -11483,18 +11461,8 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             remote_agent.is_some() || external_agent_client_id(&agent_type).is_some();
         let mut execution_task = match external_agent_client_id(&agent_type) {
             _ if remote_agent.is_some() => {
-                // The target device asks for every permission; local rules
-                // describe local resources, so no local policy decides them.
-                let permissions = ExternalAgentPermissionRoute::for_workspace(
-                    tool_pipeline.permission_request_manager(),
-                    execution_context.workspace.as_ref(),
-                    execution_context.permission_delegation.clone(),
-                    None,
-                );
-                let resume_task_id = execution_context
-                    .context
-                    .get(super::remote_agent_turn::earlier_tasks::RESUME_REMOTE_TASK_CONTEXT_KEY)
-                    .cloned();
+                // The device's owner answers every permission prompt there;
+                // no local rule or mailbox decides them.
                 drop((execution_engine, initial_messages, execution_context));
                 let parent_agent_type = self
                     .session_manager
@@ -11516,9 +11484,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                             agent_type: parent_agent_type,
                             display_name: None,
                         },
-                        permissions,
                         cancel_token: subagent_cancel_token.clone(),
-                        resume_task_id,
                     },
                 ))
             }

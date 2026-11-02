@@ -2590,7 +2590,6 @@ fn remote_descriptor(
         display_name: "Helper".to_string(),
         description: None,
         availability,
-        account: None,
     }
 }
 
@@ -2739,33 +2738,4 @@ fn remote_agents_take_no_task_kind() {
     assert!(error.contains("task_kind"), "{error}");
     let schema = AgentSpawnTool::agent_spawn_input_schema();
     assert!(schema["properties"].get("task_kind").is_none());
-}
-
-#[test]
-fn an_earlier_remote_task_is_resumed_only_by_a_fresh_spawn() {
-    let task_input = AgentSpawnTool::task_input(&json!({
-        "agent_id": "helper",
-        "agent_type": "remote:laptop/helper",
-        "prompt": "Go on with the review",
-        "resume_task_id": "delegation-1",
-    }))
-    .expect("AgentSpawn takes the earlier task");
-    let invocation = AgentExecutionTool::parse_invocation(&task_input, false).unwrap();
-    assert_eq!(invocation.resume_task_id.as_deref(), Some("delegation-1"));
-    assert!(AgentSpawnTool::agent_spawn_input_schema()["properties"]
-        .get("resume_task_id")
-        .is_some());
-
-    for input in [
-        json!({ "action": "spawn", "agent_id": "helper", "prompt": "p",
-                "fork_context": true, "resume_task_id": "delegation-1" }),
-        json!({ "action": "send_input", "agent_id": "helper", "prompt": "p",
-                "resume_task_id": "delegation-1" }),
-        json!({ "action": "cancel", "agent_id": "helper", "resume_task_id": "delegation-1" }),
-    ] {
-        let error = AgentExecutionTool::parse_invocation(&input, false)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("resume_task_id"), "{error}");
-    }
 }

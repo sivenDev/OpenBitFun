@@ -54,8 +54,6 @@ export interface RemoteAgentInfo {
   /** The assistant the open agent runs as on its device (`assistant:<directory>`). */
   agentType: string;
   availability: RemoteAgentAvailability;
-  /** The other account, for an agent reached over a cross-account connection. */
-  account?: { userId: string; displayName: string };
 }
 
 export interface SubagentInfo {

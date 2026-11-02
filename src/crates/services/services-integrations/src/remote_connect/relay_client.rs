@@ -94,18 +94,6 @@ pub enum RelayEvent {
     DevicePresence {
         devices: Vec<DevicePresenceEntry>,
     },
-    /// A call from a paired device of another account. Source account and
-    /// device are what the Relay authenticated; the payload is encrypted with
-    /// the connection key. Answer it with `respond_connection`.
-    ConnectionRequest {
-        connection_id: String,
-        command: String,
-        source_account_id: String,
-        source_device_id: String,
-        correlation_id: String,
-        encrypted_data: String,
-        nonce: String,
-    },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -355,10 +343,6 @@ impl RelayClient {
                 let Some(source) = value["sourceDeviceId"].as_str() else {
                     return false;
                 };
-                let connection = value["method"]
-                    .as_str()
-                    .and_then(|method| method.rsplit_once(':'))
-                    .is_some_and(|(_, name)| name == super::connections::CONNECTION_INVOKE_METHOD);
                 let Some(data) = value["params"]["encrypted_data"].as_str() else {
                     return false;
                 };
@@ -383,33 +367,15 @@ impl RelayClient {
                         },
                     );
                 }
-                let event = if connection {
-                    let (Some(connection_id), Some(command), Some(account)) = (
-                        value["connectionId"].as_str(),
-                        value["command"].as_str(),
-                        value["sourceAccountId"].as_str(),
-                    ) else {
-                        owner.lock().unwrap().replies.remove(&correlation);
-                        return true;
-                    };
-                    RelayEvent::ConnectionRequest {
-                        connection_id: connection_id.into(),
-                        command: command.into(),
-                        source_account_id: account.into(),
+                events
+                    .send(RelayEvent::DeviceMessageReceived {
                         source_device_id: source.into(),
                         correlation_id: correlation,
                         encrypted_data: data.into(),
                         nonce: nonce.into(),
-                    }
-                } else {
-                    RelayEvent::DeviceMessageReceived {
-                        source_device_id: source.into(),
-                        correlation_id: correlation,
-                        encrypted_data: data.into(),
-                        nonce: nonce.into(),
-                    }
-                };
-                events.send(event).await.is_ok()
+                    })
+                    .await
+                    .is_ok()
             }
             Incoming::Ephemeral(event) => {
                 let value = event.payload.0;
@@ -473,52 +439,6 @@ impl RelayClient {
             .as_str()
             .ok_or_else(|| anyhow!("RPC response missing nonce"))?;
         Ok((data.into(), nonce.into()))
-    }
-    /// Call the other end of a cross-account connection with a request
-    /// already encrypted for it. Returns the raw answer: `encrypted_data` and
-    /// `nonce`, or `refused` when the other device had no key to answer with.
-    pub async fn request_connection(
-        &self,
-        connection_id: &str,
-        command: &str,
-        encrypted_data: &str,
-        nonce: &str,
-    ) -> Result<serde_json::Value> {
-        let sender = self
-            .owner
-            .lock()
-            .unwrap()
-            .sender
-            .clone()
-            .ok_or_else(|| anyhow!("Relay is disconnected; request was not submitted"))?;
-        sender
-            .connection_call(
-                connection_id,
-                command,
-                json!({"encrypted_data":encrypted_data,"nonce":nonce}),
-            )
-            .await
-    }
-    /// Answer a `ConnectionRequest`.
-    pub async fn respond_connection(
-        &self,
-        source_device_id: &str,
-        correlation: &str,
-        answer: serde_json::Value,
-    ) -> Result<()> {
-        let (sender, reply) = {
-            let mut state = self.owner.lock().unwrap();
-            let sender = state
-                .sender
-                .clone()
-                .ok_or_else(|| anyhow!("Relay is disconnected"))?;
-            (sender, state.replies.remove(correlation))
-        };
-        let reply = reply.ok_or_else(|| anyhow!("RPC acknowledgement is no longer pending"))?;
-        if reply.source != source_device_id || reply.deadline <= Instant::now() {
-            bail!("RPC response owner expired");
-        }
-        sender.respond(reply.id, answer).await
     }
     pub async fn send_device_message(
         &self,
