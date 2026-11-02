@@ -479,11 +479,14 @@ async fn handshake(
     if initiator {
         send(ws, Message::text(hello_text.clone())).await?;
     }
-    let peer = match next_message(ws).await? {
-        Message::Text(text) => serde_json::from_str::<Hello>(text.as_str())
-            .map_err(|_| LanError::Protocol("the hello is malformed".to_string()))?
-            .check()
-            .map_err(LanError::Protocol)?,
+    let (peer, peer_text) = match next_message(ws).await? {
+        Message::Text(text) => (
+            serde_json::from_str::<Hello>(text.as_str())
+                .map_err(|_| LanError::Protocol("the hello is malformed".to_string()))?
+                .check()
+                .map_err(LanError::Protocol)?,
+            text.as_str().to_string(),
+        ),
         _ => return Err(LanError::Protocol("expected a hello".to_string())),
     };
     if peer.protocol != PROTOCOL_VERSION {
@@ -507,10 +510,10 @@ async fn handshake(
         return Err(LanError::PeerNeedsUpdate { missing });
     }
     if !initiator {
-        send(ws, Message::text(hello_text)).await?;
+        send(ws, Message::text(hello_text.clone())).await?;
     }
     let keys = local
-        .finish(&config.identity, &peer, initiator)
+        .finish(&config.identity, &peer, initiator, &hello_text, &peer_text)
         .map_err(LanError::Protocol)?;
     let (mut sealer, mut opener) = (keys.sender, keys.receiver);
     let ready = serde_json::to_vec(&Envelope::Ready).expect("ready encodes");

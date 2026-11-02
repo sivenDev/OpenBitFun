@@ -2,8 +2,11 @@
 //!
 //! Each side sends a plaintext hello with its static sharing key and a fresh
 //! ephemeral key. Both Diffie-Hellman results feed HKDF-SHA256, salted with
-//! the two ephemeral keys and bound to both device ids, giving one AES-256-GCM
-//! key per direction. Frames carry a per-direction counter; a frame whose
+//! the two ephemeral keys and bound to both device ids and to the hash of the
+//! exact hello texts both sides sent, giving one AES-256-GCM key per
+//! direction. A hello altered in transit (capabilities, names, protocol)
+//! leaves the two sides with different keys, so the encrypted ready frame
+//! fails. Frames carry a per-direction counter; a frame whose
 //! counter is not the next expected one is refused, so frames cannot be
 //! replayed, dropped, or reordered unnoticed.
 
@@ -12,7 +15,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 
 use super::identity::{clean_name, device_id_of, ShareIdentity};
@@ -104,12 +107,15 @@ impl LocalHandshake {
     }
 
     /// Derives the two direction keys. `initiator` is true on the side that
-    /// opened the connection.
+    /// opened the connection. `local_hello` and `peer_hello` are the exact
+    /// hello texts sent and received, which the keys are bound to.
     pub fn finish(
         self,
         identity: &ShareIdentity,
         peer: &CheckedHello,
         initiator: bool,
+        local_hello: &str,
+        peer_hello: &str,
     ) -> Result<SessionKeys, String> {
         let static_shared = StaticSecret::from(*identity.secret())
             .diffie_hellman(&PublicKey::from(peer.public_key));
@@ -137,13 +143,24 @@ impl LocalHandshake {
                 identity.device_id(),
             )
         };
+        let (initiator_hello, responder_hello) = if initiator {
+            (local_hello, peer_hello)
+        } else {
+            (peer_hello, local_hello)
+        };
         let mut salt = [0u8; 64];
         salt[..32].copy_from_slice(&initiator_ephemeral);
         salt[32..].copy_from_slice(&responder_ephemeral);
         let mut ikm = [0u8; 64];
         ikm[..32].copy_from_slice(static_shared.as_bytes());
         ikm[32..].copy_from_slice(ephemeral_shared.as_bytes());
-        let info = [KDF_INFO, initiator_id.as_bytes(), responder_id.as_bytes()].concat();
+        let info = [
+            KDF_INFO,
+            initiator_id.as_bytes(),
+            responder_id.as_bytes(),
+            &transcript_hash(initiator_hello, responder_hello),
+        ]
+        .concat();
         let mut okm = [0u8; 64];
         Hkdf::<Sha256>::new(Some(&salt), &ikm)
             .expand(&info, &mut okm)
@@ -162,6 +179,17 @@ impl LocalHandshake {
             receiver: FrameOpener::new(&receive, 1 - send_direction),
         })
     }
+}
+
+/// SHA-256 over both hello texts, each prefixed by its length so the
+/// boundary between them is unambiguous.
+fn transcript_hash(initiator_hello: &str, responder_hello: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for hello in [initiator_hello, responder_hello] {
+        hasher.update((hello.len() as u64).to_be_bytes());
+        hasher.update(hello.as_bytes());
+    }
+    hasher.finalize().into()
 }
 
 impl Default for LocalHandshake {

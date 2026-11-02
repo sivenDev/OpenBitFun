@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
 use super::discovery::{parse_advertisement, PeerSet};
-use super::handshake::{FrameOpener, FrameSealer, LocalHandshake};
+use super::handshake::{FrameOpener, FrameSealer, Hello, LocalHandshake};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 
 use super::identity::{device_id_of, fingerprint_of, is_fingerprint};
@@ -94,15 +94,43 @@ fn only_private_addresses_take_part() {
     assert!(!is_sharing_address("fe80::1".parse().unwrap(), true));
 }
 
-fn session_pair() -> (FrameSealer, FrameOpener) {
+/// Keys of both sides of one handshake; `tamper` changes the hello text of A
+/// on its way to B.
+fn handshake_pair(
+    tamper: impl FnOnce(String) -> String,
+) -> (super::handshake::SessionKeys, super::handshake::SessionKeys) {
     let a = identity("a");
     let b = identity("b");
     let (ha, hb) = (LocalHandshake::new(), LocalHandshake::new());
-    let hello_a = ha.hello(&a, PROTOCOL_VERSION, &[]).check().unwrap();
-    let hello_b = hb.hello(&b, PROTOCOL_VERSION, &[]).check().unwrap();
-    let keys_a = ha.finish(&a, &hello_b, true).unwrap();
-    let keys_b = hb.finish(&b, &hello_a, false).unwrap();
+    let text_a = serde_json::to_string(&ha.hello(&a, PROTOCOL_VERSION, &[])).unwrap();
+    let text_b = serde_json::to_string(&hb.hello(&b, PROTOCOL_VERSION, &[])).unwrap();
+    let seen_by_b = tamper(text_a.clone());
+    let hello_a = serde_json::from_str::<Hello>(&seen_by_b)
+        .unwrap()
+        .check()
+        .unwrap();
+    let hello_b = serde_json::from_str::<Hello>(&text_b)
+        .unwrap()
+        .check()
+        .unwrap();
+    let keys_a = ha.finish(&a, &hello_b, true, &text_a, &text_b).unwrap();
+    let keys_b = hb.finish(&b, &hello_a, false, &text_b, &seen_by_b).unwrap();
+    (keys_a, keys_b)
+}
+
+fn session_pair() -> (FrameSealer, FrameOpener) {
+    let (keys_a, keys_b) = handshake_pair(|text| text);
     (keys_a.sender, keys_b.receiver)
+}
+
+#[test]
+fn a_hello_altered_in_transit_leaves_the_sides_without_a_common_key() {
+    let (keys_a, keys_b) = handshake_pair(|text| {
+        text.replace("\"capabilities\":[]", "\"capabilities\":[\"injected\"]")
+    });
+    let (mut sealer, mut opener) = (keys_a.sender, keys_b.receiver);
+    let frame = sealer.seal(b"ready").unwrap();
+    assert!(opener.open(&frame).is_err());
 }
 
 #[test]
@@ -148,7 +176,7 @@ fn a_device_cannot_handshake_with_its_own_identity() {
     let a = identity("a");
     let (one, two) = (LocalHandshake::new(), LocalHandshake::new());
     let hello = two.hello(&a, PROTOCOL_VERSION, &[]).check().unwrap();
-    assert!(one.finish(&a, &hello, true).is_err());
+    assert!(one.finish(&a, &hello, true, "", "").is_err());
 }
 
 struct Advertised {
