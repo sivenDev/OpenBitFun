@@ -384,10 +384,8 @@ pub async fn query_device_job(
     request: DispatchQueryJobRequest,
 ) -> anyhow::Result<Value> {
     validate_query_request(&request)?;
-    let record = load_device_record(store, &request.job_id).await?;
-    let DispatchTarget::Device { device_id, .. } = &record.target else {
-        unreachable!("load_device_record validates target kind")
-    };
+    let record = load_rpc_record(store, &request.job_id).await?;
+    let device_id = rpc_device_id(&record);
     if matches!(request.kind.as_str(), "readFile" | "readFileChunk") {
         let protocol = rpc
             .invoke(device_id, "dispatch_target_probe", json!({}))
@@ -407,10 +405,8 @@ pub async fn status_device(
     store: &OutboundDispatchStore,
     request: DispatchStatusRequest,
 ) -> anyhow::Result<Value> {
-    let record = load_device_record(store, &request.job_id).await?;
-    let DispatchTarget::Device { device_id, .. } = &record.target else {
-        unreachable!("load_device_record validates target kind")
-    };
+    let record = load_rpc_record(store, &request.job_id).await?;
+    let device_id = rpc_device_id(&record);
     let response = rpc
         .invoke(
             device_id,
@@ -441,10 +437,8 @@ pub async fn cancel_device(
     store: &OutboundDispatchStore,
     request: DispatchJobRequest,
 ) -> anyhow::Result<Value> {
-    let record = load_device_record(store, &request.job_id).await?;
-    let DispatchTarget::Device { device_id, .. } = &record.target else {
-        unreachable!("load_device_record validates target kind")
-    };
+    let record = load_rpc_record(store, &request.job_id).await?;
+    let device_id = rpc_device_id(&record);
     let response = rpc
         .invoke(
             device_id,
@@ -489,10 +483,8 @@ pub async fn append_device(
 ) -> anyhow::Result<Value> {
     validate_append_request(&request)?;
     validate_device_attachment_budget(&request.attachments)?;
-    let record = load_device_record(store, &request.job_id).await?;
-    let DispatchTarget::Device { device_id, .. } = &record.target else {
-        unreachable!("load_device_record validates target kind")
-    };
+    let record = load_rpc_record(store, &request.job_id).await?;
+    let device_id = rpc_device_id(&record);
     rpc.invoke(
         device_id,
         "dispatch_target_append",
@@ -509,10 +501,8 @@ pub async fn continue_device_job(
 ) -> anyhow::Result<Value> {
     validate_continue_request(&request)?;
     validate_device_attachment_budget(&request.attachments)?;
-    let record = load_device_record(store, &request.job_id).await?;
-    let DispatchTarget::Device { device_id, .. } = &record.target else {
-        unreachable!("load_device_record validates target kind")
-    };
+    let record = load_rpc_record(store, &request.job_id).await?;
+    let device_id = rpc_device_id(&record);
     let response = rpc
         .invoke(
             device_id,
@@ -866,6 +856,29 @@ async fn load_device_record(
         anyhow::bail!("Outbound dispatch job is not bound to a device target");
     }
     Ok(record)
+}
+
+/// The outbound record of a job this controller runs through
+/// `DeviceDispatchRpc`: on an account device or a shared assistant.
+async fn load_rpc_record(
+    store: &OutboundDispatchStore,
+    job_id: &str,
+) -> anyhow::Result<OutboundDispatchRecord> {
+    let record = store
+        .get(job_id)
+        .await?
+        .ok_or_else(|| anyhow!("Outbound dispatch job was not found"))?;
+    if record.target.rpc_device_id().is_none() {
+        anyhow::bail!("Outbound dispatch job is not bound to a device target");
+    }
+    Ok(record)
+}
+
+fn rpc_device_id(record: &OutboundDispatchRecord) -> &str {
+    record
+        .target
+        .rpc_device_id()
+        .expect("load_rpc_record validates target kind")
 }
 
 #[cfg(test)]

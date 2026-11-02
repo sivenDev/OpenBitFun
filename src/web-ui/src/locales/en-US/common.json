@@ -294,7 +294,8 @@
         "running": "$t(shared:statuses.running)",
         "succeeded": "$t(shared:statuses.done)",
         "failed": "$t(shared:statuses.failed)",
-        "cancelled": "$t(shared:statuses.cancelled)"
+        "cancelled": "$t(shared:statuses.cancelled)",
+        "expired": "Expired"
       },
       "newCodeSession": "New Code session",
       "newCoworkSession": "New Cowork session",

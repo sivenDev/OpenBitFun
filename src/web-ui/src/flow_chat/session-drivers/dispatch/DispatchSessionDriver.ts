@@ -347,10 +347,15 @@ export const dispatchSessionDriver: SessionDriver = {
               ...config.dispatchTargetRequest,
               displayName: config.dispatchTargetRequest.connectionId,
             }
-          : {
-              ...config.dispatchTargetRequest,
-              displayName: config.dispatchTargetRequest.deviceId,
-            }
+          : config.dispatchTargetRequest.kind === 'device'
+            ? {
+                ...config.dispatchTargetRequest,
+                displayName: config.dispatchTargetRequest.deviceId,
+              }
+            : {
+                ...config.dispatchTargetRequest,
+                displayName: config.dispatchTargetRequest.assistantId,
+              }
       );
     const sessionId =
       globalThis.crypto?.randomUUID?.()

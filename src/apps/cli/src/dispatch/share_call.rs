@@ -109,8 +109,18 @@ pub(super) async fn admit_call(
 }
 
 /// What such a device receives back: approval prompts keep only what says
-/// the job waits.
+/// the job waits, and jobs are listed without where they run here.
 pub(super) fn present_response(verb: &str, _request: &Value, mut response: Value) -> Value {
+    if verb == "list" {
+        for entry in response.as_array_mut().into_iter().flatten() {
+            if let Some(path) = entry.get_mut("workspacePath") {
+                *path = Value::String(String::new());
+            }
+            if let Some(delegation) = entry.get_mut("delegation").and_then(Value::as_object_mut) {
+                delegation.remove("assistantWorkspace");
+            }
+        }
+    }
     if verb == "status" {
         if let Some(pending) = response
             .get_mut("pendingPermissions")
@@ -395,6 +405,23 @@ mod tests {
         );
         assert_eq!(source_share_key(&json!({ "__sourceShareKey": "" })), None);
         assert_eq!(source_share_key(&json!({})), None);
+        let listed = present_response(
+            "list",
+            &json!({}),
+            json!([{
+                "jobId": "delegation-mine",
+                "workspacePath": "/Users/owner/tenants/abc",
+                "delegation": {
+                    "assistantId": "workspace",
+                    "assistantWorkspace": "/Users/owner/assistants/workspace",
+                },
+            }]),
+        );
+        assert_eq!(listed[0]["workspacePath"], "");
+        assert_eq!(
+            listed[0]["delegation"],
+            json!({ "assistantId": "workspace" })
+        );
         // Such a device never names a path on this device.
         for path in ["/etc", "/Users"] {
             assert!(admit_call(

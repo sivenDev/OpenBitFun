@@ -1816,6 +1816,9 @@ pub(super) fn same_target_identity(left: &DispatchTarget, right: &DispatchTarget
                 ..
             },
         ) => left_device == right_device && left_workspace == right_workspace,
+        (left @ DispatchTarget::SharedAssistant { .. }, right) => {
+            super::target::same_shared_assistant(left, right)
+        }
         _ => false,
     }
 }

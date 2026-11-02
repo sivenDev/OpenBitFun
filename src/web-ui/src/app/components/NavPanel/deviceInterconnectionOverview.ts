@@ -163,7 +163,7 @@ export function selectAttachedGroups(
 
 export interface DeviceOverviewDispatchJob {
   id: string;
-  state: 'submitting' | 'submission_unknown' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  state: 'submitting' | 'submission_unknown' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
   target:
     | { kind: 'local' }
     | { kind: 'ssh'; id: string; name: string }

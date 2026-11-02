@@ -11,6 +11,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use openbitfun_core::infrastructure::{events::EventEmitter, PathManager};
+use openbitfun_core::service::dispatch::{
+    forget_shared_assistant, OutboundDispatchStore, SharedAssistantProblem,
+};
+use openbitfun_core::service::lan_share::dispatch_rpc::LanDispatchRpc;
 use openbitfun_core::service::lan_share::protocol::RequestOpened;
 use openbitfun_core::service::lan_share::{
     delete_tenant, list_tenants, tenants_root, DiscoveredDevice, HostStatus, LanShareHost,
@@ -308,11 +312,58 @@ pub async fn lan_share_shared_with_me() -> Result<Vec<SharedWithMe>, String> {
     host()?.shared_with_me().await
 }
 
+/// Removes an assistant shared with this device, and this device's records
+/// of its conversations with it.
 #[tauri::command]
 pub async fn lan_share_remove(request: LanShareRemoveRequest) -> Result<(), String> {
+    let host = host()?;
+    let owner_device = host
+        .shared_with_me()
+        .await?
+        .into_iter()
+        .find(|shared| {
+            shared.owner.public_key == request.owner_key
+                && shared.assistant_id == request.assistant_id
+        })
+        .map(|shared| shared.owner.device_id);
+    host.remove(&request.owner_key, &request.assistant_id)
+        .await?;
+    if let Some(owner_device) = owner_device {
+        let store = OutboundDispatchStore::new(&path_manager()?);
+        if let Err(error) =
+            forget_shared_assistant(&store, &owner_device, &request.assistant_id).await
+        {
+            log::warn!(
+                "Failed to delete conversations with a removed shared assistant: assistant_id={} error={}",
+                request.assistant_id,
+                error
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Dispatch to assistants other devices share with this one, over the LAN
+/// share channel.
+pub(crate) fn dispatch_rpc() -> Result<LanDispatchRpc, String> {
+    Ok(LanDispatchRpc::new(host()?.clone()))
+}
+
+/// The name this device shows for the assistant `assistant_id` of the
+/// device `owner_device_id`, while it is shared with this device.
+pub(crate) async fn shared_assistant_name(
+    owner_device_id: &str,
+    assistant_id: &str,
+) -> Result<String, String> {
     host()?
-        .remove(&request.owner_key, &request.assistant_id)
-        .await
+        .shared_with_me()
+        .await?
+        .into_iter()
+        .find(|shared| {
+            shared.owner.device_id == owner_device_id && shared.assistant_id == assistant_id
+        })
+        .map(|shared| shared.name)
+        .ok_or_else(|| SharedAssistantProblem::NotShared.to_string())
 }
 
 #[tauri::command]

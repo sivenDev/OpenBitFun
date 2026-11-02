@@ -62,6 +62,15 @@ pub enum DispatchTargetRequest {
         #[serde(rename = "workspacePath")]
         workspace_path: String,
     },
+    /// An assistant another device shares on the local network. It runs in
+    /// that device's workspace for this one; nothing is delivered or synced.
+    #[serde(rename = "sharedAssistant")]
+    SharedAssistant {
+        #[serde(rename = "ownerDeviceId")]
+        owner_device_id: String,
+        #[serde(rename = "assistantId")]
+        assistant_id: String,
+    },
 }
 
 impl DispatchTargetRequest {
@@ -71,7 +80,7 @@ impl DispatchTargetRequest {
 
     pub fn workspace_path(&self) -> Option<&str> {
         match self {
-            Self::Local => None,
+            Self::Local | Self::SharedAssistant { .. } => None,
             Self::Ssh { workspace_path, .. } | Self::Device { workspace_path, .. } => {
                 Some(workspace_path)
             }
@@ -103,6 +112,17 @@ pub enum DispatchTarget {
         #[serde(rename = "displayName")]
         display_name: String,
     },
+    /// See [`DispatchTargetRequest::SharedAssistant`]. `display_name` is the
+    /// assistant's name as its owner shares it.
+    #[serde(rename = "sharedAssistant")]
+    SharedAssistant {
+        #[serde(rename = "ownerDeviceId")]
+        owner_device_id: String,
+        #[serde(rename = "assistantId")]
+        assistant_id: String,
+        #[serde(rename = "displayName")]
+        display_name: String,
+    },
 }
 
 impl DispatchTarget {
@@ -112,12 +132,48 @@ impl DispatchTarget {
 
     pub fn workspace_path(&self) -> Option<&str> {
         match self {
-            Self::Local => None,
+            Self::Local | Self::SharedAssistant { .. } => None,
             Self::Ssh { workspace_path, .. } | Self::Device { workspace_path, .. } => {
                 Some(workspace_path)
             }
         }
     }
+
+    /// The device that runs the job, for targets reached through
+    /// `DeviceDispatchRpc`.
+    pub fn rpc_device_id(&self) -> Option<&str> {
+        match self {
+            Self::Device { device_id, .. } => Some(device_id),
+            Self::SharedAssistant {
+                owner_device_id, ..
+            } => Some(owner_device_id),
+            Self::Local | Self::Ssh { .. } => None,
+        }
+    }
+
+    pub fn is_shared_assistant(&self) -> bool {
+        matches!(self, Self::SharedAssistant { .. })
+    }
+}
+
+/// Whether `left` and `right` are the same shared assistant; its name may
+/// change.
+pub(super) fn same_shared_assistant(left: &DispatchTarget, right: &DispatchTarget) -> bool {
+    matches!(
+        (left, right),
+        (
+            DispatchTarget::SharedAssistant {
+                owner_device_id: left_owner,
+                assistant_id: left_assistant,
+                ..
+            },
+            DispatchTarget::SharedAssistant {
+                owner_device_id: right_owner,
+                assistant_id: right_assistant,
+                ..
+            },
+        ) if left_owner == right_owner && left_assistant == right_assistant
+    )
 }
 
 #[cfg(test)]
@@ -139,6 +195,31 @@ mod tests {
                 "connectionId": "server-a",
                 "workspacePath": "/srv/app"
             })
+        );
+    }
+
+    #[test]
+    fn a_shared_assistant_target_names_its_owner_and_has_no_workspace() {
+        let request: DispatchTargetRequest = serde_json::from_value(serde_json::json!({
+            "kind": "sharedAssistant",
+            "ownerDeviceId": "0123456789abcdef0123456789abcdef",
+            "assistantId": "workspace-notes",
+        }))
+        .expect("parse target");
+        assert_eq!(request.workspace_path(), None);
+        let target = DispatchTarget::SharedAssistant {
+            owner_device_id: "0123456789abcdef0123456789abcdef".to_string(),
+            assistant_id: "workspace-notes".to_string(),
+            display_name: "Notes".to_string(),
+        };
+        assert_eq!(
+            target.rpc_device_id(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(target.workspace_path(), None);
+        assert_eq!(
+            serde_json::to_value(&target).expect("serialize")["kind"],
+            "sharedAssistant"
         );
     }
 

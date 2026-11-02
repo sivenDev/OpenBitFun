@@ -6,6 +6,12 @@ import {
   DISPATCH_PROTOCOL_VERSION,
 } from './dispatchPreflight';
 import { PEER_CONTROLLER_LOCAL_COMMANDS } from '@/infrastructure/api/generated/remoteSurface';
+import {
+  SHARED_ASSISTANT_JOB_ID_PREFIX,
+  SHARED_ASSISTANT_PROBLEMS,
+  isDispatchJobTerminal,
+  sharedAssistantProblem,
+} from './types';
 
 const OUTBOUND_DISPATCH_COMMANDS = [
   'dispatch_list_targets',
@@ -223,5 +229,48 @@ describe('dispatch navigation scope contract', () => {
     expect(sessionsSection).toContain('session.config.dispatchJobState');
     expect(sessionsSection).not.toContain('dispatchTargetFilter');
     expect(sessionsSectionStyles).not.toContain('session-target-filter');
+  });
+});
+
+describe('shared assistant target contract', () => {
+  const target = read('../../../../../src/crates/assembly/core/src/service/dispatch/target.rs');
+  const sharedAssistant = read(
+    '../../../../../src/crates/assembly/core/src/service/dispatch/shared_assistant.rs',
+  );
+
+  it('names the owner device and the assistant in the shape Rust reads', () => {
+    expect(target).toContain('#[serde(rename = "sharedAssistant")]');
+    expect(target).toContain('#[serde(rename = "ownerDeviceId")]');
+    expect(target).toContain('#[serde(rename = "assistantId")]');
+  });
+
+  it('knows every reason Rust gives for a conversation that cannot go on', () => {
+    const rustCodes = new Set(
+      Array.from(sharedAssistant.matchAll(/\[shared-assistant:(\w+)\]/g), match => match[1]),
+    );
+    expect(new Set(SHARED_ASSISTANT_PROBLEMS)).toEqual(rustCodes);
+    for (const code of SHARED_ASSISTANT_PROBLEMS) {
+      expect(sharedAssistant).toContain(`=> "${code}"`);
+    }
+  });
+
+  it('reads the reason from the error a command returns', () => {
+    expect(sharedAssistantProblem(new Error(
+      "[shared-assistant:offline] the owner's device is not reachable: timed out",
+    ))).toBe('offline');
+    expect(sharedAssistantProblem('[shared-assistant:expired] gone')).toBe('expired');
+    expect(sharedAssistantProblem(new Error('[shared-assistant:other] x'))).toBeUndefined();
+    expect(sharedAssistantProblem(new Error('Dispatch target did not accept the job'))).toBeUndefined();
+  });
+
+  it('uses the job id prefix the owner lists as tasks from other devices', () => {
+    const delegation = read('../../../../../src/crates/assembly/core/src/service/delegation.rs');
+    expect(delegation).toContain(
+      `pub const DELEGATED_JOB_ID_PREFIX: &str = "${SHARED_ASSISTANT_JOB_ID_PREFIX}";`,
+    );
+  });
+
+  it('treats an expired conversation as finished', () => {
+    expect(isDispatchJobTerminal('expired')).toBe(true);
   });
 });

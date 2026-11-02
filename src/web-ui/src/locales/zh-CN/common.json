@@ -294,7 +294,8 @@
         "running": "$t(shared:statuses.running)",
         "succeeded": "$t(shared:statuses.done)",
         "failed": "$t(shared:statuses.failed)",
-        "cancelled": "$t(shared:statuses.cancelled)"
+        "cancelled": "$t(shared:statuses.cancelled)",
+        "expired": "已过期"
       },
       "newCodeSession": "新建 Code 会话",
       "newCoworkSession": "新建 Cowork 会话",

@@ -6,6 +6,8 @@ mod controller;
 mod device_controller;
 #[cfg(feature = "agent-runtime")]
 mod preparation;
+#[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
+mod shared_assistant;
 mod target;
 
 use std::path::{Path, PathBuf};
@@ -47,6 +49,12 @@ pub use device_controller::{
 pub use openbitfun_services_core::dispatch_contract::{
     DispatchAccountDaemonIdentity, DispatchAccountDaemonProvisionRequest,
     DISPATCH_ACCOUNT_DAEMON_PROVISIONING_SCHEMA_VERSION,
+};
+#[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
+pub use shared_assistant::{
+    append_shared_assistant, cancel_shared_assistant, continue_shared_assistant,
+    forget_shared_assistant, list_shared_assistant_jobs, query_shared_assistant,
+    status_shared_assistant, submit_shared_assistant, SharedAssistantProblem,
 };
 pub use target::{DispatchTarget, DispatchTargetRequest, DispatchWorkspaceDelivery};
 
@@ -774,6 +782,9 @@ async fn adopt_target_jobs(
             DispatchTarget::Local => {
                 anyhow::bail!("local jobs cannot be adopted as outbound dispatch observers")
             }
+            DispatchTarget::SharedAssistant { .. } => {
+                anyhow::bail!("conversations with shared assistants are listed by their assistant")
+            }
         };
         let title = entry
             .title
@@ -884,6 +895,9 @@ fn same_target_identity_for_store(left: &DispatchTarget, right: &DispatchTarget)
             },
         ) => left == right,
         (DispatchTarget::Local, DispatchTarget::Local) => true,
+        (left @ DispatchTarget::SharedAssistant { .. }, right) => {
+            target::same_shared_assistant(left, right)
+        }
         _ => false,
     }
 }

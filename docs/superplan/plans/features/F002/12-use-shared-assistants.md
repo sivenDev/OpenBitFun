@@ -132,7 +132,21 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-core --lib service::dispatch`
 - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
 
-- [ ] 提交、续写、追加、补收、取消、列出、过期、撤销、离线均有测试；对既有 SSH 与设备目标的测试无变化
+- [x] 提交、续写、追加、补收、取消、列出、过期、撤销、离线均有测试；对既有 SSH 与设备目标的测试无变化
+  - 证据（2026-11-02）：
+    - `cargo test --locked -p openbitfun-core --features lan-share,dispatch-store,agent-runtime,ssh-remote,git --lib service::dispatch` 65 项通过，其中 `shared_assistant` 8 项：提交组装委派任务（`remote` 审批、所有者目录中的智能体类型与名称、无工作区与模型、无基线）；提交前拒绝非 `delegation-` 任务号、非 `remote` 审批、`includeUncommitted`、`baseRef`、空助理且不发送任何请求；需要更新、助理不可用、已撤销（目录中没有）、不在线；提交无应答记为 `submission_unknown`；补收、续写（去掉模型、推理强度与审批策略）、追加、取消到达主人；任务不存在记为 `expired`、主人的授权拒绝转为 `revoked`；按助理列出并建立出站记录、不接管他人的任务号、移除后删除记录；审批不走共享助理。既有 SSH 与设备目标测试全部通过。
+    - `service::lan_share::dispatch_rpc` 1 项（通道错误转为 `SharedAssistantProblem`）；`--test lan_share_flow` 5 项通过。
+    - `cargo test --locked -p openbitfun-cli --bin openbitfun dispatch::` 114 项通过（`share_call`：向使用者列出任务时去掉工作区路径与 `assistantWorkspace`）。
+    - `cargo test --locked -p openbitfun-desktop --lib -- lan_share_api dispatch remote_workspace_policy peer_host_invoke` 34 项通过；clippy（1.91.1）在改动文件上无告警；`pnpm run check:core-boundaries` 通过。
+    - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts` 16 项通过（新增：目标形状、错误代码与 Rust 一致、错误解析、任务号前缀、`expired` 为结束状态）；`src/features/dispatch`、`NavPanel`、`flow_chat` Dispatch 驱动与存储 68 个文件 902 项通过；`type-check:web` 通过；`lint:web` 0 错误（16 个既有告警）；`i18n:audit` 通过。
+    - 文档：`detached-task-dispatch.md` 增加 `sharedAssistant` 目标；`src/web-ui/src/features/dispatch/README.md` 增加不变式 33（不变式 26、28 对该目标的适用方式）。
+  - 与计划的差异：
+    - 计划中的验证命令 `--features lan-share --lib service::dispatch::shared_assistant` 与 `--lib service::dispatch` 不启用 Dispatch 控制端（0 项），实际使用上面的特性组合；`shared_assistant.rs` 与 `device_controller.rs` 同样需要 `agent-runtime` 与 `ssh-remote`。
+    - 过期判定不比较保留期：主人端对有出站记录的任务答复「不存在」即为已过期（保留期清理或主人删除数据），并把出站记录状态记为 `expired`。
+    - 失败原因以 `[shared-assistant:<code>]` 标在错误信息开头（`notShared`、`revoked`、`offline`、`needsUpdate`、`expired`、`unavailable`），Web UI 用 `sharedAssistantProblem` 读取；代码清单由契约测试与 Rust 对齐。
+    - 共享助理的对话任务号必须以 `delegation-` 开头，主人端的外部任务视图据此列出与审批。
+    - `dispatch_answer`、`dispatch_sync_result`、`dispatch_probe_target` 对该目标明确拒绝；`lan_share_remove` 同时删除本地对话记录与转录缓存（计划在 Task 3 范围内，成本低，一并完成）。
+    - Web UI 类型：新增 `GitDispatchTargetRequest`/`GitDispatchTarget`（目标选择只提供这两类）、`expired` 状态与导航文案；设备互联概览不计入共享助理的任务。
 
 ## Task 3: 使用者界面：对话、对话列表与状态
 

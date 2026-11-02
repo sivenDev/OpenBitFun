@@ -1,6 +1,12 @@
 import type { FlowChatState, Session } from '../../../../../flow_chat/types/flow-chat';
 
-type DispatchTargetKind = 'local' | 'ssh' | 'device';
+type DispatchTargetKind = 'local' | 'ssh' | 'device' | 'sharedAssistant';
+type DispatchTarget = NonNullable<Session['config']['dispatchTarget']>;
+
+/** Where the job runs on its target; shared assistants keep that to their owner. */
+function dispatchWorkspacePathOf(target: DispatchTarget | undefined): string | undefined {
+  return target && 'workspacePath' in target ? target.workspacePath : undefined;
+}
 
 interface SessionNavSignature {
   sessionId: string;
@@ -45,7 +51,7 @@ function readSessionNavSignature(session: Session): SessionNavSignature {
     dispatchTargetKind: dispatchTarget?.kind ?? 'local',
     dispatchConnectionId: dispatchTarget?.kind === 'ssh' ? dispatchTarget.connectionId : undefined,
     dispatchDeviceId: dispatchTarget?.kind === 'device' ? dispatchTarget.deviceId : undefined,
-    dispatchWorkspacePath: dispatchTarget?.kind === 'local' ? undefined : dispatchTarget?.workspacePath,
+    dispatchWorkspacePath: dispatchWorkspacePathOf(dispatchTarget),
     dispatchDisplayName: dispatchTarget?.kind === 'local' ? undefined : dispatchTarget?.displayName,
     dispatchJobState: session.config.dispatchJobState,
   };
@@ -72,7 +78,7 @@ function sameSessionNavSignature(previous: SessionNavSignature, session: Session
     && previous.dispatchTargetKind === dispatchTargetKind
     && previous.dispatchConnectionId === (dispatchTarget?.kind === 'ssh' ? dispatchTarget.connectionId : undefined)
     && previous.dispatchDeviceId === (dispatchTarget?.kind === 'device' ? dispatchTarget.deviceId : undefined)
-    && previous.dispatchWorkspacePath === (dispatchTarget?.kind === 'local' ? undefined : dispatchTarget?.workspacePath)
+    && previous.dispatchWorkspacePath === dispatchWorkspacePathOf(dispatchTarget)
     && previous.dispatchDisplayName === (dispatchTarget?.kind === 'local' ? undefined : dispatchTarget?.displayName)
     && previous.dispatchJobState === session.config.dispatchJobState;
 }

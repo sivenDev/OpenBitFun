@@ -336,6 +336,10 @@ function sameDispatchTargetIdentity(
       return right.kind === 'ssh' && left.connectionId === right.connectionId;
     case 'device':
       return right.kind === 'device' && left.deviceId === right.deviceId;
+    case 'sharedAssistant':
+      return right.kind === 'sharedAssistant'
+        && left.ownerDeviceId === right.ownerDeviceId
+        && left.assistantId === right.assistantId;
     case 'local':
       return right.kind === 'local';
   }

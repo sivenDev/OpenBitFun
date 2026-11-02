@@ -158,3 +158,14 @@ dispatch.
 32. Dispatch target options use SSH connection identity and display metadata
     only. A saved SSH `defaultWorkspace` is not offered as the job's execution
     directory; the target always provisions the job's managed Git worktree.
+33. A `sharedAssistant` target is an assistant another device shares on the
+    local network; it travels over the LAN share channel, not the relay. It has
+    no Git baseline, result sync, `includeUncommitted`, model or approval
+    choice (`GitDispatchTargetRequest` excludes it from target selection), and
+    its job ids start with `SHARED_ASSISTANT_JOB_ID_PREFIX`. Its outbound
+    records carry no workspace identity, so invariant 28 keeps them out of
+    every workspace's session list; they are listed under the shared assistant
+    instead, and invariant 26 holds because no workspace installs this target.
+    A call that cannot reach or use the assistant fails with a
+    `[shared-assistant:<code>]` reason (`sharedAssistantProblem`); `expired`
+    is also recorded as the job's state.

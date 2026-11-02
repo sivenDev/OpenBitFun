@@ -1,7 +1,12 @@
 export type DispatchTargetRequest =
   | { kind: 'local' }
   | { kind: 'ssh'; connectionId: string; workspacePath: string }
-  | { kind: 'device'; deviceId: string; workspacePath: string };
+  | { kind: 'device'; deviceId: string; workspacePath: string }
+  /**
+   * An assistant another device shares on the local network. It runs in that
+   * device's workspace for this one: no Git baseline, nothing to sync back.
+   */
+  | { kind: 'sharedAssistant'; ownerDeviceId: string; assistantId: string };
 
 export type DispatchTarget =
   | { kind: 'local' }
@@ -16,7 +21,24 @@ export type DispatchTarget =
       deviceId: string;
       workspacePath: string;
       displayName: string;
+    }
+  | {
+      kind: 'sharedAssistant';
+      ownerDeviceId: string;
+      assistantId: string;
+      /** The assistant's name as its owner shares it. */
+      displayName: string;
     };
+
+/** Targets reached over a Git baseline, which a target picker offers. */
+export type GitDispatchTargetRequest = Exclude<
+  DispatchTargetRequest,
+  { kind: 'local' } | { kind: 'sharedAssistant' }
+>;
+export type GitDispatchTarget = Exclude<
+  DispatchTarget,
+  { kind: 'local' } | { kind: 'sharedAssistant' }
+>;
 
 export type DispatchApprovalPolicy = 'auto' | 'reject-and-report' | 'remote';
 
@@ -44,7 +66,9 @@ export type DispatchJobState =
   | 'running'
   | 'succeeded'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  /** A shared assistant's owner no longer keeps the conversation. */
+  | 'expired';
 
 export interface DispatchTargetOption {
   kind: 'local' | 'ssh' | 'device';
@@ -299,8 +323,8 @@ export interface DispatchTranscriptCache {
 }
 
 export interface DispatchSelection {
-  request: Exclude<DispatchTargetRequest, { kind: 'local' }>;
-  target: Exclude<DispatchTarget, { kind: 'local' }>;
+  request: GitDispatchTargetRequest;
+  target: GitDispatchTarget;
   /** Fold the baseline worktree's uncommitted changes into the base commit. */
   includeUncommitted: boolean;
   /** Git revision resolved when creating the controller baseline worktree. */
@@ -323,5 +347,37 @@ export function isNonLocalDispatchTarget(
 }
 
 export function isDispatchJobTerminal(state: DispatchJobState | undefined): boolean {
-  return state === 'succeeded' || state === 'failed' || state === 'cancelled';
+  return state === 'succeeded' || state === 'failed' || state === 'cancelled' || state === 'expired';
+}
+
+/**
+ * Job ids of conversations with shared assistants start with this; their
+ * owners list and answer them as tasks from other devices.
+ */
+export const SHARED_ASSISTANT_JOB_ID_PREFIX = 'delegation-';
+
+/** Every reason a conversation with a shared assistant cannot go on. */
+export const SHARED_ASSISTANT_PROBLEMS = [
+  'notShared',
+  'revoked',
+  'offline',
+  'needsUpdate',
+  'expired',
+  'unavailable',
+] as const;
+
+/** Why a conversation with a shared assistant cannot go on. */
+export type SharedAssistantProblem = typeof SHARED_ASSISTANT_PROBLEMS[number];
+
+const SHARED_ASSISTANT_PROBLEM = new RegExp(
+  `\\[shared-assistant:(${SHARED_ASSISTANT_PROBLEMS.join('|')})\\]`,
+);
+
+/**
+ * The reason a shared-assistant call failed, from the `[shared-assistant:<code>]`
+ * mark the backend puts on such errors.
+ */
+export function sharedAssistantProblem(error: unknown): SharedAssistantProblem | undefined {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return SHARED_ASSISTANT_PROBLEM.exec(message)?.[1] as SharedAssistantProblem | undefined;
 }

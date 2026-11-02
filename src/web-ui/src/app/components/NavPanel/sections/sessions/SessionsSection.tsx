@@ -1531,6 +1531,7 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
             succeeded: t('nav.sessions.dispatchStates.succeeded'),
             failed: t('nav.sessions.dispatchStates.failed'),
             cancelled: t('nav.sessions.dispatchStates.cancelled'),
+            expired: t('nav.sessions.dispatchStates.expired'),
           } satisfies Record<DispatchJobState, string>;
           const dispatchTransport = session.config.dispatchJobId
             ? dispatchTransportByJobId[session.config.dispatchJobId]

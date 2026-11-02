@@ -501,6 +501,20 @@ being sent when nothing of that device is shared with it (`NotShared`) or every 
 withdrawn (`Revoked`); an unreachable owner is `Offline`, a version mismatch
 `NeedsUpdate`, and the owner's refusal `Refused` (`ShareDispatchError`).
 
+The controller reaches a shared assistant through the `sharedAssistant` target
+(`{ ownerDeviceId, assistantId }`, `service/dispatch/shared_assistant.rs`). A
+conversation is a delegated job with a `delegation-` job id, the `remote` approval
+policy, the agent type and display name from the owner's `catalog`, and no workspace
+path, model or Git baseline; follow-ups, appended messages, status, cancellation and
+`usageReport` queries take the device paths, while `answer` and result sync are refused
+on the controller. `list_jobs` for the target adopts only that assistant's conversations.
+Failures that are not the owner's own message carry a `[shared-assistant:<code>]`
+reason (`SharedAssistantProblem`): `notShared`, `revoked`, `offline`, `needsUpdate`,
+`unavailable`, and `expired` when the owner no longer keeps a recorded conversation,
+which is also stored as the outbound record's state. Removing a shared assistant
+deletes this device's records and transcripts of its conversations. The owner lists a
+device's jobs to it without workspace paths.
+
 `dispatch_target_catalog` (CLI verb `catalog`) returns the shared assistants granted to
 the requesting device: id, assistant, display name, and why it is unavailable when its
 assistant is gone. A delegated submission must name that assistant. Target paths and the

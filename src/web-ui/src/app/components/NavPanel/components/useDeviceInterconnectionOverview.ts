@@ -85,16 +85,16 @@ export function useDeviceInterconnectionOverview(fallbackLocalDeviceName: string
   }, [refresh]);
 
   const projectedDispatchJobs = useMemo<DeviceOverviewDispatchJob[]>(() => (
-    Object.values(dispatchJobs).map(job => {
+    Object.values(dispatchJobs).flatMap((job): DeviceOverviewDispatchJob[] => {
       if (job.target.kind === 'local') {
-        return {
+        return [{
           id: job.jobId,
           state: job.state,
           target: { kind: 'local' as const },
-        };
+        }];
       }
       if (job.target.kind === 'ssh') {
-        return {
+        return [{
           id: job.jobId,
           state: job.state,
           target: {
@@ -102,9 +102,11 @@ export function useDeviceInterconnectionOverview(fallbackLocalDeviceName: string
             id: job.target.connectionId,
             name: job.target.displayName,
           },
-        };
+        }];
       }
-      return {
+      // Shared assistants belong to the devices sharing them, not to this account.
+      if (job.target.kind === 'sharedAssistant') return [];
+      return [{
         id: job.jobId,
         state: job.state,
         target: {
@@ -112,7 +114,7 @@ export function useDeviceInterconnectionOverview(fallbackLocalDeviceName: string
           id: job.target.deviceId,
           name: resolveDeviceNameFrom(directory.devices, job.target.deviceId, job.target.displayName),
         },
-      };
+      }];
     })
   ), [dispatchJobs, directory]);
 

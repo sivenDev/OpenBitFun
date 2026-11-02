@@ -24,6 +24,11 @@ use openbitfun_core::service::dispatch::{
     DispatchSubmitRequest, DispatchSyncResultRequest, DispatchTarget, DispatchTargetOption,
     DispatchTargetRequest, DispatchTranscriptRequest, OutboundDispatchStore,
 };
+use openbitfun_core::service::dispatch::{
+    append_shared_assistant, cancel_shared_assistant, continue_shared_assistant,
+    list_shared_assistant_jobs, query_shared_assistant, status_shared_assistant,
+    submit_shared_assistant,
+};
 use openbitfun_core::service::remote_ssh::dispatch_ssh::{
     self, DispatchInstallPoll, DispatchInstallStart, DispatchSshProbe,
 };
@@ -103,6 +108,19 @@ fn decode_device_dispatch_rpc(raw: &str) -> anyhow::Result<Value> {
     }
 }
 
+/// Whether `job_id` is a conversation with an assistant another device
+/// shares; those go over the LAN share channel.
+async fn is_shared_assistant_job(
+    store: &OutboundDispatchStore,
+    job_id: &str,
+) -> Result<bool, String> {
+    Ok(store
+        .get(job_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some_and(|record| record.target.is_shared_assistant()))
+}
+
 #[tauri::command]
 pub async fn dispatch_list_targets(
     state: State<'_, AppState>,
@@ -142,6 +160,12 @@ pub async fn dispatch_probe_target(
     state: State<'_, AppState>,
     request: DispatchProbeTargetRequest,
 ) -> Result<DispatchSshProbe, String> {
+    if matches!(
+        &request.target,
+        DispatchTargetRequest::SharedAssistant { .. }
+    ) {
+        return Err("shared assistants are not probed; start a conversation instead".to_string());
+    }
     if matches!(&request.target, DispatchTargetRequest::Device { .. }) {
         return probe_device_dispatch_target(&AccountDeviceDispatchRpc, request)
             .await
@@ -295,6 +319,15 @@ pub async fn dispatch_submit(
     path_manager: State<'_, Arc<PathManager>>,
     request: DispatchSubmitRequest,
 ) -> Result<Value, String> {
+    if matches!(
+        &request.target,
+        DispatchTargetRequest::SharedAssistant { .. }
+    ) {
+        let store = OutboundDispatchStore::new(path_manager.as_ref());
+        return submit_shared_assistant(&super::lan_share_api::dispatch_rpc()?, &store, request)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if let DispatchTargetRequest::Device { device_id, .. } = &request.target {
         let display_name = super::remote_connect_api::account_list_devices()
             .await
@@ -329,6 +362,11 @@ pub async fn dispatch_status(
     request: DispatchStatusRequest,
 ) -> Result<Value, String> {
     let store = OutboundDispatchStore::new(path_manager.as_ref());
+    if is_shared_assistant_job(&store, &request.job_id).await? {
+        return status_shared_assistant(&super::lan_share_api::dispatch_rpc()?, &store, request)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if matches!(
         store
             .get(&request.job_id)
@@ -363,6 +401,9 @@ pub async fn dispatch_sync_result(
     request: DispatchSyncResultRequest,
 ) -> Result<Value, String> {
     let store = OutboundDispatchStore::new(path_manager.as_ref());
+    if is_shared_assistant_job(&store, &request.job_id).await? {
+        return Err("conversations with shared assistants have no result to sync".to_string());
+    }
     if matches!(
         store
             .get(&request.job_id)
@@ -396,6 +437,11 @@ pub async fn dispatch_continue(
     request: DispatchContinueRequest,
 ) -> Result<Value, String> {
     let store = OutboundDispatchStore::new(path_manager.as_ref());
+    if is_shared_assistant_job(&store, &request.job_id).await? {
+        return continue_shared_assistant(&super::lan_share_api::dispatch_rpc()?, &store, request)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if matches!(
         store
             .get(&request.job_id)
@@ -424,6 +470,11 @@ pub async fn dispatch_query(
     request: DispatchQueryJobRequest,
 ) -> Result<Value, String> {
     let store = OutboundDispatchStore::new(path_manager.as_ref());
+    if is_shared_assistant_job(&store, &request.job_id).await? {
+        return query_shared_assistant(&super::lan_share_api::dispatch_rpc()?, &store, request)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if matches!(
         store
             .get(&request.job_id)
@@ -452,6 +503,11 @@ pub async fn dispatch_cancel(
     request: DispatchJobRequest,
 ) -> Result<Value, String> {
     let store = OutboundDispatchStore::new(path_manager.as_ref());
+    if is_shared_assistant_job(&store, &request.job_id).await? {
+        return cancel_shared_assistant(&super::lan_share_api::dispatch_rpc()?, &store, request)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if matches!(
         store
             .get(&request.job_id)
@@ -479,6 +535,23 @@ pub async fn dispatch_list_jobs(
     path_manager: State<'_, Arc<PathManager>>,
     request: DispatchListJobsRequest,
 ) -> Result<Value, String> {
+    if let Some(DispatchTargetRequest::SharedAssistant {
+        owner_device_id,
+        assistant_id,
+    }) = &request.target
+    {
+        let display_name =
+            super::lan_share_api::shared_assistant_name(owner_device_id, assistant_id).await?;
+        let store = OutboundDispatchStore::new(path_manager.as_ref());
+        return list_shared_assistant_jobs(
+            &super::lan_share_api::dispatch_rpc()?,
+            &store,
+            display_name,
+            request,
+        )
+        .await
+        .map_err(|error| error.to_string());
+    }
     if let Some(DispatchTargetRequest::Device { device_id, .. }) = &request.target {
         let display_name = super::remote_connect_api::account_list_devices()
             .await
@@ -513,6 +586,9 @@ pub async fn dispatch_answer(
     request: DispatchAnswerRequest,
 ) -> Result<Value, String> {
     let store = OutboundDispatchStore::new(path_manager.as_ref());
+    if is_shared_assistant_job(&store, &request.job_id).await? {
+        return Err("only the owner of a shared assistant answers its approvals".to_string());
+    }
     if matches!(
         store
             .get(&request.job_id)
@@ -541,6 +617,11 @@ pub async fn dispatch_append(
     request: DispatchAppendRequest,
 ) -> Result<Value, String> {
     let store = OutboundDispatchStore::new(path_manager.as_ref());
+    if is_shared_assistant_job(&store, &request.job_id).await? {
+        return append_shared_assistant(&super::lan_share_api::dispatch_rpc()?, &store, request)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if matches!(
         store
             .get(&request.job_id)
