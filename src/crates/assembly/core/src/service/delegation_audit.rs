@@ -1,7 +1,7 @@
-//! Target-side record of tasks other accounts delegated to this device.
+//! Target-side record of tasks other devices gave this device's shared
+//! assistants.
 //!
-//! Each cross-account task appends one entry when it is admitted and one when
-//! it ends. The log is append-only JSON lines under the product home. A
+//! Each such task appends one entry when it is admitted and one when it ends. The log is append-only JSON lines under the product home. A
 //! damaged line is kept and reported, never dropped, so the owner can see
 //! that something was there.
 
@@ -22,7 +22,7 @@ pub enum DelegationAuditEvent {
     Finished,
 }
 
-/// One cross-account task event.
+/// One event of a task from another device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DelegationAuditEntry {
@@ -30,13 +30,15 @@ pub struct DelegationAuditEntry {
     pub at: String,
     pub event: DelegationAuditEvent,
     pub job_id: String,
-    pub connection_id: String,
-    pub peer_user_id: String,
-    pub peer_display_name: String,
+    /// The shared assistant the task ran as.
+    pub assistant_id: String,
+    /// The requesting device: its id (derived from its sharing key), the
+    /// fingerprint the owner confirmed, and the names its grant records.
     pub peer_device_id: String,
+    pub peer_fingerprint: String,
+    pub peer_display_name: String,
     pub peer_device_name: String,
-    pub open_agent_id: String,
-    /// How far the owner trusted the connection when the event happened:
+    /// How far the owner trusted the share's users when the event happened:
     /// `normal` or `full`.
     pub trust: String,
     /// External agents (`acp:<client>`) the task started, on `finished`.
@@ -141,12 +143,11 @@ mod tests {
             at: "2026-10-30T10:00:00Z".to_string(),
             event,
             job_id: "delegation-1".to_string(),
-            connection_id: "conn-1".to_string(),
-            peer_user_id: "2002".to_string(),
+            assistant_id: "workspace".to_string(),
+            peer_device_id: "0123456789abcdef0123456789abcdef".to_string(),
+            peer_fingerprint: "AB23CD".to_string(),
             peer_display_name: "Bea".to_string(),
-            peer_device_id: "device-b".to_string(),
             peer_device_name: "B1 Desktop".to_string(),
-            open_agent_id: "helper".to_string(),
             trust: "normal".to_string(),
             external_agents: Vec::new(),
             state: state.map(str::to_string),

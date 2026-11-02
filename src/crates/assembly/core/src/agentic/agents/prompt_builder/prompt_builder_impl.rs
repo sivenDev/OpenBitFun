@@ -98,7 +98,8 @@ pub struct PromptBuilderContext {
     /// Distinguishes a resolved empty result from a caller that has not resolved instructions.
     pub workspace_instruction_files_context_resolved: bool,
     /// Set for a turn another device delegated here: its persona comes from
-    /// the opened assistant, and the owner's private context follows trust.
+    /// the shared assistant, its user profile from the tenant workspace, and
+    /// the owner's memory follows trust.
     pub delegated_turn: Option<DelegatedTurnFacts>,
 }
 
@@ -592,10 +593,10 @@ For instructions on locating and reading the transcripts, read: `{}`
                 facts
                     .assistant_workspace
                     .as_ref()
-                    .map(|root| (root.clone(), facts.includes_private_context()))
+                    .map(|root| (root.clone(), facts.tenant_workspace.clone()))
             });
-            let persona = if let Some((root, include_user_profile)) = delegated_assistant {
-                build_delegated_assistant_persona_prompt(&root, include_user_profile)
+            let persona = if let Some((root, tenant)) = delegated_assistant {
+                build_delegated_assistant_persona_prompt(&root, tenant.as_deref())
                     .await
                     .unwrap_or_default()
             } else if self.context.remote_execution.is_some() {

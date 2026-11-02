@@ -1,11 +1,11 @@
 mod audit;
-mod connection;
-mod connection_guard;
 mod delegation;
 mod permissions;
 pub(crate) mod protocol;
 mod query_file;
 mod runner;
+mod share_call;
+mod share_guard;
 mod store;
 mod worker;
 mod workspace;
@@ -70,20 +70,20 @@ async fn run_dispatch_verb_canonical(
     verb: &str,
     input: serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let Some(connection_id) = connection::source_connection(&input) else {
+    let Some(share_key) = share_call::source_share_key(&input) else {
         return run_admitted_verb(verb, input).await;
     };
     let original = input.clone();
-    let admitted = connection::admit_call(
+    let admitted = share_call::admit_call(
         &DispatchStore::open_default()?,
-        &delegation::open_agent_store()?,
+        &delegation::share_store()?,
         verb,
         input,
-        &connection_id,
+        &share_key,
     )
     .await?;
     let response = run_admitted_verb(verb, admitted).await?;
-    Ok(connection::present_response(verb, &original, response))
+    Ok(share_call::present_response(verb, &original, response))
 }
 
 async fn run_admitted_verb(verb: &str, input: serde_json::Value) -> Result<serde_json::Value> {
@@ -101,7 +101,7 @@ async fn run_admitted_verb(verb: &str, input: serde_json::Value) -> Result<serde
         "cancel" => serde_json::to_value(cancel(parse(input)?)?).context("encode cancel response"),
         "list" => {
             let request: DispatchListRequest = parse(input)?;
-            serde_json::to_value(list(request.source_connection_id.as_deref())?)
+            serde_json::to_value(list(request.source_share_key.as_deref())?)
                 .context("encode dispatch job list")
         }
         "answer" => {
@@ -161,16 +161,16 @@ pub(crate) fn run_workspace_sync(job_id: String) -> Result<()> {
     workspace::run_sync(job_id)
 }
 
-/// Assistants this device opens to the requester. The requester is the
-/// host-bound source device or connection of the call; there is no
-/// requester-less answer.
+/// Assistants this device shares with the requester. The requester is the
+/// device whose sharing key the LAN share host bound to the call; there is
+/// no requester-less answer.
 async fn catalog(
     request: openbitfun_services_core::dispatch_contract::DispatchCatalogRequest,
 ) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
     let path_manager = openbitfun_core::infrastructure::PathManager::new()
         .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
     catalog_from(
-        &openbitfun_core::service::delegation::OpenAgentStore::for_product_home(&path_manager),
+        &openbitfun_core::service::lan_share::SharedAssistantStore::for_product_home(&path_manager),
         request,
         &path_manager.assistant_workspace_base_dir(None),
     )
@@ -178,38 +178,36 @@ async fn catalog(
 }
 
 async fn catalog_from(
-    store: &openbitfun_core::service::delegation::OpenAgentStore,
+    store: &openbitfun_core::service::lan_share::SharedAssistantStore,
     request: openbitfun_services_core::dispatch_contract::DispatchCatalogRequest,
     assistants: &std::path::Path,
 ) -> Result<openbitfun_services_core::dispatch_contract::DispatchCatalogResponse> {
     use openbitfun_services_core::dispatch_contract::{
         DispatchCatalogAgent, DispatchCatalogResponse,
     };
-    let device_id = request
-        .source_device_id
-        .filter(|device_id| !device_id.trim().is_empty());
-    let connection_id = request
-        .source_connection_id
-        .filter(|connection_id| !connection_id.trim().is_empty());
-    let agents = match (device_id, connection_id) {
-        (Some(device_id), None) => store.granted_to_device(&device_id).await,
-        (None, Some(connection_id)) => store.granted_to_connection(&connection_id).await,
-        _ => bail!("dispatch catalog is answered only for a requesting device or connection"),
-    }
-    .context("read agents opened to other devices")?;
-    let mut entries = Vec::with_capacity(agents.len());
-    for agent in agents {
-        // An assistant removed after it was opened stays listed with why.
-        let unavailable =
-            openbitfun_core::service::delegation::assistant_directory(&agent.agent_type)
-                .filter(|directory| assistants.join(directory).is_dir())
-                .is_none()
-                .then(|| "the assistant no longer exists on this device".to_string());
+    let Some(share_key) = request
+        .source_share_key
+        .filter(|key| !key.trim().is_empty())
+    else {
+        bail!("dispatch catalog is answered only for a device a shared assistant is shared with");
+    };
+    let shares = store.shares().await.context("read shared assistants")?;
+    let mut entries = Vec::new();
+    for share in shares {
+        if share.grant(&share_key).is_none() || share.is_blocked(&share_key) {
+            continue;
+        }
+        // An assistant removed after it was shared stays listed with why.
+        let unavailable = (!assistants.join(&share.id).is_dir())
+            .then(|| "the assistant no longer exists on this device".to_string());
         entries.push(DispatchCatalogAgent {
-            id: agent.id,
-            agent_type: agent.agent_type,
-            display_name: agent.display_name,
-            description: agent.description,
+            agent_type: share.agent_type(),
+            display_name: share
+                .display_name
+                .clone()
+                .unwrap_or_else(|| share.id.clone()),
+            id: share.id,
+            description: None,
             unavailable,
         });
     }
@@ -252,14 +250,9 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
     capabilities.push(
         openbitfun_services_core::dispatch_contract::DISPATCH_FILE_CHUNKS_CAPABILITY.to_string(),
     );
-    // The open-agent list, `catalog`, and delegated submission ship together.
+    // Shared assistants, `catalog`, and delegated submission ship together.
     capabilities.push(
         openbitfun_services_core::dispatch_contract::DISPATCH_AGENT_DELEGATION_CAPABILITY
-            .to_string(),
-    );
-    // Connection grants, the connection gate, and connection-bound jobs.
-    capabilities.push(
-        openbitfun_services_core::dispatch_contract::DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY
             .to_string(),
     );
     // Assistant tasks may call external agents through this CLI's ACP client.
@@ -284,9 +277,9 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
     }
     let model_configured = readiness.model_configured();
     let mut readiness = readiness;
-    if request.source_connection_id.is_some() {
-        // Another account learns whether jobs can run, not which models this
-        // device configures or why one is missing.
+    if request.source_share_key.is_some() {
+        // A device using a shared assistant learns whether jobs can run, not
+        // which models this device configures or why one is missing.
         readiness.available_models.clear();
         let catalog = &mut readiness.model_catalog;
         catalog.models.clear();
@@ -323,11 +316,11 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
     openbitfun_agent_runtime::session_control::validate_session_id(&request.session_id)
         .map_err(anyhow::Error::msg)?;
     let store = DispatchStore::open_default()?;
-    // A delegated job is admitted against the open agent before anything is
-    // created, so a closed or narrowed grant refuses even a retried submit.
+    // A delegated job is admitted against its share before anything is
+    // created, so withdrawn access refuses even a retried submit.
     delegation::admit(
         &mut request,
-        &delegation::open_agent_store()?,
+        &delegation::share_store()?,
         &delegation::DelegationRoots::for_device()?,
     )
     .await?;
@@ -361,8 +354,8 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
         .unwrap_or_else(|| truncate_chars(request.prompt.trim(), 120));
     request.title = Some(title.clone());
 
-    // A task over the connection's limit is accepted and waits in its worker
-    // for a free place (`connection_guard::wait_for_place`).
+    // A task over its share's limit is accepted and waits in its worker for
+    // a free place (`share_guard::wait_for_place`).
     let outcome = store.create_job_with_intent(intent, request.clone(), title)?;
     let state = match outcome {
         CreateJobOutcome::Created(state) => {
@@ -752,38 +745,40 @@ fn cancel_in_store_with_process_checks(
     })
 }
 
-/// Jobs on this device; for a connection, only the jobs it submitted.
-fn list(connection_id: Option<&str>) -> Result<Vec<DispatchJobListEntry>> {
+/// Jobs on this device; for a device using a shared assistant, only the
+/// jobs it submitted.
+fn list(share_key: Option<&str>) -> Result<Vec<DispatchJobListEntry>> {
     let store = DispatchStore::open_default()?;
-    list_in_store(&store, connection_id)
+    list_in_store(&store, share_key)
 }
 
 fn list_in_store(
     store: &DispatchStore,
-    connection_id: Option<&str>,
+    share_key: Option<&str>,
 ) -> Result<Vec<DispatchJobListEntry>> {
-    for job in visible_jobs(store, store.list_jobs()?, connection_id) {
+    for job in visible_jobs(store, store.list_jobs()?, share_key) {
         let _ = reconcile_worker_liveness(store, &job.job_id);
     }
-    Ok(visible_jobs(store, store.list_jobs()?, connection_id))
+    Ok(visible_jobs(store, store.list_jobs()?, share_key))
 }
 
-/// The jobs a caller may see: all for this device, its own for a connection.
+/// The jobs a caller may see: all for this device, its own for a device
+/// using a shared assistant.
 fn visible_jobs(
     store: &DispatchStore,
     jobs: Vec<DispatchJobListEntry>,
-    connection_id: Option<&str>,
+    share_key: Option<&str>,
 ) -> Vec<DispatchJobListEntry> {
-    let Some(connection_id) = connection_id else {
+    let Some(share_key) = share_key else {
         return jobs;
     };
     jobs.into_iter()
         .filter(|job| {
             store
                 .load_job(&job.job_id)
-                .is_ok_and(|record| connection::owns(&record, connection_id))
+                .is_ok_and(|record| share_call::owns(&record, share_key))
         })
-        // Another account learns neither this device's paths, its models,
+        // Another device learns neither this device's paths, its models,
         // nor how its owner placed the job.
         .map(|job| DispatchJobListEntry {
             workspace_path: String::new(),
@@ -1255,110 +1250,101 @@ mod tests {
     use crate::dispatch::protocol::{DispatchApprovalPolicy, DispatchSubmitRequest};
 
     #[tokio::test]
-    async fn catalog_marks_assistants_removed_after_they_were_opened() {
-        use openbitfun_core::service::delegation::OpenAgentStore;
-        use openbitfun_services_core::dispatch_contract::DispatchCatalogRequest;
+    async fn catalog_lists_only_assistants_shared_with_the_bound_device() {
+        use delegation::test_support::{share_assistant, share_key};
+        use openbitfun_core::service::lan_share::{ShareSettings, SharedAssistantStore};
+        use openbitfun_services_core::dispatch_contract::{
+            bind_dispatch_source_share_key, DispatchCatalogRequest,
+        };
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = OpenAgentStore::new(dir.path().join("open-agents.json"));
+        let store = SharedAssistantStore::new(dir.path().join("shared-assistants.json"));
         let assistants = dir.path().join("personal_assistant");
-        for (id, directory) in [("ann", "workspace-ann"), ("bob", "workspace-bob")] {
-            delegation::test_support::open_assistant(
+        let request_from = |seed: u8| -> DispatchCatalogRequest {
+            serde_json::from_value(
+                bind_dispatch_source_share_key(
+                    "dispatch_target_catalog",
+                    serde_json::json!({ "__sourceShareKey": share_key(9) }),
+                    &share_key(seed),
+                )
+                .unwrap(),
+            )
+            .expect("catalog request")
+        };
+        let ids =
+            |catalog: openbitfun_services_core::dispatch_contract::DispatchCatalogResponse| {
+                catalog
+                    .agents
+                    .into_iter()
+                    .map(|agent| (agent.id, agent.display_name, agent.unavailable))
+                    .collect::<Vec<_>>()
+            };
+
+        // Nothing is shared by default.
+        assert!(catalog_from(&store, request_from(1), &assistants)
+            .await
+            .unwrap()
+            .agents
+            .is_empty());
+
+        for (directory, seeds) in [
+            ("workspace-ann", &[1u8][..]),
+            ("workspace-bob", &[1u8, 2][..]),
+        ] {
+            share_assistant(
                 &store,
                 &assistants,
-                id,
                 directory,
-                &["laptop"],
+                ShareSettings::default(),
+                seeds,
             )
             .await;
         }
+        store
+            .set_display_name("workspace-ann", "Ann")
+            .await
+            .unwrap();
         std::fs::remove_dir_all(assistants.join("workspace-bob")).unwrap();
-        let catalog = catalog_from(
-            &store,
-            DispatchCatalogRequest {
-                source_device_id: Some("laptop".to_string()),
-                source_connection_id: None,
-            },
-            &assistants,
-        )
-        .await
-        .unwrap();
-        let states: Vec<_> = catalog
-            .agents
-            .iter()
-            .map(|agent| (agent.id.as_str(), agent.unavailable.as_deref()))
-            .collect();
-        assert_eq!(
-            states,
-            vec![
-                ("ann", None),
-                ("bob", Some("the assistant no longer exists on this device")),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn catalog_lists_only_agents_granted_to_the_bound_requester() {
-        use openbitfun_core::service::delegation::{OpenAgentStore, ALL_SAME_ACCOUNT_DEVICES};
-        use openbitfun_services_core::dispatch_contract::{
-            bind_dispatch_source_device, DispatchCatalogRequest,
-        };
-        let dir = tempfile::tempdir().expect("tempdir");
-        let store = OpenAgentStore::new(dir.path().join("open-agents.json"));
-        let assistants = dir.path().join("personal_assistant");
-        let request_from = |device: &str| -> DispatchCatalogRequest {
-            serde_json::from_value(bind_dispatch_source_device(
-                "dispatch_target_catalog",
-                serde_json::json!({ "__sourceDeviceId": "laptop" }),
-                device,
-            ))
-            .expect("catalog request")
-        };
-
-        // Nothing is open by default.
-        let empty = catalog_from(&store, request_from("laptop"), &assistants)
+        let first = catalog_from(&store, request_from(1), &assistants)
             .await
             .unwrap();
-        assert!(empty.agents.is_empty());
-
-        delegation::test_support::open_assistant(
-            &store,
-            &assistants,
-            "for-laptop",
-            "workspace",
-            &["laptop"],
-        )
-        .await;
-        delegation::test_support::open_assistant(
-            &store,
-            &assistants,
-            "for-all",
-            "workspace-all",
-            &[ALL_SAME_ACCOUNT_DEVICES],
-        )
-        .await;
-
-        let laptop = catalog_from(&store, request_from("laptop"), &assistants)
-            .await
-            .unwrap();
-        let ids: Vec<_> = laptop
-            .agents
-            .iter()
-            .map(|agent| agent.id.as_str())
-            .collect();
-        assert_eq!(ids, vec!["for-laptop", "for-all"]);
-        assert_eq!(laptop.agents[0].agent_type, "assistant:workspace");
-        assert_eq!(laptop.agents[0].unavailable, None);
+        assert_eq!(first.agents[0].agent_type, "assistant:workspace-ann");
         // Target paths never leave the target.
-        assert!(!serde_json::to_string(&laptop)
+        assert!(!serde_json::to_string(&first)
             .unwrap()
             .contains(assistants.to_string_lossy().as_ref()));
+        assert_eq!(
+            ids(first),
+            vec![
+                ("workspace-ann".to_string(), "Ann".to_string(), None),
+                (
+                    "workspace-bob".to_string(),
+                    "workspace-bob".to_string(),
+                    Some("the assistant no longer exists on this device".to_string())
+                ),
+            ]
+        );
+        // A forged key in the payload is replaced by the bound one.
+        let second = ids(catalog_from(&store, request_from(2), &assistants)
+            .await
+            .unwrap());
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].0, "workspace-bob");
+        assert!(catalog_from(&store, request_from(3), &assistants)
+            .await
+            .unwrap()
+            .agents
+            .is_empty());
 
-        // A forged source device in the payload is replaced by the bound sender.
-        let phone = catalog_from(&store, request_from("phone"), &assistants)
+        // A blocked device sees nothing of that share.
+        store
+            .block("workspace-bob", delegation::test_support::peer(2))
             .await
             .unwrap();
-        let ids: Vec<_> = phone.agents.iter().map(|agent| agent.id.as_str()).collect();
-        assert_eq!(ids, vec!["for-all"]);
+        assert!(catalog_from(&store, request_from(2), &assistants)
+            .await
+            .unwrap()
+            .agents
+            .is_empty());
 
         // Without a bound requester there is no answer.
         assert!(
@@ -1366,91 +1352,51 @@ mod tests {
                 .await
                 .is_err()
         );
-
-        // A connection sees only what was granted to it, never device grants.
-        let over = |connection: &str| -> DispatchCatalogRequest {
-            serde_json::from_value(
-                openbitfun_services_core::dispatch_contract::bind_dispatch_source_connection(
-                    "dispatch_target_catalog",
-                    serde_json::json!({ "__sourceDeviceId": "laptop" }),
-                    connection,
-                )
-                .unwrap(),
-            )
-            .expect("catalog request")
-        };
-        assert!(catalog_from(&store, over("conn-1"), &assistants)
-            .await
-            .unwrap()
-            .agents
-            .is_empty());
-        store
-            .grant_connection("for-laptop", "conn-1")
-            .await
-            .unwrap();
-        let ids =
-            |catalog: openbitfun_services_core::dispatch_contract::DispatchCatalogResponse| {
-                catalog
-                    .agents
-                    .into_iter()
-                    .map(|agent| agent.id)
-                    .collect::<Vec<_>>()
-            };
-        assert_eq!(
-            ids(catalog_from(&store, over("conn-1"), &assistants)
-                .await
-                .unwrap()),
-            vec!["for-laptop"]
-        );
-        assert!(ids(catalog_from(&store, over("conn-2"), &assistants)
-            .await
-            .unwrap())
-        .is_empty());
-        // Both sources at once is not a requester.
-        assert!(catalog_from(
-            &store,
-            DispatchCatalogRequest {
-                source_device_id: Some("laptop".to_string()),
-                source_connection_id: Some("conn-1".to_string()),
-            },
-            &assistants
-        )
-        .await
-        .is_err());
     }
 
     #[test]
-    fn a_connection_lists_only_its_own_jobs() {
+    fn a_device_lists_only_its_own_jobs() {
+        use delegation::test_support::share_key;
         let dir = tempfile::tempdir().expect("tempdir");
         let store = DispatchStore::open(dir.path().join("dispatch")).expect("store");
-        for (job_id, connection) in [("job-a", Some("conn-1")), ("job-b", None)] {
+        for (job_id, seed) in [("job-a", Some(1u8)), ("job-b", None)] {
             let mut request = test_request(job_id);
-            request.source_connection_id = connection.map(str::to_string);
-            if connection.is_some() {
+            request.source_share_key = seed.map(share_key);
+            if seed.is_some() {
                 request.delegation = Some(protocol::DispatchDelegation {
-                    open_agent_id: "helper".to_string(),
+                    assistant_id: "workspace".to_string(),
                     source: Default::default(),
                 });
                 request.assistant_workspace = Some("/home/me/personal_assistant/workspace".into());
+                request.source_user = Some(protocol::DispatchShareUser {
+                    device_id: "0123".to_string(),
+                    fingerprint: "AB23CD".to_string(),
+                    display_name: "Bea".to_string(),
+                    device_name: "Bea's Mac".to_string(),
+                });
             }
             store
                 .create_job_with_intent(request.clone(), request, job_id.to_string())
                 .expect("create");
         }
-        let ids = |connection: Option<&str>| {
-            visible_jobs(&store, store.list_jobs().expect("list"), connection)
+        let ids = |key: Option<String>| {
+            visible_jobs(&store, store.list_jobs().expect("list"), key.as_deref())
                 .into_iter()
                 .map(|job| job.job_id)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(Some("conn-1")), vec!["job-a"]);
-        assert!(ids(Some("conn-2")).is_empty());
+        assert_eq!(ids(Some(share_key(1))), vec!["job-a"]);
+        assert!(ids(Some(share_key(2))).is_empty());
         let mut all = ids(None);
         all.sort();
         assert_eq!(all, vec!["job-a", "job-b"]);
 
-        // The connection sees its job without this device's path or model.
-        let shown = visible_jobs(&store, store.list_jobs().expect("list"), Some("conn-1"));
+        // The device sees its job without this device's path or model.
+        let shown = visible_jobs(
+            &store,
+            store.list_jobs().expect("list"),
+            Some(&share_key(1)),
+        );
         assert_eq!(shown[0].workspace_path, "");
         assert_eq!(shown[0].model, None);
         assert_eq!(shown[0].delegation, None);
@@ -1459,8 +1405,15 @@ mod tests {
         // The owner sees which assistant runs it and who sent it.
         let delegated = local.iter().find(|job| job.job_id == "job-a").unwrap();
         let summary = delegated.delegation.as_ref().expect("delegation summary");
-        assert_eq!(summary.open_agent_id, "helper");
-        assert_eq!(summary.source_connection_id.as_deref(), Some("conn-1"));
+        assert_eq!(summary.assistant_id, "workspace");
+        assert_eq!(summary.source_share_key, Some(share_key(1)));
+        assert_eq!(
+            summary
+                .source_user
+                .as_ref()
+                .map(|user| user.display_name.as_str()),
+            Some("Bea")
+        );
         assert_eq!(
             summary.assistant_workspace.as_deref(),
             Some("/home/me/personal_assistant/workspace")
@@ -1535,8 +1488,8 @@ mod tests {
             attachments: Vec::new(),
             setup_audit: Vec::new(),
             delegation: None,
-            source_device_id: None,
-            source_connection_id: None,
+            source_share_key: None,
+            source_user: None,
             assistant_workspace: None,
         }
     }
@@ -1643,7 +1596,7 @@ mod tests {
             &store,
             DispatchCancelRequest {
                 job_id: "job-no-match".to_string(),
-                source_connection_id: None,
+                source_share_key: None,
             },
             |_pid| true,
             |_pid, _job_id| false,
@@ -1675,7 +1628,7 @@ mod tests {
             &store,
             DispatchCancelRequest {
                 job_id: "job-signal-failure".to_string(),
-                source_connection_id: None,
+                source_share_key: None,
             },
             |_pid| true,
             |_pid, _job_id| true,
@@ -1704,7 +1657,7 @@ mod tests {
             &store,
             DispatchCancelRequest {
                 job_id: "job-stopped".to_string(),
-                source_connection_id: None,
+                source_share_key: None,
             },
             |_pid| false,
             |_pid, _job_id| panic!("an absent process must not undergo identity inspection"),

@@ -499,8 +499,7 @@
       "discoveringExternal": "正在发现外部会话…",
       "delegated": {
         "external": "外部任务",
-        "fromAccount": "来自 {{name}}",
-        "fromDevice": "来自 {{device}}",
+        "from": "来自 {{name}} · {{device}}",
         "waiting": "等待审批 {{count}} 项",
         "untitled": "未命名任务",
         "unavailable": "这个外部任务的会话已不可用"

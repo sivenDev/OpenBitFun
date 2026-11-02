@@ -572,8 +572,8 @@ fn queued_reason(device_name: &str, hold: &RemoteAgentJobHold) -> String {
         None => "a limited number of tasks".to_string(),
     };
     match hold.reason {
-        openbitfun_runtime_ports::RemoteAgentHoldReason::ConnectionLimit => format!(
-            "Queued on {device_name}: its owner allows {allowed} at a time from this connection, and that many are running.\nUnblock: one of them finishes, or the owner of {device_name} raises the limit. The task starts on its own."
+        openbitfun_runtime_ports::RemoteAgentHoldReason::ShareLimit => format!(
+            "Queued on {device_name}: its owner allows this assistant {allowed} at a time for other devices, and that many are running.\nUnblock: one of them finishes, or the owner of {device_name} raises the limit. The task starts on its own."
         ),
     }
 }

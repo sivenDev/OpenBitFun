@@ -13,8 +13,8 @@ pub mod config; // Config management
 pub(crate) mod coordination_persistence;
 #[cfg(all(feature = "agent-runtime", feature = "scheduled-jobs"))]
 pub mod cron; // Scheduled jobs
-pub mod delegation; // Agents this device opens to other devices
-pub mod delegation_audit; // Tasks other accounts delegated to this device
+pub mod delegation; // Delegated tasks that run as this device's assistants
+pub mod delegation_audit; // Tasks other devices delegated to this device
 #[cfg(feature = "dispatch-store")]
 pub mod dispatch; // Outbound dispatch observer index and target contracts
 #[cfg(feature = "filesystem")]
@@ -24,6 +24,7 @@ pub mod git; // Git service
 pub mod i18n; // I18n service
 #[cfg(feature = "agent-runtime")]
 pub(crate) mod instruction_context; // Workspace instruction file prompt helpers
+pub mod lan_share; // Assistants shared on the local network and their tenant workspaces
 #[cfg(feature = "mcp-runtime")]
 pub mod mcp; // MCP (Model Context Protocol) system
 #[cfg(feature = "remote-connect")]

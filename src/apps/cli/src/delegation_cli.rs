@@ -74,15 +74,14 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                     }
                 };
                 println!(
-                    "- {} {} task {} for {} ({}), device {}, via {} with {}",
+                    "- {} {} task {} for {} on {} ({}) with {}",
                     escape_terminal_text(&entry.at),
                     event,
                     escape_terminal_text(&entry.job_id),
                     escape_terminal_text(&entry.peer_display_name),
-                    escape_terminal_text(&entry.peer_user_id),
                     escape_terminal_text(&entry.peer_device_name),
-                    escape_terminal_text(&entry.connection_id),
-                    escape_terminal_text(&entry.open_agent_id),
+                    escape_terminal_text(&entry.peer_fingerprint),
+                    escape_terminal_text(&entry.assistant_id),
                 );
                 println!("  trust: {}", escape_terminal_text(&entry.trust));
                 if !entry.external_agents.is_empty() {

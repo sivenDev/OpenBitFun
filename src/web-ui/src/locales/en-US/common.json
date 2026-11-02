@@ -499,8 +499,7 @@
       "discoveringExternal": "Discovering external sessions…",
       "delegated": {
         "external": "Outside task",
-        "fromAccount": "from {{name}}",
-        "fromDevice": "from {{device}}",
+        "from": "from {{name}} · {{device}}",
         "waiting": "{{count}} awaiting approval",
         "untitled": "Untitled task",
         "unavailable": "This external task session is no longer available"

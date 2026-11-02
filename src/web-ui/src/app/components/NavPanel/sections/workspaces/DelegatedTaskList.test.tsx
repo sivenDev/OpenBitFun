@@ -42,9 +42,9 @@ const workspace = { id: 'ws-1', rootPath: ROOT, name: 'Nova' } as WorkspaceInfo;
 
 function task(jobId: string, overrides: Record<string, unknown> = {}) {
   return {
-    jobId, sessionId: `s-${jobId}`, state: 'running', title: `Task ${jobId}`, openAgentId: 'workspace',
+    jobId, sessionId: `s-${jobId}`, state: 'running', title: `Task ${jobId}`, assistantId: 'workspace',
     agentType: 'assistant:workspace', assistantWorkspace: ROOT, pendingPermissionCount: 0,
-    source: { kind: 'device', deviceId: 'laptop', deviceName: 'Laptop' },
+    source: { deviceId: '0123', fingerprint: 'AB23CD', displayName: 'Ann', deviceName: 'Laptop' },
     ...overrides,
   };
 }
@@ -68,7 +68,7 @@ describe('DelegatedTaskList', () => {
 
   it('lists the tasks this assistant runs for others, with their source', async () => {
     mocks.listTasks.mockResolvedValue([
-      task('a', { pendingPermissionCount: 2, source: { kind: 'connection', connectionId: 'c1', accountName: 'Bea' } }),
+      task('a', { pendingPermissionCount: 2, source: { deviceId: '4567', fingerprint: 'EF45GH', displayName: 'Bea', deviceName: 'Studio' } }),
       task('b'),
       // The runner may spell the directory differently; the assistant type decides.
       task('c', { assistantWorkspace: `/private${ROOT}` }),
@@ -77,11 +77,11 @@ describe('DelegatedTaskList', () => {
     await render();
     expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
       .toEqual(['Task a', 'Task b', 'Task c']);
-    expect(rows()[0].textContent).toContain('nav.sessions.delegated.fromAccount:Bea');
+    expect(rows()[0].textContent).toContain('nav.sessions.delegated.from:Bea');
     expect(rows()[0].textContent).toContain('nav.sessions.delegated.waiting:2');
     expect(rows()[0].classList.contains('is-waiting')).toBe(true);
     expect(rows()[1].classList.contains('is-waiting')).toBe(false);
-    expect(rows()[1].textContent).toContain('nav.sessions.delegated.fromDevice:Laptop');
+    expect(rows()[1].textContent).toContain('nav.sessions.delegated.from:Ann');
 
     // A task opens as its own read-only session.
     mocks.openTask.mockResolvedValue(true);

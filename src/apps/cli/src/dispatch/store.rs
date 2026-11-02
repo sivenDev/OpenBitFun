@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::protocol::{
     DispatchAppendRequest, DispatchApprovalPolicy, DispatchAttachment, DispatchContinueRequest,
-    DispatchDelegatedJobSummary, DispatchEvent, DispatchHold, DispatchJobListEntry, DispatchJobState,
-    DispatchSubmitRequest, DispatchTurnKind, DISPATCH_PROTOCOL_VERSION,
+    DispatchDelegatedJobSummary, DispatchEvent, DispatchHold, DispatchJobListEntry,
+    DispatchJobState, DispatchSubmitRequest, DispatchTurnKind, DISPATCH_PROTOCOL_VERSION,
 };
 
 const JOB_RECORD_FILE: &str = "job.json";
@@ -212,36 +212,77 @@ struct RepoCacheRetentionRecord {
     last_used_at: String,
 }
 
-/// What the retention cleanup knows about delegated tasks: how long their
-/// grants keep them, and where their directories and sessions live.
+/// What the retention cleanup knows about tasks from other devices: how long
+/// their shares keep them, where the tenant workspaces are, and how their
+/// sessions are removed.
 #[derive(Default)]
 pub(crate) struct DelegatedRetention {
-    /// Opened assistants; `None` when they cannot be read, so delegated tasks
+    /// Shared assistants; `None` when they cannot be read, so delegated tasks
     /// wait for a later cleanup instead of using a guessed period.
-    agents: Option<Vec<openbitfun_core::service::delegation::OpenAgent>>,
-    /// Parent of delegated task directories; nothing outside it is removed.
-    task_root: Option<PathBuf>,
-    /// The session directory of a task directory.
-    session_root: Option<Box<dyn Fn(&Path) -> PathBuf>>,
+    shares: Option<Vec<openbitfun_core::service::lan_share::SharedAssistant>>,
+    /// Parent of the tenant workspaces; no session outside it is removed.
+    tenant_root: Option<PathBuf>,
+    /// Removes the session of an expired task from the sessions of its
+    /// tenant workspace. The workspace itself stays: it holds the device's
+    /// other sessions and its `USER.md`.
+    remove_session: Option<Box<dyn Fn(&Path, &str) -> Result<()>>>,
+    /// Runs after a cleanup removed delegated tasks: deletes the tenant
+    /// workspaces no device holds a grant for and no session is left in.
+    prune_tenants: Option<Box<dyn Fn()>>,
+}
+
+/// Runs `future` to completion on a thread of its own, so the synchronous
+/// cleanup can use async session stores from inside or outside a runtime.
+fn run_detached<T: Send + 'static>(
+    future: impl std::future::Future<Output = T> + Send + 'static,
+) -> Result<T> {
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map(|runtime| runtime.block_on(future))
+    })
+    .join()
+    .map_err(|_| anyhow!("retention cleanup thread panicked"))?
+    .context("start retention cleanup runtime")
 }
 
 impl DelegatedRetention {
     fn for_product_home(path_manager: openbitfun_core::infrastructure::PathManager) -> Self {
-        use openbitfun_core::service::delegation::{delegation_workspaces_root, OpenAgentStore};
-        let agents = match OpenAgentStore::for_product_home(&path_manager).agents_now() {
-            Ok(agents) => Some(agents),
+        use openbitfun_core::service::lan_share::{tenants_root, SharedAssistantStore};
+        let store = SharedAssistantStore::for_product_home(&path_manager);
+        let shares = match store.shares_now() {
+            Ok(shares) => Some(shares),
             Err(error) => {
                 tracing::warn!(
-                    "Keeping delegated tasks past retention, open agents unreadable: error={error}"
+                    "Keeping delegated tasks past retention, shared assistants unreadable: error={error}"
                 );
                 None
             }
         };
+        let path_manager = std::sync::Arc::new(path_manager);
+        let sessions = std::sync::Arc::clone(&path_manager);
         Self {
-            agents,
-            task_root: Some(delegation_workspaces_root(&path_manager)),
-            session_root: Some(Box::new(move |task_dir: &Path| {
-                path_manager.project_runtime_root(task_dir)
+            shares,
+            tenant_root: Some(tenants_root(&path_manager)),
+            remove_session: Some(Box::new(move |tenant: &Path, session_id: &str| {
+                let store = openbitfun_services_core::session::SessionMetadataStore::new(
+                    sessions.project_sessions_dir(tenant),
+                );
+                let session_id = session_id.to_string();
+                run_detached(async move { store.delete_session_dir_and_index(&session_id).await })?
+                    .map_err(|error| anyhow!("remove expired delegated session: {error}"))
+            })),
+            prune_tenants: Some(Box::new(move || {
+                let path_manager = std::sync::Arc::clone(&path_manager);
+                let store = store.clone();
+                match run_detached(async move {
+                    openbitfun_core::service::lan_share::prune_tenants(&path_manager, &store).await
+                }) {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => tracing::warn!("Tenant workspace cleanup skipped: {error}"),
+                    Err(error) => tracing::warn!("Tenant workspace cleanup skipped: {error:#}"),
+                }
             })),
         }
     }
@@ -249,56 +290,37 @@ impl DelegatedRetention {
     /// Days `job` is kept after its last turn ends, or `None` to keep it for
     /// now.
     fn retention_days(&self, job: &DispatchJobRecord) -> Option<i64> {
-        use openbitfun_core::service::delegation::{session_retention_days, DelegationRequester};
         let Some(delegation) = &job.request.delegation else {
             return Some(TERMINAL_JOB_RETENTION_DAYS);
         };
-        let agents = match &self.agents {
-            Some(agents) => agents.as_slice(),
-            None => return None,
-        };
-        let requester = match &job.request.source_connection_id {
-            Some(connection_id) => DelegationRequester::Connection(connection_id),
-            None => DelegationRequester::Device(
-                job.request.source_device_id.as_deref().unwrap_or_default(),
-            ),
-        };
-        Some(i64::from(session_retention_days(
-            agents,
-            &delegation.open_agent_id,
-            requester,
-        )))
+        let shares = self.shares.as_ref()?;
+        // A share the owner stopped keeps its tasks the default period.
+        Some(i64::from(
+            shares
+                .iter()
+                .find(|share| share.id == delegation.assistant_id)
+                .map_or(
+                    openbitfun_core::service::lan_share::DEFAULT_SESSION_RETENTION_DAYS,
+                    |share| share.settings.session_retention_days,
+                ),
+        ))
     }
 
-    /// Removes an expired delegated task's own directory and its session.
-    fn remove_task_directories(&self, workspace_path: &str) -> Result<()> {
-        let Some(task_root) = &self.task_root else {
+    /// Removes an expired delegated task's session from its tenant workspace.
+    fn remove_task_session(&self, workspace_path: &str, session_id: &str) -> Result<()> {
+        let (Some(tenant_root), Some(remove_session)) = (&self.tenant_root, &self.remove_session)
+        else {
             return Ok(());
         };
-        let task_dir = Path::new(workspace_path);
-        if !task_dir.starts_with(task_root) || task_dir == task_root.as_path() {
+        let tenant = Path::new(workspace_path);
+        if !tenant.starts_with(tenant_root) || tenant == tenant_root.as_path() {
+            tracing::warn!(
+                "Skipping a delegated session outside the tenant workspaces: {}",
+                tenant.display()
+            );
             return Ok(());
         }
-        let mut directories = vec![task_dir.to_path_buf()];
-        if let Some(session_root) = &self.session_root {
-            directories.push(session_root(task_dir));
-        }
-        for directory in directories {
-            match fs::symlink_metadata(&directory) {
-                Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {
-                    fs::remove_dir_all(&directory).with_context(|| {
-                        format!("remove expired delegated task {}", directory.display())
-                    })?;
-                }
-                Ok(_) => tracing::warn!(
-                    "Skipping unsafe expired delegated task path: {}",
-                    directory.display()
-                ),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok(())
+        remove_session(tenant, session_id)
     }
 }
 
@@ -1161,10 +1183,10 @@ impl DispatchStore {
                     .delegation
                     .as_ref()
                     .map(|delegation| DispatchDelegatedJobSummary {
-                        open_agent_id: delegation.open_agent_id.clone(),
+                        assistant_id: delegation.assistant_id.clone(),
                         assistant_workspace: job.request.assistant_workspace.clone(),
-                        source_device_id: job.request.source_device_id.clone(),
-                        source_connection_id: job.request.source_connection_id.clone(),
+                        source_share_key: job.request.source_share_key.clone(),
+                        source_user: job.request.source_user.clone(),
                         source: delegation.source.clone(),
                     });
             let pending_permission_count = if state.state.is_terminal() {
@@ -1383,7 +1405,8 @@ impl DispatchStore {
     }
 
     /// Removes terminal jobs kept longer than their retention period: 30 days
-    /// for ordinary jobs, and for a delegated task the period its grant sets.
+    /// for ordinary jobs, and for a task from another device the period its
+    /// share sets. Then removes the tenant workspaces nobody needs any more.
     fn collect_expired_jobs(
         &self,
         now: chrono::DateTime<chrono::Utc>,
@@ -1517,7 +1540,10 @@ impl DispatchStore {
                 Err(error) => return Err(error.into()),
             }
             if job_record.request.delegation.is_some() {
-                delegated.remove_task_directories(&job_record.request.workspace_path)?;
+                delegated.remove_task_session(
+                    &job_record.request.workspace_path,
+                    &job_record.request.session_id,
+                )?;
             }
             drop(workspace_runtime_lock);
             drop(git_operation_lock);
@@ -1587,6 +1613,9 @@ impl DispatchStore {
             removed += 1;
         }
         self.collect_expired_repo_clones(now)?;
+        if let Some(prune_tenants) = &delegated.prune_tenants {
+            prune_tenants();
+        }
         Ok(removed)
     }
 
@@ -1877,20 +1906,15 @@ pub(crate) struct WorkspaceLock {
 }
 
 impl DispatchStore {
-    /// Serializes admissions of one connection, so its task count and the
-    /// job that count admits are one step.
-    pub(crate) fn lock_connection_admission(&self, connection_id: &str) -> Result<WorkspaceLock> {
+    /// Serializes admissions of one shared assistant's tasks, so its task
+    /// count and the job that count admits are one step.
+    pub(crate) fn lock_share_admission(&self, assistant_id: &str) -> Result<WorkspaceLock> {
         use sha2::{Digest, Sha256};
-        let digest: String = Sha256::digest(connection_id.as_bytes())[..16]
+        let digest: String = Sha256::digest(assistant_id.as_bytes())[..16]
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        WorkspaceLock::acquire(
-            &self
-                .root
-                .join("locks")
-                .join(format!("connection-{digest}.lock")),
-        )
+        WorkspaceLock::acquire(&self.root.join("locks").join(format!("share-{digest}.lock")))
     }
 }
 
@@ -2442,8 +2466,8 @@ mod tests {
             attachments: Vec::new(),
             setup_audit: Vec::new(),
             delegation: None,
-            source_device_id: None,
-            source_connection_id: None,
+            source_share_key: None,
+            source_user: None,
             assistant_workspace: None,
         }
     }
@@ -2561,7 +2585,7 @@ mod tests {
             approval_policy: None,
             kind: DispatchTurnKind::Prompt,
             attachments: Vec::new(),
-            source_connection_id: None,
+            source_share_key: None,
         }
     }
 
@@ -3007,7 +3031,7 @@ mod tests {
             content: "Continue with tests".to_string(),
             display_content: None,
             attachments: Vec::new(),
-            source_connection_id: None,
+            source_share_key: None,
         };
 
         assert!(store
@@ -3627,12 +3651,14 @@ mod tests {
     }
 
     #[test]
-    fn delegated_tasks_are_kept_as_long_as_their_grant_says() {
-        use openbitfun_core::service::delegation::{ConnectionGrant, ConnectionLimits, OpenAgent};
+    fn delegated_sessions_are_kept_as_long_as_their_share_says() {
+        use openbitfun_core::service::lan_share::SharedAssistant;
+        use std::sync::{Arc, Mutex};
 
         let (dir, store) = store();
-        let task_root = dir.path().join("delegation").join("workspaces");
-        let sessions_root = dir.path().join("projects");
+        let tenant_root = dir.path().join("delegation").join("tenants");
+        let tenant = tenant_root.join("workspace").join("0123");
+        let notes_tenant = tenant_root.join("workspace-notes").join("0123");
         let now = chrono::Utc::now();
         let finish = |job_id: &str, days_ago: i64| {
             store
@@ -3646,93 +3672,102 @@ mod tests {
             )
             .expect("age terminal state");
         };
-        let delegated = |job_id: &str, connection_id: Option<&str>| {
+        let delegated = |job_id: &str, assistant_id: &str, workspace: &Path| {
             let mut request = request(job_id);
-            let task_dir = task_root.join("helper").join("requester").join(job_id);
-            create_private_dir(&task_dir).expect("task dir");
-            create_private_dir(&sessions_root.join(job_id)).expect("session dir");
-            request.workspace_path = task_dir.to_string_lossy().into_owned();
+            request.session_id = format!("session-{job_id}");
+            request.workspace_path = workspace.to_string_lossy().into_owned();
             request.delegation = Some(DispatchDelegation {
-                open_agent_id: "helper".to_string(),
+                assistant_id: assistant_id.to_string(),
                 source: DispatchDelegationSource::default(),
             });
-            request.source_connection_id = connection_id.map(str::to_string);
-            request.source_device_id = connection_id.is_none().then(|| "laptop".to_string());
-            store.create_job(request, "Task".to_string()).expect("create job");
+            request.source_share_key = Some("ab".repeat(32));
+            store
+                .create_job(request, "Task".to_string())
+                .expect("create job");
         };
-        // conn-1 keeps sessions 1 day, conn-2 has no period (7 days), and
-        // same-account devices keep them 30 days.
-        let agents = vec![OpenAgent {
-            id: "helper".to_string(),
-            agent_type: "assistant:workspace".to_string(),
-            display_name: "Helper".to_string(),
-            description: None,
-            same_account_devices: vec!["laptop".to_string()],
-            session_retention_days: Some(30),
-            connections: vec![
-                ConnectionGrant {
-                    connection_id: "conn-1".to_string(),
-                    limits: ConnectionLimits {
-                        session_retention_days: Some(1),
-                        ..ConnectionLimits::default()
-                    },
-                },
-                ConnectionGrant {
-                    connection_id: "conn-2".to_string(),
-                    limits: ConnectionLimits::default(),
-                },
-            ],
-        }];
-        delegated("delegation-short", Some("conn-1"));
+        // `workspace` keeps sessions 1 day; `workspace-notes` is no longer
+        // shared, so its tasks are kept the default 7 days.
+        let shares: Vec<SharedAssistant> = serde_json::from_value(serde_json::json!([{
+            "id": "workspace",
+            "trust": "normal",
+            "sessionRetentionDays": 1,
+            "maxConcurrentTasks": 2,
+            "sharedAt": "2026-11-01T00:00:00Z",
+        }]))
+        .expect("share");
+        assert_eq!(shares[0].settings.session_retention_days, 1);
+        delegated("delegation-short", "workspace", &tenant);
         finish("delegation-short", 2);
-        delegated("delegation-default", Some("conn-2"));
-        finish("delegation-default", 2);
-        delegated("delegation-default-old", Some("conn-2"));
-        finish("delegation-default-old", 8);
-        delegated("delegation-device", None);
-        finish("delegation-device", 8);
-        delegated("delegation-withdrawn", Some("conn-gone"));
-        finish("delegation-withdrawn", 8);
+        delegated("delegation-fresh", "workspace", &tenant);
+        finish("delegation-fresh", 0);
+        delegated("delegation-stopped", "workspace-notes", &notes_tenant);
+        finish("delegation-stopped", 2);
+        delegated("delegation-stopped-old", "workspace-notes", &notes_tenant);
+        finish("delegation-stopped-old", 8);
+        delegated("delegation-outside", "workspace", dir.path());
+        finish("delegation-outside", 8);
         store
             .create_job(request("ordinary"), "Task".to_string())
             .expect("create job");
         finish("ordinary", 8);
 
-        let sessions = sessions_root.clone();
-        let retention = DelegatedRetention {
-            agents: Some(agents),
-            task_root: Some(task_root.clone()),
-            session_root: Some(Box::new(move |task_dir: &Path| {
-                sessions.join(task_dir.file_name().unwrap())
-            })),
+        let removed_sessions = Arc::new(Mutex::new(Vec::new()));
+        let pruned = Arc::new(Mutex::new(0));
+        let retention = |shares: Option<Vec<SharedAssistant>>| {
+            let removed_sessions = Arc::clone(&removed_sessions);
+            let pruned = Arc::clone(&pruned);
+            DelegatedRetention {
+                shares,
+                tenant_root: Some(tenant_root.clone()),
+                remove_session: Some(Box::new(move |tenant: &Path, session_id: &str| {
+                    removed_sessions
+                        .lock()
+                        .unwrap()
+                        .push((tenant.to_path_buf(), session_id.to_string()));
+                    Ok(())
+                })),
+                prune_tenants: Some(Box::new(move || *pruned.lock().unwrap() += 1)),
+            }
         };
-        // Unreadable open agents keep every delegated task for now.
-        let unreadable = DelegatedRetention {
-            agents: None,
-            ..DelegatedRetention::default()
-        };
-        assert_eq!(store.collect_expired_jobs(now, &unreadable).unwrap(), 0);
+        // Unreadable shares keep every delegated task for now.
+        assert_eq!(
+            store.collect_expired_jobs(now, &retention(None)).unwrap(),
+            0
+        );
+        assert!(removed_sessions.lock().unwrap().is_empty());
 
-        assert_eq!(store.collect_expired_jobs(now, &retention).unwrap(), 3);
+        assert_eq!(
+            store
+                .collect_expired_jobs(now, &retention(Some(shares)))
+                .unwrap(),
+            3
+        );
         for (job_id, kept) in [
             ("delegation-short", false),
-            ("delegation-default", true),
-            ("delegation-default-old", false),
-            ("delegation-device", true),
-            ("delegation-withdrawn", false),
+            ("delegation-fresh", true),
+            ("delegation-stopped", true),
+            ("delegation-stopped-old", false),
+            ("delegation-outside", false),
             ("ordinary", true),
         ] {
             assert_eq!(store.load_job(job_id).is_ok(), kept, "{job_id}");
-            if job_id.starts_with("delegation-") {
-                let task_dir = task_root.join("helper").join("requester").join(job_id);
-                assert_eq!(task_dir.exists(), kept, "{job_id} task directory");
-                assert_eq!(
-                    sessions_root.join(job_id).exists(),
-                    kept,
-                    "{job_id} session"
-                );
-            }
         }
+        // Only the expired sessions inside tenant workspaces were removed;
+        // the workspaces stay for the device's other sessions.
+        let mut removed = removed_sessions.lock().unwrap().clone();
+        removed.sort();
+        assert_eq!(
+            removed,
+            vec![
+                (tenant.clone(), "session-delegation-short".to_string()),
+                (
+                    notes_tenant.clone(),
+                    "session-delegation-stopped-old".to_string()
+                ),
+            ]
+        );
+        // Tenant workspaces nobody needs are looked for after each cleanup.
+        assert_eq!(*pruned.lock().unwrap(), 2);
     }
 
     #[test]

@@ -326,23 +326,26 @@ The following files are located in the workspace root directory and define your 
     )))
 }
 
-/// The persona of an opened assistant for a task another device delegated.
-/// Reads the assistant's files without creating or changing any of them:
-/// the task must not alter the assistant. `USER.md` describes the owner and
-/// is included only when the owner trusts the requester fully.
+/// The persona of a shared assistant for a task another device delegated.
+/// Identity and soul come from the assistant, read without creating or
+/// changing anything: the task must not alter the assistant. The user
+/// profile is the tenant's own `USER.md` in `tenant_workspace`; the owner's
+/// never enters, and a tenant never gets `BOOTSTRAP.md`.
 #[cfg(feature = "agent-runtime")]
 pub(crate) async fn build_delegated_assistant_persona_prompt(
     assistant_root: &Path,
-    include_user_profile: bool,
+    tenant_workspace: Option<&Path>,
 ) -> Option<String> {
-    let mut file_names = vec![SOUL_FILE_NAME, IDENTITY_FILE_NAME];
-    if include_user_profile {
-        file_names.push(USER_FILE_NAME);
+    let mut files: Vec<(&str, std::path::PathBuf)> = vec![
+        (SOUL_FILE_NAME, assistant_root.join(SOUL_FILE_NAME)),
+        (IDENTITY_FILE_NAME, assistant_root.join(IDENTITY_FILE_NAME)),
+    ];
+    if let Some(tenant) = tenant_workspace {
+        files.push((USER_FILE_NAME, tenant.join(USER_FILE_NAME)));
     }
     let mut prompt = String::from("<persona>\n");
     let mut found = false;
-    for file_name in file_names {
-        let file_path = assistant_root.join(file_name);
+    for (file_name, file_path) in files {
         let content = match fs::read_to_string(&file_path).await {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -370,7 +373,7 @@ pub(crate) async fn build_delegated_assistant_persona_prompt(
     Some(format!(
         r#"# Persona
 
-You are this assistant, answering a task that another device delegated to you. The files below define who you are. They belong to your owner: you cannot change them, and this task does not change your memory. Work in the current workspace directory, which belongs to this task.
+You are this assistant, helping a person who uses you from another device. `SOUL.md` and `IDENTITY.md` define who you are; they belong to your owner and you cannot change them. `USER.md` describes the person you are helping: it lives in the current workspace directory, which belongs to them, and you may update it as you learn about them. Your earlier conversations with this person are kept in this workspace too.
 
 {}
 "#,
@@ -408,7 +411,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegated_assistant_persona_reads_without_changing_the_assistant() {
+    async fn delegated_assistant_persona_takes_the_users_own_profile() {
         let root = tempfile::tempdir().unwrap();
         for (name, content) in [
             (SOUL_FILE_NAME, "soul: patient"),
@@ -418,22 +421,24 @@ mod tests {
         ] {
             fs::write(root.path().join(name), content).await.unwrap();
         }
+        let tenant = tempfile::tempdir().unwrap();
+        fs::write(tenant.path().join(USER_FILE_NAME), "Name: Bea")
+            .await
+            .unwrap();
 
-        let normal = super::build_delegated_assistant_persona_prompt(root.path(), false)
-            .await
-            .unwrap();
-        assert!(normal.contains("soul: patient") && normal.contains("name: Ann"));
-        assert!(!normal.contains("lives in Lyon"));
-        assert!(!normal.contains("finish setup"));
-        let full = super::build_delegated_assistant_persona_prompt(root.path(), true)
-            .await
-            .unwrap();
-        assert!(full.contains("lives in Lyon"));
+        let prompt =
+            super::build_delegated_assistant_persona_prompt(root.path(), Some(tenant.path()))
+                .await
+                .unwrap();
+        assert!(prompt.contains("soul: patient") && prompt.contains("name: Ann"));
+        assert!(prompt.contains("Name: Bea"));
+        assert!(!prompt.contains("lives in Lyon"));
+        assert!(!prompt.contains("finish setup"));
 
         // An assistant without persona files gets none, and nothing is created.
         let empty = tempfile::tempdir().unwrap();
         assert!(
-            super::build_delegated_assistant_persona_prompt(empty.path(), true)
+            super::build_delegated_assistant_persona_prompt(empty.path(), None)
                 .await
                 .is_none()
         );

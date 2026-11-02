@@ -1,30 +1,16 @@
-//! Assistants this device opens to other devices for delegated dispatch jobs.
-//!
-//! Only assistants are opened. Each delegated task is a message task that runs
-//! as the assistant in a directory of its own.
-//!
-//! The open list is device-local: it lives beside the dispatch data rather than
-//! in the shared configuration document, so a configuration backup restored on
-//! another device never opens agents there. A list this build cannot read is
-//! reported and never overwritten.
+//! Delegated tasks: tasks another device gives one of this device's shared
+//! assistants. Each runs as the assistant, in the tenant workspace of the
+//! device that asked (see [`crate::service::lan_share`]), and cannot change
+//! the assistant itself.
 
 use std::path::{Path, PathBuf};
 
-use openbitfun_services_core::json_store::{JsonFileStore, JsonFileStoreError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use thiserror::Error;
 
 use crate::infrastructure::PathManager;
 
-const DELEGATION_DIR: &str = "delegation";
-const OPEN_AGENTS_FILE: &str = "open-agents.json";
-const CONNECTION_TRUST_FILE: &str = "connection-trust.json";
-const CONNECTION_TRUST_SCHEMA_VERSION: u32 = 1;
-const OPEN_AGENTS_SCHEMA_VERSION: u32 = 1;
-/// Grants every device of this account.
-pub const ALL_SAME_ACCOUNT_DEVICES: &str = "*";
-const MAX_OPEN_AGENT_ID_LEN: usize = 64;
+const MAX_ASSISTANT_ID_LEN: usize = 64;
 /// Turn context key a target sets on a delegated job's turns, naming the
 /// device that asked. A turn that carries it must not delegate onward.
 pub const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
@@ -32,16 +18,13 @@ pub const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
 /// never adopts them: the delegating subagent already observes them.
 pub const DELEGATED_JOB_ID_PREFIX: &str = "delegation-";
 
-/// Agent type of an opened assistant: `assistant:<directory>` names one
-/// directory under this device's assistant workspace base.
+/// Agent type of an assistant: `assistant:<directory>` names one directory
+/// under this device's assistant workspace base.
 pub const ASSISTANT_AGENT_TYPE_PREFIX: &str = "assistant:";
-/// The agent mode an opened assistant's tasks run in.
+/// The agent mode a shared assistant's tasks run in.
 pub const ASSISTANT_RUN_AGENT_TYPE: &str = "Claw";
 const DEFAULT_ASSISTANT_DIRECTORY: &str = "workspace";
 const NAMED_ASSISTANT_DIRECTORY_PREFIX: &str = "workspace-";
-/// Directory under the product home that holds delegated task directories.
-/// Nothing under it is a source of memories.
-const DELEGATION_WORKSPACES_DIR: &str = "workspaces";
 
 /// The assistant directory an `assistant:<directory>` agent type names, when
 /// it is one this device could hold.
@@ -54,7 +37,7 @@ pub fn assistant_directory(agent_type: &str) -> Option<&str> {
             .strip_prefix(NAMED_ASSISTANT_DIRECTORY_PREFIX)
             .is_some_and(|id| {
                 !id.is_empty()
-                    && id.len() <= MAX_OPEN_AGENT_ID_LEN
+                    && id.len() <= MAX_ASSISTANT_ID_LEN
                     && id
                         .chars()
                         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
@@ -62,7 +45,7 @@ pub fn assistant_directory(agent_type: &str) -> Option<&str> {
     valid.then_some(directory)
 }
 
-/// The agent type that opens the assistant in `directory`.
+/// The agent type of the assistant in `directory`.
 pub fn assistant_agent_type(directory: &str) -> String {
     format!("{ASSISTANT_AGENT_TYPE_PREFIX}{directory}")
 }
@@ -76,11 +59,11 @@ pub fn assistant_workspace_root(path_manager: &PathManager, agent_type: &str) ->
     })
 }
 
-/// An assistant this device could open.
+/// An assistant on this device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalAssistant {
-    /// The agent type that opens it (`assistant:<directory>`).
+    /// Its agent type (`assistant:<directory>`).
     pub agent_type: String,
     /// The assistant id, or `None` for the default assistant.
     pub assistant_id: Option<String>,
@@ -113,31 +96,24 @@ pub fn local_assistants(path_manager: &PathManager) -> Vec<LocalAssistant> {
     assistants
 }
 
-/// Parent of the directories delegated tasks run in.
-pub fn delegation_workspaces_root(path_manager: &PathManager) -> PathBuf {
-    path_manager
-        .product_home_dir()
-        .join(DELEGATION_DIR)
-        .join(DELEGATION_WORKSPACES_DIR)
-}
-
-/// Whether `path` is a directory a delegated task ran in. Such sessions
-/// belong to another account's or device's request and never feed memories.
+/// Whether `path` is a tenant workspace a delegated task ran in. Such
+/// sessions belong to another device's user and never feed the owner's
+/// memories.
 pub fn is_delegation_workspace_path(path: &Path) -> bool {
     crate::infrastructure::try_get_path_manager_arc()
-        .is_ok_and(|path_manager| path.starts_with(delegation_workspaces_root(&path_manager)))
+        .is_ok_and(|path_manager| crate::service::lan_share::is_tenant_path(&path_manager, path))
 }
 
-/// How far the owner trusts the requester of a delegated task.
+/// How far the owner trusts the users of a shared assistant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DelegationTrust {
-    /// The default for another account: the task cannot reach the owner's
-    /// desktop, other sessions, schedules or publishing, and gets no memory.
+    /// The default: the task cannot reach the owner's desktop, other
+    /// sessions, schedules or publishing, and gets no owner memory.
     #[default]
     Normal,
-    /// The owner's own devices, or a connection the owner chose to trust
-    /// fully: the task runs like the owner's own.
+    /// The owner chose to trust the users fully: the task runs like the
+    /// owner's own.
     Full,
 }
 
@@ -158,13 +134,13 @@ impl DelegationTrust {
     }
 }
 
-/// Tools a task another account delegated at normal trust cannot use: they
-/// reach the owner's desktop, other sessions, schedules, goals, publishing
-/// or this app's own controls. The single list every check reads.
-pub const NORMAL_TRUST_DENIED_TOOLS: [&str; 13] = [
-    "SessionHistory",
+/// Tools a delegated task at normal trust cannot use: they reach the owner's
+/// desktop, other sessions, schedules, goals, publishing or this app's own
+/// controls. `SessionHistory` and `SessionControl` are not here: they serve
+/// the task's own tenant workspace and refuse everything else themselves
+/// (see [`DelegatedTurnFacts::session_workspace_refusal`]).
+pub const NORMAL_TRUST_DENIED_TOOLS: [&str; 11] = [
     "SessionMessage",
-    "SessionControl",
     "ListWorkspaces",
     "ComputerUse",
     "ControlHub",
@@ -181,26 +157,27 @@ pub const NORMAL_TRUST_DENIED_TOOLS: [&str; 13] = [
 /// start them.
 pub const NORMAL_TRUST_DENIED_SUBAGENTS: [&str; 2] = ["ComputerUse", "OpenBitFun"];
 
-const NORMAL_TRUST_REFUSAL: &str = "is not available to a task another account delegated here: \
-     the owner of this device has not trusted this connection fully";
+const NORMAL_TRUST_REFUSAL: &str = "is not available to a task from a device this assistant is \
+     shared with: the owner shares it at normal trust";
 
 /// Turn context keys that carry the facts of a delegated turn. The target's
 /// worker writes them into the `dispatchDelegation` turn metadata; the kernel
 /// copies them into the turn and every subagent it starts.
 pub const DELEGATION_ASSISTANT_CONTEXT_KEY: &str = "dispatchDelegationAssistant";
-pub const DELEGATION_TASK_DIR_CONTEXT_KEY: &str = "dispatchDelegationTaskDir";
+pub const DELEGATION_TENANT_CONTEXT_KEY: &str = "dispatchDelegationTenant";
 pub const DELEGATION_TRUST_CONTEXT_KEY: &str = "dispatchDelegationTrust";
 const METADATA_ASSISTANT_FIELD: &str = "assistantWorkspace";
-const METADATA_TASK_DIR_FIELD: &str = "taskWorkspace";
+const METADATA_TENANT_FIELD: &str = "tenantWorkspace";
 const METADATA_TRUST_FIELD: &str = "trust";
 
 /// What the kernel knows about a turn another device delegated here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelegatedTurnFacts {
-    /// Root of the opened assistant the task runs as; read-only to it.
+    /// Root of the shared assistant the task runs as; read-only to it.
     pub assistant_workspace: Option<PathBuf>,
-    /// The task's own directory, the only place it writes files.
-    pub task_dir: Option<PathBuf>,
+    /// The tenant workspace of the device that asked: the only place the
+    /// task writes, where that device's sessions are kept.
+    pub tenant_workspace: Option<PathBuf>,
     pub trust: DelegationTrust,
 }
 
@@ -224,7 +201,7 @@ impl DelegatedTurnFacts {
         );
         for (field, key) in [
             (METADATA_ASSISTANT_FIELD, DELEGATION_ASSISTANT_CONTEXT_KEY),
-            (METADATA_TASK_DIR_FIELD, DELEGATION_TASK_DIR_CONTEXT_KEY),
+            (METADATA_TENANT_FIELD, DELEGATION_TENANT_CONTEXT_KEY),
             (METADATA_TRUST_FIELD, DELEGATION_TRUST_CONTEXT_KEY),
         ] {
             if let Some(value) = delegation
@@ -240,7 +217,7 @@ impl DelegatedTurnFacts {
     /// The metadata fields a target's worker adds for a delegated turn.
     pub fn metadata_fields(
         assistant_workspace: Option<&str>,
-        task_dir: &str,
+        tenant_workspace: &str,
         trust: DelegationTrust,
     ) -> serde_json::Map<String, Value> {
         let mut fields = serde_json::Map::new();
@@ -251,8 +228,8 @@ impl DelegatedTurnFacts {
             );
         }
         fields.insert(
-            METADATA_TASK_DIR_FIELD.to_string(),
-            Value::String(task_dir.to_string()),
+            METADATA_TENANT_FIELD.to_string(),
+            Value::String(tenant_workspace.to_string()),
         );
         fields.insert(
             METADATA_TRUST_FIELD.to_string(),
@@ -278,7 +255,7 @@ impl DelegatedTurnFacts {
         };
         Some(Self {
             assistant_workspace: path(DELEGATION_ASSISTANT_CONTEXT_KEY),
-            task_dir: path(DELEGATION_TASK_DIR_CONTEXT_KEY),
+            tenant_workspace: path(DELEGATION_TENANT_CONTEXT_KEY),
             trust: context
                 .get(DELEGATION_TRUST_CONTEXT_KEY)
                 .and_then(|value| DelegationTrust::parse(value))
@@ -306,14 +283,31 @@ impl DelegatedTurnFacts {
     /// Context keys a subagent inherits from its delegated parent turn.
     pub const INHERITED_CONTEXT_KEYS: [&'static str; 3] = [
         DELEGATION_ASSISTANT_CONTEXT_KEY,
-        DELEGATION_TASK_DIR_CONTEXT_KEY,
+        DELEGATION_TENANT_CONTEXT_KEY,
         DELEGATION_TRUST_CONTEXT_KEY,
     ];
 
-    /// Whether the task may see the owner's private context: `USER.md` and
-    /// the memory summary.
+    /// Whether the task may see the owner's memory summary. The owner's
+    /// `USER.md` never enters a delegated task's prompt: its user profile is
+    /// the tenant's own.
     pub fn includes_private_context(&self) -> bool {
         self.trust == DelegationTrust::Full
+    }
+
+    /// Why a session tool of this task cannot reach the sessions of
+    /// `workspace`, if it cannot. At normal trust a task reaches only its
+    /// tenant workspace; at full trust, every workspace.
+    pub fn session_workspace_refusal(&self, tool: &str, workspace: &str) -> Option<String> {
+        let scope = match self.trust {
+            DelegationTrust::Full => return None,
+            DelegationTrust::Normal => self.tenant_workspace.as_deref(),
+        };
+        let normalize = |path: &str| path.replace('\\', "/").trim_end_matches('/').to_string();
+        let allowed =
+            scope.is_some_and(|scope| normalize(&scope.to_string_lossy()) == normalize(workspace));
+        (!allowed).then(|| {
+            format!("{tool} reaches only the conversations of the device this task came from")
+        })
     }
 
     /// Why this task cannot start a subagent of `agent_type`, if it cannot.
@@ -344,7 +338,7 @@ impl DelegatedTurnFacts {
     }
 
     /// Narrows `restrictions` for this turn: a task that runs as an
-    /// assistant writes only in its own directory, so it can never change
+    /// assistant writes only in its tenant workspace, so it can never change
     /// the assistant's persona, instructions or memory. At normal trust the
     /// tools in [`NORMAL_TRUST_DENIED_TOOLS`] are refused as well.
     #[cfg(feature = "agent-runtime")]
@@ -352,8 +346,8 @@ impl DelegatedTurnFacts {
         &self,
         mut restrictions: crate::agentic::tools::ToolRuntimeRestrictions,
     ) -> crate::agentic::tools::ToolRuntimeRestrictions {
-        if let (Some(_), Some(task_dir)) = (&self.assistant_workspace, &self.task_dir) {
-            let root = task_dir.to_string_lossy().into_owned();
+        if let (Some(_), Some(tenant)) = (&self.assistant_workspace, &self.tenant_workspace) {
+            let root = tenant.to_string_lossy().into_owned();
             let policy = &mut restrictions.path_policy;
             for roots in [
                 &mut policy.write_roots,
@@ -363,7 +357,7 @@ impl DelegatedTurnFacts {
                 if roots.is_empty() {
                     roots.push(root.clone());
                 } else {
-                    roots.retain(|existing| Path::new(existing).starts_with(task_dir));
+                    roots.retain(|existing| Path::new(existing).starts_with(tenant));
                     if roots.is_empty() {
                         roots.push(root.clone());
                     }
@@ -382,949 +376,10 @@ impl DelegatedTurnFacts {
     }
 }
 
-/// One assistant this device opens to other devices.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenAgent {
-    /// Stable id the requester addresses.
-    pub id: String,
-    /// The opened assistant, `assistant:<directory>`.
-    #[serde(deserialize_with = "openbitfun_core_types::agent_identity::deserialize_agent_id")]
-    pub agent_type: String,
-    pub display_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Same-account devices allowed to delegate; [`ALL_SAME_ACCOUNT_DEVICES`]
-    /// allows every device of this account.
-    #[serde(default)]
-    pub same_account_devices: Vec<String>,
-    /// Days the tasks of same-account devices are kept after their last turn
-    /// ends; unset means [`DEFAULT_SESSION_RETENTION_DAYS`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_retention_days: Option<u32>,
-    /// Cross-account connections allowed to delegate, granted one by one.
-    /// Managed only through [`OpenAgentStore::grant_connection`] and
-    /// [`OpenAgentStore::revoke_connection`]; reopening the same agent keeps
-    /// them, opening a different agent under the id drops them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub connections: Vec<ConnectionGrant>,
-}
-
-/// One cross-account connection an open agent is granted to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectionGrant {
-    pub connection_id: String,
-    /// Limits the owner set for this connection; unset means none.
-    #[serde(default, flatten)]
-    pub limits: ConnectionLimits,
-}
-
-/// Most this device does for one connection with one open agent.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectionLimits {
-    /// Tasks that may run at once; more wait, queued, until one finishes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_concurrent_jobs: Option<u32>,
-    /// Minutes one turn of a task may run before it is stopped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_job_minutes: Option<u32>,
-    /// Days this connection's tasks, and their sessions, are kept after
-    /// their last turn ends; unset means [`DEFAULT_SESSION_RETENTION_DAYS`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_retention_days: Option<u32>,
-}
-
-/// Bounds the owner can set, so a typo cannot disable a limit.
-pub const MAX_CONNECTION_CONCURRENT_JOBS: u32 = 100;
-pub const MAX_CONNECTION_JOB_MINUTES: u32 = 24 * 60;
-/// How long a delegated task and its session are kept after its last turn
-/// ends, unless the grant says otherwise.
-pub const DEFAULT_SESSION_RETENTION_DAYS: u32 = 7;
-/// The retention periods an owner can choose, in days.
-pub const SESSION_RETENTION_DAY_CHOICES: [u32; 4] = [1, 7, 30, 90];
-
-fn validate_session_retention(days: Option<u32>) -> Result<(), String> {
-    match days {
-        Some(days) if !SESSION_RETENTION_DAY_CHOICES.contains(&days) => Err(format!(
-            "sessions are kept for one of {SESSION_RETENTION_DAY_CHOICES:?} days"
-        )),
-        _ => Ok(()),
-    }
-}
-
-/// Who a delegated task came from, for its retention period.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DelegationRequester<'a> {
-    Device(&'a str),
-    Connection(&'a str),
-}
-
-/// Days the task of `requester` to `open_agent_id` is kept after its last
-/// turn ends. A task whose grant or open agent is gone keeps the default.
-pub fn session_retention_days(
-    agents: &[OpenAgent],
-    open_agent_id: &str,
-    requester: DelegationRequester<'_>,
-) -> u32 {
-    let agent = agents.iter().find(|agent| agent.id == open_agent_id);
-    let days = match requester {
-        DelegationRequester::Device(_) => agent.and_then(|agent| agent.session_retention_days),
-        DelegationRequester::Connection(connection_id) => agent
-            .and_then(|agent| agent.connection_grant(connection_id))
-            .and_then(|grant| grant.limits.session_retention_days),
-    };
-    days.unwrap_or(DEFAULT_SESSION_RETENTION_DAYS)
-}
-
-impl ConnectionLimits {
-    fn validate(&self) -> Result<(), String> {
-        if let Some(jobs) = self.max_concurrent_jobs {
-            if !(1..=MAX_CONNECTION_CONCURRENT_JOBS).contains(&jobs) {
-                return Err(format!(
-                    "concurrent tasks must be 1-{MAX_CONNECTION_CONCURRENT_JOBS}"
-                ));
-            }
-        }
-        if let Some(minutes) = self.max_job_minutes {
-            if !(1..=MAX_CONNECTION_JOB_MINUTES).contains(&minutes) {
-                return Err(format!(
-                    "task minutes must be 1-{MAX_CONNECTION_JOB_MINUTES}"
-                ));
-            }
-        }
-        validate_session_retention(self.session_retention_days)
-    }
-}
-
-impl OpenAgent {
-    pub fn is_granted_to_device(&self, device_id: &str) -> bool {
-        !device_id.trim().is_empty()
-            && self
-                .same_account_devices
-                .iter()
-                .any(|device| device == ALL_SAME_ACCOUNT_DEVICES || device == device_id)
-    }
-
-    pub fn is_granted_to_connection(&self, connection_id: &str) -> bool {
-        self.connection_grant(connection_id).is_some()
-    }
-
-    /// The grant to `connection_id`, with its limits.
-    pub fn connection_grant(&self, connection_id: &str) -> Option<&ConnectionGrant> {
-        if connection_id.trim().is_empty() {
-            return None;
-        }
-        self.connections
-            .iter()
-            .find(|grant| grant.connection_id == connection_id)
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.id.is_empty()
-            || self.id.len() > MAX_OPEN_AGENT_ID_LEN
-            || !self
-                .id
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        {
-            return Err(format!(
-                "open agent id must be 1-{MAX_OPEN_AGENT_ID_LEN} letters, digits, '-' or '_'"
-            ));
-        }
-        let agent_type = self.agent_type.trim();
-        if assistant_directory(agent_type).is_none() {
-            return Err(format!("'{agent_type}' does not name an assistant"));
-        }
-        if self.display_name.trim().is_empty() {
-            return Err("open agent requires a display name".to_string());
-        }
-        validate_session_retention(self.session_retention_days)?;
-        if self
-            .same_account_devices
-            .iter()
-            .any(|device| device.trim().is_empty())
-        {
-            return Err("granted device ids must not be empty".to_string());
-        }
-        for (index, grant) in self.connections.iter().enumerate() {
-            if grant.connection_id.trim().is_empty() {
-                return Err("granted connection ids must not be empty".to_string());
-            }
-            grant.limits.validate()?;
-            if self.connections[..index]
-                .iter()
-                .any(|earlier| earlier.connection_id == grant.connection_id)
-            {
-                return Err(format!(
-                    "connection '{}' is granted more than once",
-                    grant.connection_id
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OpenAgentsDocument {
-    #[serde(default)]
-    schema_version: u32,
-    #[serde(default)]
-    entries: Vec<OpenAgent>,
-}
-
-/// Why a delegated job is refused.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DelegationRefusal {
-    #[error("open agent '{0}' does not exist on this device")]
-    UnknownOpenAgent(String),
-    #[error("open agent '{0}' is not granted to the requesting device")]
-    NotGranted(String),
-    #[error("the requesting device is unknown")]
-    MissingRequester,
-    #[error("open agent '{0}' is not granted to this connection")]
-    NotGrantedToConnection(String),
-}
-
-#[derive(Debug, Error)]
-pub enum OpenAgentStoreError {
-    #[error(transparent)]
-    Store(#[from] JsonFileStoreError),
-    #[error("{0}")]
-    Invalid(String),
-}
-
-/// Device-local store of opened agents.
-#[derive(Debug, Clone)]
-pub struct OpenAgentStore {
-    path: PathBuf,
-}
-
-impl OpenAgentStore {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    pub fn for_product_home(path_manager: &PathManager) -> Self {
-        Self::new(
-            path_manager
-                .product_home_dir()
-                .join(DELEGATION_DIR)
-                .join(OPEN_AGENTS_FILE),
-        )
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Every opened assistant, read without the store lock for callers that
-    /// cannot wait, such as the dispatch retention cleanup. Writes replace the
-    /// file atomically, so the read sees one whole version.
-    pub fn agents_now(&self) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
-        let document: OpenAgentsDocument = match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
-                OpenAgentStoreError::Invalid(format!("open agents unreadable: {error}"))
-            })?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                OpenAgentsDocument::default()
-            }
-            Err(error) => {
-                return Err(OpenAgentStoreError::Invalid(format!(
-                    "read open agents: {error}"
-                )))
-            }
-        };
-        Ok(document.entries)
-    }
-
-    /// Every opened assistant.
-    pub async fn agents(&self) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
-        let document: OpenAgentsDocument = JsonFileStore
-            .read_locked_optional(&self.path)
-            .await?
-            .unwrap_or_default();
-        for agent in &document.entries {
-            agent.validate().map_err(|problem| {
-                OpenAgentStoreError::Invalid(format!("open agent '{}': {problem}", agent.id))
-            })?;
-        }
-        Ok(document.entries)
-    }
-
-    /// The entry `open_agent_id`, or why it cannot take a task.
-    async fn open_agent(
-        &self,
-        open_agent_id: &str,
-    ) -> Result<Result<OpenAgent, DelegationRefusal>, OpenAgentStoreError> {
-        Ok(self
-            .agents()
-            .await?
-            .into_iter()
-            .find(|agent| agent.id == open_agent_id)
-            .ok_or_else(|| DelegationRefusal::UnknownOpenAgent(open_agent_id.to_string())))
-    }
-
-    /// Entries granted to `device_id`.
-    pub async fn granted_to_device(
-        &self,
-        device_id: &str,
-    ) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
-        Ok(self
-            .agents()
-            .await?
-            .into_iter()
-            .filter(|agent| agent.is_granted_to_device(device_id))
-            .collect())
-    }
-
-    /// The open agent a delegated job from `device_id` may run, or why not.
-    pub async fn authorize(
-        &self,
-        device_id: &str,
-        open_agent_id: &str,
-    ) -> Result<Result<OpenAgent, DelegationRefusal>, OpenAgentStoreError> {
-        if device_id.trim().is_empty() {
-            return Ok(Err(DelegationRefusal::MissingRequester));
-        }
-        let agent = match self.open_agent(open_agent_id).await? {
-            Ok(agent) => agent,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        if !agent.is_granted_to_device(device_id) {
-            return Ok(Err(DelegationRefusal::NotGranted(agent.id)));
-        }
-        Ok(Ok(agent))
-    }
-
-    /// Entries granted to the cross-account connection.
-    pub async fn granted_to_connection(
-        &self,
-        connection_id: &str,
-    ) -> Result<Vec<OpenAgent>, OpenAgentStoreError> {
-        Ok(self
-            .agents()
-            .await?
-            .into_iter()
-            .filter(|agent| agent.is_granted_to_connection(connection_id))
-            .collect())
-    }
-
-    /// The open agent a delegated job over `connection_id` may run, or why
-    /// not. Same-account device grants never apply to a connection.
-    pub async fn authorize_connection(
-        &self,
-        connection_id: &str,
-        open_agent_id: &str,
-    ) -> Result<Result<OpenAgent, DelegationRefusal>, OpenAgentStoreError> {
-        if connection_id.trim().is_empty() {
-            return Ok(Err(DelegationRefusal::MissingRequester));
-        }
-        let agent = match self.open_agent(open_agent_id).await? {
-            Ok(agent) => agent,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        if !agent.is_granted_to_connection(connection_id) {
-            return Ok(Err(DelegationRefusal::NotGrantedToConnection(agent.id)));
-        }
-        Ok(Ok(agent))
-    }
-
-    /// Grants the open agent `open_agent_id` to a cross-account connection.
-    pub async fn grant_connection(
-        &self,
-        open_agent_id: &str,
-        connection_id: &str,
-    ) -> Result<OpenAgent, OpenAgentStoreError> {
-        let connection_id = connection_id.trim();
-        if connection_id.is_empty() {
-            return Err(OpenAgentStoreError::Invalid(
-                "a connection id is required".to_string(),
-            ));
-        }
-        let mut agent = self.readable(open_agent_id).await?;
-        if !agent.is_granted_to_connection(connection_id) {
-            agent.connections.push(ConnectionGrant {
-                connection_id: connection_id.to_string(),
-                limits: ConnectionLimits::default(),
-            });
-            self.write_entry(agent.clone()).await?;
-        }
-        Ok(agent)
-    }
-
-    /// Sets the limits of an existing grant; unset fields remove a limit.
-    pub async fn set_connection_limits(
-        &self,
-        open_agent_id: &str,
-        connection_id: &str,
-        limits: ConnectionLimits,
-    ) -> Result<OpenAgent, OpenAgentStoreError> {
-        limits.validate().map_err(OpenAgentStoreError::Invalid)?;
-        let mut agent = self.readable(open_agent_id).await?;
-        let grant = agent
-            .connections
-            .iter_mut()
-            .find(|grant| grant.connection_id == connection_id)
-            .ok_or_else(|| {
-                OpenAgentStoreError::Invalid(format!(
-                    "open agent '{open_agent_id}' is not granted to connection '{connection_id}'"
-                ))
-            })?;
-        if grant.limits != limits {
-            grant.limits = limits;
-            self.write_entry(agent.clone()).await?;
-        }
-        Ok(agent)
-    }
-
-    /// Withdraws the connection's grant. Returns whether one existed.
-    pub async fn revoke_connection(
-        &self,
-        open_agent_id: &str,
-        connection_id: &str,
-    ) -> Result<bool, OpenAgentStoreError> {
-        let mut agent = self.readable(open_agent_id).await?;
-        let before = agent.connections.len();
-        agent
-            .connections
-            .retain(|grant| grant.connection_id != connection_id);
-        if agent.connections.len() == before {
-            return Ok(false);
-        }
-        self.write_entry(agent).await?;
-        Ok(true)
-    }
-
-    async fn readable(&self, open_agent_id: &str) -> Result<OpenAgent, OpenAgentStoreError> {
-        self.agents()
-            .await?
-            .into_iter()
-            .find(|agent| agent.id == open_agent_id)
-            .ok_or_else(|| {
-                OpenAgentStoreError::Invalid(format!(
-                    "open agent '{open_agent_id}' does not exist on this device"
-                ))
-            })
-    }
-
-    /// Stores an opened agent. Connection grants are not part of opening:
-    /// the stored entry's grants carry over while it runs the same agent.
-    async fn store_entry(&self, mut agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
-        agent.agent_type =
-            openbitfun_core_types::agent_identity::canonical_agent_id(agent.agent_type.trim())
-                .to_string();
-        agent.connections = self
-            .agents()
-            .await?
-            .into_iter()
-            .find(|stored| stored.id == agent.id && stored.agent_type == agent.agent_type)
-            .map(|stored| stored.connections)
-            .unwrap_or_default();
-        self.write_entry(agent).await
-    }
-
-    async fn write_entry(&self, agent: OpenAgent) -> Result<(), OpenAgentStoreError> {
-        agent.validate().map_err(OpenAgentStoreError::Invalid)?;
-        JsonFileStore
-            .update_locked(
-                &self.path,
-                OpenAgentsDocument::default(),
-                |document: &mut OpenAgentsDocument| {
-                    document.schema_version = OPEN_AGENTS_SCHEMA_VERSION;
-                    match document
-                        .entries
-                        .iter_mut()
-                        .find(|entry| entry.id == agent.id)
-                    {
-                        Some(entry) => *entry = agent,
-                        None => document.entries.push(agent),
-                    }
-                },
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Opens the assistant `agent.agent_type` names, under `assistants_base`
-    /// (see [`PathManager::assistant_workspace_base_dir`]). The owner confirms
-    /// once that tasks may use external agents with this device's own login
-    /// or credentials. An empty display name takes the assistant's directory.
-    pub async fn open_assistant(
-        &self,
-        assistants_base: &Path,
-        mut agent: OpenAgent,
-        usage_confirmed: bool,
-    ) -> Result<OpenAgent, OpenAgentStoreError> {
-        agent.agent_type = agent.agent_type.trim().to_string();
-        let root = assistant_directory(&agent.agent_type)
-            .map(|directory| assistants_base.join(directory))
-            .ok_or_else(|| {
-                OpenAgentStoreError::Invalid(format!(
-                    "'{}' does not name an assistant",
-                    agent.agent_type
-                ))
-            })?;
-        if !root.is_dir() {
-            return Err(OpenAgentStoreError::Invalid(format!(
-                "assistant '{}' does not exist on this device",
-                agent.agent_type
-            )));
-        }
-        if !usage_confirmed {
-            return Err(OpenAgentStoreError::Invalid(
-                "opening an assistant requires confirming that its tasks may use external agents with this device's own login or credentials".to_string(),
-            ));
-        }
-        if agent.display_name.trim().is_empty() {
-            agent.display_name = assistant_directory(&agent.agent_type)
-                .unwrap_or_default()
-                .to_string();
-        }
-        self.store_entry(agent.clone()).await?;
-        Ok(agent)
-    }
-
-    /// Closes the entry with `id`. Returns whether one existed.
-    pub async fn close(&self, id: &str) -> Result<bool, OpenAgentStoreError> {
-        let (removed, _) = JsonFileStore
-            .update_locked(
-                &self.path,
-                OpenAgentsDocument::default(),
-                |document: &mut OpenAgentsDocument| {
-                    let before = document.entries.len();
-                    document.entries.retain(|entry| entry.id != id);
-                    before != document.entries.len()
-                },
-            )
-            .await?;
-        Ok(removed)
-    }
-}
-
-/// How far this device's owner trusts each cross-account connection. A
-/// connection without an entry is trusted normally.
-#[derive(Debug, Clone)]
-pub struct ConnectionTrustStore {
-    path: PathBuf,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConnectionTrustDocument {
-    #[serde(default)]
-    schema_version: u32,
-    /// Connection id to level; only levels other than normal are stored.
-    #[serde(default)]
-    connections: std::collections::BTreeMap<String, DelegationTrust>,
-}
-
-impl ConnectionTrustStore {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    pub fn for_product_home(path_manager: &PathManager) -> Self {
-        Self::new(
-            path_manager
-                .product_home_dir()
-                .join(DELEGATION_DIR)
-                .join(CONNECTION_TRUST_FILE),
-        )
-    }
-
-    /// Every connection trusted beyond normal.
-    pub async fn levels(
-        &self,
-    ) -> Result<std::collections::BTreeMap<String, DelegationTrust>, OpenAgentStoreError> {
-        let document: ConnectionTrustDocument = JsonFileStore
-            .read_locked_optional(&self.path)
-            .await?
-            .unwrap_or_default();
-        Ok(document
-            .connections
-            .into_iter()
-            .filter(|(_, level)| *level != DelegationTrust::Normal)
-            .collect())
-    }
-
-    /// The level of `connection_id`. A store that cannot be read trusts
-    /// normally, the safer side, and says why in the log.
-    pub async fn level(&self, connection_id: &str) -> DelegationTrust {
-        match self.levels().await {
-            Ok(levels) => levels.get(connection_id).copied().unwrap_or_default(),
-            Err(error) => {
-                log::warn!(
-                    "Connection trust store unreadable, trusting connection normally: path={}, error={}",
-                    self.path.display(),
-                    error
-                );
-                DelegationTrust::Normal
-            }
-        }
-    }
-
-    /// Sets the level of `connection_id`; normal removes its entry.
-    pub async fn set(
-        &self,
-        connection_id: &str,
-        level: DelegationTrust,
-    ) -> Result<(), OpenAgentStoreError> {
-        let connection_id = connection_id.trim();
-        if connection_id.is_empty() {
-            return Err(OpenAgentStoreError::Invalid(
-                "a connection id is required".to_string(),
-            ));
-        }
-        JsonFileStore
-            .update_locked(
-                &self.path,
-                ConnectionTrustDocument::default(),
-                |document: &mut ConnectionTrustDocument| {
-                    document.schema_version = CONNECTION_TRUST_SCHEMA_VERSION;
-                    match level {
-                        DelegationTrust::Normal => {
-                            document.connections.remove(connection_id);
-                        }
-                        level => {
-                            document
-                                .connections
-                                .insert(connection_id.to_string(), level);
-                        }
-                    }
-                },
-            )
-            .await?;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    fn agent(id: &str, devices: &[&str]) -> OpenAgent {
-        OpenAgent {
-            id: id.to_string(),
-            agent_type: "assistant:workspace".to_string(),
-            display_name: "Helper".to_string(),
-            description: None,
-            same_account_devices: devices.iter().map(|device| device.to_string()).collect(),
-            session_retention_days: None,
-            connections: Vec::new(),
-        }
-    }
-
-    fn store() -> (OpenAgentStore, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        (
-            OpenAgentStore::new(dir.path().join("delegation").join(OPEN_AGENTS_FILE)),
-            dir,
-        )
-    }
-
-    #[tokio::test]
-    async fn nothing_is_open_by_default() {
-        let (store, _dir) = store();
-        assert!(store.agents().await.unwrap().is_empty());
-        assert!(store.granted_to_device("laptop").await.unwrap().is_empty());
-        assert_eq!(
-            store.authorize("laptop", "helper").await.unwrap(),
-            Err(DelegationRefusal::UnknownOpenAgent("helper".to_string()))
-        );
-    }
-
-    #[tokio::test]
-    async fn grants_are_per_device() {
-        let (store, _dir) = store();
-        store
-            .store_entry(agent("helper", &["laptop"]))
-            .await
-            .unwrap();
-        store
-            .store_entry(agent("everyone", &[ALL_SAME_ACCOUNT_DEVICES]))
-            .await
-            .unwrap();
-
-        let laptop: Vec<_> = store
-            .granted_to_device("laptop")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|agent| agent.id)
-            .collect();
-        assert_eq!(laptop, vec!["helper", "everyone"]);
-        let phone: Vec<_> = store
-            .granted_to_device("phone")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|agent| agent.id)
-            .collect();
-        assert_eq!(phone, vec!["everyone"]);
-
-        assert!(store.authorize("laptop", "helper").await.unwrap().is_ok());
-        assert_eq!(
-            store.authorize("phone", "helper").await.unwrap(),
-            Err(DelegationRefusal::NotGranted("helper".to_string()))
-        );
-        assert_eq!(
-            store.authorize("", "everyone").await.unwrap(),
-            Err(DelegationRefusal::MissingRequester)
-        );
-    }
-
-    #[tokio::test]
-    async fn connections_are_granted_one_by_one_and_apart_from_devices() {
-        let (store, _dir) = store();
-        store.store_entry(agent("helper", &["*"])).await.unwrap();
-        store.store_entry(agent("reviewer", &[])).await.unwrap();
-
-        // Nothing is granted to a connection by default, not even "*".
-        assert!(store
-            .granted_to_connection("conn-1")
-            .await
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            store
-                .authorize_connection("conn-1", "helper")
-                .await
-                .unwrap(),
-            Err(DelegationRefusal::NotGrantedToConnection(
-                "helper".to_string()
-            ))
-        );
-
-        store.grant_connection("reviewer", "conn-1").await.unwrap();
-        let granted = store.granted_to_connection("conn-1").await.unwrap();
-        assert_eq!(granted.len(), 1);
-        assert_eq!(granted[0].id, "reviewer");
-        assert!(store
-            .granted_to_connection("conn-2")
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(store
-            .authorize_connection("conn-1", "reviewer")
-            .await
-            .unwrap()
-            .is_ok());
-        // A connection grant never admits a same-account device, and the
-        // device id "conn-1" is not the connection.
-        assert_eq!(
-            store.authorize("conn-1", "reviewer").await.unwrap(),
-            Err(DelegationRefusal::NotGranted("reviewer".to_string()))
-        );
-
-        // Granting twice keeps one grant; revoking removes it.
-        store.grant_connection("reviewer", "conn-1").await.unwrap();
-        assert_eq!(
-            store.granted_to_connection("conn-1").await.unwrap()[0]
-                .connections
-                .len(),
-            1
-        );
-        assert!(store.revoke_connection("reviewer", "conn-1").await.unwrap());
-        assert!(!store.revoke_connection("reviewer", "conn-1").await.unwrap());
-        assert!(store
-            .granted_to_connection("conn-1")
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(store.grant_connection("missing", "conn-1").await.is_err());
-        assert!(store.grant_connection("reviewer", " ").await.is_err());
-    }
-
-    #[tokio::test]
-    async fn connection_limits_are_set_per_grant_and_kept_on_regrant() {
-        let (store, _dir) = store();
-        store.store_entry(agent("helper", &[])).await.unwrap();
-        let limits = ConnectionLimits {
-            max_concurrent_jobs: Some(2),
-            max_job_minutes: Some(30),
-            ..ConnectionLimits::default()
-        };
-        // Limits apply only to an existing grant.
-        assert!(store
-            .set_connection_limits("helper", "conn-1", limits)
-            .await
-            .is_err());
-        store.grant_connection("helper", "conn-1").await.unwrap();
-        store
-            .set_connection_limits("helper", "conn-1", limits)
-            .await
-            .unwrap();
-        // Granting again keeps them.
-        let agent = store.grant_connection("helper", "conn-1").await.unwrap();
-        assert_eq!(agent.connection_grant("conn-1").unwrap().limits, limits);
-        for invalid in [
-            ConnectionLimits {
-                max_concurrent_jobs: Some(0),
-                max_job_minutes: None,
-                ..ConnectionLimits::default()
-            },
-            ConnectionLimits {
-                max_concurrent_jobs: None,
-                max_job_minutes: Some(MAX_CONNECTION_JOB_MINUTES + 1),
-                ..ConnectionLimits::default()
-            },
-        ] {
-            assert!(store
-                .set_connection_limits("helper", "conn-1", invalid)
-                .await
-                .is_err());
-        }
-        // Stored flat beside the connection id.
-        let raw = std::fs::read_to_string(store.path()).unwrap();
-        assert!(raw.contains("\"maxConcurrentJobs\":2"), "{raw}");
-    }
-
-    #[tokio::test]
-    async fn sessions_are_kept_as_long_as_each_grant_says() {
-        let (store, _dir) = store();
-        store
-            .store_entry(OpenAgent {
-                session_retention_days: Some(30),
-                ..agent("helper", &["laptop"])
-            })
-            .await
-            .unwrap();
-        store.grant_connection("helper", "conn-1").await.unwrap();
-        store.grant_connection("helper", "conn-2").await.unwrap();
-        store
-            .set_connection_limits(
-                "helper",
-                "conn-1",
-                ConnectionLimits {
-                    session_retention_days: Some(1),
-                    ..ConnectionLimits::default()
-                },
-            )
-            .await
-            .unwrap();
-        let agents = store.agents_now().unwrap();
-        let days = |requester| session_retention_days(&agents, "helper", requester);
-        assert_eq!(days(DelegationRequester::Device("laptop")), 30);
-        assert_eq!(days(DelegationRequester::Connection("conn-1")), 1);
-        // A grant without a period, a withdrawn grant and a closed agent keep
-        // the default.
-        assert_eq!(
-            days(DelegationRequester::Connection("conn-2")),
-            DEFAULT_SESSION_RETENTION_DAYS
-        );
-        assert_eq!(
-            days(DelegationRequester::Connection("conn-gone")),
-            DEFAULT_SESSION_RETENTION_DAYS
-        );
-        assert_eq!(
-            session_retention_days(&agents, "closed", DelegationRequester::Device("laptop")),
-            DEFAULT_SESSION_RETENTION_DAYS
-        );
-
-        // Only the offered periods are accepted.
-        for invalid in [0, 2, 365] {
-            assert!(store
-                .set_connection_limits(
-                    "helper",
-                    "conn-1",
-                    ConnectionLimits {
-                        session_retention_days: Some(invalid),
-                        ..ConnectionLimits::default()
-                    },
-                )
-                .await
-                .is_err());
-            assert!(store
-                .store_entry(OpenAgent {
-                    session_retention_days: Some(invalid),
-                    ..agent("helper", &["laptop"])
-                })
-                .await
-                .is_err());
-        }
-    }
-
-    #[tokio::test]
-    async fn reopening_keeps_connection_grants_unless_the_agent_changes() {
-        let (store, _dir) = store();
-        store.store_entry(agent("helper", &[])).await.unwrap();
-        store.grant_connection("helper", "conn-1").await.unwrap();
-
-        let mut edited = agent("helper", &["laptop"]);
-        edited.display_name = "Renamed".to_string();
-        store.store_entry(edited).await.unwrap();
-        assert_eq!(
-            store.granted_to_connection("conn-1").await.unwrap().len(),
-            1
-        );
-
-        let mut other = agent("helper", &[]);
-        other.agent_type = "assistant:workspace-other".to_string();
-        store.store_entry(other).await.unwrap();
-        assert!(store
-            .granted_to_connection("conn-1")
-            .await
-            .unwrap()
-            .is_empty());
-    }
-
-    #[tokio::test]
-    async fn reopening_replaces_and_closing_removes() {
-        let (store, _dir) = store();
-        store
-            .store_entry(agent("helper", &["laptop"]))
-            .await
-            .unwrap();
-        store
-            .store_entry(agent("helper", &["phone"]))
-            .await
-            .unwrap();
-        let agents = store.agents().await.unwrap();
-        assert_eq!(agents.len(), 1);
-        assert_eq!(agents[0].same_account_devices, vec!["phone"]);
-        assert_eq!(agents[0].agent_type, "assistant:workspace");
-        assert!(store.close("helper").await.unwrap());
-        assert!(!store.close("helper").await.unwrap());
-        assert!(store.agents().await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn invalid_agents_are_refused() {
-        let (store, _dir) = store();
-        for invalid in [
-            OpenAgent {
-                id: "bad id".to_string(),
-                ..agent("x", &["laptop"])
-            },
-            OpenAgent {
-                agent_type: "Standard".to_string(),
-                ..agent("x", &["laptop"])
-            },
-            OpenAgent {
-                agent_type: "acp:codex".to_string(),
-                ..agent("x", &["laptop"])
-            },
-            OpenAgent {
-                agent_type: "assistant:notes".to_string(),
-                ..agent("x", &["laptop"])
-            },
-            OpenAgent {
-                agent_type: "remote:device/helper".to_string(),
-                ..agent("x", &["laptop"])
-            },
-        ] {
-            assert!(matches!(
-                store.store_entry(invalid).await,
-                Err(OpenAgentStoreError::Invalid(_))
-            ));
-        }
-        assert!(store.agents().await.unwrap().is_empty());
-    }
 
     #[test]
     fn assistant_agent_types_name_only_assistant_directories() {
@@ -1349,60 +404,14 @@ mod tests {
         assert_eq!(assistant_agent_type("workspace-x"), "assistant:workspace-x");
     }
 
-    fn assistant_entry(id: &str, agent_type: &str) -> OpenAgent {
-        OpenAgent {
-            agent_type: agent_type.to_string(),
-            display_name: String::new(),
-            ..agent(id, &[ALL_SAME_ACCOUNT_DEVICES])
-        }
-    }
-
-    #[tokio::test]
-    async fn assistants_open_only_with_confirmation() {
-        let (store, dir) = store();
-        let path_manager = PathManager::with_user_root_for_tests(dir.path().join("user"));
-        let base = path_manager.assistant_workspace_base_dir(None);
-        std::fs::create_dir_all(base.join("workspace-ann")).unwrap();
-        std::fs::create_dir_all(base.join("notes")).unwrap();
-        assert_eq!(
-            local_assistants(&path_manager)
-                .into_iter()
-                .map(|assistant| assistant.agent_type)
-                .collect::<Vec<_>>(),
-            vec!["assistant:workspace-ann".to_string()]
-        );
-
-        let entry = assistant_entry("ann", "assistant:workspace-ann");
-        assert!(store
-            .open_assistant(&base, entry.clone(), false)
-            .await
-            .is_err());
-        assert!(store
-            .open_assistant(
-                &base,
-                assistant_entry("gone", "assistant:workspace-gone"),
-                true
-            )
-            .await
-            .is_err());
-        let opened = store
-            .open_assistant(&base, entry.clone(), true)
-            .await
-            .unwrap();
-        assert_eq!(opened.display_name, "workspace-ann");
-
-        let granted = store.authorize("laptop", "ann").await.unwrap().unwrap();
-        assert_eq!(granted.agent_type, "assistant:workspace-ann");
-    }
-
     #[test]
     fn delegated_turn_facts_travel_from_metadata_to_context() {
         let fields = DelegatedTurnFacts::metadata_fields(
             Some("/home/a/.openbitfun/personal_assistant/workspace"),
-            "/home/a/.openbitfun/delegation/workspaces/ann/conn/job",
+            "/home/a/.openbitfun/delegation/tenants/workspace/0123",
             DelegationTrust::Normal,
         );
-        let mut delegation = json!({ "openAgentId": "ann" });
+        let mut delegation = json!({ "assistantId": "workspace" });
         delegation.as_object_mut().unwrap().extend(fields);
         let metadata = json!({ DISPATCH_DELEGATION_CONTEXT_KEY: delegation });
         let mut context = std::collections::HashMap::new();
@@ -1441,7 +450,7 @@ mod tests {
     fn assistant_tasks_write_only_in_their_own_directory() {
         let facts = DelegatedTurnFacts {
             assistant_workspace: Some(PathBuf::from("/a/personal_assistant/workspace")),
-            task_dir: Some(PathBuf::from("/a/delegation/workspaces/job")),
+            tenant_workspace: Some(PathBuf::from("/a/delegation/tenants/workspace/0123")),
             trust: DelegationTrust::Full,
         };
         let restricted = facts.restrict_tools(Default::default());
@@ -1450,7 +459,10 @@ mod tests {
             &restricted.path_policy.edit_roots,
             &restricted.path_policy.delete_roots,
         ] {
-            assert_eq!(roots, &vec!["/a/delegation/workspaces/job".to_string()]);
+            assert_eq!(
+                roots,
+                &vec!["/a/delegation/tenants/workspace/0123".to_string()]
+            );
         }
         assert!(restricted.path_policy.read_roots.is_empty());
 
@@ -1466,54 +478,10 @@ mod tests {
             .is_empty());
     }
 
-    #[tokio::test]
-    async fn an_unparseable_file_is_never_overwritten() {
-        let (store, _dir) = store();
-        tokio::fs::create_dir_all(store.path().parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(store.path(), b"{ not json").await.unwrap();
-        assert!(store.agents().await.is_err());
-        assert!(store
-            .store_entry(agent("helper", &["laptop"]))
-            .await
-            .is_err());
-        assert_eq!(tokio::fs::read(store.path()).await.unwrap(), b"{ not json");
-    }
-
-    #[tokio::test]
-    async fn connections_are_trusted_normally_until_the_owner_trusts_them_fully() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = ConnectionTrustStore::new(dir.path().join("connection-trust.json"));
-        assert_eq!(store.level("conn-1").await, DelegationTrust::Normal);
-
-        store.set("conn-1", DelegationTrust::Full).await.unwrap();
-        assert_eq!(store.level("conn-1").await, DelegationTrust::Full);
-        assert_eq!(store.level("conn-2").await, DelegationTrust::Normal);
-
-        store.set("conn-1", DelegationTrust::Normal).await.unwrap();
-        assert_eq!(store.level("conn-1").await, DelegationTrust::Normal);
-        assert!(store.levels().await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn unreadable_trust_reads_as_normal_and_is_never_overwritten() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("connection-trust.json");
-        let store = ConnectionTrustStore::new(path.clone());
-        store.set("conn-2", DelegationTrust::Full).await.unwrap();
-        assert_eq!(store.level("conn-2").await, DelegationTrust::Full);
-
-        tokio::fs::write(&path, b"{ not json").await.unwrap();
-        assert_eq!(store.level("conn-2").await, DelegationTrust::Normal);
-        assert!(store.set("conn-2", DelegationTrust::Full).await.is_err());
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"{ not json");
-    }
-
     fn delegated_facts(trust: DelegationTrust) -> DelegatedTurnFacts {
         DelegatedTurnFacts {
             assistant_workspace: Some(PathBuf::from("/home/me/personal_assistant/workspace")),
-            task_dir: Some(PathBuf::from("/home/me/delegation/workspaces/job")),
+            tenant_workspace: Some(PathBuf::from("/home/me/delegation/tenants/workspace/0123")),
             trust,
         }
     }
@@ -1524,7 +492,7 @@ mod tests {
         let normal = delegated_facts(DelegationTrust::Normal).restrict_tools(Default::default());
         for tool in NORMAL_TRUST_DENIED_TOOLS {
             assert!(normal.denied_tool_names.contains(tool), "{tool}");
-            assert!(normal.denied_tool_messages[tool].contains("not trusted this connection fully"));
+            assert!(normal.denied_tool_messages[tool].contains("shares it at normal trust"));
         }
         let full = delegated_facts(DelegationTrust::Full).restrict_tools(Default::default());
         assert!(full.denied_tool_names.is_empty());
@@ -1532,7 +500,7 @@ mod tests {
         for restrictions in [&normal, &full] {
             assert_eq!(
                 restrictions.path_policy.write_roots,
-                vec!["/home/me/delegation/workspaces/job".to_string()]
+                vec!["/home/me/delegation/tenants/workspace/0123".to_string()]
             );
         }
     }
@@ -1550,6 +518,38 @@ mod tests {
         let full = delegated_facts(DelegationTrust::Full);
         assert!(full.subagent_refusal("ComputerUse").is_none());
         assert!(full.owner_private_paths().is_empty());
+    }
+
+    #[test]
+    fn normal_trust_reaches_only_the_sessions_of_its_tenant() {
+        let normal = delegated_facts(DelegationTrust::Normal);
+        let tenant = "/home/me/delegation/tenants/workspace/0123";
+        assert_eq!(
+            normal.session_workspace_refusal("SessionHistory", tenant),
+            None
+        );
+        assert_eq!(
+            normal.session_workspace_refusal("SessionHistory", &format!("{tenant}/")),
+            None
+        );
+        for other in [
+            "/home/me/personal_assistant/workspace",
+            "/home/me/delegation/tenants/workspace/4567",
+            "/home/me/delegation/tenants/workspace",
+        ] {
+            let refusal = normal
+                .session_workspace_refusal("SessionControl", other)
+                .expect(other);
+            assert!(
+                refusal.starts_with("SessionControl reaches only"),
+                "{refusal}"
+            );
+        }
+        let full = delegated_facts(DelegationTrust::Full);
+        assert_eq!(
+            full.session_workspace_refusal("SessionHistory", "/home/me/elsewhere"),
+            None
+        );
     }
 
     #[test]

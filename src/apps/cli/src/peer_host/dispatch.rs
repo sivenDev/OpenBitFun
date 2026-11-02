@@ -50,23 +50,15 @@ impl HostInvokeBridgeResult {
     }
 }
 
-/// Handle `RemoteCommand::HostInvoke` from `source_device_id`, the
-/// relay-authenticated sender, and return a HostInvokeResult envelope.
-pub(crate) async fn handle_host_invoke(
-    command: &str,
-    args: Value,
-    source_device_id: &str,
-) -> RemoteResponse {
-    handle_host_invoke_inner(command, args, source_device_id)
+/// Handle `RemoteCommand::HostInvoke` from a relay-authenticated device of
+/// this account and return a HostInvokeResult envelope.
+pub(crate) async fn handle_host_invoke(command: &str, args: Value) -> RemoteResponse {
+    handle_host_invoke_inner(command, args)
         .await
         .into_remote_response()
 }
 
-async fn handle_host_invoke_inner(
-    command: &str,
-    args: Value,
-    source_device_id: &str,
-) -> HostInvokeBridgeResult {
+async fn handle_host_invoke_inner(command: &str, args: Value) -> HostInvokeBridgeResult {
     // The Product Operation Registry decides what this host may run on a
     // controller's behalf. The verdict order (empty, retired, control plane,
     // controller-owned, unsupported here, execute, unknown) is the registry's,
@@ -75,9 +67,7 @@ async fn handle_host_invoke_inner(
         PeerHostVerdict::Refuse(refusal) => {
             return HostInvokeBridgeResult::err(refusal.message(command));
         }
-        PeerHostVerdict::HostControlPlane => {
-            return handle_control_plane(command, args, source_device_id).await
-        }
+        PeerHostVerdict::HostControlPlane => return handle_control_plane(command, args).await,
         PeerHostVerdict::Execute => {}
     }
 
@@ -107,19 +97,12 @@ async fn handle_host_invoke_inner(
 
 /// Control-plane commands are answered before any product dispatch and never
 /// acquire a Peer controller lease for a product command.
-async fn handle_control_plane(
-    command: &str,
-    args: Value,
-    source_device_id: &str,
-) -> HostInvokeBridgeResult {
+async fn handle_control_plane(command: &str, args: Value) -> HostInvokeBridgeResult {
     // Detached dispatch is target-owned. Route the distinct target command
-    // family directly to the durable CLI runner, bound to the sender.
+    // family directly to the durable CLI runner. Only the LAN share host
+    // speaks for a device using a shared assistant.
     if let Some(verb) = dispatch_target_verb(command) {
-        let args = openbitfun_services_core::dispatch_contract::bind_dispatch_source_device(
-            command,
-            args,
-            source_device_id,
-        );
+        let args = openbitfun_services_core::dispatch_contract::strip_dispatch_source(args);
         return match crate::dispatch::run_dispatch_verb(verb, args).await {
             Ok(value) => HostInvokeBridgeResult::ok_value(value),
             Err(error) => HostInvokeBridgeResult::err(format!("{error:#}")),
@@ -184,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn peer_mode_ping_returns_ok_peer_payload() {
-        let resp = handle_host_invoke("peer_mode_ping", json!({}), "ctrl-test").await;
+        let resp = handle_host_invoke("peer_mode_ping", json!({})).await;
         match resp {
             RemoteResponse::HostInvokeResult {
                 ok: true,
@@ -229,7 +212,7 @@ mod tests {
         // `host_type: "cli"` field lets the controller resolve those missing
         // capabilities as unsupported instead of optimistically invoking a
         // command the CLI never implemented. See PR #2428 round 5 #1.
-        let resp = handle_host_invoke("peer_mode_ping", json!({}), "ctrl-test").await;
+        let resp = handle_host_invoke("peer_mode_ping", json!({})).await;
         match resp {
             RemoteResponse::HostInvokeResult {
                 ok: true,
@@ -244,7 +227,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_only_commands_are_denied() {
-        let resp = handle_host_invoke("account_logout", json!({}), "ctrl-test").await;
+        let resp = handle_host_invoke("account_logout", json!({})).await;
         match resp {
             RemoteResponse::HostInvokeResult {
                 ok: false,
@@ -259,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn retired_lsp_commands_fail_before_peer_state_or_command_dispatch() {
-        let resp = handle_host_invoke("lsp_open_workspace", json!({}), "ctrl-test").await;
+        let resp = handle_host_invoke("lsp_open_workspace", json!({})).await;
         match resp {
             RemoteResponse::HostInvokeResult {
                 ok: false,
@@ -306,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_unsupported_commands_keep_the_legacy_prefix_and_add_a_reason() {
-        let resp = handle_host_invoke("worktree_list", json!({}), "ctrl-test").await;
+        let resp = handle_host_invoke("worktree_list", json!({})).await;
         match resp {
             RemoteResponse::HostInvokeResult {
                 ok: false,
@@ -325,7 +308,7 @@ mod tests {
 
     #[tokio::test]
     async fn browser_control_is_unsupported_not_local_only_on_cli() {
-        let resp = handle_host_invoke("browser_control_launch", json!({}), "ctrl-test").await;
+        let resp = handle_host_invoke("browser_control_launch", json!({})).await;
         match resp {
             RemoteResponse::HostInvokeResult {
                 ok: false,
@@ -341,7 +324,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_command_reports_host_version_mismatch() {
-        let resp = handle_host_invoke("not_an_openbitfun_command", json!({}), "ctrl-test").await;
+        let resp = handle_host_invoke("not_an_openbitfun_command", json!({})).await;
         match resp {
             RemoteResponse::HostInvokeResult {
                 ok: false,
@@ -387,7 +370,6 @@ mod tests {
         let _ = handle_host_invoke(
             "peer_control_attach",
             json!({ "controller_device_id": "ctrl-test-1" }),
-            "ctrl-test-1",
         )
         .await;
         assert!(super::super::control::attached_controllers()
@@ -396,7 +378,6 @@ mod tests {
         let _ = handle_host_invoke(
             "peer_control_detach",
             json!({ "controller_device_id": "ctrl-test-1" }),
-            "ctrl-test-1",
         )
         .await;
         assert!(!super::super::control::attached_controllers()

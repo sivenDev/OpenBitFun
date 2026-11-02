@@ -89,13 +89,13 @@ fn snapshots_read_target_status_payloads() {
     let queued: RemoteAgentJobSnapshot = serde_json::from_value(json!({
         "state": "queued",
         "cursor": 0,
-        "hold": {"reason": "connectionLimit", "limit": 2, "sinceMs": 1}
+        "hold": {"reason": "shareLimit", "limit": 2, "sinceMs": 1}
     }))
     .unwrap();
     assert_eq!(
         queued.hold,
         Some(RemoteAgentJobHold {
-            reason: RemoteAgentHoldReason::ConnectionLimit,
+            reason: RemoteAgentHoldReason::ShareLimit,
             limit: Some(2),
         })
     );

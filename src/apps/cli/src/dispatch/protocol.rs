@@ -16,14 +16,14 @@ pub(crate) const MAX_DISPATCH_TEXT_BYTES: usize = 32 * 1024;
 pub(crate) struct DispatchProbeRequest {
     #[serde(default)]
     pub(crate) workspace_path: Option<String>,
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_share_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -114,28 +114,28 @@ pub(crate) struct DispatchSubmitRequest {
     /// from submit idempotency.
     #[serde(default)]
     pub(crate) setup_audit: Vec<DispatchSetupAuditEvent>,
-    /// Present when another device of the account delegates this job to an
-    /// agent this device opened. Omitted from ordinary jobs so their records
-    /// stay readable by older targets.
+    /// Present when a device this device shares an assistant with delegates
+    /// this job to it. Omitted from ordinary jobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) delegation: Option<DispatchDelegation>,
-    /// The delegating device, bound by the receiving host from the
-    /// relay-authenticated sender; never accepted from the requester.
+    /// The sharing public key (hex) of the device that delegated the job,
+    /// bound by the LAN share host from the key the channel verified; never
+    /// accepted from the caller.
     #[serde(
-        rename = "__sourceDeviceId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_device_id: Option<String>,
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    pub(crate) source_share_key: Option<String>,
+    /// Who that device is, from its grant when the job was admitted; set by
+    /// this device, never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceUser",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
-    /// Root of the opened assistant a delegated job runs as, chosen by this
+    pub(crate) source_user: Option<DispatchShareUser>,
+    /// Root of the shared assistant a delegated job runs as, chosen by this
     /// device at admission; never accepted from the caller.
     #[serde(
         rename = "__assistantWorkspace",
@@ -145,11 +145,23 @@ pub(crate) struct DispatchSubmitRequest {
     pub(crate) assistant_workspace: Option<String>,
 }
 
-/// A job delegated to one of this device's open agents.
+/// The device a delegated job came from, as its grant names it.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DispatchShareUser {
+    /// Derived from the device's sharing key: the tenant the job runs for.
+    pub(crate) device_id: String,
+    pub(crate) fingerprint: String,
+    pub(crate) display_name: String,
+    pub(crate) device_name: String,
+}
+
+/// A job delegated to one of this device's shared assistants.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DispatchDelegation {
-    pub(crate) open_agent_id: String,
+    /// The shared assistant: its directory, as the share catalog lists it.
+    pub(crate) assistant_id: String,
     /// Requester-reported context, shown to the owner and never used for
     /// authorization.
     #[serde(default)]
@@ -207,14 +219,14 @@ pub(crate) struct DispatchStatusRequest {
     pub(crate) job_id: String,
     #[serde(default)]
     pub(crate) cursor: u64,
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_share_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -272,14 +284,14 @@ pub(crate) struct DispatchAppendRequest {
     /// controller omits the field entirely, which decodes to an empty list.
     #[serde(default)]
     pub(crate) attachments: Vec<DispatchAttachment>,
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_share_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -499,14 +511,14 @@ pub(crate) struct DispatchContinueRequest {
     pub(crate) kind: DispatchTurnKind,
     #[serde(default)]
     pub(crate) attachments: Vec<DispatchAttachment>,
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_share_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -523,14 +535,14 @@ pub(crate) struct DispatchContinueResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DispatchCancelRequest {
     pub(crate) job_id: String,
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_share_key: Option<String>,
 }
 
 /// Read-only question about a job's persisted session state.
@@ -548,14 +560,14 @@ pub(crate) struct DispatchQueryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) file_chunk:
         Option<openbitfun_services_core::dispatch_contract::DispatchFileChunkRequest>,
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_share_key: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -569,14 +581,14 @@ pub(crate) enum DispatchQueryKind {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DispatchListRequest {
-    /// The cross-account connection the call arrived over, bound by the
-    /// receiving host; never accepted from the caller.
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
     #[serde(
-        rename = "__sourceConnectionId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_share_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -729,9 +741,9 @@ pub(crate) struct DispatchHold {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum DispatchHoldReason {
-    /// The connection already runs as many tasks with this agent as its
-    /// owner allows.
-    ConnectionLimit,
+    /// The shared assistant already runs as many tasks for other devices as
+    /// its owner allows.
+    ShareLimit,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -791,16 +803,16 @@ fn is_zero(count: &usize) -> bool {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DispatchDelegatedJobSummary {
-    pub(crate) open_agent_id: String,
+    pub(crate) assistant_id: String,
     /// The assistant root the job runs as, set by this device.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) assistant_workspace: Option<String>,
-    /// A device of this account that delegated the job.
+    /// The sharing public key of the device that delegated the job.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) source_device_id: Option<String>,
-    /// The cross-account connection the job arrived over.
+    pub(crate) source_share_key: Option<String>,
+    /// Who that device is, from its grant at admission.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) source_connection_id: Option<String>,
+    pub(crate) source_user: Option<DispatchShareUser>,
     /// What the requester reported about itself; shown, never trusted.
     pub(crate) source: DispatchDelegationSource,
 }

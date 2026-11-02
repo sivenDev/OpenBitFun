@@ -87,16 +87,10 @@ export default function DelegatedTaskList({
     : tasks;
   if (shown.length === 0) return null;
 
-  const source = (task: DelegatedTask): string => {
-    if (task.source.kind === 'connection') {
-      return t('nav.sessions.delegated.fromAccount', {
-        name: task.source.accountName ?? task.source.connectionId ?? '',
-      });
-    }
-    return t('nav.sessions.delegated.fromDevice', {
-      device: task.source.deviceName ?? task.source.deviceId ?? '',
-    });
-  };
+  const source = (task: DelegatedTask): string => t('nav.sessions.delegated.from', {
+    name: task.source.displayName || task.source.fingerprint,
+    device: task.source.deviceName,
+  });
 
   return (
     <div

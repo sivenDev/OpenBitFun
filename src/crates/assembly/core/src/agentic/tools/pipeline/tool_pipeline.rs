@@ -3669,7 +3669,7 @@ mod tests {
     #[test]
     fn a_normal_trust_task_asks_before_reading_the_owners_profile() {
         use crate::service::delegation::{
-            DELEGATION_ASSISTANT_CONTEXT_KEY, DELEGATION_TASK_DIR_CONTEXT_KEY,
+            DELEGATION_ASSISTANT_CONTEXT_KEY, DELEGATION_TENANT_CONTEXT_KEY,
             DELEGATION_TRUST_CONTEXT_KEY, DISPATCH_DELEGATION_CONTEXT_KEY,
         };
         let home = tempfile::tempdir().unwrap();
@@ -3688,7 +3688,7 @@ mod tests {
                 for (key, value) in [
                     (DISPATCH_DELEGATION_CONTEXT_KEY, json!(true)),
                     (DELEGATION_ASSISTANT_CONTEXT_KEY, json!(assistant)),
-                    (DELEGATION_TASK_DIR_CONTEXT_KEY, json!(task_dir)),
+                    (DELEGATION_TENANT_CONTEXT_KEY, json!(task_dir)),
                     (DELEGATION_TRUST_CONTEXT_KEY, json!(trust)),
                 ] {
                     context.custom_data.insert(key.to_string(), value);

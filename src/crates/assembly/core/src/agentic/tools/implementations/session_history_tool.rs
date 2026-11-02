@@ -247,7 +247,7 @@ Examples:
     async fn call_impl(
         &self,
         input: &Value,
-        _context: &ToolUseContext,
+        context: &ToolUseContext,
     ) -> OpenBitFunResult<Vec<ToolResult>> {
         let params: SessionHistoryInput = serde_json::from_value(input.clone())
             .map_err(|e| OpenBitFunError::tool(format!("Invalid input: {}", e)))?;
@@ -263,6 +263,16 @@ Examples:
                     ))
                 })?;
         let display_workspace = display_workspace.to_string_lossy().into_owned();
+        // A task from a device this assistant is shared with, at normal
+        // trust, reads only the conversations of its own tenant workspace.
+        if let Some(refusal) =
+            crate::service::delegation::DelegatedTurnFacts::from_tool_data(&context.custom_data)
+                .and_then(|facts| {
+                    facts.session_workspace_refusal("SessionHistory", &display_workspace)
+                })
+        {
+            return Err(OpenBitFunError::tool(refusal));
+        }
         let coordinator =
             crate::agentic::coordination::get_global_coordinator().ok_or_else(|| {
                 OpenBitFunError::service(

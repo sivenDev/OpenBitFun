@@ -121,32 +121,25 @@ pub struct DispatchFileChunk {
     pub revision: String,
 }
 
-/// Optional: the target keeps a list of agents opened to its other devices,
-/// answers `catalog`, and accepts delegated submissions. Older targets reject
-/// the delegation fields, so a requester must see this before using them.
+/// Optional: the target runs tasks that devices it shares assistants with
+/// delegate to them, answers `catalog` for such a device, and accepts
+/// delegated submissions. A requester must see this before using them.
 pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";
 
 /// Optional: tasks delegated to this device's assistants may call external
-/// agents with its own login or credentials. Earlier requesters listed a
-/// target's `acp:` open agents only when the target advertised this; targets
-/// no longer open external agents themselves.
+/// agents with its own login or credentials.
 pub const DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY: &str = "external_agent_executor_v1";
 
-/// Optional: the target answers dispatch calls from paired devices of other
-/// accounts, for agents its owner granted to that connection. A requester
-/// queries a connection's catalog only when the target advertises this.
-pub const DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY: &str = "cross_account_delegation_v1";
+/// Reserved argument carrying the sharing public key (hex) of the device a
+/// call came from over the LAN share channel. Only the LAN share host sets
+/// it, from the key the channel verified; every other host removes it.
+pub const DISPATCH_SOURCE_SHARE_KEY_ARG: &str = "__sourceShareKey";
 
-/// Reserved argument carrying the cross-account connection a call arrived
-/// over. Only the receiving host sets it, from the connection it authenticated;
-/// the two reserved source arguments are never both set.
-pub const DISPATCH_SOURCE_CONNECTION_ARG: &str = "__sourceConnectionId";
-
-/// Target commands a cross-account connection may send. Each is bound to the
-/// connection; job commands act only on what that connection started.
+/// Target commands a device that uses a shared assistant may send. Each is
+/// bound to that device's key; job commands act only on what it started.
 /// `answer` is absent: only the target's owner approves its jobs. Delegated
-/// tasks are message tasks, so no workspace command reaches a connection.
-pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
+/// tasks are message tasks, so no workspace command reaches such a device.
+pub const DISPATCH_SHARE_COMMANDS: &[&str] = &[
     "dispatch_target_probe",
     "dispatch_target_catalog",
     "dispatch_target_submit",
@@ -158,111 +151,80 @@ pub const DISPATCH_CONNECTION_COMMANDS: &[&str] = &[
     "dispatch_target_append",
 ];
 
-/// Why a call over a connection is refused before the target runs it.
-pub const DISPATCH_CONNECTION_ANSWER_REFUSED: &str =
-    "approvals of cross-account jobs come only from the owner of the target device";
+/// Why an `answer` from a device using a shared assistant is refused.
+pub const DISPATCH_SHARE_ANSWER_REFUSED: &str =
+    "approvals of shared assistants' tasks come only from the owner of the target device";
 
-/// Binds a target command from a cross-account connection: removes both
-/// caller-supplied sources and sets the connection. Commands a connection may
-/// not send are refused here, so no handler sees them.
-pub fn bind_dispatch_source_connection(
+/// Field marking a submission as delegated to a shared assistant.
+pub const DISPATCH_DELEGATION_FIELD: &str = "delegation";
+
+/// Binds a target command that arrived over the LAN share channel from the
+/// device with `share_key`: removes any caller-supplied source and sets the
+/// key. Commands such a device may not send are refused here, so no handler
+/// sees them.
+pub fn bind_dispatch_source_share_key(
     command: &str,
     args: serde_json::Value,
-    connection_id: &str,
+    share_key: &str,
 ) -> Result<serde_json::Value, String> {
     if command == "dispatch_target_answer" {
-        return Err(DISPATCH_CONNECTION_ANSWER_REFUSED.to_string());
+        return Err(DISPATCH_SHARE_ANSWER_REFUSED.to_string());
     }
-    if !DISPATCH_CONNECTION_COMMANDS.contains(&command) {
+    if !DISPATCH_SHARE_COMMANDS.contains(&command) {
         return Err(format!(
-            "command '{command}' is not accepted over a cross-account connection"
+            "command '{command}' is not accepted from a device using a shared assistant"
         ));
     }
-    if connection_id.trim().is_empty() {
-        return Err("the connection is unknown".to_string());
+    let share_key = share_key.trim();
+    if share_key.len() != 64 || !share_key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("the sharing key of the calling device is unknown".to_string());
     }
     let mut args = match args {
         serde_json::Value::Object(map) => map,
         serde_json::Value::Null => serde_json::Map::new(),
         _ => return Err("dispatch arguments must be an object".to_string()),
     };
-    args.remove(DISPATCH_SOURCE_DEVICE_ARG);
-    args.remove(DISPATCH_SOURCE_CONNECTION_ARG);
+    args.remove(DISPATCH_SOURCE_SHARE_KEY_ARG);
     if command == "dispatch_target_submit" && !args.contains_key(DISPATCH_DELEGATION_FIELD) {
-        return Err("a connection submits only jobs delegated to an open agent".to_string());
+        return Err("a device using a shared assistant submits only tasks for it".to_string());
     }
     if command == "dispatch_target_probe" && args.contains_key("workspacePath") {
-        return Err("a connection cannot inspect paths on this device".to_string());
+        return Err("a device using a shared assistant cannot inspect paths here".to_string());
     }
     args.insert(
-        DISPATCH_SOURCE_CONNECTION_ARG.to_string(),
-        serde_json::Value::String(connection_id.to_string()),
+        DISPATCH_SOURCE_SHARE_KEY_ARG.to_string(),
+        serde_json::Value::String(share_key.to_ascii_lowercase()),
     );
     Ok(serde_json::Value::Object(args))
 }
 
-/// Reserved argument carrying the device that sent a device RPC. Only the
-/// receiving host sets it, from the relay-authenticated sender; any value in
-/// the incoming payload is discarded so a requester cannot claim another device.
-pub const DISPATCH_SOURCE_DEVICE_ARG: &str = "__sourceDeviceId";
-
-/// Target commands whose request carries [`DISPATCH_SOURCE_DEVICE_ARG`].
-/// `dispatch_target_submit` carries it only for a delegated job, so an older
-/// local runner, which refuses unknown fields, keeps accepting ordinary jobs.
-pub const DISPATCH_SOURCE_BOUND_COMMANDS: &[&str] =
-    &["dispatch_target_catalog", "dispatch_target_submit"];
-
-/// Field marking a submission as delegated to an open agent.
-pub const DISPATCH_DELEGATION_FIELD: &str = "delegation";
-
-/// Binds a target command's arguments to the authenticated sender: removes any
-/// caller-supplied source device, then sets it for commands that use it.
-pub fn bind_dispatch_source_device(
-    command: &str,
-    args: serde_json::Value,
-    source_device_id: &str,
-) -> serde_json::Value {
-    let mut args = match args {
-        serde_json::Value::Object(map) => map,
-        serde_json::Value::Null => serde_json::Map::new(),
+/// Removes a caller-supplied source from a target command that arrived any
+/// other way (the account relay, Peer Device Mode): only the LAN share host
+/// speaks for a device using a shared assistant.
+pub fn strip_dispatch_source(args: serde_json::Value) -> serde_json::Value {
+    match args {
+        serde_json::Value::Object(mut map) => {
+            map.remove(DISPATCH_SOURCE_SHARE_KEY_ARG);
+            serde_json::Value::Object(map)
+        }
         // Not a request object: leave it for the target to reject.
-        other => return other,
-    };
-    args.remove(DISPATCH_SOURCE_DEVICE_ARG);
-    // A same-account device never speaks for a connection.
-    args.remove(DISPATCH_SOURCE_CONNECTION_ARG);
-    let bound = match command {
-        "dispatch_target_submit" => args.contains_key(DISPATCH_DELEGATION_FIELD),
-        _ => DISPATCH_SOURCE_BOUND_COMMANDS.contains(&command),
-    };
-    if bound {
-        args.insert(
-            DISPATCH_SOURCE_DEVICE_ARG.to_string(),
-            serde_json::Value::String(source_device_id.to_string()),
-        );
+        other => other,
     }
-    serde_json::Value::Object(args)
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DispatchCatalogRequest {
     #[serde(
-        rename = "__sourceDeviceId",
+        rename = "__sourceShareKey",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub source_device_id: Option<String>,
-    #[serde(
-        rename = "__sourceConnectionId",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub source_connection_id: Option<String>,
+    pub source_share_key: Option<String>,
 }
 
-/// Agents the target opens to the requesting device. Target paths and the
-/// grants of other devices are never included.
+/// Assistants the target shares with the requesting device. Target paths
+/// and the grants of other devices are never included.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchCatalogResponse {
@@ -274,7 +236,8 @@ pub struct DispatchCatalogResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DispatchCatalogAgent {
     pub id: String,
-    /// The agent the open agent runs; a delegated submission must name it.
+    /// The agent the shared assistant runs as; a delegated submission must
+    /// name it.
     pub agent_type: String,
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -395,143 +358,77 @@ pub fn validate_dispatch_attachments(attachments: &[DispatchAttachment]) -> Resu
 mod tests {
     use super::*;
 
-    #[test]
-    fn source_device_is_bound_by_the_host_never_by_the_caller() {
-        let forged = serde_json::json!({ "__sourceDeviceId": "someone-else" });
-        assert_eq!(
-            bind_dispatch_source_device("dispatch_target_catalog", forged.clone(), "laptop"),
-            serde_json::json!({ "__sourceDeviceId": "laptop" })
-        );
-        assert_eq!(
-            bind_dispatch_source_device(
-                "dispatch_target_catalog",
-                serde_json::Value::Null,
-                "laptop"
-            ),
-            serde_json::json!({ "__sourceDeviceId": "laptop" })
-        );
-        // Other verbs never receive the reserved argument, even when forged.
-        assert_eq!(
-            bind_dispatch_source_device(
-                "dispatch_target_status",
-                serde_json::json!({ "jobId": "j", "__sourceDeviceId": "someone-else" }),
-                "laptop"
-            ),
-            serde_json::json!({ "jobId": "j" })
-        );
-        // Submissions are bound only when delegated.
-        assert_eq!(
-            bind_dispatch_source_device(
-                "dispatch_target_submit",
-                serde_json::json!({ "jobId": "j", "__sourceDeviceId": "someone-else" }),
-                "laptop"
-            ),
-            serde_json::json!({ "jobId": "j" })
-        );
-        assert_eq!(
-            bind_dispatch_source_device(
-                "dispatch_target_submit",
-                serde_json::json!({ "delegation": {}, "__sourceDeviceId": "someone-else" }),
-                "laptop"
-            ),
-            serde_json::json!({ "delegation": {}, "__sourceDeviceId": "laptop" })
-        );
-        // The catalog request refuses unknown fields but accepts the bound one.
-        let request: DispatchCatalogRequest = serde_json::from_value(bind_dispatch_source_device(
-            "dispatch_target_catalog",
-            forged,
-            "laptop",
-        ))
-        .unwrap();
-        assert_eq!(request.source_device_id.as_deref(), Some("laptop"));
-        assert!(serde_json::from_value::<DispatchCatalogRequest>(
-            serde_json::json!({ "deviceId": "x" })
-        )
-        .is_err());
-    }
+    const KEY: &str = "abababababababababababababababababababababababababababababababab";
 
     #[test]
-    fn connections_are_bound_and_limited_to_their_commands() {
-        // Forged sources of either kind are replaced by the connection.
-        let bound = bind_dispatch_source_connection(
+    fn share_keys_are_bound_by_the_lan_host_never_by_the_caller() {
+        let bound = bind_dispatch_source_share_key(
             "dispatch_target_status",
-            serde_json::json!({
-                "jobId": "j",
-                "__sourceDeviceId": "laptop",
-                "__sourceConnectionId": "conn-other",
-            }),
-            "conn-1",
+            serde_json::json!({ "jobId": "j", "__sourceShareKey": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd" }),
+            &KEY.to_uppercase(),
         )
         .unwrap();
         assert_eq!(
             bound,
-            serde_json::json!({ "jobId": "j", "__sourceConnectionId": "conn-1" })
+            serde_json::json!({ "jobId": "j", "__sourceShareKey": KEY })
         );
         let catalog: DispatchCatalogRequest = serde_json::from_value(
-            bind_dispatch_source_connection(
-                "dispatch_target_catalog",
-                serde_json::Value::Null,
-                "conn-1",
-            )
-            .unwrap(),
+            bind_dispatch_source_share_key("dispatch_target_catalog", serde_json::Value::Null, KEY)
+                .unwrap(),
         )
         .unwrap();
-        assert_eq!(catalog.source_connection_id.as_deref(), Some("conn-1"));
-        assert_eq!(catalog.source_device_id, None);
+        assert_eq!(catalog.source_share_key.as_deref(), Some(KEY));
+        assert!(serde_json::from_value::<DispatchCatalogRequest>(
+            serde_json::json!({ "deviceId": "x" })
+        )
+        .is_err());
 
         assert_eq!(
-            bind_dispatch_source_connection(
+            bind_dispatch_source_share_key(
                 "dispatch_target_answer",
                 serde_json::json!({ "jobId": "j" }),
-                "conn-1"
+                KEY
             )
             .unwrap_err(),
-            DISPATCH_CONNECTION_ANSWER_REFUSED
+            DISPATCH_SHARE_ANSWER_REFUSED
         );
         for refused in [
             "dispatch_target_read_file",
             "dispatch_target_workspace_provision",
             "peer_mode_ping",
         ] {
-            assert!(
-                bind_dispatch_source_connection(refused, serde_json::Value::Null, "conn-1")
-                    .is_err()
-            );
+            assert!(bind_dispatch_source_share_key(refused, serde_json::Value::Null, KEY).is_err());
         }
-        assert!(bind_dispatch_source_connection(
+        assert!(bind_dispatch_source_share_key(
             "dispatch_target_submit",
             serde_json::json!({ "jobId": "j" }),
-            "conn-1"
+            KEY
         )
         .unwrap_err()
-        .contains("delegated"));
-        for path in [
-            serde_json::json!("/etc"),
-            serde_json::json!(42),
-            serde_json::json!("connection-workspace:delegation-1"),
-        ] {
-            assert!(bind_dispatch_source_connection(
-                "dispatch_target_probe",
-                serde_json::json!({ "workspacePath": path }),
-                "conn-1"
+        .contains("shared assistant"));
+        assert!(bind_dispatch_source_share_key(
+            "dispatch_target_probe",
+            serde_json::json!({ "workspacePath": "/etc" }),
+            KEY
+        )
+        .is_err());
+        for bad in ["", "abcd", &"zz".repeat(32)] {
+            assert!(bind_dispatch_source_share_key(
+                "dispatch_target_list",
+                serde_json::Value::Null,
+                bad
             )
             .is_err());
         }
-        assert!(bind_dispatch_source_connection(
-            "dispatch_target_list",
-            serde_json::Value::Null,
-            " "
-        )
-        .is_err());
 
-        // A same-account device cannot claim a connection.
+        // Any other host removes a forged key.
         assert_eq!(
-            bind_dispatch_source_device(
-                "dispatch_target_catalog",
-                serde_json::json!({ "__sourceConnectionId": "conn-1" }),
-                "laptop"
-            ),
-            serde_json::json!({ "__sourceDeviceId": "laptop" })
+            strip_dispatch_source(serde_json::json!({ "jobId": "j", "__sourceShareKey": KEY })),
+            serde_json::json!({ "jobId": "j" })
+        );
+        assert_eq!(
+            strip_dispatch_source(serde_json::Value::Null),
+            serde_json::Value::Null
         );
     }
 

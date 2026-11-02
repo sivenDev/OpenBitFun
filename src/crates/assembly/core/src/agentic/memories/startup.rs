@@ -109,7 +109,7 @@ pub fn memory_startup_is_eligible(request: &MemoryStartupRequest) -> bool {
     if request.is_remote_workspace || request.workspace_path.is_none() {
         return false;
     }
-    // A task another device delegated here never feeds the owner's memory.
+    // A tenant workspace of a shared assistant never feeds the owner's memory.
     if request.workspace_path.as_deref().is_some_and(|path| {
         crate::service::delegation::is_delegation_workspace_path(std::path::Path::new(path))
     }) {
@@ -176,10 +176,9 @@ mod tests {
     #[test]
     fn delegated_tasks_never_feed_memories() {
         let path_manager = crate::infrastructure::get_path_manager_arc();
-        let task_dir = crate::service::delegation::delegation_workspaces_root(&path_manager)
-            .join("ann")
-            .join("connection-c1")
-            .join("job-1");
+        let task_dir = crate::service::lan_share::tenants_root(&path_manager)
+            .join("workspace")
+            .join("0123456789abcdef0123456789abcdef");
         assert!(!memory_startup_is_eligible(&MemoryStartupRequest {
             workspace_path: Some(task_dir.to_string_lossy().into_owned()),
             ..request()

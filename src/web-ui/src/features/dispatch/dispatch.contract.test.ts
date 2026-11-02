@@ -126,29 +126,19 @@ describe('dispatch wire contract single source', () => {
     expect(new Set(BASE_DISPATCH_CAPABILITIES)).toEqual(rustRequired);
   });
 
-  it('keeps agent delegation optional and its requester bound by the host', () => {
+  it('keeps agent delegation optional and its requester bound by the LAN share host', () => {
     expect(contractSource).toContain('pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";');
     expect(BASE_DISPATCH_CAPABILITIES).not.toContain('agent_delegation_v1');
-    // Running opened `acp:` agents is a separate, optional target fact.
+    // Running `acp:` agents for shared assistants' tasks is a separate, optional target fact.
     expect(contractSource).toContain('pub const DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY: &str = "external_agent_executor_v1";');
     expect(BASE_DISPATCH_CAPABILITIES).not.toContain('external_agent_executor_v1');
-    // Hosts overwrite this reserved argument with the relay-authenticated sender.
-    expect(contractSource).toContain('pub const DISPATCH_SOURCE_DEVICE_ARG: &str = "__sourceDeviceId";');
-    const bound = /DISPATCH_SOURCE_BOUND_COMMANDS: &\[&str\] =\s*&\[([^\]]*)\]/u.exec(contractSource);
-    expect(bound).not.toBeNull();
-    expect(Array.from(bound![1].matchAll(/"([^"]+)"/g), match => match[1]))
-      .toEqual(['dispatch_target_catalog', 'dispatch_target_submit']);
-  });
-
-  it('keeps cross-account delegation optional and its connection bound by the host', () => {
-    expect(contractSource).toContain('pub const DISPATCH_CROSS_ACCOUNT_DELEGATION_CAPABILITY: &str = "cross_account_delegation_v1";');
-    expect(BASE_DISPATCH_CAPABILITIES).not.toContain('cross_account_delegation_v1');
-    // Hosts overwrite this reserved argument with the authenticated connection.
-    expect(contractSource).toContain('pub const DISPATCH_SOURCE_CONNECTION_ARG: &str = "__sourceConnectionId";');
-    const commands = /DISPATCH_CONNECTION_COMMANDS: &\[&str\] = &\[([^\]]*)\]/u.exec(contractSource);
+    // Only the LAN share host sets this reserved argument, from the key its channel verified.
+    expect(contractSource).toContain('pub const DISPATCH_SOURCE_SHARE_KEY_ARG: &str = "__sourceShareKey";');
+    expect(contractSource).not.toContain('cross_account_delegation_v1');
+    const commands = /DISPATCH_SHARE_COMMANDS: &\[&str\] = &\[([^\]]*)\]/u.exec(contractSource);
     expect(commands).not.toBeNull();
     const allowed = Array.from(commands![1].matchAll(/"([^"]+)"/g), match => match[1]);
-    // Only the target's owner answers approvals of cross-account jobs.
+    // Only the target's owner answers approvals of shared assistants' tasks.
     expect(allowed).not.toContain('dispatch_target_answer');
     expect(allowed).toEqual(expect.arrayContaining(['dispatch_target_catalog', 'dispatch_target_submit', 'dispatch_target_status']));
   });

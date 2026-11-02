@@ -1,4 +1,4 @@
-//! Records cross-account tasks in this device's delegation audit log.
+//! Records tasks from other devices in this device's delegation audit log.
 //!
 //! Recording never fails a task: a log that cannot be written is reported in
 //! this device's own log, and the task runs as its owner allowed.
@@ -17,7 +17,7 @@ fn default_log() -> Option<DelegationAuditLog> {
         .map(|path_manager| DelegationAuditLog::for_product_home(&path_manager))
 }
 
-/// The entry for `request`, or none when it did not come over a connection.
+/// The entry for `request`, or none when it did not come from another device.
 pub(super) fn entry(
     request: &DispatchSubmitRequest,
     event: DelegationAuditEvent,
@@ -26,19 +26,18 @@ pub(super) fn entry(
     state: Option<DispatchJobState>,
     detail: Option<&str>,
 ) -> Option<DelegationAuditEntry> {
-    let connection_id = request.source_connection_id.as_ref()?;
+    request.source_share_key.as_ref()?;
     let delegation = request.delegation.as_ref()?;
+    let user = request.source_user.clone().unwrap_or_default();
     Some(DelegationAuditEntry {
         at: chrono::Utc::now().to_rfc3339(),
         event,
         job_id: request.job_id.clone(),
-        connection_id: connection_id.clone(),
-        // Who the requester is comes from the share grant (F002-11 Task 2).
-        peer_user_id: String::new(),
-        peer_display_name: String::new(),
-        peer_device_id: String::new(),
-        peer_device_name: String::new(),
-        open_agent_id: delegation.open_agent_id.clone(),
+        assistant_id: delegation.assistant_id.clone(),
+        peer_device_id: user.device_id,
+        peer_fingerprint: user.fingerprint,
+        peer_display_name: user.display_name,
+        peer_device_name: user.device_name,
         trust: trust.as_str().to_string(),
         external_agents,
         state: state.map(|state| {
@@ -55,8 +54,8 @@ pub(super) fn entry(
     })
 }
 
-/// Appends one event for a cross-account task to this device's log, with
-/// the connection's trust level now and the external agents the task started.
+/// Appends one event for a task from another device to this device's log,
+/// with the share's trust level now and the external agents the task started.
 pub(super) async fn record(
     request: &DispatchSubmitRequest,
     event: DelegationAuditEvent,
@@ -64,7 +63,7 @@ pub(super) async fn record(
     detail: Option<&str>,
     external_agents: Vec<String>,
 ) {
-    if request.source_connection_id.is_none() {
+    if request.source_share_key.is_none() {
         return;
     }
     let trust = super::worker::delegation_trust(request).await;
@@ -76,6 +75,6 @@ pub(super) async fn record(
         return;
     };
     if let Err(error) = log.append(&entry) {
-        tracing::warn!("Failed to record a cross-account task in the audit log: {error}");
+        tracing::warn!("Failed to record a task from another device in the audit log: {error}");
     }
 }

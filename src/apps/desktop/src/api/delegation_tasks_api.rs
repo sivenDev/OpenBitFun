@@ -1,11 +1,9 @@
-//! The owner's view of tasks other devices and accounts delegated to the
-//! assistants of this device.
+//! The owner's view of tasks other devices gave this device's shared
+//! assistants.
 //!
 //! Tasks run in the same `openbitfun dispatch` runner that accepted them, so
 //! these commands read and answer them through that runner as the device
 //! owner. Nothing is written to the assistant's own session store.
-
-use std::time::Duration;
 
 use openbitfun_core::infrastructure::PathManager;
 use openbitfun_core::service::delegation::{
@@ -14,26 +12,15 @@ use openbitfun_core::service::delegation::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// How long the owner's list waits for this account's device names.
-const DEVICE_NAMES_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Who delegated a task, as far as this device knows it.
+/// The device a task came from, as its grant named it when the task was
+/// admitted.
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DelegatedTaskSource {
-    /// `device` for a device of this account, `connection` for a paired
-    /// device of another account.
-    pub kind: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub connection_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub account_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub account_user_id: Option<String>,
+    pub device_id: String,
+    pub fingerprint: String,
+    pub display_name: String,
+    pub device_name: String,
 }
 
 /// One task delegated to an assistant here.
@@ -46,7 +33,8 @@ pub struct DelegatedTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
     pub title: String,
-    pub open_agent_id: String,
+    /// The shared assistant: its directory.
+    pub assistant_id: String,
     /// The assistant the task runs as, `assistant:<directory>`.
     pub agent_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,7 +61,7 @@ pub struct DelegationTaskAnswerRequest {
     pub reply: String,
 }
 
-/// The assistants on this device that can be opened.
+/// The assistants on this device that can be shared.
 #[tauri::command]
 pub async fn delegation_list_assistants() -> Result<Vec<LocalAssistant>, String> {
     let path_manager =
@@ -87,15 +75,12 @@ pub async fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String> {
     let listed = super::dispatch_host::run_local("list", serde_json::json!({}))
         .await
         .map_err(|error| format!("{error:#}"))?;
-    let device_names = tokio::time::timeout(
-        DEVICE_NAMES_TIMEOUT,
-        super::remote_connect_api::account_list_devices(),
-    )
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or_default();
-    Ok(listed
+    Ok(delegated_tasks(&listed))
+}
+
+/// The delegated tasks in a `dispatch list` answer.
+fn delegated_tasks(listed: &Value) -> Vec<DelegatedTask> {
+    listed
         .as_array()
         .into_iter()
         .flatten()
@@ -104,27 +89,20 @@ pub async fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String> {
             let text = |value: &Value, field: &str| {
                 value.get(field).and_then(Value::as_str).map(str::to_string)
             };
-            let mut source = DelegatedTaskSource::default();
-            if let Some(connection_id) = text(delegation, "sourceConnectionId") {
-                source.kind = "connection";
-                source.connection_id = Some(connection_id);
-            } else {
-                source.kind = "device";
-                source.device_id = text(delegation, "sourceDeviceId");
-                source.device_name = source.device_id.as_ref().and_then(|device_id| {
-                    device_names
-                        .iter()
-                        .find(|device| &device.device_id == device_id)
-                        .map(|device| device.device_name.clone())
-                });
-            }
+            let user = delegation.get("sourceUser").unwrap_or(&Value::Null);
+            let source = DelegatedTaskSource {
+                device_id: text(user, "deviceId").unwrap_or_default(),
+                fingerprint: text(user, "fingerprint").unwrap_or_default(),
+                display_name: text(user, "displayName").unwrap_or_default(),
+                device_name: text(user, "deviceName").unwrap_or_default(),
+            };
             Some(DelegatedTask {
                 job_id: text(entry, "jobId")?,
                 session_id: text(entry, "sessionId").unwrap_or_default(),
                 state: text(entry, "state").unwrap_or_default(),
                 started_at: text(entry, "startedAt"),
                 title: text(entry, "title").unwrap_or_default(),
-                open_agent_id: text(delegation, "openAgentId").unwrap_or_default(),
+                assistant_id: text(delegation, "assistantId").unwrap_or_default(),
                 agent_type: text(entry, "agentType").unwrap_or_default(),
                 assistant_workspace: text(delegation, "assistantWorkspace"),
                 pending_permission_count: entry
@@ -134,7 +112,7 @@ pub async fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String> {
                 source,
             })
         })
-        .collect())
+        .collect()
 }
 
 fn ensure_delegated(job_id: &str) -> Result<(), String> {
@@ -183,6 +161,40 @@ pub async fn delegation_task_answer(request: DelegationTaskAnswerRequest) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delegated_tasks_name_their_assistant_and_device() {
+        let listed = serde_json::json!([
+            {
+                "jobId": "delegation-1",
+                "sessionId": "s1",
+                "state": "running",
+                "title": "Plan",
+                "agentType": "assistant:workspace",
+                "pendingPermissionCount": 2,
+                "delegation": {
+                    "assistantId": "workspace",
+                    "assistantWorkspace": "/home/me/personal_assistant/workspace",
+                    "sourceShareKey": "ab",
+                    "sourceUser": {
+                        "deviceId": "0123",
+                        "fingerprint": "AB23CD",
+                        "displayName": "Bea",
+                        "deviceName": "Bea's Mac"
+                    },
+                    "source": {}
+                }
+            },
+            { "jobId": "dispatch-2", "state": "running" }
+        ]);
+        let tasks = delegated_tasks(&listed);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].assistant_id, "workspace");
+        assert_eq!(tasks[0].pending_permission_count, 2);
+        assert_eq!(tasks[0].source.display_name, "Bea");
+        assert_eq!(tasks[0].source.device_name, "Bea's Mac");
+        assert_eq!(tasks[0].source.fingerprint, "AB23CD");
+    }
 
     #[test]
     fn only_delegated_tasks_are_read_or_answered_here() {

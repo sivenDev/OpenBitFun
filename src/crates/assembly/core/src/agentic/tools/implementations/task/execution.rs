@@ -1806,7 +1806,7 @@ mod target_context_tests {
                 "/a/personal_assistant/workspace",
             ),
             (
-                crate::service::delegation::DELEGATION_TASK_DIR_CONTEXT_KEY,
+                crate::service::delegation::DELEGATION_TENANT_CONTEXT_KEY,
                 "/a/delegation/workspaces/job",
             ),
             (
@@ -1826,7 +1826,7 @@ mod target_context_tests {
         let facts = crate::service::delegation::DelegatedTurnFacts::from_context(&child)
             .expect("the child is a delegated turn");
         assert_eq!(
-            facts.task_dir.as_deref(),
+            facts.tenant_workspace.as_deref(),
             Some(std::path::Path::new("/a/delegation/workspaces/job"))
         );
         assert_eq!(

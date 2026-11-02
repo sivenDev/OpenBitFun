@@ -1,36 +1,40 @@
-//! Dispatch calls that arrive over a cross-account connection.
+//! Dispatch calls from a device that uses one of this device's shared
+//! assistants.
 //!
-//! The receiving host binds every such call to the connection it
-//! authenticated (`__sourceConnectionId`). Before a verb runs, this module
-//! limits what the connection may do: it acts only on jobs it started, it
-//! cannot read files or inspect paths, and it cannot change the approval
-//! policy or the model a job runs with. Approvals never come from a
-//! connection; the host refuses `answer` before it reaches the runner.
-//! [`present_response`] keeps the details of what this device's owner is
-//! asked to approve out of every answer.
+//! The LAN share host binds every such call to the sharing key the channel
+//! verified (`__sourceShareKey`). Before a verb runs, this module limits what
+//! that device may do: it acts only on jobs it started, it cannot read files
+//! or inspect paths, and it cannot change the approval policy or the model a
+//! job runs with. Approvals never come from such a device; the host refuses
+//! `answer` before it reaches the runner. [`present_response`] keeps the
+//! details of what this device's owner is asked to approve out of every
+//! answer.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
-use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_CONNECTION_ARG;
+use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_SHARE_KEY_ARG;
 
-use openbitfun_core::service::delegation::OpenAgentStore;
+use openbitfun_core::service::lan_share::SharedAssistantStore;
 
 use super::store::{DispatchJobRecord, DispatchStore};
 
-/// The connection a call is bound to, if any.
-pub(super) fn source_connection(input: &Value) -> Option<String> {
+/// The sharing key a call is bound to, if any, in lowercase hex.
+pub(super) fn source_share_key(input: &Value) -> Option<String> {
     input
-        .get(DISPATCH_SOURCE_CONNECTION_ARG)
+        .get(DISPATCH_SOURCE_SHARE_KEY_ARG)
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|connection_id| !connection_id.is_empty())
-        .map(str::to_string)
+        .filter(|key| !key.is_empty())
+        .map(str::to_ascii_lowercase)
 }
 
-/// Whether `job` was submitted over `connection_id`.
-pub(super) fn owns(job: &DispatchJobRecord, connection_id: &str) -> bool {
-    job.request.source_connection_id.as_deref() == Some(connection_id)
+/// Whether `job` was submitted by the device with `share_key`.
+pub(super) fn owns(job: &DispatchJobRecord, share_key: &str) -> bool {
+    job.request
+        .source_share_key
+        .as_deref()
+        .is_some_and(|key| key.eq_ignore_ascii_case(share_key))
 }
 
 fn job_id(input: &Value) -> &str {
@@ -45,23 +49,22 @@ fn missing(job_id: &str) -> anyhow::Error {
     anyhow::anyhow!("dispatch job '{job_id}' does not exist")
 }
 
-/// Refuses a call the connection may not make, and returns the input the
-/// verb runs with. Verbs not listed here never run for a connection.
+/// Refuses a call the device may not make, and returns the input the verb
+/// runs with. Verbs not listed here never run for such a device.
 pub(super) async fn admit_call(
     store: &DispatchStore,
-    grants: &OpenAgentStore,
+    grants: &SharedAssistantStore,
     verb: &str,
     input: Value,
-    connection_id: &str,
+    share_key: &str,
 ) -> Result<Value> {
     match verb {
-        // Catalog and submit check the connection's grants themselves, and
-        // submit refuses a workspace path; list shows only the connection's
-        // jobs.
+        // Catalog and submit check the device's grants themselves, and
+        // submit refuses a workspace path; list shows only the device's jobs.
         "catalog" | "list" | "submit" => {}
         "probe" => {
             if input.get("workspacePath").is_some() {
-                bail!("a connection cannot inspect paths on this device");
+                bail!("a device using a shared assistant cannot inspect paths here");
             }
         }
         "status" | "cancel" | "append" | "continue" | "query" => {
@@ -69,40 +72,44 @@ pub(super) async fn admit_call(
             let job = store
                 .load_job(job_id)
                 .ok()
-                .filter(|job| owns(job, connection_id))
+                .filter(|job| owns(job, share_key))
                 .ok_or_else(|| missing(job_id))?;
             // New work on a job needs the grant it was admitted under.
             if matches!(verb, "append" | "continue") {
-                ensure_still_granted(grants, &job, connection_id).await?;
+                ensure_still_granted(grants, &job, share_key).await?;
             }
             match verb {
                 "query" => {
                     if input.get("kind").and_then(Value::as_str) != Some("usageReport") {
-                        bail!("a cross-account connection cannot read files on this device");
+                        bail!("a device using a shared assistant cannot read files here");
                     }
                 }
                 "continue" => {
                     for field in ["model", "reasoningPreset"] {
                         if !input.get(field).unwrap_or(&Value::Null).is_null() {
-                            bail!("this device chooses the model of cross-account jobs");
+                            bail!("this device chooses the model of shared assistants' tasks");
                         }
                     }
                     if let Some(policy) = input.get("approvalPolicy").filter(|v| !v.is_null()) {
                         if policy.as_str() != Some("remote") {
-                            bail!("cross-account jobs are approved only by this device's owner");
+                            bail!(
+                                "shared assistants' tasks are approved only by this device's owner"
+                            );
                         }
                     }
                 }
                 _ => {}
             }
         }
-        other => bail!("dispatch verb '{other}' is not accepted over a cross-account connection"),
+        other => {
+            bail!("dispatch verb '{other}' is not accepted from a device using a shared assistant")
+        }
     }
     Ok(input)
 }
 
-/// What a connection receives back: approval prompts keep only what says the
-/// job waits.
+/// What such a device receives back: approval prompts keep only what says
+/// the job waits.
 pub(super) fn present_response(verb: &str, _request: &Value, mut response: Value) -> Value {
     if verb == "status" {
         if let Some(pending) = response
@@ -117,7 +124,7 @@ pub(super) fn present_response(verb: &str, _request: &Value, mut response: Value
     response
 }
 
-/// A pending prompt as another account sees it: that the job waits and on
+/// A pending prompt as another device sees it: that the job waits and on
 /// what kind of action, never the paths, commands, or files involved.
 fn redacted_permission(request: &Value) -> Value {
     let field = |name: &str| request.get(name).cloned().unwrap_or(Value::Null);
@@ -136,19 +143,19 @@ fn redacted_permission(request: &Value) -> Value {
 }
 
 async fn ensure_still_granted(
-    grants: &OpenAgentStore,
+    grants: &SharedAssistantStore,
     job: &DispatchJobRecord,
-    connection_id: &str,
+    share_key: &str,
 ) -> Result<()> {
     let delegation = job
         .request
         .delegation
         .as_ref()
-        .context("a cross-account job has no delegation")?;
+        .context("a task from another device has no delegation")?;
     grants
-        .authorize_connection(connection_id, &delegation.open_agent_id)
+        .authorize(&delegation.assistant_id, share_key)
         .await
-        .context("read agents opened to other devices")?
+        .context("read shared assistants")?
         .map(|_| ())
         .map_err(anyhow::Error::new)
 }
@@ -156,13 +163,14 @@ async fn ensure_still_granted(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::delegation::test_support::share_key as key;
     use crate::dispatch::protocol::{
         DispatchApprovalPolicy, DispatchDelegation, DispatchDelegationSource,
         DispatchSubmitRequest, DISPATCH_PROTOCOL_VERSION,
     };
     use serde_json::json;
 
-    fn job(job_id: &str, connection_id: Option<&str>) -> DispatchSubmitRequest {
+    fn job(job_id: &str, share_key: Option<String>) -> DispatchSubmitRequest {
         DispatchSubmitRequest {
             protocol_version: DISPATCH_PROTOCOL_VERSION,
             job_id: job_id.to_string(),
@@ -177,11 +185,11 @@ mod tests {
             attachments: Vec::new(),
             setup_audit: Vec::new(),
             delegation: Some(DispatchDelegation {
-                open_agent_id: "helper".to_string(),
+                assistant_id: "workspace".to_string(),
                 source: DispatchDelegationSource::default(),
             }),
-            source_device_id: None,
-            source_connection_id: connection_id.map(str::to_string),
+            source_share_key: share_key,
+            source_user: None,
             assistant_workspace: None,
         }
     }
@@ -189,39 +197,29 @@ mod tests {
     struct Fixture {
         _dir: tempfile::TempDir,
         store: DispatchStore,
-        grants: OpenAgentStore,
+        grants: SharedAssistantStore,
     }
 
-    /// Jobs of two connections and a local one; the assistant `helper` is
-    /// granted to both connections, `notes` only to conn-3.
+    /// Jobs of devices 1 and 2 and a local one; the assistant `workspace` is
+    /// shared with devices 1 and 2, `workspace-notes` only with device 3.
     async fn store_with_jobs() -> Fixture {
+        use crate::dispatch::delegation::test_support::share_assistant;
         let dir = tempfile::tempdir().unwrap();
         let store = DispatchStore::open(dir.path().join("dispatch")).unwrap();
-        let grants = OpenAgentStore::new(dir.path().join("open-agents.json"));
+        let grants = SharedAssistantStore::new(dir.path().join("shared-assistants.json"));
         let assistants = dir.path().join("personal_assistant");
-        for (id, directory) in [("helper", "workspace"), ("notes", "workspace-notes")] {
-            crate::dispatch::delegation::test_support::open_assistant(
-                &grants,
-                &assistants,
-                id,
-                directory,
-                &[],
-            )
-            .await;
+        for (directory, seeds) in [
+            ("workspace", &[1u8, 2][..]),
+            ("workspace-notes", &[3u8][..]),
+        ] {
+            share_assistant(&grants, &assistants, directory, Default::default(), seeds).await;
         }
-        for connection_id in ["conn-1", "conn-2"] {
-            grants
-                .grant_connection("helper", connection_id)
-                .await
-                .unwrap();
-        }
-        grants.grant_connection("notes", "conn-3").await.unwrap();
-        for (job_id, connection) in [
-            ("delegation-mine", Some("conn-1")),
-            ("delegation-theirs", Some("conn-2")),
+        for (job_id, seed) in [
+            ("delegation-mine", Some(1)),
+            ("delegation-theirs", Some(2)),
             ("delegation-local", None),
         ] {
-            let request = job(job_id, connection);
+            let request = job(job_id, seed.map(key));
             store
                 .create_job_with_intent(request.clone(), request, "title".to_string())
                 .unwrap();
@@ -234,7 +232,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_connection_acts_only_on_its_own_jobs() {
+    async fn a_device_acts_only_on_its_own_jobs() {
         let fixture = store_with_jobs().await;
         let store = &fixture.store;
         for verb in ["status", "cancel", "append", "continue"] {
@@ -243,7 +241,7 @@ mod tests {
                 &fixture.grants,
                 verb,
                 json!({ "jobId": "delegation-mine" }),
-                "conn-1",
+                &key(1),
             )
             .await
             .unwrap();
@@ -253,7 +251,7 @@ mod tests {
                     &fixture.grants,
                     verb,
                     json!({ "jobId": other }),
-                    "conn-1",
+                    &key(1),
                 )
                 .await
                 .unwrap_err()
@@ -261,7 +259,7 @@ mod tests {
                 assert_eq!(error, format!("dispatch job '{other}' does not exist"));
             }
         }
-        admit_call(store, &fixture.grants, "status", json!({}), "conn-1")
+        admit_call(store, &fixture.grants, "status", json!({}), &key(1))
             .await
             .unwrap_err();
     }
@@ -271,28 +269,24 @@ mod tests {
         let fixture = store_with_jobs().await;
         let store = &fixture.store;
         let mine = json!({ "jobId": "delegation-mine" });
-        fixture
-            .grants
-            .revoke_connection("helper", "conn-1")
-            .await
-            .unwrap();
+        fixture.grants.revoke("workspace", &key(1)).await.unwrap();
         for verb in ["append", "continue"] {
             assert!(
-                admit_call(store, &fixture.grants, verb, mine.clone(), "conn-1")
+                admit_call(store, &fixture.grants, verb, mine.clone(), &key(1))
                     .await
                     .is_err()
             );
         }
         // The requester can still read and stop what is already running.
         for verb in ["status", "cancel"] {
-            admit_call(store, &fixture.grants, verb, mine.clone(), "conn-1")
+            admit_call(store, &fixture.grants, verb, mine.clone(), &key(1))
                 .await
                 .unwrap();
         }
     }
 
     #[tokio::test]
-    async fn a_connection_cannot_read_files_or_change_approval_and_model() {
+    async fn a_device_cannot_read_files_or_change_approval_and_model() {
         let fixture = store_with_jobs().await;
         let store = &fixture.store;
         let mine = |extra: Value| {
@@ -308,7 +302,7 @@ mod tests {
             &fixture.grants,
             "query",
             mine(json!({ "kind": "usageReport" })),
-            "conn-1",
+            &key(1),
         )
         .await
         .unwrap();
@@ -318,7 +312,7 @@ mod tests {
                 &fixture.grants,
                 "query",
                 mine(json!({ "kind": kind })),
-                "conn-1"
+                &key(1)
             )
             .await
             .is_err());
@@ -328,7 +322,7 @@ mod tests {
             &fixture.grants,
             "continue",
             mine(json!({ "approvalPolicy": "remote", "model": null })),
-            "conn-1",
+            &key(1),
         )
         .await
         .unwrap();
@@ -338,7 +332,7 @@ mod tests {
             json!({ "reasoningPreset": "high" }),
         ] {
             assert!(
-                admit_call(store, &fixture.grants, "continue", mine(extra), "conn-1")
+                admit_call(store, &fixture.grants, "continue", mine(extra), &key(1))
                     .await
                     .is_err()
             );
@@ -346,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_approvals_reach_a_connection_without_their_details() {
+    fn pending_approvals_reach_a_device_without_their_details() {
         let status = json!({
             "state": "running",
             "pendingPermissions": [{
@@ -369,11 +363,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verbs_outside_the_connection_set_are_refused() {
+    async fn verbs_outside_the_share_set_are_refused() {
         let fixture = store_with_jobs().await;
         let store = &fixture.store;
         for verb in ["probe", "catalog", "submit", "list"] {
-            admit_call(store, &fixture.grants, verb, json!({}), "conn-1")
+            admit_call(store, &fixture.grants, verb, json!({}), &key(1))
                 .await
                 .unwrap();
         }
@@ -389,28 +383,26 @@ mod tests {
                 &fixture.grants,
                 verb,
                 json!({ "jobId": "delegation-mine" }),
-                "conn-1"
+                &key(1)
             )
             .await
             .is_err());
         }
+        let upper = key(1).to_uppercase();
         assert_eq!(
-            source_connection(&json!({ "__sourceConnectionId": " conn-1 " })).as_deref(),
-            Some("conn-1")
+            source_share_key(&json!({ "__sourceShareKey": format!(" {upper} ") })),
+            Some(key(1))
         );
-        assert_eq!(
-            source_connection(&json!({ "__sourceConnectionId": "" })),
-            None
-        );
-        assert_eq!(source_connection(&json!({})), None);
-        // A connection never names a path on this device.
-        for path in ["/etc", "connection-workspace:delegation-mine"] {
+        assert_eq!(source_share_key(&json!({ "__sourceShareKey": "" })), None);
+        assert_eq!(source_share_key(&json!({})), None);
+        // Such a device never names a path on this device.
+        for path in ["/etc", "/Users"] {
             assert!(admit_call(
                 store,
                 &fixture.grants,
                 "probe",
                 json!({ "workspacePath": path }),
-                "conn-1"
+                &key(1)
             )
             .await
             .is_err());

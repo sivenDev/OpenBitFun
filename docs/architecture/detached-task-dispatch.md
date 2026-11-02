@@ -466,45 +466,64 @@ configuration. A list this build cannot read is reported and never overwritten.
 `openbitfun delegation assistants|audit` inspects a headless host; sharing itself is
 managed in the desktop app.
 
-`dispatch_target_catalog` (CLI verb `catalog`) returns the entries granted to the
-requesting device or connection: id, assistant, display name, description, and why it
-is unavailable when its assistant is gone. A delegated submission must name that
-assistant. Target paths and the grants of others are not returned. The requester is the
-reserved `__sourceDeviceId` (or `__sourceConnectionId`) argument, which only the
-receiving host sets from the relay-authenticated sender (`bind_dispatch_source_device`
-in `dispatch_contract.rs`); a value in the incoming payload is discarded, and other
-target verbs never receive it. Without a bound requester the verb fails. The optional
-`agent_delegation_v1` capability gates delegated use; released builds do not advertise it and are shown as needing an
-update. It is not a submission requirement and does not change the protocol version.
+The share store is `<product_home>/delegation/shared-assistants.json`: one entry per
+shared assistant (its directory, the name other devices see, trust, session retention
+days, concurrent tasks) with the devices granted it and the devices blocked from asking.
+Devices are named by their LAN sharing public key; the device id is derived from it.
+
+`dispatch_target_catalog` (CLI verb `catalog`) returns the shared assistants granted to
+the requesting device: id, assistant, display name, and why it is unavailable when its
+assistant is gone. A delegated submission must name that assistant. Target paths and the
+grants of others are not returned. The requester is the reserved `__sourceShareKey`
+argument, which only the LAN share host sets, from the key its channel verified
+(`bind_dispatch_source_share_key` in `dispatch_contract.rs`); a value in the incoming
+payload is discarded. The share host accepts only `DISPATCH_SHARE_COMMANDS` and refuses
+`answer`. Every other host — the account relay and Peer Device Mode — removes the
+argument (`strip_dispatch_source`), so delegation never arrives over the relay. Without
+a bound requester the verb fails. The optional `agent_delegation_v1` capability gates
+delegated use. It is not a submission requirement and does not change the protocol
+version.
 
 Delegated submission adds an optional `delegation` field to `submit`:
-`{ openAgentId, source? }`, where `source` (session id, agent type, display name) is
-requester-reported display context only. Hosts bind `__sourceDeviceId` into a
-submission only when it carries `delegation`, so a released local runner that refuses
-unknown fields keeps accepting ordinary jobs. The target admits a delegated job before
-creating anything: the open agent must exist and be granted to the bound device or
-connection; the request's agent must equal the open agent's; the approval policy must be
-`remote`; and `workspacePath` must be empty. The task runs as the assistant in a private
-`<product_home>/delegation/workspaces/<openAgentId>/<requester>/<job>` directory. The
-source is kept in the job record and in the `dispatchDelegation` turn context; it is
-deliberately not added to `list` entries, which released controllers parse strictly.
+`{ assistantId, source? }`, where `source` (session id, agent type, display name) is
+requester-reported display context only. The target admits a delegated job before
+creating anything: the assistant must be shared and granted to the bound key, not
+blocked; the request's agent must equal `assistant:<assistantId>`; the approval policy
+must be `remote`; and `workspacePath` must be empty. The target chooses the model and
+records who asked (`__sourceUser`: device id, fingerprint and names from the grant).
+The task runs as the assistant in the tenant workspace of the device that asked,
+`<product_home>/delegation/tenants/<assistantId>/<deviceId>/`, created on first use with
+that device's own `USER.md`. All of that device's tasks and sessions live there, so the
+assistant can read its earlier conversations with that device; at normal trust
+`SessionHistory` and `SessionControl list` reach only that workspace. Identity and
+persona come read-only from the assistant's own workspace; the owner's `USER.md` and
+memories never enter, and tenant sessions never feed the owner's memories. The source
+is kept in the job record and in the `dispatchDelegation` turn context.
+
+Each finished task is kept for the share's retention period (the default when the
+share was stopped); then its job and its session are removed, while the tenant workspace
+stays for the device's other sessions. A tenant workspace whose device holds no grant
+and that has no session left is removed by the same cleanup.
 
 On the requesting side, a `remote:<deviceId>/<openAgentId>` subagent drives the job
 (the `RemoteAgentDelegationPort` the host registers; with none registered the
-list of remote assistants is empty). Every prompt such a job raises is answered by
-the owner of the device it runs on, never by the requester. Job ids start with
-`delegation-`. A delegated job writes no outbound record; its link (device, job,
-session, cursor) lives in the coordination database's `remote_job` column, which a
-restarted requester reads to observe it again. Delegated jobs are left out of the
-Dispatch panel's job list and target-job adoption, so only the delegating subagent
-observes them.
+list of remote assistants is empty). Its addressing moves to shared assistants with
+F002-12. Every prompt such a job raises is answered by the owner of the device it runs
+on, never by the requester. Job ids start with `delegation-`. A delegated job writes no
+outbound record; its link (device, job, session, cursor) lives in the coordination
+database's `remote_job` column, which a restarted requester reads to observe it again.
+Delegated jobs are left out of the Dispatch panel's job list and target-job adoption,
+so only the delegating subagent observes them.
 
-A cross-account grant may limit how many tasks its connection runs at once with an
-open agent. The target accepts a task over the limit and keeps it `queued`: its worker
-waits for a place before it marks the job running, counting running jobs of the same
-connection and open agent plus jobs that began to wait earlier, under the connection's
-admission lock. While it waits, `status` carries an optional
-`hold: { reason: "connectionLimit", limit, sinceMs }`; cancellation and a withdrawn grant
-still end the waiting job. The requester reports a queued job, and a cross-account job that waits
-for its target owner's approval, to the delegating agent: `AgentWait` returns early once
-per hold with status `blocked`, listing what each task waits for and what unblocks it.
+A share limits how many tasks its assistant runs at once for other devices, counted
+across every device it is shared with. The target accepts a task over the limit and
+keeps it `queued`: its worker waits for a place before it marks the job running,
+counting running jobs of the same share plus jobs that began to wait earlier, under the
+share's admission lock. Tasks of one device run side by side in its tenant workspace,
+without the workspace lock ordinary jobs take. While a task waits, `status` carries an
+optional `hold: { reason: "shareLimit", limit, sinceMs }`; cancellation and withdrawn
+access still end the waiting job, and a running turn stops when the owner revokes or
+blocks the device or stops the share. The requester reports a queued job, and a job
+that waits for its target owner's approval, to the delegating agent: `AgentWait`
+returns early once per hold with status `blocked`, listing what each task waits for and
+what unblocks it.

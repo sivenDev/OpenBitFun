@@ -556,6 +556,17 @@ Arguments:
     ) -> OpenBitFunResult<Vec<ToolResult>> {
         let params: SessionControlInput = serde_json::from_value(input.clone())
             .map_err(|e| OpenBitFunError::tool(format!("Invalid input: {}", e)))?;
+        // A task from a device this assistant is shared with, at normal
+        // trust, only lists the conversations of its own tenant workspace.
+        let delegated =
+            crate::service::delegation::DelegatedTurnFacts::from_tool_data(&context.custom_data)
+                .filter(|facts| facts.trust == crate::service::delegation::DelegationTrust::Normal);
+        if delegated.is_some() && !matches!(params.action, SessionControlAction::List) {
+            return Err(OpenBitFunError::tool(format!(
+                "SessionControl {} is not available to a task from another device; it can only list that device's conversations",
+                params.action.as_str()
+            )));
+        }
         let coordinator = get_global_coordinator()
             .ok_or_else(|| OpenBitFunError::tool("coordinator not initialized".to_string()))?;
         let runtime = CoreServiceAgentRuntime::agent_runtime(coordinator.clone())
@@ -836,6 +847,11 @@ Arguments:
                         &runtime,
                     )
                     .await?;
+                if let Some(refusal) = delegated.as_ref().and_then(|facts| {
+                    facts.session_workspace_refusal("SessionControl", &workspace.display_workspace)
+                }) {
+                    return Err(OpenBitFunError::tool(refusal));
+                }
                 let sessions = runtime
                     .list_sessions(Self::list_request(&workspace))
                     .await
@@ -1340,6 +1356,46 @@ mod tests {
                 Some("target-workspace")
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_normal_trust_task_from_another_device_can_only_list() {
+        use crate::service::delegation::{
+            DELEGATION_TRUST_CONTEXT_KEY, DISPATCH_DELEGATION_CONTEXT_KEY,
+        };
+        let tool = SessionControlTool::new();
+        let mut context = empty_context();
+        context
+            .custom_data
+            .insert(DISPATCH_DELEGATION_CONTEXT_KEY.to_string(), json!(true));
+        for (action, extra) in [
+            ("create", json!({ "workspace": "/w" })),
+            ("delete", json!({ "session_id": "s" })),
+            ("cancel", json!({ "session_id": "s" })),
+            ("rename", json!({ "session_id": "s", "session_name": "n" })),
+        ] {
+            let mut input = json!({ "action": action });
+            input
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let error = tool
+                .call_impl(&input, &context)
+                .await
+                .expect_err(action)
+                .to_string();
+            assert!(error.contains("can only list"), "{action}: {error}");
+        }
+        // At full trust the task acts like the owner's own.
+        context
+            .custom_data
+            .insert(DELEGATION_TRUST_CONTEXT_KEY.to_string(), json!("full"));
+        let error = tool
+            .call_impl(&json!({ "action": "delete", "session_id": "s" }), &context)
+            .await
+            .map(|_| String::new())
+            .unwrap_or_else(|error| error.to_string());
+        assert!(!error.contains("can only list"), "{error}");
     }
 
     #[tokio::test]

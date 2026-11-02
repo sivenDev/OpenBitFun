@@ -170,9 +170,9 @@ pub struct RemoteAgentJobHold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RemoteAgentHoldReason {
-    /// The connection already runs as many tasks with the agent as the
-    /// device's owner allows.
-    ConnectionLimit,
+    /// The shared assistant already runs as many tasks for other devices as
+    /// its owner allows.
+    ShareLimit,
 }
 
 /// One page of a job's event log after `cursor`.

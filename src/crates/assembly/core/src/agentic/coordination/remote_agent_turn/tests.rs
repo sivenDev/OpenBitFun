@@ -331,7 +331,7 @@ fn the_parent_hears_why_a_job_waits_on_its_device() {
     // learns the limit and that it starts on its own.
     let mut queued = page(RemoteAgentJobState::Queued, 0, Vec::new());
     queued.hold = Some(RemoteAgentJobHold {
-        reason: openbitfun_runtime_ports::RemoteAgentHoldReason::ConnectionLimit,
+        reason: openbitfun_runtime_ports::RemoteAgentHoldReason::ShareLimit,
         limit: Some(1),
     });
     let note = holds.observe(&queued);
@@ -341,7 +341,7 @@ fn the_parent_hears_why_a_job_waits_on_its_device() {
     );
     assert!(holds.observe(&queued).is_none());
     let reason = store.remote_holds().note("child").expect("queued hold");
-    assert!(reason.contains("allows 1 task(s) at a time"), "{reason}");
+    assert!(reason.contains("1 task(s) at a time"), "{reason}");
     assert!(reason.contains("Unblock:"), "{reason}");
 
     // Running and asking the device's owner: the parent learns who must act.

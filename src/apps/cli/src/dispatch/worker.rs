@@ -20,13 +20,13 @@ use crate::{shutdown_mcp_servers, BootstrapProfile};
 use super::permissions::{self, REJECT_AND_REPORT_REASON};
 use super::protocol::{DispatchApprovalPolicy, DispatchEvent, DispatchJobState, DispatchTurnKind};
 use super::store::{DispatchStore, WorkspaceLock};
-use super::{audit, connection_guard};
+use super::{audit, share_guard};
 
 const TURN_SETTLEMENT_TIMEOUT_MS: u64 = 5_000;
 
 pub(crate) async fn run(job_id: String) -> Result<()> {
     let store = DispatchStore::open_default()?;
-    // Decided once, before the runtime starts. An opened assistant may hand
+    // Decided once, before the runtime starts. A shared assistant may hand
     // work to external agents, whose prompts reach the owner through the
     // job's approval mailbox. Any other job has no guaranteed controller to
     // answer an external agent's own prompts, so external agents fail there
@@ -130,13 +130,22 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
 
     // Every detached worker takes the same stable lock for a canonical target
     // workspace. Waiting workers remain Queued and are visible/cancellable.
-    let lock_path = store.workspace_lock_path(&job.request.workspace_path);
-    let _workspace_lock = WorkspaceLock::acquire(&lock_path)?;
-    // A task over its connection's limit stays Queued here until a place is
-    // free; the admission lock is held until the job is marked running.
-    let place =
-        connection_guard::wait_for_place(store, &super::delegation::open_agent_store()?, job_id)
-            .await?;
+    // Tasks for a shared assistant are the exception: they are message tasks
+    // in their device's tenant workspace, each in its own session, so one
+    // device's tasks run side by side up to the share's limit.
+    let _workspace_lock = if job.request.delegation.is_some() {
+        None
+    } else {
+        let lock_path = store.workspace_lock_path(&job.request.workspace_path);
+        Some(WorkspaceLock::acquire(&lock_path)?)
+    };
+    // A task over its share's limit stays Queued here until a place is free;
+    // the admission lock is held until the job is marked running.
+    let place = if job.request.delegation.is_some() {
+        share_guard::wait_for_place(store, &super::delegation::share_store()?, job_id).await?
+    } else {
+        None
+    };
     let state = store.load_state(job_id)?;
     if state.state.is_terminal() {
         return Ok(());
@@ -334,10 +343,10 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     let mut handled_permissions = HashSet::new();
     let mut mailbox_tick = tokio::time::interval(Duration::from_millis(200));
     mailbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // A job of another account stops when its owner withdraws the grant or
-    // the connection, or when the turn outlives the owner's limit.
-    let guard = connection_guard_for(&job).await;
-    let mut guard_tick = tokio::time::interval(connection_guard::GUARD_INTERVAL);
+    // A task from another device stops when the owner revokes or blocks
+    // that device or stops sharing the assistant.
+    let guard = share_guard_for(&job);
+    let mut guard_tick = tokio::time::interval(share_guard::GUARD_INTERVAL);
     guard_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let (terminal_state, terminal_error) = loop {
@@ -465,11 +474,11 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
             }
             _ = guard_tick.tick(), if guard.is_some() => {
                 let stop = match guard.as_ref() {
-                    Some(guard) => guard.stop_reason(std::time::Instant::now()).await,
+                    Some(guard) => guard.stop_reason().await,
                     None => None,
                 };
                 if let Some(reason) = stop {
-                    cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_connection_guard").await;
+                    cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_share_guard").await;
                     break (DispatchJobState::Failed, Some(reason));
                 }
             }
@@ -509,20 +518,14 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn connection_guard_for(
-    job: &super::store::DispatchJobRecord,
-) -> Option<connection_guard::ConnectionGuard> {
-    job.request.source_connection_id.as_ref()?;
-    let guarded = match super::delegation::open_agent_store() {
-        Ok(grants) => connection_guard::ConnectionGuard::for_job(job, grants).await,
-        Err(error) => Err(error),
-    };
-    match guarded {
-        Ok(guard) => guard,
+fn share_guard_for(job: &super::store::DispatchJobRecord) -> Option<share_guard::ShareGuard> {
+    job.request.source_share_key.as_ref()?;
+    match super::delegation::share_store() {
+        Ok(grants) => share_guard::ShareGuard::for_job(job, grants),
         Err(error) => {
             // Admission already checked the grant; the guard is a second
             // line, so it degrades to that check rather than failing the job.
-            tracing::warn!("Connection guard unavailable for a cross-account job: {error:#}");
+            tracing::warn!("Share guard unavailable for a task from another device: {error:#}");
             None
         }
     }
@@ -811,9 +814,8 @@ fn turn_metadata(
     let mut metadata = permissions::metadata(policy);
     if let Some(delegation) = &request.delegation {
         let mut facts = serde_json::json!({
-            "sourceDeviceId": request.source_device_id,
-            "sourceConnectionId": request.source_connection_id,
-            "openAgentId": delegation.open_agent_id,
+            "assistantId": delegation.assistant_id,
+            "sourceUser": request.source_user,
             "source": delegation.source,
         });
         if let Some(object) = facts.as_object_mut() {
@@ -828,26 +830,28 @@ fn turn_metadata(
     metadata
 }
 
-/// How far the owner trusts who delegated `request`, read when each turn
-/// starts so a change applies from the next turn: the owner's own devices
-/// fully, another account's connection at the level its owner chose.
+/// How far the owner trusts the users of the shared assistant `request`
+/// runs, read when each turn starts so a change applies from the next turn.
 pub(super) async fn delegation_trust(
     request: &super::protocol::DispatchSubmitRequest,
 ) -> DelegationTrust {
-    let trust = openbitfun_core::infrastructure::PathManager::new()
-        .ok()
-        .map(|path_manager| ConnectionTrustStore::for_product_home(&path_manager));
-    delegation_trust_in(request, trust.as_ref()).await
+    match super::delegation::share_store() {
+        Ok(store) => delegation_trust_in(request, &store).await,
+        Err(_) => DelegationTrust::Normal,
+    }
 }
 
+/// Normal unless the share of `request` is readable and set to full trust.
 async fn delegation_trust_in(
     request: &super::protocol::DispatchSubmitRequest,
-    trust: Option<&ConnectionTrustStore>,
+    store: &openbitfun_core::service::lan_share::SharedAssistantStore,
 ) -> DelegationTrust {
-    match (request.source_connection_id.as_deref(), trust) {
-        (None, _) => DelegationTrust::Full,
-        (Some(connection_id), Some(trust)) => trust.level(connection_id).await,
-        (Some(_), None) => DelegationTrust::Normal,
+    let Some(delegation) = &request.delegation else {
+        return DelegationTrust::Normal;
+    };
+    match store.share_of(&delegation.assistant_id).await {
+        Ok(Some(share)) => share.settings.trust,
+        _ => DelegationTrust::Normal,
     }
 }
 
@@ -871,12 +875,12 @@ fn external_agents_used() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Whether `job` runs as an opened assistant, which this device admitted.
+/// Whether `job` runs as a shared assistant, which this device admitted.
 fn runs_assistant(job: &super::store::DispatchJobRecord) -> bool {
     job.request.delegation.is_some() && job.request.assistant_workspace.is_some()
 }
 
-/// The agent mode the job's session runs: an opened assistant runs as the
+/// The agent mode the job's session runs: a shared assistant runs as the
 /// assistant mode with its persona; any other job runs the requested agent.
 fn session_agent_type(request: &super::protocol::DispatchSubmitRequest) -> &str {
     if request.delegation.is_some() && request.assistant_workspace.is_some() {
@@ -890,7 +894,7 @@ fn session_agent_type(request: &super::protocol::DispatchSubmitRequest) -> &str 
 /// kernel reads it to refuse delegating such a turn onward.
 pub(crate) use openbitfun_core::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
 use openbitfun_core::service::delegation::{
-    ConnectionTrustStore, DelegatedTurnFacts, DelegationTrust, ASSISTANT_RUN_AGENT_TYPE,
+    DelegatedTurnFacts, DelegationTrust, ASSISTANT_RUN_AGENT_TYPE,
 };
 
 #[cfg(test)]
@@ -920,11 +924,11 @@ mod tests {
                 attachments: Vec::new(),
                 setup_audit: Vec::new(),
                 delegation: delegated.then(|| DispatchDelegation {
-                    open_agent_id: "codex".to_string(),
+                    assistant_id: "workspace".to_string(),
                     source: DispatchDelegationSource::default(),
                 }),
-                source_device_id: delegated.then(|| "laptop".to_string()),
-                source_connection_id: None,
+                source_share_key: delegated.then(|| "ab".repeat(32)),
+                source_user: None,
                 assistant_workspace: None,
             },
             created_at: String::new(),
@@ -933,30 +937,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trust_follows_the_owners_choice_for_each_connection() {
+    async fn trust_follows_the_owners_choice_for_the_share() {
+        use openbitfun_core::service::lan_share::{
+            ShareConfirmations, ShareSettings, SharedAssistantStore,
+        };
         let dir = tempfile::tempdir().unwrap();
-        let trust = ConnectionTrustStore::new(dir.path().join("connection-trust.json"));
-        let mut request = job("assistant:workspace", true).request;
-        // The owner's own devices are trusted fully.
+        let store = SharedAssistantStore::new(dir.path().join("shared-assistants.json"));
+        let request = job("assistant:workspace", true).request;
+        // A share that does not exist, or cannot be read, trusts normally.
         assert_eq!(
-            delegation_trust_in(&request, Some(&trust)).await,
-            DelegationTrust::Full
-        );
-        // Another account's connection normally, until its owner chooses.
-        request.source_device_id = None;
-        request.source_connection_id = Some("conn-1".to_string());
-        assert_eq!(
-            delegation_trust_in(&request, Some(&trust)).await,
+            delegation_trust_in(&request, &store).await,
             DelegationTrust::Normal
         );
-        trust.set("conn-1", DelegationTrust::Full).await.unwrap();
+        let assistants = dir.path().join("personal_assistant");
+        std::fs::create_dir_all(assistants.join("workspace")).unwrap();
+        store
+            .share(
+                &assistants,
+                "workspace",
+                ShareSettings::default(),
+                ShareConfirmations::default(),
+            )
+            .await
+            .unwrap();
         assert_eq!(
-            delegation_trust_in(&request, Some(&trust)).await,
+            delegation_trust_in(&request, &store).await,
+            DelegationTrust::Normal
+        );
+        store
+            .change_settings(
+                "workspace",
+                ShareSettings {
+                    trust: DelegationTrust::Full,
+                    ..ShareSettings::default()
+                },
+                ShareConfirmations {
+                    full_trust_risk: true,
+                    ..ShareConfirmations::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            delegation_trust_in(&request, &store).await,
             DelegationTrust::Full
         );
-        // Without a readable store, normally.
+        std::fs::write(store.path(), b"{ not json").unwrap();
         assert_eq!(
-            delegation_trust_in(&request, None).await,
+            delegation_trust_in(&request, &store).await,
             DelegationTrust::Normal
         );
     }
@@ -989,7 +1017,7 @@ mod tests {
             ))
         );
         assert_eq!(
-            facts.task_dir.as_deref(),
+            facts.tenant_workspace.as_deref(),
             Some(std::path::Path::new("/tmp/job"))
         );
         assert_eq!(facts.trust, DelegationTrust::Full);

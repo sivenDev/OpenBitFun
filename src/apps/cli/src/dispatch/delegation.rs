@@ -1,27 +1,25 @@
 //! Target-side admission of delegated dispatch jobs.
 //!
-//! A delegated job names one of this device's opened assistants. Every task
-//! is a message task that runs as the assistant in a directory of its own,
-//! which this device chooses; the requesting device is the host-bound sender
-//! of the device RPC.
+//! A delegated job names one of this device's shared assistants and comes
+//! from a device the owner granted it to, identified by the sharing key the
+//! LAN share host bound to the call. Every task is a message task that runs
+//! as the assistant in that device's tenant workspace, which this device
+//! chooses; the requester chooses neither the directory nor the model.
 
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use openbitfun_core::service::delegation::{
-    assistant_directory, delegation_workspaces_root, OpenAgentStore,
-};
-use sha2::{Digest, Sha256};
+use openbitfun_core::service::delegation::assistant_directory;
+use openbitfun_core::service::lan_share::{ensure_tenant, SharedAssistantStore, TenantUser};
 
-use super::protocol::{DispatchApprovalPolicy, DispatchSubmitRequest};
-use super::store::create_private_dir;
+use super::protocol::{DispatchApprovalPolicy, DispatchShareUser, DispatchSubmitRequest};
 
 const MAX_SOURCE_FIELD_CHARS: usize = 256;
 
 /// Where admitted jobs may run on this device.
 pub(super) struct DelegationRoots {
-    /// Parent of the per-task directories of delegated tasks.
-    pub(super) message_workspaces: PathBuf,
+    /// Parent of the tenant workspaces of shared assistants.
+    pub(super) tenants: PathBuf,
     /// Parent of this device's assistant workspaces.
     pub(super) assistants: PathBuf,
 }
@@ -31,57 +29,46 @@ impl DelegationRoots {
         let path_manager = openbitfun_core::infrastructure::PathManager::new()
             .map_err(|error| anyhow::anyhow!("resolve OpenBitFun storage root: {error}"))?;
         Ok(Self {
-            message_workspaces: delegation_workspaces_root(&path_manager),
+            tenants: openbitfun_core::service::lan_share::tenants_root(&path_manager),
             assistants: path_manager.assistant_workspace_base_dir(None),
         })
     }
 }
 
-/// The device-local open-agent list.
-pub(super) fn open_agent_store() -> Result<OpenAgentStore> {
+/// The device-local list of shared assistants and their grants.
+pub(super) fn share_store() -> Result<SharedAssistantStore> {
     let path_manager = openbitfun_core::infrastructure::PathManager::new()
         .map_err(|error| anyhow::anyhow!("resolve OpenBitFun storage root: {error}"))?;
-    Ok(OpenAgentStore::for_product_home(&path_manager))
+    Ok(SharedAssistantStore::for_product_home(&path_manager))
 }
 
 /// Admits `request` before a job is created. Ordinary jobs pass unchanged; a
-/// delegated job is checked against the opened assistant and gets its task
-/// directory and the assistant's workspace from this device.
+/// delegated job is checked against the share and its grant, and gets the
+/// tenant workspace of its device and the assistant's workspace from this
+/// device.
 pub(super) async fn admit(
     request: &mut DispatchSubmitRequest,
-    store: &OpenAgentStore,
+    store: &SharedAssistantStore,
     roots: &DelegationRoots,
 ) -> Result<()> {
-    let Some(delegation) = request.delegation.clone() else {
-        if request.source_device_id.is_some() {
-            bail!("__sourceDeviceId is reserved for delegated dispatch jobs");
-        }
-        if request.source_connection_id.is_some() {
-            bail!("__sourceConnectionId is reserved for delegated dispatch jobs");
-        }
-        if request.assistant_workspace.is_some() {
-            bail!("__assistantWorkspace is chosen by this device");
-        }
-        return Ok(());
-    };
     if request.assistant_workspace.is_some() {
         bail!("__assistantWorkspace is chosen by this device");
     }
-    let requester = match (
-        request
-            .source_device_id
-            .clone()
-            .filter(|device_id| !device_id.trim().is_empty()),
-        request
-            .source_connection_id
-            .clone()
-            .filter(|connection_id| !connection_id.trim().is_empty()),
-    ) {
-        (Some(device_id), None) => Requester::Device(device_id),
-        (None, Some(connection_id)) => Requester::Connection(connection_id),
-        _ => bail!(
-            "delegated dispatch jobs are accepted only from another device of this account or a paired connection"
-        ),
+    if request.source_user.is_some() {
+        bail!("__sourceUser is chosen by this device");
+    }
+    let Some(delegation) = request.delegation.clone() else {
+        if request.source_share_key.is_some() {
+            bail!("__sourceShareKey is reserved for tasks for shared assistants");
+        }
+        return Ok(());
+    };
+    let Some(share_key) = request
+        .source_share_key
+        .clone()
+        .filter(|key| !key.trim().is_empty())
+    else {
+        bail!("tasks for shared assistants are accepted only from a device they are shared with");
     };
     let source = &delegation.source;
     for value in [&source.session_id, &source.agent_type, &source.display_name]
@@ -95,172 +82,158 @@ pub(super) async fn admit(
     if request.approval_policy != DispatchApprovalPolicy::Remote {
         bail!("delegated dispatch jobs require the remote approval policy");
     }
-    let agent = match &requester {
-        Requester::Device(device_id) => store.authorize(device_id, &delegation.open_agent_id).await,
-        Requester::Connection(connection_id) => {
-            store
-                .authorize_connection(connection_id, &delegation.open_agent_id)
-                .await
-        }
-    }
-    .context("read agents opened to other devices")?
-    .map_err(anyhow::Error::new)?;
-    if matches!(requester, Requester::Connection(_)) {
-        // This device chooses the model of jobs another account delegates.
-        request.model = None;
-        request.reasoning_preset = None;
-    }
-    if request.agent_type != agent.agent_type {
+    let (share, grant) = store
+        .authorize(&delegation.assistant_id, &share_key)
+        .await
+        .context("read shared assistants")?
+        .map_err(anyhow::Error::new)?;
+    if request.agent_type != share.agent_type() {
         bail!(
-            "open agent '{}' runs agent '{}', not '{}'",
-            agent.id,
-            agent.agent_type,
+            "shared assistant '{}' runs as '{}', not '{}'",
+            share.id,
+            share.agent_type(),
             request.agent_type
         );
     }
-
-    let Some(directory) = assistant_directory(&agent.agent_type) else {
-        bail!("open agent '{}' is not an assistant", agent.id);
+    let agent_type = share.agent_type();
+    let Some(directory) = assistant_directory(&agent_type) else {
+        bail!("'{}' is not an assistant", share.id);
     };
-    // An opened assistant answers each task in a directory of its own, and
-    // reads its persona from its workspace without writing there.
+    // A shared assistant answers in the tenant workspace of the device that
+    // asked, and reads its identity from its own workspace without writing.
     if !request.workspace_path.trim().is_empty() {
-        bail!("assistant tasks run in a directory chosen by this device; omit workspacePath");
+        bail!("tasks for shared assistants run where this device chooses; omit workspacePath");
     }
     let assistant_root = roots.assistants.join(directory);
     if !assistant_root.is_dir() {
         bail!(
-            "open agent '{}' names an assistant that no longer exists on this device",
-            agent.id
+            "shared assistant '{}' no longer exists on this device",
+            share.id
         );
     }
-    let dir = roots
-        .message_workspaces
-        .join(&agent.id)
-        .join(requester.directory_name())
-        .join(device_directory_name(&request.job_id));
-    create_private_dir(&dir)?;
-    request.workspace_path = dir.to_string_lossy().into_owned();
+    let peer = &grant.peer;
+    let tenant = ensure_tenant(
+        &roots.tenants,
+        &share.id,
+        &peer.device_id,
+        &TenantUser {
+            display_name: peer.display_name.clone(),
+            device_name: peer.device_name.clone(),
+        },
+    )
+    .context("prepare the workspace of the requesting device")?;
+    // This device chooses the model of tasks other devices give it.
+    request.model = None;
+    request.reasoning_preset = None;
+    request.source_share_key = Some(share_key.trim().to_ascii_lowercase());
+    request.source_user = Some(DispatchShareUser {
+        device_id: peer.device_id.clone(),
+        fingerprint: peer.fingerprint.clone(),
+        display_name: peer.display_name.clone(),
+        device_name: peer.device_name.clone(),
+    });
+    request.workspace_path = tenant.to_string_lossy().into_owned();
     request.assistant_workspace = Some(assistant_root.to_string_lossy().into_owned());
+    if let Err(error) = store.record_use(&share.id, &share_key).await {
+        tracing::warn!("Failed to record the use of a shared assistant: {error}");
+    }
     Ok(())
 }
 
-/// Who delegated a job: a device of this account or a cross-account
-/// connection. Each has its own grants and its own task directories.
-enum Requester {
-    Device(String),
-    Connection(String),
-}
-
-impl Requester {
-    fn directory_name(&self) -> String {
-        match self {
-            Self::Device(device_id) => device_directory_name(device_id),
-            // Device ids never start with "connection-".
-            Self::Connection(connection_id) => {
-                format!("connection-{}", device_directory_name(connection_id))
-            }
-        }
-    }
-}
-
-/// A directory name for the requester that cannot traverse or collide with
-/// another requester's directory.
-fn device_directory_name(device_id: &str) -> String {
-    let safe = !device_id.is_empty()
-        && device_id.len() <= 64
-        && device_id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_');
-    if safe {
-        device_id.to_string()
-    } else {
-        Sha256::digest(device_id.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
-    }
-}
-
-/// Opens assistants for tests of the dispatch target.
+/// Shares assistants for tests of the dispatch target.
 #[cfg(test)]
 pub(super) mod test_support {
-    use openbitfun_core::service::delegation::{OpenAgent, OpenAgentStore};
+    use openbitfun_core::service::lan_share::{
+        ShareConfirmations, SharePeer, ShareSettings, SharedAssistantStore,
+    };
     use std::path::Path;
 
-    /// Opens the assistant `directory` under `assistants` as `id`, creating
-    /// its directory, to the same-account `devices`.
-    pub(crate) async fn open_assistant(
-        store: &OpenAgentStore,
+    /// The sharing key in hex of the test device `seed`.
+    pub(crate) fn share_key(seed: u8) -> String {
+        hex::encode([seed; 32])
+    }
+
+    /// The grant peer of the test device `seed`.
+    pub(crate) fn peer(seed: u8) -> SharePeer {
+        SharePeer::new(
+            &share_key(seed),
+            "AB23CD",
+            &format!("User {seed}"),
+            &format!("Mac {seed}"),
+        )
+        .unwrap()
+    }
+
+    /// Shares the assistant `directory` under `assistants`, creating its
+    /// directory, with `settings`, and grants it to the devices `seeds`.
+    pub(crate) async fn share_assistant(
+        store: &SharedAssistantStore,
         assistants: &Path,
-        id: &str,
         directory: &str,
-        devices: &[&str],
+        settings: ShareSettings,
+        seeds: &[u8],
     ) {
         std::fs::create_dir_all(assistants.join(directory)).unwrap();
         store
-            .open_assistant(
+            .share(
                 assistants,
-                OpenAgent {
-                    id: id.to_string(),
-                    agent_type: format!("assistant:{directory}"),
-                    display_name: id.to_string(),
-                    description: None,
-                    same_account_devices: devices.iter().map(|d| d.to_string()).collect(),
-                    session_retention_days: None,
-                    connections: Vec::new(),
+                directory,
+                settings,
+                ShareConfirmations {
+                    full_trust_risk: true,
+                    external_agent_usage: true,
                 },
-                true,
             )
             .await
             .unwrap();
+        for seed in seeds {
+            store.grant(directory, peer(*seed)).await.unwrap();
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::{share_assistant, share_key};
     use super::*;
     use crate::dispatch::protocol::{DispatchDelegation, DispatchDelegationSource};
+    use openbitfun_core::service::lan_share::{share_device_id, ShareSettings};
     use std::path::Path;
 
     struct Fixture {
         _dir: tempfile::TempDir,
-        store: OpenAgentStore,
+        store: SharedAssistantStore,
         roots: DelegationRoots,
         elsewhere: PathBuf,
     }
 
     const HELPER_TYPE: &str = "assistant:workspace";
 
-    async fn open_assistant(fixture: &Fixture, id: &str, directory: &str) {
-        super::test_support::open_assistant(
-            &fixture.store,
-            &fixture.roots.assistants,
-            id,
-            directory,
-            &["laptop"],
-        )
-        .await;
-    }
-
     async fn fixture() -> Fixture {
         let dir = tempfile::tempdir().expect("tempdir");
         let elsewhere = dir.path().join("notes");
         std::fs::create_dir_all(&elsewhere).unwrap();
         let fixture = Fixture {
-            store: OpenAgentStore::new(dir.path().join("open-agents.json")),
+            store: SharedAssistantStore::new(dir.path().join("shared-assistants.json")),
             roots: DelegationRoots {
-                message_workspaces: dir.path().join("message-workspaces"),
+                tenants: dir.path().join("tenants"),
                 assistants: dir.path().join("personal_assistant"),
             },
             elsewhere,
             _dir: dir,
         };
-        open_assistant(&fixture, "helper", "workspace").await;
+        share_assistant(
+            &fixture.store,
+            &fixture.roots.assistants,
+            "workspace",
+            ShareSettings::default(),
+            &[1],
+        )
+        .await;
         fixture
     }
 
-    fn delegated(open_agent_id: &str) -> DispatchSubmitRequest {
+    fn delegated(assistant_id: &str) -> DispatchSubmitRequest {
         DispatchSubmitRequest {
             protocol_version:
                 openbitfun_services_core::dispatch_contract::DISPATCH_PROTOCOL_VERSION,
@@ -270,17 +243,17 @@ mod tests {
             agent_type: HELPER_TYPE.to_string(),
             prompt: "What changed?".to_string(),
             approval_policy: DispatchApprovalPolicy::Remote,
-            model: None,
-            reasoning_preset: None,
+            model: Some("big-model".to_string()),
+            reasoning_preset: Some("high".to_string()),
             title: None,
             attachments: Vec::new(),
             setup_audit: Vec::new(),
             delegation: Some(DispatchDelegation {
-                open_agent_id: open_agent_id.to_string(),
+                assistant_id: assistant_id.to_string(),
                 source: DispatchDelegationSource::default(),
             }),
-            source_device_id: Some("laptop".to_string()),
-            source_connection_id: None,
+            source_share_key: Some(share_key(1)),
+            source_user: None,
             assistant_workspace: None,
         }
     }
@@ -295,14 +268,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn assistant_tasks_get_a_directory_each_and_the_assistant_this_device_holds() {
+    async fn tasks_of_one_device_share_its_tenant_workspace_and_no_model_choice() {
         let fixture = fixture().await;
-        open_assistant(&fixture, "ann", "workspace-ann").await;
-        let assistant_root = fixture.roots.assistants.join("workspace-ann");
+        let assistant_root = fixture.roots.assistants.join("workspace");
         let ask = |job_id: &str| {
-            let mut request = delegated("ann");
+            let mut request = delegated("workspace");
             request.job_id = job_id.to_string();
-            request.agent_type = "assistant:workspace-ann".to_string();
             request
         };
 
@@ -314,159 +285,125 @@ mod tests {
         admit(&mut second, &fixture.store, &fixture.roots)
             .await
             .unwrap();
-        let laptop = fixture.roots.message_workspaces.join("ann").join("laptop");
-        assert_eq!(first.workspace_path, laptop.join("job-1").to_string_lossy());
-        assert_eq!(
-            second.workspace_path,
-            laptop.join("job-2").to_string_lossy()
-        );
-        assert!(Path::new(&first.workspace_path).is_dir());
+        let tenant = fixture
+            .roots
+            .tenants
+            .join("workspace")
+            .join(share_device_id(&share_key(1)).unwrap());
+        assert_eq!(first.workspace_path, tenant.to_string_lossy());
+        assert_eq!(second.workspace_path, first.workspace_path);
+        assert!(Path::new(&first.workspace_path).join("USER.md").is_file());
         assert_eq!(
             first.assistant_workspace.as_deref(),
             Some(assistant_root.to_string_lossy().as_ref())
         );
-        // Admitting the same job again chooses the same directory.
-        let mut retried = ask("job-1");
-        admit(&mut retried, &fixture.store, &fixture.roots)
+        assert_eq!(first.model, None);
+        assert_eq!(first.reasoning_preset, None);
+        let user = first.source_user.clone().expect("the grant names the user");
+        assert_eq!(user.display_name, "User 1");
+        assert_eq!(user.device_name, "Mac 1");
+        assert_eq!(user.device_id, share_device_id(&share_key(1)).unwrap());
+        let share = fixture.store.share_of("workspace").await.unwrap().unwrap();
+        assert!(share.grant(&share_key(1)).unwrap().last_used_at.is_some());
+
+        // Another device of the same share gets a workspace of its own.
+        fixture
+            .store
+            .grant("workspace", super::test_support::peer(2))
             .await
             .unwrap();
-        assert_eq!(retried, first);
+        let mut other = ask("job-3");
+        other.source_share_key = Some(share_key(2));
+        admit(&mut other, &fixture.store, &fixture.roots)
+            .await
+            .unwrap();
+        assert_ne!(other.workspace_path, first.workspace_path);
 
-        // The requester never chooses the directory or the assistant.
-        let mut chosen = ask("job-3");
+        // The requester never chooses the directory, the assistant or who it is.
+        let mut chosen = ask("job-4");
         chosen.workspace_path = fixture.elsewhere.to_string_lossy().into_owned();
         assert!(admit_error(&fixture, chosen)
             .await
             .contains("omit workspacePath"));
-        let mut injected = ask("job-3");
+        let mut injected = ask("job-4");
         injected.assistant_workspace = Some("/".to_string());
         assert!(admit_error(&fixture, injected)
             .await
             .contains("chosen by this device"));
+        let mut claimed = ask("job-4");
+        claimed.source_user = first.source_user.clone();
+        assert!(admit_error(&fixture, claimed)
+            .await
+            .contains("chosen by this device"));
 
-        // An assistant removed after it was opened refuses new tasks.
+        // An assistant removed after it was shared refuses new tasks.
         std::fs::remove_dir_all(&assistant_root).unwrap();
-        assert!(admit_error(&fixture, ask("job-4"))
+        assert!(admit_error(&fixture, ask("job-5"))
             .await
             .contains("no longer exists"));
-    }
-
-    #[tokio::test]
-    async fn connections_use_their_own_grants_directory_and_no_model_choice() {
-        let fixture = fixture().await;
-        let over = |connection: &str| {
-            let mut request = delegated("helper");
-            request.source_device_id = None;
-            request.source_connection_id = Some(connection.to_string());
-            request.model = Some("big-model".to_string());
-            request.reasoning_preset = Some("high".to_string());
-            request
-        };
-
-        // A grant to the device "laptop" does not admit a connection.
-        assert!(admit_error(&fixture, over("conn-1"))
-            .await
-            .contains("not granted to this connection"));
-
-        fixture
-            .store
-            .grant_connection("helper", "conn-1")
-            .await
-            .unwrap();
-        let mut request = over("conn-1");
-        admit(&mut request, &fixture.store, &fixture.roots)
-            .await
-            .unwrap();
-        let expected = fixture
-            .roots
-            .message_workspaces
-            .join("helper")
-            .join("connection-conn-1")
-            .join("job-1");
-        assert_eq!(request.workspace_path, expected.to_string_lossy());
-        assert!(expected.is_dir());
-        assert_eq!(request.model, None);
-        assert_eq!(request.reasoning_preset, None);
-
-        assert!(admit_error(&fixture, over("conn-2"))
-            .await
-            .contains("not granted to this connection"));
-
-        // A request naming both a device and a connection is refused.
-        let mut both = over("conn-1");
-        both.source_device_id = Some("laptop".to_string());
-        assert!(admit_error(&fixture, both)
-            .await
-            .contains("accepted only from"));
-
-        // An ordinary job cannot claim a connection.
-        let mut ordinary = over("conn-1");
-        ordinary.delegation = None;
-        assert!(admit_error(&fixture, ordinary)
-            .await
-            .contains("__sourceConnectionId is reserved"));
     }
 
     #[tokio::test]
     async fn refusals_name_the_reason_and_create_nothing() {
         let fixture = fixture().await;
 
-        let mut stranger = delegated("helper");
-        stranger.source_device_id = Some("phone".to_string());
-        assert!(admit_error(&fixture, stranger)
-            .await
-            .contains("not granted"));
+        let mut stranger = delegated("workspace");
+        stranger.source_share_key = Some(share_key(9));
+        assert!(admit_error(&fixture, stranger).await.contains("no access"));
 
-        let missing = delegated("nobody");
-        assert!(admit_error(&fixture, missing)
-            .await
-            .contains("does not exist"));
+        let missing = delegated("workspace-gone");
+        assert!(admit_error(&fixture, missing).await.contains("not shared"));
 
-        let mut wrong_agent = delegated("helper");
+        let mut wrong_agent = delegated("workspace");
         wrong_agent.agent_type = "Standard".to_string();
         assert!(admit_error(&fixture, wrong_agent)
             .await
-            .contains("runs agent 'assistant:workspace'"));
+            .contains("runs as 'assistant:workspace'"));
 
-        let mut unattended = delegated("helper");
+        let mut unattended = delegated("workspace");
         unattended.approval_policy = DispatchApprovalPolicy::Auto;
         assert!(admit_error(&fixture, unattended)
             .await
             .contains("remote approval policy"));
 
-        let mut anonymous = delegated("helper");
-        anonymous.source_device_id = None;
+        let mut anonymous = delegated("workspace");
+        anonymous.source_share_key = None;
         assert!(admit_error(&fixture, anonymous)
             .await
-            .contains("another device"));
+            .contains("accepted only from a device"));
 
-        // None of the refusals created a task directory.
-        assert!(!fixture.roots.message_workspaces.exists());
+        // A revoked or blocked device and a stopped share are refused too.
+        fixture
+            .store
+            .block("workspace", super::test_support::peer(1))
+            .await
+            .unwrap();
+        assert!(admit_error(&fixture, delegated("workspace"))
+            .await
+            .contains("declined"));
+        fixture.store.stop("workspace").await.unwrap();
+        assert!(admit_error(&fixture, delegated("workspace"))
+            .await
+            .contains("not shared"));
+
+        // None of the refusals created a tenant workspace.
+        assert!(!fixture.roots.tenants.exists());
     }
 
     #[tokio::test]
-    async fn ordinary_jobs_cannot_claim_a_source_device() {
+    async fn ordinary_jobs_cannot_claim_a_share_key() {
         let fixture = fixture().await;
-        let mut ordinary = delegated("helper");
+        let mut ordinary = delegated("workspace");
         ordinary.delegation = None;
         ordinary.workspace_path = "/repo".to_string();
         assert!(admit_error(&fixture, ordinary.clone())
             .await
-            .contains("reserved for delegated"));
-        ordinary.source_device_id = None;
+            .contains("reserved for tasks for shared assistants"));
+        ordinary.source_share_key = None;
         admit(&mut ordinary, &fixture.store, &fixture.roots)
             .await
             .unwrap();
         assert_eq!(ordinary.workspace_path, "/repo");
-    }
-
-    #[test]
-    fn requester_directories_never_traverse() {
-        assert_eq!(device_directory_name("laptop-1"), "laptop-1");
-        for hostile in ["../escape", "a/b", "", ".."] {
-            let name = device_directory_name(hostile);
-            assert_eq!(name.len(), 64, "{hostile}");
-            assert!(name.chars().all(|ch| ch.is_ascii_hexdigit()));
-        }
+        assert_eq!(ordinary.model.as_deref(), Some("big-model"));
     }
 }

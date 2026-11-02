@@ -14,21 +14,13 @@ use tokio::io::AsyncWriteExt;
 const TARGET_COMMAND_TIMEOUT: Duration = Duration::from_secs(110);
 const MAX_TARGET_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
-/// Runs a target command for `source_device_id`, the relay-authenticated
-/// sender. The sender is bound here so the target never trusts a self-reported
-/// device.
-pub(crate) async fn dispatch(
-    command: &str,
-    args: Value,
-    source_device_id: &str,
-) -> anyhow::Result<Value> {
+/// Runs a target command that another device of this account sent over the
+/// relay. Such a call never speaks for a device using a shared assistant, so
+/// a caller-supplied source is removed.
+pub(crate) async fn dispatch(command: &str, args: Value) -> anyhow::Result<Value> {
     let verb = target_cli_verb(command)
         .ok_or_else(|| anyhow!("Unknown detached dispatch target command '{command}'"))?;
-    let args = openbitfun_services_core::dispatch_contract::bind_dispatch_source_device(
-        command,
-        args,
-        source_device_id,
-    );
+    let args = openbitfun_services_core::dispatch_contract::strip_dispatch_source(args);
     let executable = discover_cli().ok_or_else(|| {
         anyhow!(
             "OpenBitFun CLI dispatch runner is not installed on this device; install `openbitfun` in ~/.local/bin or PATH"

@@ -180,7 +180,24 @@ parent: "F002"
 - `pnpm run check:core-boundaries`
 - `rg -n "ConnectionTrustStore|OpenAgentStore|sourceConnectionId|bind_dispatch_source_connection" src docs/architecture` 无结果
 
-- [ ] 共享存储的设置、授权、撤销、屏蔽有测试；租户工作空间（同设备共用、不同设备隔离、删除时机）、人设继承与租户 `USER.md`、会话工具只作用于本租户有测试；未授权 / 已屏蔽 / 已撤销的公钥被拒绝且原因明确；排队、信任、保留、审计按共享生效；撤销与停止共享会停止进行中的任务
+- [x] 共享存储的设置、授权、撤销、屏蔽有测试；租户工作空间（同设备共用、不同设备隔离、删除时机）、人设继承与租户 `USER.md`、会话工具只作用于本租户有测试；未授权 / 已屏蔽 / 已撤销的公钥被拒绝且原因明确；排队、信任、保留、审计按共享生效；撤销与停止共享会停止进行中的任务
+  - 证据（2026-11-02）：
+    - core：`--no-default-features --features local-storage --lib service::lan_share` 7 项（共享设置与校验、完全信任确认、按公钥授予 / 撤销 / 屏蔽 / 停止、同名不同公钥不算同一设备、读不了的文件不覆盖、租户同设备共用与隔离及 `USER.md`、无授权且无会话的租户被清理）；`agent-runtime,git --lib service::delegation` 8 项（含普通信任只能到达本租户会话）；`session_control_tool` 19 项（含普通信任只能 list）；`service::bootstrap` 7 项（人设取自助理、用户画像取自租户、主人 `USER.md` 与 `BOOTSTRAP.md` 不进提示）；`agentic::memories::startup` 2 项；`tool_pipeline` 53 项；`task::tests` 83；`agentic::coordination::` 278；`agentic::agents::registry::` 63，全部通过。
+    - `openbitfun-services-core --lib dispatch_contract` 7 项（`__sourceShareKey` 只由局域网共享主机绑定、`answer` 被拒、其他主机剥离）；`openbitfun-runtime-ports` 通过。
+    - CLI：`--bin openbitfun dispatch::` 114 项（准入、只操作自己的任务、按共享排队跨设备计数、撤销 / 屏蔽 / 停止共享停止运行中的任务、按共享的信任与保留、到期只删会话不删租户）；`peer_host::` 105 项；`--test cli_command_contracts dispatch_probe_cli::` 通过。
+    - 桌面：`cargo check --locked -p openbitfun-desktop --tests` 通过；`--lib -- remote_workspace_policy dispatch_host peer_host_invoke delegation` 31 项通过。
+    - Web UI：`DelegatedTaskList.test.tsx` 与 `dispatch.contract.test.ts` 17 项通过；`type-check:web` 通过；`lint:web` 0 错误；`i18n:audit` 通过。
+    - `check:core-boundaries`、`check:repo-hygiene`、`git diff --check` 通过。
+    - `rg -n "ConnectionTrustStore|OpenAgentStore|sourceConnectionId|bind_dispatch_source_connection" src docs/architecture` 无结果。
+  - 与计划的差异：
+    - core 的 `lan_share` 模块只含文件存储，不设 `lan-share` feature；`prune_tenants` 依赖会话存储，跟随已有的 `local-storage` feature。`lan-share` feature 与 services-integrations 的接线随 Task 3 的 `host.rs` 一起加入。
+    - 公钥以 64 位小写十六进制保存与传递（core 已有 `hex`，`base64` 在 core 是可选依赖）。
+    - `SessionControl` 只有 Create/List/Cancel/Delete/Rename，没有读取：普通信任只允许 `list` 本租户；读取会话由 `SessionHistory` 承担，同样只限本租户。完全信任按 D8 与主人相同。
+    - 同一设备的任务在其租户工作空间里并行（每个任务各自一个会话），不取普通任务的工作空间锁；并发由共享的「同时处理的任务数」控制，跨所有使用者合计。排队原因改名为 `shareLimit`（目标端与 `runtime-ports` 一致）。
+    - 准入时由目标端记录 `__sourceUser`（设备 id、指纹、显示名、设备名），审计与主人的任务列表用它，撤销授权后仍能看出是谁。共享记录增加可选的 `displayName`（目录中显示的助理名），由 Task 3/4 的共享主机保持与主人看到的名称一致；未设置时目录用助理 id。
+    - 删除每个连接的单任务时长限制（`max_job_minutes`）：RFC v6 的共享设置不含此项。
+    - 中继与 Peer Device Mode 收到的目标命令只剥离来源参数（`strip_dispatch_source`），不再绑定；委派任务只能经局域网共享主机到达。CLI 主机的 `handle_host_invoke` 因此不再需要来源设备参数。
+    - 发起方的 `remote:<deviceId>/<openAgentId>` 寻址与 `RemoteAgentAddress.open_agent_id` 保持不变，随 F002-12 改为共享助理寻址。
 
 ## Task 3: 共享主机、申请队列与发现会话
 
