@@ -1,0 +1,200 @@
+---
+id: "F002-13"
+title: "助理之间相互调用：「助理」类目的子智能体、本机助理任务会话、调用链环检测、不可用时如实列出"
+type: "feature"
+status: "approved"
+summary: "主人自己的每个助理，以及别人共享给主人的每个助理，都以「助理」类目出现在可调用的子智能体列表中；助理在后台调用它们并经 AgentWait 收回结果。调用自己的助理时在本机该助理名下建一个标明来源的任务会话；调用共享给我的助理时复用 F002-12 的授权与通道。每次调用携带调用链，出现循环时明确拒绝；不可用的助理仍列出并标明原因。"
+source: "docs/superplan/human/features.md"
+created: "2026-11-02"
+order: 13
+depends_on: ["F002-12"]
+parent: "F002"
+---
+
+# 助理之间相互调用 Plan
+
+**需求基准：** RFC `docs/superplan/rfcs/F002.md` 第 6 版「AI协作需求（基准，第 6 版）」第 6 条；D8（普通程度下不能调用主人的其他助理）、D9（多租户工作空间）、D10；兼容性一节（F002 上线前不考虑兼容）；批准条件 5（调用主人的其他助理部分）、8。
+
+**Goal:** A 有自己的助理 X、Y 和 B 共享给 A 的助理 Z。在 X 的对话中让它调用 Y 和 Z，两者都在后台完成，X 收回结果并继续；Y 的任务会话在 Y 名下标「来自 助理 X」；构造 X→Y→X 时被拒绝，原因是循环调用；Z 不在线时 X 看到 Z 被列出且标明不在线，调用明确失败。
+
+**Scope:**
+- **可调用的助理列表**
+  - 子智能体列表增加「助理」类目：主人自己的每个助理（不含发起调用的助理自身），以及共享给主人的每个助理（F002-11 的 `shared_with_me`）。
+  - 每项显示助理名、说明与来源（「我的助理」或「来自 某某的设备」）。
+  - 不可用的助理仍列出并标明原因：不在线、已撤销、需要更新、对方执行器不可用；调用时明确失败，原因与列表一致（修复 B003 一类「悄悄消失」的问题）。
+- **调用方式**
+  - 助理通过现有的后台委派调用（`Task` 后台运行），不被阻塞；结果经 `AgentWait` 收回；可取消。
+  - 调用自己的助理：在本机该助理名下建一个任务会话，标「来自 助理 X」，可在导航中查看。调用发生在主人自己的会话中时，会话放在被调用助理的默认工作空间，按主人自己的任务处理，能力完整；调用发生在某个租户的外部任务中（仅完全信任）时，会话放在被调用助理名下同一租户的工作空间。
+  - 调用共享给我的助理：与 F002-12 的对话使用同一授权与通道；在主人那边是一个标明来源的外部任务；需要对方审批时，调用方的任务卡片显示「等待 某某 审批」，排队时显示排队状态。
+- **调用链与环检测**
+  - 每次调用携带调用链：参与过的助理及其所在设备的标识（`设备 id/助理 id`）。
+  - 目标发现自己已在链中时明确拒绝，原因写明「循环调用」，并列出链路。这是结构性的检测，不按次数或字符串限制（遵守 AGENTS.md「Agent loop behavior」）。
+  - 本机调用在提交前检查；跨设备调用由目标端执行器在准入时再检查一次，不依赖调用方。
+- **外部任务的继续调用（D8）**
+  - 普通信任程度：外部任务及其子智能体看不到「助理」类目，直接调用也在工具层被拒绝，原因是「这个共享不允许调用其他助理」。
+  - 完全信任：外部任务可以调用主人的其他助理与共享给主人的助理；由此产生的任务计入原共享的同时任务数，并在审计中记在原使用者名下。
+- **不在范围内的调用方**：主人直接在普通（非助理）会话中的智能体也能看到「助理」类目，行为相同。
+
+**Non-Goals:**
+- 跨设备的调用链可视化图；只在会话与拒绝原因中显示链路。
+- 对他人共享给我的助理做并发配额（由对方的同时任务数决定）。
+- 手机端、IM、CLI 主机上发起助理之间的调用（CLI 主机不提供共享，RFC D11）。
+
+**Architecture:**
+- **地址与列表**：
+  - 自己的助理：`assistant:<目录名>`（沿用 F002-07 的 `assistant_agent_type`）。
+  - 共享给我的助理：`shared:<主人设备 id>/<助理 id>`，替代第 5 版的 `remote:` 与 `conn:` 地址；`runtime-ports::remote_agent` 的地址解析与说明改为这一形状。
+  - core `agentic/agents/registry/assistants.rs` 提供「助理」类目：读取本机助理目录与 `shared_with_me`，合并在线状态（F002-12 Task 4），生成带来源与不可用原因的条目。
+- **调用自己的助理**：
+  - 新增 `agentic/coordination/assistant_turn.rs`：按调用方所属的租户选择目标助理的工作空间（主人 → 默认工作空间；租户 → 该助理名下同一租户的工作空间，不存在则创建），创建会话并标记 `delegatedBy {assistant, sessionId, callChain}`；运行在执行引擎内，作为后台子智能体，结果经现有的后台结果与 `AgentWait` 收回。
+  - 主人的调用：会话在目标助理默认工作空间，人设、记忆与工具与该助理自己的会话一致，不受共享设置约束。租户的调用：会话在租户工作空间，沿用外部任务的规则（不参与记忆整理、助理工作区只读）。
+- **调用共享给我的助理**：
+  - `service/lan_share/remote_agents.rs` 用 F002-12 的 `LanDispatchRpc` 实现 `RemoteAgentDelegationPort`（`list_agents`、`submit`、`observe`、`cancel`、`answer`、`continue_job`），保留 `remote_agent_turn` 的观察、审批提示与排队提示。
+  - 提交的委派块带 `callChain`；执行器准入时检查链路并拒绝循环。
+- **调用链**：
+  - 链路存在会话的委派元数据中：普通会话为空；`assistant_turn` 创建的会话为父链 + 父助理；外部任务的会话为提交时的链（执行器写入）。
+  - 每个条目是 `{deviceId, assistantId}`，本机条目使用本机的共享设备 id（F002-10 的身份），因此跨设备的链路可以比较。
+  - 链长度不设额外上限；环检测足以阻止无限递归，嵌套深度沿用现有子智能体深度规则。
+- **外部任务与信任程度**：
+  - 外部任务的会话带共享 id 与信任程度（F002-11）；普通程度下，注册表不为它生成「助理」类目，`Task` 工具在执行前再检查一次。
+  - 完全信任下由外部任务派生的本机助理会话属于同一租户：放在被调用助理名下该租户的工作空间，继承原共享 id；执行器把它计入该共享的同时任务数，审计记在原使用者名下；撤销该共享时一起停止。
+- **远程场景**：
+  - Peer Device Mode：「助理」类目在对端模式下列出对端主机自己的助理与共享，由对端执行；控制端不回退本地。
+  - 远程控制：手机端与 IM 驱动的会话可以调用助理；跨设备审批照常经权限邮箱。
+  - Detached Dispatch：委派块新增必填字段 `callChain`。F002 上线前不考虑兼容，不另设能力协商；局域网通道的协议版本不一致时已显示「需要更新」。
+  - 远程工作区：调用自己的助理时在本机助理工作区运行，不涉及 SSH 工作区。
+
+**Baseline:**
+- F002-12 完成后：`LanDispatchRpc`、`SharedAssistant` 目标、在线状态、执行器按共享公钥准入。
+- `coordination/remote_agent_turn.rs`（观察、审批与排队提示，与传输无关）、`RemoteAgentDelegationPort`。
+- 子智能体注册表 `agentic/agents/registry/`、`Task` 与 `AgentWait` 工具、后台结果 `background_outcomes.rs`。
+- F002-07 的助理目录与 `assistant:<dir>` 类型、`DelegationTrust` 与工具限制。
+- 缺陷 B003（设备离线时没有提示）：第 5 版的中继路径在 F002-11 已删除；本计划保证新的局域网路径上同类情况有提示。
+
+**Exit Criteria:**
+- 两台只装 dmg、未登录账号的 Mac：A 有 X、Y，B 共享 Z 给 A：
+  1. 在 X 的对话中让它分别调用 Y 和 Z：两者后台完成，X 收回结果并继续；Y 的会话在 Y 名下标「来自 助理 X」；Z 的任务在 B 的 Z 名下标「来自 A 的设备」；
+  2. Z 需要 B 审批时，X 的任务卡片显示「等待 B 审批」；
+  3. 让 Y 再调用 X（X→Y→X）被拒绝，原因是循环调用并列出链路；跨设备构造 X→Z→（B 的 W，W 完全信任且调用 A 共享给 B 的 X）同样被拒绝；
+  4. B 退出应用后，X 的「助理」列表中 Z 仍列出并标「不在线」，调用明确失败；
+  5. 普通信任程度下，B 使用 A 共享的 X 时，X 的任务看不到「助理」类目，直接调用被拒绝；A 改为完全信任后可以调用 Y，Y 的会话出现在 Y 名下「来自 B 的设备」分组，该任务计入共享的同时任务数并在审计中记在 B 名下。
+- 列表、地址解析、本机助理会话、调用链传递与环检测、信任程度拦截、计数与审计、不可用原因均有自动化测试。
+
+## Task 1: 「助理」类目与地址
+
+**Outcome:** 子智能体列表显示主人的助理与共享给主人的助理，带来源与不可用原因；地址形状 `assistant:` 与 `shared:` 可解析。
+
+**Files:**
+- Modify: `src/crates/contracts/runtime-ports/src/remote_agent.rs`、`src/crates/contracts/runtime-ports/tests/remote_agent_port_contracts.rs`
+- Create: `src/crates/assembly/core/src/agentic/agents/registry/assistants.rs`
+- Modify: `src/crates/assembly/core/src/agentic/agents/registry/{mod.rs,query.rs,types.rs}`、`src/crates/assembly/core/src/agentic/tools/implementations/task/{mod.rs,tests.rs}`
+- Modify: `src/web-ui/src/app/scenes/agents/`（类目显示）与语言文件
+
+**Change Map:**
+- `remote_agent.rs`：地址改为 `shared:<deviceId>/<assistantId>`，说明改为局域网共享；不可用原因增加 `Revoked`、`ExecutorMissing`。
+- `assistants.rs`：生成「助理」类目条目；排除发起调用的助理自身；外部任务在普通信任程度下不生成。
+- `Task` 工具：说明中列出助理类目与不可用原因；调用不可用的助理时返回列表中的原因。
+
+**Verification:**
+- `cargo test --locked -p openbitfun-runtime-ports --test remote_agent_port_contracts`
+- `cargo test --locked -p openbitfun-core --features lan-share --lib agentic::agents::registry`
+- `cargo test --locked -p openbitfun-core --lib agentic::tools::implementations::task`
+
+- [ ] 类目条目、来源、不可用原因、排除自身、普通信任程度下不生成均有测试
+
+## Task 2: 调用自己的助理
+
+**Outcome:** 助理在后台调用本机的另一个助理，目标助理名下出现标明来源的任务会话，结果经 `AgentWait` 收回；调用链随会话传递，本机循环被拒绝。
+
+**Files:**
+- Create: `src/crates/assembly/core/src/agentic/coordination/assistant_turn.rs` 与 `assistant_turn/tests.rs`
+- Modify: `src/crates/assembly/core/src/agentic/coordination/{coordinator.rs,mod.rs,delegation_context.rs}`
+- Modify: `src/crates/assembly/core/src/agentic/session/`（会话委派元数据：`delegatedBy`、`callChain`）
+- Modify: `src/web-ui/src/app/components/NavPanel/sections/`（「来自 助理 X」标记）与语言文件
+
+**Change Map:**
+- `assistant_turn.rs`：在目标助理工作区创建会话并运行；写入 `delegatedBy` 与调用链；结束时把最终文本交给后台结果。
+- 环检测：提交前比较调用链与目标 `{本机设备 id, 助理 id}`，命中时返回「循环调用」及链路。
+- 会话元数据新增可选字段 `delegatedBy`；普通会话没有该字段（会话存储是已发布格式，新字段按 AGENTS.md 以默认值读入）。
+- 导航中助理名下的会话显示「来自 助理 X」。
+
+**Verification:**
+- `cargo test --locked -p openbitfun-core --lib agentic::coordination::assistant_turn`
+- `cargo test --locked -p openbitfun-core --lib agentic::session`
+- `pnpm --dir src/web-ui run test:run src/app/components/NavPanel/sections`
+
+- [ ] 后台调用与收回、会话标记、主人与租户调用各自进入正确的工作空间、调用链传递、X→Y→X 拒绝、没有该字段的会话读入均有测试
+
+## Task 3: 调用共享给我的助理与跨设备环检测
+
+**Outcome:** 助理在后台调用共享给主人的助理，经局域网在对方那里作为外部任务运行（在主人这台设备的租户工作空间中）；审批与排队提示显示在任务卡片；目标端执行器拒绝循环调用。
+
+**Files:**
+- Create: `src/crates/assembly/core/src/service/lan_share/remote_agents.rs`
+- Modify: `src/crates/assembly/core/src/agentic/coordination/remote_agent_turn.rs`（地址与提示文案）
+- Modify: `src/apps/cli/src/dispatch/{delegation.rs,protocol.rs,mod.rs}`（`callChain` 必填与准入检查）
+- Modify: `src/crates/services/services-core/src/dispatch_contract.rs`、`src/web-ui/src/features/dispatch/dispatch.contract.test.ts`
+- Modify: `src/apps/desktop/src/lib.rs` 或 `lan_share_api.rs`（注册端口实现）
+- Modify: `src/crates/assembly/core/tests/lan_share_flow.rs`、`docs/architecture/detached-task-dispatch.md`
+
+**Change Map:**
+- `remote_agents.rs`：用 `LanDispatchRpc` 实现 `RemoteAgentDelegationPort`；列出时合并在线状态与不可用原因；提交时带调用链。
+- 执行器准入：委派块中的调用链包含本机 `{设备 id, 助理 id}` 时拒绝「循环调用」；任务会话保存调用链，供它再调用时延续。
+
+**Verification:**
+- `cargo test --locked -p openbitfun-core --features lan-share --lib service::lan_share`
+- `cargo test --locked -p openbitfun-core --features lan-share --test lan_share_flow`
+- `cargo test --locked -p openbitfun-core --lib agentic::coordination::remote_agent_turn`
+- `cargo test --locked -p openbitfun-cli --bin openbitfun dispatch::`
+- `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
+
+- [ ] 回环两主机：调用、审批提示、排队提示、跨设备循环拒绝、缺少调用链被拒绝、离线失败均有测试
+
+## Task 4: 外部任务的继续调用与计数
+
+**Outcome:** 普通信任程度下外部任务不能调用任何助理；完全信任下可以，派生任务在被调用助理名下同一租户的工作空间运行，计入原共享的同时任务数、在审计中记在原使用者名下，撤销共享时一起停止。
+
+**Files:**
+- Modify: `src/crates/assembly/core/src/service/delegation.rs`（工具限制）、`src/crates/assembly/core/src/agentic/coordination/assistant_turn.rs`
+- Modify: `src/apps/cli/src/dispatch/{connection_guard.rs,audit.rs,worker.rs}`（按原共享计数与审计）
+- Modify: `src/crates/assembly/core/src/service/lan_share/shared_assistants.rs`
+
+**Change Map:**
+- 普通信任程度：`Task` 工具对「助理」类目的调用在工具层拒绝，原因明确；注册表不生成该类目（Task 1）。
+- 完全信任：派生的本机助理会话继承原共享 id；执行器计数与撤销把它算作原共享的任务；审计条目记录原使用者与派生链路。
+
+**Verification:**
+- `cargo test --locked -p openbitfun-core --features lan-share --lib service::delegation`
+- `cargo test --locked -p openbitfun-cli --bin openbitfun dispatch::`
+
+- [ ] 普通程度拒绝、完全信任可用、计数、审计、撤销即停止均有测试
+
+## Task 5: 两台 Mac 真机验收
+
+**Outcome:** 按 Exit Criteria 在两台只装 dmg、未登录账号的 Mac 上走完本机调用、跨设备调用、审批提示、循环拒绝、离线与信任程度。
+
+**Files:**
+- Modify: `docs/superplan/plans/features/F002/13-assistants-call-each-other.md`（证据）
+
+**Change Map:**
+- 打 arm64 与 x64 dmg 分别安装；用 cua-driver 驱动两台 Mac 的界面；跨设备循环需要两边互相共享，按 Exit Criteria 第 3 条准备。
+
+**Verification:**
+- 手工：Exit Criteria 第 1–5 条逐条记录。
+
+- [ ] 两台 Mac 真机验收逐条通过，或记录失败与修复
+
+## 风险
+
+| 风险 | 缓解 |
+|---|---|
+| 助理互相调用形成无限递归 | 结构性调用链检测，本机与目标端各查一次；嵌套深度沿用子智能体规则；不加按次数的限制 |
+| 完全信任下外部任务借助理调用绕过同时任务数 | 派生任务继承原共享 id，计数、审计、撤销都按原共享 |
+| 本机助理会话写入目标助理的存储与记忆 | 主人自己的调用本就可以；源自外部任务的派生会话放在同一租户的工作空间，沿用外部任务的只读与不参与记忆整理规则 |
+| 列表中混入太多不可用条目 | 不可用条目排在后面并标原因；移除共享的助理后不再列出 |
+
+## References
+- `docs/superplan/rfcs/F002.md`
+- `docs/superplan/plans/features/F002/12-use-shared-assistants.md`
+- `docs/architecture/detached-task-dispatch.md`
+- `AGENTS.md`「Agent loop behavior」
