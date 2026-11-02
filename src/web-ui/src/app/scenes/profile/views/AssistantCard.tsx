@@ -1,6 +1,6 @@
 import { resolveAssistantName } from '@/shared/utils/assistantName';
 import React from 'react';
-import { EyeOff } from 'lucide-react';
+import { EyeOff, Share2 } from 'lucide-react';
 import {
   Card,
   CardFooter,
@@ -30,6 +30,14 @@ interface AssistantCardProps {
   isPrimary?: boolean;
   isDeleting?: boolean;
   isSettingPrimary?: boolean;
+  /** Shares the assistant on the local network. */
+  onShare?: () => void;
+  /** Why sharing is unavailable, such as while controlling another device. */
+  shareDisabledReason?: string;
+  /** Set while the assistant is shared: how many devices use it. */
+  sharedWith?: number;
+  /** Opens the sharing management of a shared assistant. */
+  onManageShare?: () => void;
   style?: React.CSSProperties;
 }
 
@@ -46,6 +54,10 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
   isPrimary,
   isDeleting = false,
   isSettingPrimary = false,
+  onShare,
+  shareDisabledReason,
+  sharedWith,
+  onManageShare,
   style,
 }) => {
   const { t } = useTranslation('scenes/profile');
@@ -57,7 +69,11 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
   const creature = identity?.creature?.trim() || '';
   const vibe = identity?.vibe?.trim() || '';
   const isBusy = isDeleting || isSettingPrimary || isOpening || isClosing;
-  const hasActions = Boolean(onOpen || onClose || onSetPrimary || onDelete);
+  const isShared = sharedWith !== undefined;
+  const hasActions = Boolean(onOpen || onClose || onSetPrimary || onDelete || onShare);
+  const shareLabel = isShared
+    ? t(sharedWith > 0 ? 'nursery.share.badge' : 'nursery.share.badgeIdle', { count: sharedWith })
+    : t('nursery.share.action');
   const isOpened = Boolean(onClose);
   const visibilityAction = onClose ?? onOpen;
   const visibilityLabel = t(isOpened ? 'nursery.card.close' : 'nursery.card.open');
@@ -116,6 +132,11 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
                   <StatusPill tone="neutral">{t('nursery.card.primaryBadge')}</StatusPill>
                 </span>
               )}
+              {isShared && (
+                <span className="assistant-card__shared-badge" data-openbitfun-component="assistant-card" data-openbitfun-part="sharedBadge">
+                  <StatusPill tone="info">{shareLabel}</StatusPill>
+                </span>
+              )}
             </span>
           )}
           description={(
@@ -159,6 +180,21 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
               ) : null}
 
               <span className="assistant-card__footer-actions">
+                {onShare ? (
+                  <Tooltip content={shareDisabledReason ?? shareLabel}>
+                    <IconButton
+                      data-openbitfun-component="assistant-card"
+                      data-openbitfun-part="share"
+                      size="sm"
+                      onClick={isShared && onManageShare ? onManageShare : onShare}
+                      aria-label={shareLabel}
+                      aria-pressed={isShared}
+                      disabled={isBusy || Boolean(shareDisabledReason)}
+                      icon={<Icon glyph={Share2} size="sm" aria-hidden="true" />}
+                    />
+                  </Tooltip>
+                ) : null}
+
                 {onSetPrimary ? (
                   <Tooltip content={t('nursery.card.setPrimary')}>
                     <IconButton

@@ -299,7 +299,16 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/app/scenes/profile/views src/app/components/LanShareRequestDialog src/infrastructure/lan-share`
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`、`pnpm run theme:color-audit:all`
 
-- [ ] 共享、修改、撤销、停止共享与确认框的倒计时、队列、屏蔽有组件测试；文案无内部术语
+- [x] 共享、修改、撤销、停止共享与确认框的倒计时、队列、屏蔽有组件测试；文案无内部术语
+  - 证据（2026-11-02）：
+    - `pnpm --dir src/web-ui run test:run src/app/scenes/profile src/app/components/LanShareRequestDialog src/infrastructure/lan-share` 9 个文件 47 项通过。新增：`AssistantShareDialog.test.tsx` 5 项（默认设置共享、完全信任需确认风险、外部智能体提示需确认、修改设置不重复询问、失败时保留对话框并说明原因）；`AssistantShareManageDialog.test.tsx` 6 项（设置摘要与使用者、确认后移除、删除已无授权设备留下的对话、确认后停止共享、无人使用、失败原因）；`LanShareRequestDialog.test.tsx` 4 项（倒数与允许、队列逐个与拒绝 / 拒绝并不再提示、到点后不能操作并提示已自动拒绝、后台时只发一次系统通知）；`lanShareStore.test.ts` 4 项（按助理目录匹配共享、剩余秒数、事件订阅引用计数、不可用原因）。
+    - `pnpm run type-check:web` 通过；`pnpm run lint:web` 0 错误（16 条警告均在既有文件，新文件无警告）；`pnpm run i18n:audit` 通过；`pnpm run theme:color-audit:all` 28 个界面全部通过，未改基线。
+    - 文案检查：三种语言的 `nursery.share.*` 不含「连接 / 授权 / 中继 / 信任级别」及英文对应词；「信任程度」只在共享设置出现一次。
+  - 与计划的差异：
+    - 「共享中 · N 人在用」角标是卡片标题旁的状态标签；点击卡片上的共享按钮（共享中时）打开管理视图，标签本身不可点，避免与打开助理的整卡点击冲突。
+    - 外部智能体额度提示按本机是否启用了任一外部智能体显示（助理没有单独的外部智能体配置）；确认后记录在共享上，之后修改设置不再提示。
+    - 后台系统通知由确认框在新申请到达且窗口不在前台时发出（见 Task 4 差异）。
+    - 只有本机助理显示共享按钮；远程工作区的助理不显示。真实界面在 Task 7 两台 Mac 验收时检查。
 
 ## Task 6: 使用者界面：发现面板与来自共享的助理
 

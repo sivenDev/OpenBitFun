@@ -1,6 +1,6 @@
 import { resolveAssistantName } from '@/shared/utils/assistantName';
 import { Button, Icon, NumberBadge, PageHeader } from '@openbitfun/ui';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { CircleAlert, LoaderCircle } from 'lucide-react';
 import {
@@ -13,14 +13,30 @@ import {
 import { confirmDanger, confirmDialog } from '@/infrastructure/confirm-dialog';
 import { useWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
 import { getActiveSurfaceScope } from '@/infrastructure/peer-device/deviceSurface';
+import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
+import { isTauriRuntime } from '@/infrastructure/runtime';
+import { lanShareAPI } from '@/infrastructure/api/service-api/LanShareAPI';
+import {
+  assistantShareId,
+  shareForWorkspace,
+  subscribeLanShare,
+  useLanShareStore,
+} from '@/infrastructure/lan-share/lanShareStore';
 import type { WorkspaceInfo } from '@/shared/types';
 import { useNotification } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
 import AssistantCard from './AssistantCard';
+import AssistantShareDialog from './AssistantShareDialog';
+import AssistantShareManageDialog from './AssistantShareManageDialog';
 import { useNurseryStore } from '../nurseryStore';
 import './NurseryView.scss';
 
 const log = createLogger('NurseryGallery');
+
+/** Whether an assistant lives on this device and can be shared from here. */
+function isShareable(workspace: WorkspaceInfo): boolean {
+  return !workspace.connectionId && (!workspace.sshHost || workspace.sshHost === 'localhost');
+}
 
 const NurseryGallery: React.FC = () => {
   const { t } = useI18n('scenes/profile');
@@ -45,6 +61,44 @@ const NurseryGallery: React.FC = () => {
   const [settingPrimaryWorkspaceId, setSettingPrimaryWorkspaceId] = useState<string | null>(null);
   const [openingWorkspaceId, setOpeningWorkspaceId] = useState<string | null>(null);
   const [closingWorkspaceId, setClosingWorkspaceId] = useState<string | null>(null);
+  const sharingAvailable = isTauriRuntime();
+  const peerActive = usePeerDeviceModeOptional()?.peerMode.active ?? false;
+  const lanShareOverview = useLanShareStore((state) => state.overview);
+  const lanShareUnavailable = useLanShareStore((state) => state.unavailable);
+  const [shareTarget, setShareTarget] = useState<WorkspaceInfo | null>(null);
+  const [manageTarget, setManageTarget] = useState<WorkspaceInfo | null>(null);
+
+  useEffect(() => (sharingAvailable ? subscribeLanShare() : undefined), [sharingAvailable]);
+
+  const assistantName = useCallback(
+    (workspace: WorkspaceInfo) => resolveAssistantName(workspace, t('shared:agents.Claw')),
+    [t],
+  );
+
+  // Other devices see the assistant under the name its owner sees. Each name
+  // is sent once; the host may shorten it.
+  const sentShareNames = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (!lanShareOverview) return;
+    for (const workspace of assistantWorkspacesList) {
+      const share = shareForWorkspace(lanShareOverview, workspace.rootPath);
+      const name = assistantName(workspace);
+      if (share && share.displayName !== name && sentShareNames.current.get(share.id) !== name) {
+        sentShareNames.current.set(share.id, name);
+        void lanShareAPI.update(share.id, { name }).catch((error: unknown) => {
+          log.warn('Shared assistant name not updated', { assistantId: share.id, error });
+        });
+      }
+    }
+  }, [assistantName, assistantWorkspacesList, lanShareOverview]);
+
+  const shareDisabledReason = peerActive
+    ? t('nursery.share.peerUnavailable')
+    : lanShareUnavailable
+      ? t('nursery.share.unavailable', { reason: lanShareUnavailable })
+      : undefined;
+  const manageShare = manageTarget ? shareForWorkspace(lanShareOverview, manageTarget.rootPath) : undefined;
+  const editShare = shareTarget ? shareForWorkspace(lanShareOverview, shareTarget.rootPath) : undefined;
 
   const handleCreateAssistant = useCallback(async () => {
     if (assistantCreationPending.current) return;
@@ -241,6 +295,8 @@ const NurseryGallery: React.FC = () => {
               {sortedAssistantWorkspacesList.map((workspace, i) => {
                 const isPrimary = workspace.id === primaryAssistantWorkspaceId;
                 const isOpened = openedWorkspaces.has(workspace.id);
+                const canShare = sharingAvailable && isShareable(workspace);
+                const share = canShare ? shareForWorkspace(lanShareOverview, workspace.rootPath) : undefined;
                 return (
                   <AssistantCard
                     key={workspace.id}
@@ -256,6 +312,10 @@ const NurseryGallery: React.FC = () => {
                     onClick={() => openAssistant(workspace.id)}
                     onDelete={isPrimary ? undefined : () => { void handleDeleteRequest(workspace); }}
                     onSetPrimary={isPrimary ? undefined : () => { void handleSetPrimary(workspace); }}
+                    onShare={canShare ? () => setShareTarget(workspace) : undefined}
+                    shareDisabledReason={shareDisabledReason}
+                    sharedWith={share?.grants.length}
+                    onManageShare={share ? () => setManageTarget(workspace) : undefined}
                     style={{ '--surface-stagger-index': i } as React.CSSProperties}
                   />
                 );
@@ -289,6 +349,28 @@ const NurseryGallery: React.FC = () => {
           )}
         </GalleryZone>
       </div>
+
+      {shareTarget ? (
+        <AssistantShareDialog
+          open
+          assistantId={assistantShareId(shareTarget.rootPath)}
+          name={assistantName(shareTarget)}
+          share={editShare}
+          onClose={() => setShareTarget(null)}
+        />
+      ) : null}
+      {manageTarget && manageShare ? (
+        <AssistantShareManageDialog
+          open
+          name={assistantName(manageTarget)}
+          share={manageShare}
+          onClose={() => setManageTarget(null)}
+          onEdit={() => {
+            setShareTarget(manageTarget);
+            setManageTarget(null);
+          }}
+        />
+      ) : null}
     </GalleryLayout>
   );
 };

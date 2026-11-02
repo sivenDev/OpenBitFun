@@ -1,0 +1,29 @@
+.lan-share-request {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbitfun-space-2);
+}
+
+.lan-share-request__message {
+  margin: 0;
+}
+
+.lan-share-request__code,
+.lan-share-request__hint {
+  margin: 0;
+  color: var(--openbitfun-color-content-muted);
+  font-family: var(--openbitfun-type-support-font-family);
+  font-size: var(--openbitfun-type-support-font-size);
+  font-weight: var(--openbitfun-type-support-font-weight);
+  line-height: var(--openbitfun-type-support-line-height);
+  letter-spacing: var(--openbitfun-type-support-letter-spacing);
+}
+
+.lan-share-request__footer {
+  justify-content: space-between;
+}
+
+.lan-share-request__actions {
+  display: flex;
+  gap: var(--openbitfun-space-2);
+}

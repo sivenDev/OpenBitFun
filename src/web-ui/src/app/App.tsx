@@ -10,6 +10,7 @@ import { ComputerUseControlCard } from './components/ComputerUseControlCard';
 import { UpdateNotificationCard } from '@/infrastructure/update/UpdateNotificationCard';
 import { NotificationCenter } from '../shared/notification-system/components/NotificationCenter';
 import { ConfirmDialogRenderer } from '@/infrastructure/confirm-dialog';
+import { LanShareRequestDialog } from './components/LanShareRequestDialog';
 import { SessionUsageModal } from '../flow_chat/components/usage/SessionUsageModal';
 import { createLogger } from '@/shared/utils/logger';
 import { startupTrace } from '@/shared/utils/startupTrace';
@@ -965,6 +966,10 @@ function App() {
 
               {/* Confirm dialog */}
               <ConfirmDialogRenderer />
+
+              {/* Requests from other devices to use a shared assistant. Mounted
+                  here so the owner is asked wherever they are in the app. */}
+              {isTauriRuntime() ? <LanShareRequestDialog /> : null}
 
               {/* Session usage report. Mounted here rather than in a chat view:
                   the request runs below any component, and the report outlives
