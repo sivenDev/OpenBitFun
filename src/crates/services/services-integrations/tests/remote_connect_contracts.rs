@@ -3223,6 +3223,7 @@ fn remote_connect_tracker_preserves_streaming_snapshot_contract() {
         user_input: "hello".to_string(),
         original_user_input: None,
         user_message_metadata: None,
+        session_workspace: None,
     });
     tracker.handle_agentic_event(&AgenticEvent::ModelRoundStarted {
         session_id: "session-1".to_string(),
@@ -3281,6 +3282,7 @@ fn remote_connect_tracker_keeps_steering_between_assistant_text_segments() {
         user_input: "hello".to_string(),
         original_user_input: None,
         user_message_metadata: None,
+        session_workspace: None,
     });
     tracker.handle_agentic_event(&AgenticEvent::TextChunk {
         session_id: "session-1".to_string(),
@@ -3367,6 +3369,7 @@ async fn remote_connect_tracker_broadcasts_tool_and_turn_events() {
         user_input: "hello".to_string(),
         original_user_input: None,
         user_message_metadata: None,
+        session_workspace: None,
     });
     tracker.handle_agentic_event(&AgenticEvent::ToolEvent {
         session_id: "session-1".to_string(),
@@ -3421,6 +3424,7 @@ fn remote_connect_tracker_keeps_finished_turn_snapshot_until_persistence_finaliz
         user_input: "hello".to_string(),
         original_user_input: None,
         user_message_metadata: None,
+        session_workspace: None,
     });
     tracker.handle_agentic_event(&AgenticEvent::TextChunk {
         session_id: "session-1".to_string(),
@@ -3567,6 +3571,7 @@ fn remote_connect_poll_helpers_preserve_delta_and_completion_policy() {
         user_input: "hello".to_string(),
         original_user_input: None,
         user_message_metadata: None,
+        session_workspace: None,
     });
     tracker.handle_agentic_event(&AgenticEvent::TextChunk {
         session_id: "session-1".to_string(),
@@ -3662,6 +3667,7 @@ fn remote_connect_tracker_ignores_unrelated_direct_session_events() {
         user_input: "hello".to_string(),
         original_user_input: None,
         user_message_metadata: None,
+        session_workspace: None,
     });
     tracker.handle_agentic_event(&AgenticEvent::TextChunk {
         session_id: "session-2".to_string(),
