@@ -14,19 +14,41 @@ use openbitfun_core::infrastructure::{events::EventEmitter, PathManager};
 use openbitfun_core::service::lan_share::protocol::RequestOpened;
 use openbitfun_core::service::lan_share::{
     delete_tenant, list_tenants, tenants_root, DiscoveredDevice, HostStatus, LanShareHost,
-    LanShareOptions, RequestAnswer, ShareConfirmations, ShareRequestView, ShareSettings,
-    SharedAssistant, SharedWithMe,
+    LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch, ShareRequestView,
+    ShareSettings, SharedAssistant, SharedWithMe,
 };
+use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_SHARE_KEY_ARG;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 static HOST: OnceLock<Result<LanShareHost, String>> = OnceLock::new();
+
+/// Runs tasks for devices this one shares assistants with through the
+/// executor that ships with the app.
+struct DesktopShareDispatch;
+
+#[async_trait::async_trait]
+impl ShareDispatch for DesktopShareDispatch {
+    async fn run(&self, command: &str, args: Value) -> Result<Value, String> {
+        let share_key = args
+            .get(DISPATCH_SOURCE_SHARE_KEY_ARG)
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the sharing key of the calling device is unknown".to_string())?
+            .to_string();
+        super::dispatch_host::dispatch_for_share_key(command, args, &share_key)
+            .await
+            .map_err(|error| format!("{error:#}"))
+    }
+}
 
 /// Starts the share host with the app. A host that cannot start is reported
 /// by every command.
 pub async fn start(events: Arc<dyn EventEmitter>) {
     let started = match PathManager::new() {
         Ok(path_manager) => {
-            LanShareHost::start(LanShareOptions::for_product_home(&path_manager, events)).await
+            let mut options = LanShareOptions::for_product_home(&path_manager, events);
+            options.dispatch = Some(Arc::new(DesktopShareDispatch));
+            LanShareHost::start(options).await
         }
         Err(error) => Err(format!("resolve storage root: {error}")),
     };

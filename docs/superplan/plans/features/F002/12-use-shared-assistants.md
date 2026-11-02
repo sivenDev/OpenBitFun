@@ -99,7 +99,17 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-desktop --lib api::dispatch_host`
 - `cargo test --locked -p openbitfun-services-core --lib dispatch_contract`
 
-- [ ] 回环两主机：已授权设备的命令到达执行回调并带正确公钥；未授权、已撤销、白名单外命令被拒绝；`job_updated` 推送到达
+- [x] 回环两主机：已授权设备的命令到达执行回调并带正确公钥；未授权、已撤销、白名单外命令被拒绝；`job_updated` 推送到达
+  - 证据（2026-11-02）：
+    - `cargo test --locked -p openbitfun-core --features lan-share --test lan_share_flow` 5 项通过（连续 5 次）；新增 `a_device_with_access_runs_tasks_on_the_shared_assistant_over_the_channel`（未授权前不发送、提交到达执行回调且 `__sourceShareKey` 为使用者公钥而非调用方自填的值、任务事件文件变化后 `job_updated` 推送到达并发出 `lan_share://job_updated`、`answer` 与工作区命令被拒且未到达执行回调、撤销后本地即返回 `Revoked`）与 `tasks_are_refused_to_devices_without_access_and_offline_owners_are_reported`（陌生设备的 `dispatch` 被拒且未到达执行回调；主人关闭后返回 `Offline`）。
+    - `cargo test --locked -p openbitfun-core --features lan-share --lib service::lan_share` 14 项、`--no-default-features --features local-storage` 15 项通过；`cargo +1.95.0 check -p openbitfun-core --features lan-share,dispatch-store,agent-runtime,ssh-remote,git --tests` 通过（`LanDispatchRpc` 随 Dispatch 控制端同一组特性编译）；clippy（1.91.1）在改动文件上无告警。
+    - `cargo test --locked -p openbitfun-desktop --lib -- lan_share_api dispatch_host remote_workspace_policy peer_host_invoke` 31 项通过（新增 `a_shared_assistant_command_is_bound_before_any_runner_is_looked_up`）；`cargo test --locked -p openbitfun-services-core --lib dispatch_contract` 7 项通过；`pnpm run check:core-boundaries` 通过。
+    - 文档：`docs/architecture/detached-task-dispatch.md` 增加局域网 `dispatch` 方法、执行回调、`job_updated` 与使用者端错误类型的说明。
+  - 与计划的差异：
+    - `services-core` 的 `bind_dispatch_source_share_key` 已在 F002-11 Task 2 实现，本任务直接复用，不再修改该文件。
+    - 主机按「该设备至少持有一个授权」放行 `dispatch`，具体能用哪个助理、能操作哪些任务由执行器按绑定的公钥判定（F002-11 的 CLI 准入）。
+    - `job_updated` 由主人端观察该任务的 `events.ndjson` 大小与 `job.json` 修改时间（每 0.5 秒，安静 15 分钟后停止）产生，不依赖执行器回调；推送只是提示。
+    - 使用者端错误为 `ShareDispatchError`（未共享、已撤销、不在线、需要更新、被拒绝），`LanDispatchRpc` 以 `anyhow` 包装，调用方可区分。
 
 ## Task 2: `SharedAssistant` 目标与对话记录
 

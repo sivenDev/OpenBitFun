@@ -15,9 +15,9 @@
 //! `lan_share://requests`, `lan_share://shared`,
 //! `lan_share://shared_with_me` and `lan_share://discovered`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -25,6 +25,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use log::{debug, info, warn};
 use openbitfun_events::EventEmitter;
+use openbitfun_services_core::dispatch_contract::bind_dispatch_source_share_key;
 use openbitfun_services_integrations::lan_share::discovery::sharing_ipv4_addresses;
 use openbitfun_services_integrations::lan_share::{
     connect, Advertisement, ChannelConfig, DiscoveredPeer, Discovery, DiscoveryEvent,
@@ -37,23 +38,27 @@ use serde_json::{json, Value};
 
 use super::browse::{peer_addresses, BrowseState, DeviceStatus, DiscoveredDevice};
 use super::protocol::{
-    now_ms, Access, AssistantBody, CatalogAssistant, CatalogResponse, Decision, RequestOpened,
-    RequestState, RequestStatus, RequestStatusBody, Revoked, ASSISTANT_SHARE_CAPABILITY,
-    COOLDOWN_SECONDS, METHOD_CATALOG, METHOD_REMOVE, METHOD_REQUEST, METHOD_REQUEST_STATUS,
-    PUSH_DECISION, PUSH_REVOKED, REQUEST_SECONDS,
+    now_ms, Access, AssistantBody, CatalogAssistant, CatalogResponse, Decision, DispatchBody,
+    JobUpdated, RequestOpened, RequestState, RequestStatus, RequestStatusBody, Revoked,
+    ASSISTANT_SHARE_CAPABILITY, COOLDOWN_SECONDS, METHOD_CATALOG, METHOD_DISPATCH, METHOD_REMOVE,
+    METHOD_REQUEST, METHOD_REQUEST_STATUS, PUSH_DECISION, PUSH_JOB_UPDATED, PUSH_REVOKED,
+    REQUEST_SECONDS,
 };
 use super::requests::{Opened, PendingRequest, RequestQueue, RequestRefusal};
 use super::shared_assistants::{
     ShareConfirmations, SharePeer, ShareRefusal, ShareSettings, SharedAssistant,
     SharedAssistantStore,
 };
-use super::shared_with_me::{SharedWithMe, SharedWithMeStore};
+use super::shared_with_me::{SharedWithMe, SharedWithMeState, SharedWithMeStore};
 use crate::infrastructure::PathManager;
 
 pub const EVENT_REQUESTS: &str = "lan_share://requests";
 pub const EVENT_SHARED: &str = "lan_share://shared";
 pub const EVENT_SHARED_WITH_ME: &str = "lan_share://shared_with_me";
 pub const EVENT_DISCOVERED: &str = "lan_share://discovered";
+/// A job this device started on a shared assistant has news:
+/// `{ ownerKey, jobId }`.
+pub const EVENT_JOB_UPDATED: &str = "lan_share://job_updated";
 
 const LAN_SHARE_DIR: &str = "lan-share";
 const IDENTITY_FILE: &str = "identity.json";
@@ -62,6 +67,67 @@ const MAX_CONNECTIONS_PER_DEVICE: usize = 4;
 /// How long after a request's deadline the asking side looks it up itself
 /// when no decision arrived.
 const STATUS_GRACE: Duration = Duration::from_secs(2);
+/// The owner's executor answers within 110 seconds; this leaves room for the
+/// channel.
+const DISPATCH_CALL_TIMEOUT: Duration = Duration::from_secs(125);
+/// How often the owner looks for news of a job another device started.
+const JOB_WATCH_INTERVAL: Duration = Duration::from_millis(500);
+/// A job without news this long is no longer watched; the device still reads
+/// it on its own schedule.
+const JOB_WATCH_IDLE: Duration = Duration::from_secs(15 * 60);
+/// Commands after which the job they name has news to watch for.
+const JOB_STARTING_COMMANDS: &[&str] = &[
+    "dispatch_target_submit",
+    "dispatch_target_continue",
+    "dispatch_target_append",
+];
+
+/// Runs Dispatch target commands for devices that use a shared assistant.
+/// The arguments arrive bound to the calling device's sharing key.
+#[async_trait]
+pub trait ShareDispatch: Send + Sync {
+    async fn run(&self, command: &str, args: Value) -> Result<Value, String>;
+}
+
+/// Why a command for a shared assistant did not reach its owner, or what the
+/// owner answered instead of running it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShareDispatchError {
+    /// No assistant of that device is shared with this one.
+    NotShared,
+    /// The owner withdrew every assistant it shared with this device.
+    Revoked,
+    /// The owner cannot be reached on the local network.
+    Offline(String),
+    /// One of the two devices runs a version the other cannot talk to.
+    NeedsUpdate(String),
+    /// The owner refused or failed the command.
+    Refused(String),
+}
+
+impl std::fmt::Display for ShareDispatchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotShared => {
+                formatter.write_str("no assistant of that device is shared with you")
+            }
+            Self::Revoked => {
+                formatter.write_str("the owner stopped sharing this assistant with you")
+            }
+            Self::Offline(reason) => write!(
+                formatter,
+                "the device sharing this assistant is not on the local network: {reason}"
+            ),
+            Self::NeedsUpdate(reason) => write!(
+                formatter,
+                "update OpenBitFun on both devices to use this assistant: {reason}"
+            ),
+            Self::Refused(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
+impl std::error::Error for ShareDispatchError {}
 
 /// Where the host keeps its state and how it reaches the network.
 pub struct LanShareOptions {
@@ -80,6 +146,11 @@ pub struct LanShareOptions {
     pub bonjour: bool,
     pub request_window: Duration,
     pub cooldown: Duration,
+    /// Runs tasks for devices this one shares assistants with; `None` when
+    /// this build has no executor.
+    pub dispatch: Option<Arc<dyn ShareDispatch>>,
+    /// Where the executor keeps jobs, to notice their news.
+    pub dispatch_jobs: PathBuf,
 }
 
 impl LanShareOptions {
@@ -98,6 +169,11 @@ impl LanShareOptions {
             bonjour: true,
             request_window: Duration::from_secs(REQUEST_SECONDS),
             cooldown: Duration::from_secs(COOLDOWN_SECONDS),
+            dispatch: None,
+            dispatch_jobs: path_manager
+                .product_home_dir()
+                .join("dispatch")
+                .join("jobs"),
         }
     }
 }
@@ -162,6 +238,8 @@ struct Inner {
     browse: Mutex<BrowseState>,
     browsing: AtomicBool,
     browser: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Owner side: jobs other devices started that are watched for news.
+    watched_jobs: Mutex<HashSet<String>>,
 }
 
 /// The LAN share host. Clones share one host.
@@ -192,6 +270,7 @@ impl LanShareHost {
                 browse: Mutex::new(BrowseState::default()),
                 browsing: AtomicBool::new(false),
                 browser: Mutex::new(None),
+                watched_jobs: Mutex::new(HashSet::new()),
             }),
         };
         if let Err(error) = host.reconcile().await {
@@ -573,6 +652,7 @@ impl LanShareHost {
                 self.removed_by_device(&key, &body.assistant_id).await?;
                 Ok(json!({}))
             }
+            METHOD_DISPATCH => self.dispatch_for(&key, from_value(body)?).await,
             _ => Err(format!("unknown method {method}")),
         }
     }
@@ -1161,23 +1241,7 @@ impl LanShareHost {
             assistant_id, removed.owner.device_id
         );
         self.emit(EVENT_SHARED_WITH_ME, json!({})).await;
-        let mut addresses: Vec<SocketAddr> = self
-            .inner
-            .browse
-            .lock()
-            .expect("browse lock")
-            .peer_with_key(&owner_key)
-            .map(peer_addresses)
-            .unwrap_or_default();
-        if let Some(last) = removed
-            .last_address
-            .as_deref()
-            .and_then(|address| address.parse().ok())
-        {
-            if !addresses.contains(&last) {
-                addresses.push(last);
-            }
-        }
+        let addresses = self.owner_addresses(&owner_key, removed.last_address.as_deref());
         let Some(public_key) = key_bytes(&owner_key) else {
             return Ok(());
         };
@@ -1373,6 +1437,17 @@ impl LanShareHost {
                     self.refresh_catalog(&connection, None).await;
                 }
             }
+            PUSH_JOB_UPDATED => {
+                let Ok(update) = serde_json::from_value::<JobUpdated>(push.body) else {
+                    debug!("Malformed job update ignored");
+                    return;
+                };
+                self.emit(
+                    EVENT_JOB_UPDATED,
+                    json!({ "ownerKey": key, "jobId": update.job_id }),
+                )
+                .await;
+            }
             PUSH_REVOKED => {
                 let Ok(revoked) = serde_json::from_value::<Revoked>(push.body) else {
                     debug!("Malformed share withdrawal ignored");
@@ -1401,6 +1476,196 @@ impl LanShareHost {
             }
             other => debug!("Unknown LAN sharing push ignored: topic={}", other),
         }
+    }
+
+    // ---- Tasks for shared assistants ----
+
+    /// Owner side: runs a Dispatch command from the device with `public_key`,
+    /// which must hold one of this device's shared assistants. The executor
+    /// decides from the bound key which assistant and jobs it may touch.
+    async fn dispatch_for(&self, public_key: &str, body: DispatchBody) -> Result<Value, String> {
+        let shares =
+            self.inner.options.shares.shares().await.map_err(|_| {
+                "this device cannot list its shared assistants right now".to_string()
+            })?;
+        if !shares.iter().any(|share| share.grant(public_key).is_some()) {
+            return Err("this device does not share an assistant with you".to_string());
+        }
+        let executor = self.inner.options.dispatch.clone().ok_or_else(|| {
+            "this device cannot run tasks for its shared assistants: its task runner is missing"
+                .to_string()
+        })?;
+        let args = bind_dispatch_source_share_key(&body.command, body.args, public_key)?;
+        let asked_job = args
+            .get("jobId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let answer = executor.run(&body.command, args).await?;
+        if JOB_STARTING_COMMANDS.contains(&body.command.as_str()) {
+            let job_id = answer
+                .get("jobId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or(asked_job);
+            if let Some(job_id) = job_id {
+                self.watch_job(public_key, &job_id);
+            }
+        }
+        Ok(answer)
+    }
+
+    /// Owner side: tells the device with `public_key` whenever job `job_id`
+    /// has news, until it has none for a while.
+    fn watch_job(&self, public_key: &str, job_id: &str) {
+        if !is_job_id(job_id) {
+            return;
+        }
+        let watch_key = format!("{public_key}/{job_id}");
+        if !self
+            .inner
+            .watched_jobs
+            .lock()
+            .expect("watched jobs lock")
+            .insert(watch_key.clone())
+        {
+            return;
+        }
+        let job_dir = self.inner.options.dispatch_jobs.join(job_id);
+        let public_key = public_key.to_string();
+        let job_id = job_id.to_string();
+        let host = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            let mut seen = job_mark(&job_dir);
+            let mut quiet = Duration::ZERO;
+            while quiet < JOB_WATCH_IDLE {
+                tokio::time::sleep(JOB_WATCH_INTERVAL).await;
+                let Some(inner) = host.upgrade() else {
+                    return;
+                };
+                let mark = job_mark(&job_dir);
+                if mark == seen {
+                    quiet += JOB_WATCH_INTERVAL;
+                    continue;
+                }
+                seen = mark;
+                quiet = Duration::ZERO;
+                LanShareHost { inner }
+                    .push_to_device(
+                        &public_key,
+                        PUSH_JOB_UPDATED,
+                        json!(JobUpdated {
+                            job_id: job_id.clone(),
+                        }),
+                    )
+                    .await;
+            }
+            if let Some(inner) = host.upgrade() {
+                inner
+                    .watched_jobs
+                    .lock()
+                    .expect("watched jobs lock")
+                    .remove(&watch_key);
+            }
+        });
+    }
+
+    /// Owner side: pushes to every open channel of the device with `public_key`.
+    async fn push_to_device(&self, public_key: &str, topic: &str, body: Value) {
+        let connections = self
+            .inner
+            .incoming
+            .lock()
+            .expect("incoming lock")
+            .get(public_key)
+            .map(|connections| {
+                connections
+                    .iter()
+                    .filter(|connection| !connection.is_closed())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for connection in connections {
+            if let Err(error) = connection.push(topic, body.clone()).await {
+                debug!(
+                    "Push to a device not delivered: topic={}, error={}",
+                    topic, error
+                );
+            }
+        }
+    }
+
+    /// User side: sends a Dispatch target command to the device `device_id`,
+    /// which shares an assistant with this one.
+    pub async fn dispatch(
+        &self,
+        device_id: &str,
+        command: &str,
+        args: Value,
+    ) -> Result<Value, ShareDispatchError> {
+        let entries = self
+            .inner
+            .options
+            .shared_with_me
+            .assistants()
+            .await
+            .map_err(|error| ShareDispatchError::Refused(error.to_string()))?;
+        let from_owner: Vec<&SharedWithMe> = entries
+            .iter()
+            .filter(|entry| entry.owner.device_id == device_id)
+            .collect();
+        let Some(entry) = from_owner
+            .iter()
+            .find(|entry| entry.state == SharedWithMeState::Available)
+            .copied()
+        else {
+            return Err(if from_owner.is_empty() {
+                ShareDispatchError::NotShared
+            } else {
+                ShareDispatchError::Revoked
+            });
+        };
+        let owner_key = entry.owner.public_key.clone();
+        let public_key = key_bytes(&owner_key).ok_or(ShareDispatchError::NotShared)?;
+        let addresses = self.owner_addresses(&owner_key, entry.last_address.as_deref());
+        let connection = self
+            .owner_connection(&owner_key, &addresses, &public_key)
+            .await
+            .map_err(unreachable_owner)?;
+        let call = connection.call(
+            METHOD_DISPATCH,
+            json!(DispatchBody {
+                command: command.to_string(),
+                args,
+            }),
+        );
+        match tokio::time::timeout(DISPATCH_CALL_TIMEOUT, call).await {
+            Ok(Ok(answer)) => Ok(answer),
+            Ok(Err(LanError::Remote(message))) => Err(ShareDispatchError::Refused(message)),
+            Ok(Err(error)) => Err(unreachable_owner(error)),
+            Err(_) => Err(ShareDispatchError::Offline(
+                "the owner did not answer in time".to_string(),
+            )),
+        }
+    }
+
+    /// Where the owner with `owner_key` may be: what Bonjour lists now, then
+    /// where it was last reached.
+    fn owner_addresses(&self, owner_key: &str, last_address: Option<&str>) -> Vec<SocketAddr> {
+        let mut addresses: Vec<SocketAddr> = self
+            .inner
+            .browse
+            .lock()
+            .expect("browse lock")
+            .peer_with_key(owner_key)
+            .map(peer_addresses)
+            .unwrap_or_default();
+        if let Some(last) = last_address.and_then(|address| address.parse().ok()) {
+            if !addresses.contains(&last) {
+                addresses.push(last);
+            }
+        }
+        addresses
     }
 
     fn open_owner_connection(&self, owner_key: &str) -> Option<LanConnection> {
@@ -1555,6 +1820,38 @@ fn share_device(public_key: &str) -> String {
 
 fn key_bytes(public_key: &str) -> Option<[u8; 32]> {
     hex::decode(public_key).ok()?.try_into().ok()
+}
+
+fn unreachable_owner(error: LanError) -> ShareDispatchError {
+    match error {
+        LanError::NeedsUpdate { .. }
+        | LanError::PeerNeedsUpdate { .. }
+        | LanError::ProtocolVersion(_) => ShareDispatchError::NeedsUpdate(error.to_string()),
+        other => ShareDispatchError::Offline(other.to_string()),
+    }
+}
+
+/// A job id the executor would accept, so it never names another path.
+fn is_job_id(job_id: &str) -> bool {
+    !job_id.is_empty()
+        && job_id.len() <= 128
+        && job_id != "."
+        && job_id != ".."
+        && job_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+/// What changes when a job has news: its event log grows or its record is
+/// rewritten.
+fn job_mark(job_dir: &Path) -> (u64, Option<std::time::SystemTime>) {
+    let events = std::fs::metadata(job_dir.join("events.ndjson"))
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let record = std::fs::metadata(job_dir.join("job.json"))
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    (events, record)
 }
 
 fn remote_message(error: LanError) -> String {

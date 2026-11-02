@@ -485,7 +485,21 @@ The requesting side browses only while the Discover panel is open, connects with
 advertised key pinned, and keeps what it was granted in
 `<product_home>/lan-share/shared-with-me.json`; a removal is kept there until the owner
 hears of it. The host announces changes as `lan_share://requests`, `lan_share://shared`,
-`lan_share://shared_with_me` and `lan_share://discovered`.
+`lan_share://shared_with_me`, `lan_share://discovered` and `lan_share://job_updated`.
+
+A granted device sends Dispatch target commands to the owner as the channel method
+`dispatch` (`{ command, args }`); the user side implements `DeviceDispatchRpc` as
+`LanDispatchRpc` (`service/lan_share/dispatch_rpc.rs`). The owner refuses a device that
+holds no grant, binds the arguments to the channel's key, and hands them to the injected
+`ShareDispatch` executor; the desktop runs the `openbitfun dispatch` runner that ships
+with the app (`dispatch_host::dispatch_for_share_key`). After `submit`, `continue` or
+`append` the owner watches that job's `events.ndjson` and record and pushes
+`job_updated { jobId }` to the device whenever they change, until the job has been quiet
+for 15 minutes. The push is a hint to read the job now and carries no content; the
+device's own polling remains the fallback. On the user side a command fails without
+being sent when nothing of that device is shared with it (`NotShared`) or every grant was
+withdrawn (`Revoked`); an unreachable owner is `Offline`, a version mismatch
+`NeedsUpdate`, and the owner's refusal `Refused` (`ShareDispatchError`).
 
 `dispatch_target_catalog` (CLI verb `catalog`) returns the shared assistants granted to
 the requesting device: id, assistant, display name, and why it is unavailable when its

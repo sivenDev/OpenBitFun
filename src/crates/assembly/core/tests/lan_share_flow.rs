@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use openbitfun_core::service::lan_share::protocol::Access;
 use openbitfun_core::service::lan_share::{
     DeviceStatus, DiscoveredDevice, LanShareHost, LanShareOptions, RequestAnswer,
-    ShareConfirmations, ShareSettings, SharedAssistantStore, SharedWithMeState, SharedWithMeStore,
-    EVENT_REQUESTS, EVENT_SHARED_WITH_ME,
+    ShareConfirmations, ShareDispatch, ShareDispatchError, ShareSettings, SharedAssistantStore,
+    SharedWithMeState, SharedWithMeStore, EVENT_JOB_UPDATED, EVENT_REQUESTS, EVENT_SHARED_WITH_ME,
 };
 use openbitfun_events::EventEmitter;
 use openbitfun_services_integrations::lan_share::{
@@ -48,6 +48,14 @@ impl EventEmitter for Events {
 }
 
 async fn host(dir: &Path, events: Arc<Events>) -> LanShareHost {
+    host_with(dir, events, None).await
+}
+
+async fn host_with(
+    dir: &Path,
+    events: Arc<Events>,
+    dispatch: Option<Arc<dyn ShareDispatch>>,
+) -> LanShareHost {
     let assistants = dir.join("personal_assistant");
     std::fs::create_dir_all(assistants.join("workspace")).unwrap();
     LanShareHost::start(LanShareOptions {
@@ -61,6 +69,8 @@ async fn host(dir: &Path, events: Arc<Events>) -> LanShareHost {
         bonjour: false,
         request_window: WINDOW,
         cooldown: COOLDOWN,
+        dispatch,
+        dispatch_jobs: dir.join("dispatch/jobs"),
     })
     .await
     .unwrap()
@@ -386,4 +396,202 @@ async fn a_catalog_alone_never_adds_an_assistant_this_device_did_not_ask_for() {
 
     user.shutdown().await;
     listener.shutdown();
+}
+
+/// Records the commands the owner's executor receives.
+#[derive(Default)]
+struct Executor(Mutex<Vec<(String, Value)>>);
+
+#[async_trait]
+impl ShareDispatch for Executor {
+    async fn run(&self, command: &str, args: Value) -> Result<Value, String> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((command.to_string(), args.clone()));
+        Ok(json!({ "accepted": true, "jobId": args["jobId"], "state": "queued" }))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_device_with_access_runs_tasks_on_the_shared_assistant_over_the_channel() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let user_dir = tempfile::tempdir().unwrap();
+    let executor = Arc::new(Executor::default());
+    let user_events = Arc::new(Events::default());
+    let owner = host_with(
+        owner_dir.path(),
+        Arc::new(Events::default()),
+        Some(executor.clone()),
+    )
+    .await;
+    let user = host(user_dir.path(), user_events.clone()).await;
+    let user_key = hex::encode(user.identity().public_key());
+    let owner_id = owner.identity().device_id().to_string();
+    owner
+        .share(
+            "workspace",
+            "Writer",
+            ShareSettings::default(),
+            ShareConfirmations::default(),
+        )
+        .await
+        .unwrap();
+    user.discover_start().await.unwrap();
+    user.observe(found(&owner).await).await;
+    eventually("the user reads the owner's catalog", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Available)
+    })
+    .await;
+
+    // Nothing shared with this device yet: nothing is sent.
+    assert_eq!(
+        user.dispatch(&owner_id, "dispatch_target_probe", json!({}))
+            .await
+            .unwrap_err(),
+        ShareDispatchError::NotShared
+    );
+
+    let request = ask(&user, &owner, &owner_id).await;
+    owner.decide(&request, RequestAnswer::Allow).await.unwrap();
+    eventually("the grant reaches the user", || async {
+        my_state(&user).await == Some(SharedWithMeState::Available)
+    })
+    .await;
+
+    // A task reaches the executor bound to this device's key, whatever it claims.
+    let answer = user
+        .dispatch(
+            &owner_id,
+            "dispatch_target_submit",
+            json!({
+                "jobId": "job-1",
+                "delegation": { "assistantId": "workspace" },
+                "__sourceShareKey": "cd".repeat(32),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(answer["jobId"], "job-1");
+    {
+        let received = executor.0.lock().unwrap();
+        assert_eq!(received[0].0, "dispatch_target_submit");
+        assert_eq!(received[0].1["__sourceShareKey"], user_key);
+    }
+
+    // The owner tells the device when the job has news.
+    let job = owner_dir.path().join("dispatch/jobs/job-1");
+    std::fs::create_dir_all(&job).unwrap();
+    std::fs::write(job.join("events.ndjson"), "{}\n").unwrap();
+    eventually("the job update reaches the user", || async {
+        user_events.count(EVENT_JOB_UPDATED) >= 1
+    })
+    .await;
+
+    // Approvals and workspace commands stay with the owner.
+    for command in ["dispatch_target_answer", "dispatch_target_workspace_sync"] {
+        assert!(
+            matches!(
+                user.dispatch(&owner_id, command, json!({ "jobId": "job-1" }))
+                    .await,
+                Err(ShareDispatchError::Refused(_))
+            ),
+            "{command} is refused"
+        );
+    }
+    assert_eq!(executor.0.lock().unwrap().len(), 1);
+
+    // Once access is withdrawn the device knows before sending anything.
+    owner.revoke("workspace", &user_key, false).await.unwrap();
+    eventually("the withdrawal reaches the user", || async {
+        my_state(&user).await == Some(SharedWithMeState::Revoked)
+    })
+    .await;
+    assert_eq!(
+        user.dispatch(
+            &owner_id,
+            "dispatch_target_status",
+            json!({ "jobId": "job-1" })
+        )
+        .await
+        .unwrap_err(),
+        ShareDispatchError::Revoked
+    );
+
+    user.discover_stop().await;
+    user.shutdown().await;
+    owner.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tasks_are_refused_to_devices_without_access_and_offline_owners_are_reported() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let user_dir = tempfile::tempdir().unwrap();
+    let executor = Arc::new(Executor::default());
+    let owner = host_with(
+        owner_dir.path(),
+        Arc::new(Events::default()),
+        Some(executor.clone()),
+    )
+    .await;
+    owner
+        .share(
+            "workspace",
+            "Writer",
+            ShareSettings::default(),
+            ShareConfirmations::default(),
+        )
+        .await
+        .unwrap();
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, owner.port().await.unwrap()));
+
+    // A stranger's channel cannot run anything.
+    let mut config = ChannelConfig::new(Arc::new(
+        ShareIdentity::generate("Stranger's Mac", "Stranger").unwrap(),
+    ));
+    config.capabilities = vec!["assistant_share_v1".to_string()];
+    config.allow_loopback = true;
+    let stranger = connect(&config, address, Some(&owner.identity().public_key()), None)
+        .await
+        .unwrap();
+    let refused = stranger
+        .call(
+            "dispatch",
+            json!({ "command": "dispatch_target_list", "args": {} }),
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(LanError::Remote(message)) if message.contains("does not share")),
+        "{refused:?}"
+    );
+    assert!(executor.0.lock().unwrap().is_empty());
+    stranger.close().await;
+
+    // A device granted earlier cannot reach an owner that went away.
+    let user = host(user_dir.path(), Arc::new(Events::default())).await;
+    let owner_id = owner.identity().device_id().to_string();
+    user.discover_start().await.unwrap();
+    user.observe(found(&owner).await).await;
+    eventually("the user reads the owner's catalog", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Available)
+    })
+    .await;
+    let request = ask(&user, &owner, &owner_id).await;
+    owner.decide(&request, RequestAnswer::Allow).await.unwrap();
+    eventually("the grant reaches the user", || async {
+        my_state(&user).await == Some(SharedWithMeState::Available)
+    })
+    .await;
+    owner.shutdown().await;
+    eventually("the owner's channel closes", || async {
+        matches!(
+            user.dispatch(&owner_id, "dispatch_target_list", json!({}))
+                .await,
+            Err(ShareDispatchError::Offline(_))
+        )
+    })
+    .await;
+
+    user.discover_stop().await;
+    user.shutdown().await;
 }

@@ -1,9 +1,9 @@
 //! What sharing devices say to each other over the LAN channel.
 //!
 //! A device that shares assistants answers `catalog`, `request`,
-//! `request_status` and `remove`, and pushes `decision` and `revoked`. A
-//! device it has not granted anything may only read the catalog and ask
-//! (RFC F002 D3).
+//! `request_status`, `remove` and `dispatch`, and pushes `decision`,
+//! `revoked` and `job_updated`. A device it has not granted anything may
+//! only read the catalog and ask (RFC F002 D3).
 
 use serde::{Deserialize, Serialize};
 
@@ -14,11 +14,16 @@ pub const METHOD_CATALOG: &str = "catalog";
 pub const METHOD_REQUEST: &str = "request";
 pub const METHOD_REQUEST_STATUS: &str = "request_status";
 pub const METHOD_REMOVE: &str = "remove";
+/// A Dispatch target command for a shared assistant; granted devices only.
+pub const METHOD_DISPATCH: &str = "dispatch";
 
 /// Pushed to the asking device when the owner decides, or the request ends.
 pub const PUSH_DECISION: &str = "decision";
 /// Pushed to a device whose access the owner withdrew.
 pub const PUSH_REVOKED: &str = "revoked";
+/// Pushed to the device that started a job when the job has news. A hint to
+/// read the job now; it carries no content.
+pub const PUSH_JOB_UPDATED: &str = "job_updated";
 
 /// How long the owner has to answer a request.
 pub const REQUEST_SECONDS: u64 = 60;
@@ -120,6 +125,22 @@ pub struct Decision {
 #[serde(rename_all = "camelCase")]
 pub struct Revoked {
     pub assistant_id: String,
+}
+
+/// A Dispatch target command, such as `dispatch_target_submit`, and its
+/// arguments. The owner binds the arguments to the calling device's key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchBody {
+    pub command: String,
+    #[serde(default)]
+    pub args: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobUpdated {
+    pub job_id: String,
 }
 
 /// Milliseconds since the Unix epoch.

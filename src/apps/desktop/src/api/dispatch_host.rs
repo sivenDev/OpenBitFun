@@ -29,6 +29,27 @@ pub(crate) async fn dispatch(command: &str, args: Value) -> anyhow::Result<Value
     invoke_cli(&executable, verb, args).await
 }
 
+/// Runs a target command that a device using one of this device's shared
+/// assistants sent over the LAN share channel, bound to that device's
+/// sharing key: the executor then admits only that device's own jobs and the
+/// assistants shared with it.
+pub(crate) async fn dispatch_for_share_key(
+    command: &str,
+    args: Value,
+    share_key: &str,
+) -> anyhow::Result<Value> {
+    let verb = target_cli_verb(command)
+        .ok_or_else(|| anyhow!("Unknown detached dispatch target command '{command}'"))?;
+    let args = openbitfun_services_core::dispatch_contract::bind_dispatch_source_share_key(
+        command, args, share_key,
+    )
+    .map_err(|error| anyhow!(error))?;
+    let executable = discover_cli().ok_or_else(|| {
+        anyhow!("the task runner that ships with OpenBitFun is missing on this device; reinstall OpenBitFun")
+    })?;
+    invoke_cli(&executable, verb, args).await
+}
+
 /// Runs `openbitfun dispatch <verb>` as this device's owner: no source is
 /// bound, so the runner answers for every job on this device.
 pub(crate) async fn run_local(verb: &'static str, args: Value) -> anyhow::Result<Value> {
@@ -183,6 +204,31 @@ fn bounded_text(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_shared_assistant_command_is_bound_before_any_runner_is_looked_up() {
+        let key = "ab".repeat(32);
+        let refused = dispatch_for_share_key("dispatch_target_answer", serde_json::json!({}), &key)
+            .await
+            .expect_err("owners alone approve");
+        assert!(refused.to_string().contains("only from the owner"));
+        let refused = dispatch_for_share_key(
+            "dispatch_target_submit",
+            serde_json::json!({ "jobId": "j" }),
+            &key,
+        )
+        .await
+        .expect_err("only delegated tasks");
+        assert!(refused.to_string().contains("submits only tasks for it"));
+        let refused = dispatch_for_share_key(
+            "dispatch_target_workspace_sync",
+            serde_json::json!({}),
+            &key,
+        )
+        .await
+        .expect_err("no workspace commands");
+        assert!(refused.to_string().contains("not accepted"));
+    }
 
     #[test]
     fn outbound_controller_commands_are_not_target_commands() {
