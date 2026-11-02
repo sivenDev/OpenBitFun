@@ -1,7 +1,9 @@
 import type { ConnectionResult, RemoteConnectionMethod, RemoteConnectStatus } from '../api/service-api/RemoteConnectAPI';
 
 export type RemoteNetworkMethod = 'lan' | 'openbitfun_server';
-export const OFFICIAL_RELAY_URL = 'https://remote.openbitfun.com/v/1.0.2';
+/** The Relay this build signs in to: a self-hosted one when the build names it. */
+export const OFFICIAL_RELAY_URL: string = import.meta.env.VITE_OPENBITFUN_RELAY_URL
+  || 'https://remote.openbitfun.com/v/1.0.2';
 
 export function remoteNetworkMethod(method: RemoteConnectionMethod | null | undefined): RemoteNetworkMethod | null {
   if (typeof method === 'object' && method !== null && 'lan' in method) return 'lan';

@@ -165,6 +165,11 @@ export default defineConfig(({ mode, command }) => {
     // Independent dev ports must not replace each other's optimized deps.
     // In-process generators use their own config and cache directory.
     cacheDir: path.resolve(__dirname, 'node_modules/.vite', `dev-${devPort}`),
+    // The Relay this build signs in to, as compiled into the Rust host;
+    // empty keeps the official one.
+    define: {
+      'import.meta.env.VITE_OPENBITFUN_RELAY_URL': JSON.stringify(process.env.OPENBITFUN_RELAY_URL ?? ''),
+    },
     plugins: [
       createWebFontProfilePlugin(fontProfile, command),
       react(),
