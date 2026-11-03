@@ -40,6 +40,17 @@ const mocks = vi.hoisted(() => ({
   dispatchExternal: vi.fn(),
   checkPathExists: vi.fn(),
   sendSystemNotification: vi.fn(),
+  jobUpdated: null as ((payload: { ownerKey: string; jobId: string }) => void) | null,
+  releaseJobUpdated: vi.fn(),
+}));
+
+vi.mock('@/infrastructure/api/service-api/LanShareAPI', () => ({
+  lanShareAPI: {
+    onJobUpdated: (handler: (payload: { ownerKey: string; jobId: string }) => void) => {
+      mocks.jobUpdated = handler;
+      return mocks.releaseJobUpdated;
+    },
+  },
 }));
 
 vi.mock('./dispatchApi', () => ({
@@ -1330,7 +1341,16 @@ describe('DispatchJobObserver', () => {
       }),
     );
     expect(mocks.status).toHaveBeenCalledWith('delegation-1', 0);
+
+    // The owner says the job changed: it is read again at once, not at the
+    // next poll. A job this device does not observe is left alone.
+    mocks.status.mockClear();
+    mocks.jobUpdated!({ ownerKey: 'a'.repeat(64), jobId: 'delegation-1' });
+    mocks.jobUpdated!({ ownerKey: 'a'.repeat(64), jobId: 'delegation-unknown' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.status.mock.calls.map(([jobId]) => jobId)).toEqual(['delegation-1']);
     cleanup();
+    expect(mocks.releaseJobUpdated).toHaveBeenCalled();
   });
 
   it('continues polling while hidden so background notifications can observe changes', async () => {

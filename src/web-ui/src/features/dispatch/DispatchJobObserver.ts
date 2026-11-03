@@ -16,6 +16,7 @@ import {
   SessionExecutionState,
 } from '@/flow_chat/state-machine/types';
 import { dispatchApi } from './dispatchApi';
+import { lanShareAPI } from '@/infrastructure/api/service-api/LanShareAPI';
 import { dispatchJobStore, type DispatchObserverJob } from './dispatchJobStore';
 import {
   cancelDispatchTranscriptSaves,
@@ -1063,6 +1064,7 @@ export function installDispatchJobObserver(context: FlowChatContext): () => void
   let interval: ReturnType<typeof setInterval> | null = null;
   let pollIntervalMs = 0;
   let unsubscribeJobs: (() => void) | null = null;
+  let unsubscribeSharedJobs: (() => void) | null = null;
   let handleVisibilityChanged: (() => void) | null = null;
   const lease: DispatchObserverLease = {
     requestRefresh: schedule,
@@ -1181,6 +1183,8 @@ export function installDispatchJobObserver(context: FlowChatContext): () => void
     pendingRefresh = null;
     unsubscribeJobs?.();
     unsubscribeJobs = null;
+    unsubscribeSharedJobs?.();
+    unsubscribeSharedJobs = null;
     if (typeof document !== 'undefined' && handleVisibilityChanged) {
       document.removeEventListener('visibilitychange', handleVisibilityChanged);
     }
@@ -1199,6 +1203,11 @@ export function installDispatchJobObserver(context: FlowChatContext): () => void
     const wasIdle = pollIntervalMs === DISPATCH_IDLE_DISCOVERY_INTERVAL_MS;
     updatePollingInterval();
     if (wasIdle && pollIntervalMs === DISPATCH_JOB_POLL_INTERVAL_MS) schedule();
+  });
+  // The owner of a shared assistant tells this device when one of its jobs
+  // changes, so a reply or an approval shows without waiting for the poll.
+  unsubscribeSharedJobs = lanShareAPI.onJobUpdated(({ jobId }) => {
+    if (ownsLease() && dispatchJobStore.getState().jobs[jobId]) schedule(jobId);
   });
   handleVisibilityChanged = () => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
