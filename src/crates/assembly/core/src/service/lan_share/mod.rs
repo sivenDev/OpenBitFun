@@ -5,6 +5,7 @@
 //! here; `openbitfun-services-integrations::lan_share` only provides the
 //! sharing identity, discovery, and the encrypted channel.
 
+pub mod added_devices;
 #[cfg(feature = "lan-share")]
 pub mod browse;
 #[cfg(all(
@@ -25,13 +26,14 @@ pub mod tenants;
 #[cfg(test)]
 mod tests;
 
+pub use added_devices::{AddedDevice, AddedDeviceStore, AddedDevicesError};
 #[cfg(feature = "lan-share")]
 pub use browse::{DeviceStatus, DiscoveredAssistant, DiscoveredDevice};
 #[cfg(feature = "lan-share")]
 pub use host::{
-    HostStatus, LanShareHost, LanShareOptions, RequestAnswer, ShareDispatch, ShareDispatchError,
-    ShareRequestView, SharedWithMeNow, EVENT_DISCOVERED, EVENT_JOB_UPDATED, EVENT_REQUESTS,
-    EVENT_SHARED, EVENT_SHARED_WITH_ME,
+    AddressOutcome, AddressProblem, AddressedDevice, HostStatus, LanShareHost, LanShareOptions,
+    RequestAnswer, ShareDispatch, ShareDispatchError, ShareRequestView, SharedWithMeNow,
+    EVENT_DISCOVERED, EVENT_JOB_UPDATED, EVENT_REQUESTS, EVENT_SHARED, EVENT_SHARED_WITH_ME,
 };
 pub use shared_assistants::{
     is_share_device_id, share_device_id, BlockedDevice, ShareConfirmations, ShareGrant, SharePeer,

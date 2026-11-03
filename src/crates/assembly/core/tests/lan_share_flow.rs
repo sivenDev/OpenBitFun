@@ -11,9 +11,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use openbitfun_core::service::lan_share::protocol::Access;
 use openbitfun_core::service::lan_share::{
-    DeviceStatus, DiscoveredDevice, LanShareHost, LanShareOptions, RequestAnswer,
-    ShareConfirmations, ShareDispatch, ShareDispatchError, ShareSettings, SharedAssistantStore,
-    SharedWithMeState, SharedWithMeStore, EVENT_JOB_UPDATED, EVENT_REQUESTS, EVENT_SHARED_WITH_ME,
+    AddedDeviceStore, AddressOutcome, AddressProblem, DeviceStatus, DiscoveredDevice, LanShareHost,
+    LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch, ShareDispatchError,
+    ShareSettings, SharedAssistantStore, SharedWithMeState, SharedWithMeStore, EVENT_JOB_UPDATED,
+    EVENT_REQUESTS, EVENT_SHARED_WITH_ME,
 };
 use openbitfun_events::EventEmitter;
 use openbitfun_services_integrations::lan_share::{
@@ -24,6 +25,7 @@ use serde_json::{json, Value};
 
 const WINDOW: Duration = Duration::from_millis(700);
 const COOLDOWN: Duration = Duration::from_millis(900);
+const RECONNECT: Duration = Duration::from_millis(200);
 
 /// Keeps every event a host emits.
 #[derive(Default)]
@@ -56,16 +58,29 @@ async fn host_with(
     events: Arc<Events>,
     dispatch: Option<Arc<dyn ShareDispatch>>,
 ) -> LanShareHost {
+    host_on(dir, events, dispatch, 0).await
+}
+
+/// A host that listens on `port` when it is free.
+async fn host_on(
+    dir: &Path,
+    events: Arc<Events>,
+    dispatch: Option<Arc<dyn ShareDispatch>>,
+    port: u16,
+) -> LanShareHost {
     let assistants = dir.join("personal_assistant");
     std::fs::create_dir_all(assistants.join("workspace")).unwrap();
     LanShareHost::start(LanShareOptions {
         identity_path: dir.join("lan-share/identity.json"),
         shares: SharedAssistantStore::new(dir.join("delegation/shared-assistants.json")),
         shared_with_me: SharedWithMeStore::new(dir.join("lan-share/shared-with-me.json")),
+        added_devices: AddedDeviceStore::new(dir.join("lan-share/added-devices.json")),
         assistants_base: assistants,
         events,
         allow_loopback: true,
         listen_addresses: Some(vec![Ipv4Addr::LOCALHOST]),
+        listen_port: port,
+        reconnect_interval: RECONNECT,
         bonjour: false,
         request_window: WINDOW,
         cooldown: COOLDOWN,
@@ -688,5 +703,233 @@ async fn the_owner_of_an_assistant_shared_with_this_device_stays_in_reach() {
     })
     .await;
 
+    user.shutdown().await;
+}
+
+fn problem_of(outcome: &AddressOutcome) -> Option<AddressProblem> {
+    match outcome {
+        AddressOutcome::Problem { problem, .. } => Some(*problem),
+        AddressOutcome::Reached { .. } => None,
+    }
+}
+
+async fn share_writer(owner: &LanShareHost) {
+    owner
+        .share(
+            "workspace",
+            "Writer",
+            ShareSettings::default(),
+            ShareConfirmations::default(),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_device_bonjour_cannot_see_is_added_by_address_and_asked() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let user_dir = tempfile::tempdir().unwrap();
+    let owner = host(owner_dir.path(), Arc::new(Events::default())).await;
+    let user = host(user_dir.path(), Arc::new(Events::default())).await;
+    let owner_key = hex::encode(owner.identity().public_key());
+    let owner_id = owner.identity().device_id().to_string();
+    share_writer(&owner).await;
+    let status = owner.status().await;
+    let port = status.port.unwrap();
+    assert_eq!(status.addresses, vec![format!("127.0.0.1:{port}")]);
+    let typed = format!("127.0.0.1:{port}");
+
+    // Typed text that is not a local address is refused before connecting.
+    for (input, problem) in [
+        ("", AddressProblem::Format),
+        ("owner.local", AddressProblem::HostName),
+        ("fd00::1", AddressProblem::Ipv6),
+        ("8.8.8.8", AddressProblem::NotLocal),
+    ] {
+        assert_eq!(
+            problem_of(&user.probe_address(input).await),
+            Some(problem),
+            "{input}"
+        );
+    }
+    assert_eq!(
+        problem_of(&owner.probe_address(&typed).await),
+        Some(AddressProblem::ThisDevice)
+    );
+    // Nothing listens there.
+    let closed = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    assert_eq!(
+        problem_of(&user.probe_address(&format!("127.0.0.1:{closed}")).await),
+        Some(AddressProblem::Unreachable)
+    );
+    // Something that is not a sharing device listens there.
+    let stranger = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let stranger_port = stranger.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = stranger.accept().await {
+            use tokio::io::AsyncWriteExt;
+            let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
+        }
+    });
+    assert_eq!(
+        problem_of(
+            &user
+                .probe_address(&format!("127.0.0.1:{stranger_port}"))
+                .await
+        ),
+        Some(AddressProblem::NotOpenBitFun)
+    );
+
+    // The owner answers with who it is, and nothing is kept yet.
+    let AddressOutcome::Reached { device } = user.probe_address(&typed).await else {
+        panic!("the owner answers at its address");
+    };
+    assert_eq!(device.public_key, owner_key);
+    assert_eq!(device.fingerprint, owner.identity().fingerprint());
+    assert_eq!(device.assistants, 1);
+    assert!(!device.added);
+    user.discover_start().await.unwrap();
+    assert!(user.discovered().is_empty());
+
+    // Added after the codes were compared: listed and asked like any other.
+    let AddressOutcome::Reached { device } = user.add_device(&typed, &owner_key).await.unwrap()
+    else {
+        panic!("the owner is added");
+    };
+    assert!(device.added);
+    eventually("the added owner's catalog is read", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Available)
+    })
+    .await;
+    let devices = user.discovered();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].added_address.as_deref(), Some(typed.as_str()));
+    let request = ask(&user, &owner, &owner_id).await;
+    owner.decide(&request, RequestAnswer::Allow).await.unwrap();
+    eventually("the grant reaches the user", || async {
+        my_state(&user).await == Some(SharedWithMeState::Available)
+    })
+    .await;
+
+    // Bonjour finding the same device lists it once.
+    user.observe(found(&owner).await).await;
+    assert_eq!(user.discovered().len(), 1);
+    user.observe(DiscoveryEvent::Lost {
+        device_id: owner_id.clone(),
+    })
+    .await;
+    assert_eq!(user.discovered().len(), 1, "an added device stays listed");
+
+    // Remembered the next time Discover opens.
+    user.discover_stop().await;
+    user.discover_start().await.unwrap();
+    let devices = user.discovered();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].device_id, owner_id);
+    user.discover_stop().await;
+
+    // Another device now answers at that address: its identity changed.
+    owner.shutdown().await;
+    let impostor_dir = tempfile::tempdir().unwrap();
+    let impostor = host_on(impostor_dir.path(), Arc::new(Events::default()), None, port).await;
+    share_writer(&impostor).await;
+    assert_eq!(impostor.port().await, Some(port));
+    user.discover_start().await.unwrap();
+    eventually("the changed identity shows", || async {
+        matches!(
+            user.discovered()
+                .first()
+                .map(|device| device.status.clone()),
+            Some(DeviceStatus::IdentityChanged { .. })
+        )
+    })
+    .await;
+    assert_eq!(
+        problem_of(&user.set_device_address(&owner_id, &typed).await.unwrap()),
+        Some(AddressProblem::IdentityChanged)
+    );
+
+    // Forgotten on request; what it shared stays.
+    assert!(user.remove_device(&owner_id).await.unwrap());
+    assert!(user.discovered().is_empty());
+    assert_eq!(my_state(&user).await, Some(SharedWithMeState::Available));
+    user.discover_stop().await;
+    user.discover_start().await.unwrap();
+    assert!(user.discovered().is_empty());
+
+    impostor.shutdown().await;
+    user.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_owner_that_comes_back_is_reached_again_without_bonjour() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let user_dir = tempfile::tempdir().unwrap();
+    let owner = host(owner_dir.path(), Arc::new(Events::default())).await;
+    let user = host(user_dir.path(), Arc::new(Events::default())).await;
+    let owner_key = hex::encode(owner.identity().public_key());
+    let user_key = hex::encode(user.identity().public_key());
+    let owner_id = owner.identity().device_id().to_string();
+    share_writer(&owner).await;
+    let port = owner.port().await.unwrap();
+    let typed = format!("127.0.0.1:{port}");
+
+    user.discover_start().await.unwrap();
+    user.add_device(&typed, &owner_key).await.unwrap();
+    eventually("the added owner's catalog is read", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Available)
+    })
+    .await;
+    let request = ask(&user, &owner, &owner_id).await;
+    owner.decide(&request, RequestAnswer::Allow).await.unwrap();
+    eventually("the grant reaches the user", || async {
+        my_state(&user).await == Some(SharedWithMeState::Available)
+    })
+    .await;
+    user.discover_stop().await;
+    assert!(user.owner_online(&owner_key));
+
+    // The owner goes away.
+    owner.shutdown().await;
+    drop(owner);
+    eventually("the user sees the owner offline", || async {
+        !user.owner_online(&owner_key)
+    })
+    .await;
+
+    // It comes back on the same port: reached again with no Bonjour at all.
+    let owner = host_on(owner_dir.path(), Arc::new(Events::default()), None, port).await;
+    assert_eq!(owner.port().await, Some(port));
+    eventually("the user reaches the owner again", || async {
+        user.owner_online(&owner_key)
+    })
+    .await;
+    assert!(user.shared_with_me_now().await.unwrap()[0].online);
+
+    // Access withdrawn while the user could not hear it shows once reached.
+    owner.shutdown().await;
+    drop(owner);
+    eventually("the user sees the owner offline again", || async {
+        !user.owner_online(&owner_key)
+    })
+    .await;
+    SharedAssistantStore::new(owner_dir.path().join("delegation/shared-assistants.json"))
+        .revoke("workspace", &user_key)
+        .await
+        .unwrap()
+        .expect("the user had access");
+    let owner = host_on(owner_dir.path(), Arc::new(Events::default()), None, port).await;
+    eventually("the withdrawal shows after reconnecting", || async {
+        my_state(&user).await == Some(SharedWithMeState::Revoked)
+    })
+    .await;
+
+    owner.shutdown().await;
     user.shutdown().await;
 }

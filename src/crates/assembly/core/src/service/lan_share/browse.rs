@@ -1,9 +1,11 @@
 //! What the Discover panel shows: the sharing devices on the local network,
 //! their shared assistants, and where this device stands with each.
 //!
-//! Pure state. The host feeds it what Bonjour finds and what each device's
-//! catalog says; a device whose protocol this build does not speak is listed
-//! as needing an update and never contacted.
+//! Pure state. The host feeds it what Bonjour finds, the devices added by
+//! address, and what each device's catalog says; a device whose protocol
+//! this build does not speak is listed as needing an update and never
+//! contacted. A device both found and added is listed once, by its id, which
+//! its sharing key decides.
 
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -38,6 +40,10 @@ pub enum DeviceStatus {
     Unreachable {
         message: String,
     },
+    /// Whoever answers at the device's address holds another key.
+    IdentityChanged {
+        message: String,
+    },
 }
 
 /// One sharing device on the local network.
@@ -52,11 +58,17 @@ pub struct DiscoveredDevice {
     pub public_key: String,
     pub status: DeviceStatus,
     pub assistants: Vec<DiscoveredAssistant>,
+    /// Set when the device was added by address: where it answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_address: Option<String>,
 }
 
 #[derive(Debug, Default)]
 pub struct BrowseState {
-    peers: BTreeMap<String, DiscoveredPeer>,
+    /// What Bonjour lists now.
+    found: BTreeMap<String, DiscoveredPeer>,
+    /// The devices added by address.
+    added: BTreeMap<String, DiscoveredPeer>,
     devices: BTreeMap<String, DiscoveredDevice>,
 }
 
@@ -81,46 +93,119 @@ impl BrowseState {
         };
         let read_catalog = peer.is_compatible() && !known;
         if !known {
-            self.devices.insert(
-                peer.device_id.clone(),
-                DiscoveredDevice {
-                    device_id: peer.device_id.clone(),
-                    device_name: peer.device_name.clone(),
-                    display_name: peer.display_name.clone(),
-                    fingerprint: peer.fingerprint.clone(),
-                    public_key: key,
-                    status,
-                    assistants: Vec::new(),
-                },
-            );
+            self.list(&peer, key, status);
         }
-        self.peers.insert(peer.device_id.clone(), peer);
+        self.found.insert(peer.device_id.clone(), peer);
         read_catalog
     }
 
-    pub fn lost(&mut self, device_id: &str) -> Option<DiscoveredPeer> {
-        self.devices.remove(device_id);
-        self.peers.remove(device_id)
+    /// Lists a device added by address, reachable at `peer.addresses` and
+    /// `peer.port`. Its catalog is to be read unless it is listed as ready.
+    pub fn add(&mut self, peer: DiscoveredPeer, address: String) -> bool {
+        let key = hex::encode(peer.public_key);
+        let known = self
+            .devices
+            .get(&peer.device_id)
+            .is_some_and(|device| device.public_key == key && device.status == DeviceStatus::Ready);
+        if !known {
+            self.list(&peer, key, DeviceStatus::Connecting);
+        }
+        if let Some(device) = self.devices.get_mut(&peer.device_id) {
+            device.added_address = Some(address);
+        }
+        self.added.insert(peer.device_id.clone(), peer);
+        !known
     }
 
-    /// The devices found whose catalog this device can read.
+    fn list(&mut self, peer: &DiscoveredPeer, key: String, status: DeviceStatus) {
+        let added_address = self
+            .devices
+            .get(&peer.device_id)
+            .and_then(|device| device.added_address.clone());
+        self.devices.insert(
+            peer.device_id.clone(),
+            DiscoveredDevice {
+                device_id: peer.device_id.clone(),
+                device_name: peer.device_name.clone(),
+                display_name: peer.display_name.clone(),
+                fingerprint: peer.fingerprint.clone(),
+                public_key: key,
+                status,
+                assistants: Vec::new(),
+                added_address,
+            },
+        );
+    }
+
+    /// Bonjour no longer lists `device_id`. A device added by address stays.
+    pub fn lost(&mut self, device_id: &str) -> Option<DiscoveredPeer> {
+        if !self.added.contains_key(device_id) {
+            self.devices.remove(device_id);
+        }
+        self.found.remove(device_id)
+    }
+
+    /// Forgets that `device_id` was added by address. A device Bonjour lists
+    /// stays. Returns whether the list changed.
+    pub fn forget(&mut self, device_id: &str) -> bool {
+        if self.added.remove(device_id).is_none() {
+            return false;
+        }
+        if self.found.contains_key(device_id) {
+            if let Some(device) = self.devices.get_mut(device_id) {
+                device.added_address = None;
+            }
+        } else {
+            self.devices.remove(device_id);
+        }
+        true
+    }
+
+    /// The devices listed whose catalog this device can read.
     pub fn readable_peers(&self) -> Vec<DiscoveredPeer> {
-        self.peers
-            .values()
+        self.peers()
             .filter(|peer| peer.is_compatible())
             .cloned()
             .collect()
     }
 
-    pub fn peer(&self, device_id: &str) -> Option<&DiscoveredPeer> {
-        self.peers.get(device_id)
+    /// Every listed device once: as Bonjour lists it, or as it was added.
+    fn peers(&self) -> impl Iterator<Item = &DiscoveredPeer> {
+        self.found.values().chain(
+            self.added
+                .values()
+                .filter(|peer| !self.found.contains_key(&peer.device_id)),
+        )
     }
 
-    /// The device that holds `public_key`, if listed.
-    pub fn peer_with_key(&self, public_key: &str) -> Option<&DiscoveredPeer> {
-        self.peers
-            .values()
+    pub fn peer(&self, device_id: &str) -> Option<&DiscoveredPeer> {
+        self.found
+            .get(device_id)
+            .or_else(|| self.added.get(device_id))
+    }
+
+    /// Where `device_id` may answer: what Bonjour lists, then the address it
+    /// was added at.
+    pub fn addresses(&self, device_id: &str) -> Vec<SocketAddr> {
+        let mut addresses = Vec::new();
+        for peer in [self.found.get(device_id), self.added.get(device_id)]
+            .into_iter()
+            .flatten()
+        {
+            for address in peer_addresses(peer) {
+                if !addresses.contains(&address) {
+                    addresses.push(address);
+                }
+            }
+        }
+        addresses
+    }
+
+    /// The id of the listed device that holds `public_key`.
+    pub fn device_with_key(&self, public_key: &str) -> Option<String> {
+        self.peers()
             .find(|peer| hex::encode(peer.public_key) == public_key)
+            .map(|peer| peer.device_id.clone())
     }
 
     /// Records the catalog of `device_id`.
@@ -182,7 +267,8 @@ impl BrowseState {
     }
 
     pub fn clear(&mut self) {
-        self.peers.clear();
+        self.found.clear();
+        self.added.clear();
         self.devices.clear();
     }
 }

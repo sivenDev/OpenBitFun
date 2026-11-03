@@ -55,6 +55,10 @@ pub struct ChannelConfig {
     pub max_pending_handshakes: usize,
     /// Accept loopback addresses; only tests and single-machine tools set it.
     pub allow_loopback: bool,
+    /// The port a listener tries first on every address, so devices that
+    /// cannot see each other over Bonjour can connect by address alone. When
+    /// it is taken anywhere, or 0, the listener takes any free port.
+    pub listen_port: u16,
 }
 
 impl ChannelConfig {
@@ -67,6 +71,7 @@ impl ChannelConfig {
             max_frame_bytes: 4 * 1024 * 1024,
             max_pending_handshakes: 16,
             allow_loopback: false,
+            listen_port: 0,
         }
     }
 
@@ -93,6 +98,10 @@ pub enum LanError {
     PeerKeyMismatch,
     #[error("the other device did not answer in time")]
     Timeout,
+    /// Nothing accepted a connection at the address: the device is off, not
+    /// listening, or a proxy, VPN or firewall is in the way.
+    #[error("the other device cannot be reached: {0}")]
+    Unreachable(String),
     #[error("the connection was refused: {0}")]
     Refused(String),
     #[error("the connection is closed")]
@@ -294,7 +303,7 @@ impl LanListener {
                 "{address} is not a private network address"
             )));
         }
-        let listeners = bind_all(addresses).await?;
+        let listeners = bind_all(addresses, config.listen_port).await?;
         let port = listeners[0]
             .local_addr()
             .map_err(|error| LanError::Io(error.to_string()))?
@@ -341,7 +350,17 @@ impl Drop for LanListener {
     }
 }
 
-async fn bind_all(addresses: &[Ipv4Addr]) -> Result<Vec<TcpListener>, LanError> {
+async fn bind_all(addresses: &[Ipv4Addr], preferred: u16) -> Result<Vec<TcpListener>, LanError> {
+    if preferred != 0 {
+        match bind_on(addresses, preferred).await {
+            Ok(listeners) => return Ok(listeners),
+            Err(error) => log::debug!(
+                "LAN sharing port {} unavailable, taking any free port: {}",
+                preferred,
+                error
+            ),
+        }
+    }
     let mut last_error = None;
     for _ in 0..BIND_ATTEMPTS {
         let first = TcpListener::bind(SocketAddr::new(IpAddr::V4(addresses[0]), 0))
@@ -368,6 +387,18 @@ async fn bind_all(addresses: &[Ipv4Addr]) -> Result<Vec<TcpListener>, LanError> 
         }
     }
     Err(last_error.unwrap_or_else(|| LanError::Io("could not listen".to_string())))
+}
+
+/// Listens on `port` at every address, or on none of them.
+async fn bind_on(addresses: &[Ipv4Addr], port: u16) -> Result<Vec<TcpListener>, LanError> {
+    let mut listeners = Vec::with_capacity(addresses.len());
+    for address in addresses {
+        let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(*address), port))
+            .await
+            .map_err(|error| LanError::Io(format!("listen on {address}:{port}: {error}")))?;
+        listeners.push(listener);
+    }
+    Ok(listeners)
 }
 
 async fn accept_loop(
@@ -438,10 +469,11 @@ pub async fn connect(
             address.ip()
         )));
     }
+    let stream = tokio::time::timeout(config.handshake_timeout, TcpStream::connect(address))
+        .await
+        .map_err(|_| LanError::Unreachable(format!("connect to {address}: timed out")))?
+        .map_err(|error| LanError::Unreachable(format!("connect to {address}: {error}")))?;
     let (ws, (hello, sealer, opener)) = tokio::time::timeout(config.handshake_timeout, async {
-        let stream = TcpStream::connect(address)
-            .await
-            .map_err(|error| LanError::Io(format!("connect to {address}: {error}")))?;
         let (mut ws, _) = tokio_tungstenite::client_async_with_config(
             format!("ws://{address}/lan-share"),
             stream,

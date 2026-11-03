@@ -237,3 +237,37 @@ async fn non_private_addresses_are_refused() {
     .await
     .is_err());
 }
+
+#[tokio::test]
+async fn a_listener_takes_its_preferred_port_and_any_free_one_when_it_is_taken() {
+    // A port the system just handed out is free now, as far as anyone can tell.
+    let free = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut first = config("owner");
+    first.listen_port = free;
+    let (preferred, _, _) = listen(first).await;
+    assert_eq!(preferred.port(), free);
+
+    let mut second = config("other");
+    second.listen_port = free;
+    let (fallback, _, _) = listen(second).await;
+    assert_ne!(fallback.port(), free);
+    assert_ne!(fallback.port(), 0);
+}
+
+#[tokio::test]
+async fn an_unknown_device_is_reached_by_address_alone() {
+    let server = config("owner");
+    let server_identity = server.identity.clone();
+    let (_listener, _echo, address) = listen(server).await;
+
+    let connection = connect(&config("user"), address, None, None).await.unwrap();
+    let peer = connection.peer();
+    assert_eq!(peer.public_key, server_identity.public_key());
+    assert_eq!(peer.device_id, server_identity.device_id());
+    assert_eq!(peer.fingerprint, server_identity.fingerprint());
+    assert_eq!(peer.address, address);
+}

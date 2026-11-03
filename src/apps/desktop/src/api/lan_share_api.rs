@@ -17,9 +17,9 @@ use openbitfun_core::service::dispatch::{
 use openbitfun_core::service::lan_share::dispatch_rpc::LanDispatchRpc;
 use openbitfun_core::service::lan_share::protocol::RequestOpened;
 use openbitfun_core::service::lan_share::{
-    delete_tenant, list_tenants, tenants_root, DiscoveredDevice, HostStatus, LanShareHost,
-    LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch, ShareRequestView,
-    ShareSettings, SharedAssistant, SharedWithMeNow,
+    delete_tenant, list_tenants, tenants_root, AddressOutcome, DiscoveredDevice, HostStatus,
+    LanShareHost, LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch,
+    ShareRequestView, ShareSettings, SharedAssistant, SharedWithMeNow,
 };
 use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_SHARE_KEY_ARG;
 use serde::{Deserialize, Serialize};
@@ -173,6 +173,34 @@ pub struct LanShareRemoveRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LanShareDisplayNameRequest {
     pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanShareProbeAddressRequest {
+    /// What the person typed: `ip` or `ip:port`.
+    pub address: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanShareAddDeviceRequest {
+    pub address: String,
+    /// The key of the device whose code the person compared.
+    pub public_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanShareDeviceRequest {
+    pub device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanShareDeviceAddressRequest {
+    pub device_id: String,
+    pub address: String,
 }
 
 /// This device's sharing identity and the assistants it shares.
@@ -389,6 +417,41 @@ pub(crate) async fn shared_assistant_name(
         .ok_or_else(|| SharedAssistantProblem::NotShared.to_string())
 }
 
+/// Says who answers at an address someone typed, for a device Bonjour
+/// cannot see. Nothing is kept.
+#[tauri::command]
+pub async fn lan_share_probe_address(
+    request: LanShareProbeAddressRequest,
+) -> Result<AddressOutcome, String> {
+    Ok(host()?.probe_address(&request.address).await)
+}
+
+/// Adds a device by address once its code was compared.
+#[tauri::command]
+pub async fn lan_share_add_device(
+    request: LanShareAddDeviceRequest,
+) -> Result<AddressOutcome, String> {
+    host()?
+        .add_device(&request.address, &request.public_key)
+        .await
+}
+
+/// Forgets a device added by address.
+#[tauri::command]
+pub async fn lan_share_remove_device(request: LanShareDeviceRequest) -> Result<bool, String> {
+    host()?.remove_device(&request.device_id).await
+}
+
+/// Moves a device added by address to another address.
+#[tauri::command]
+pub async fn lan_share_set_device_address(
+    request: LanShareDeviceAddressRequest,
+) -> Result<AddressOutcome, String> {
+    host()?
+        .set_device_address(&request.device_id, &request.address)
+        .await
+}
+
 #[tauri::command]
 pub async fn lan_share_set_display_name(
     request: LanShareDisplayNameRequest,
@@ -459,6 +522,18 @@ mod tests {
                     .unwrap();
             assert_eq!(decide.answer, expected);
         }
+
+        let add: LanShareAddDeviceRequest = serde_json::from_value(serde_json::json!({
+            "address": "172.17.9.12",
+            "publicKey": "ab".repeat(32),
+        }))
+        .unwrap();
+        assert_eq!(add.address, "172.17.9.12");
+        let moved: LanShareDeviceAddressRequest = serde_json::from_value(
+            serde_json::json!({ "deviceId": "d1", "address": "172.17.9.13:50000" }),
+        )
+        .unwrap();
+        assert_eq!(moved.device_id, "d1");
         let revoke: LanShareRevokeRequest = serde_json::from_value(
             serde_json::json!({ "assistantId": "workspace", "publicKey": "ab" }),
         )

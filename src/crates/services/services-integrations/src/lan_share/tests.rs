@@ -94,6 +94,35 @@ fn only_private_addresses_take_part() {
     assert!(!is_sharing_address("fe80::1".parse().unwrap(), true));
 }
 
+#[test]
+fn typed_addresses_are_read_with_the_default_port() {
+    let read = |input: &str| parse_peer_address(input, false);
+    assert_eq!(
+        read(" 172.17.9.12 ").unwrap(),
+        "172.17.9.12:47652".parse().unwrap()
+    );
+    assert_eq!(
+        read("192.168.1.20:50000").unwrap(),
+        "192.168.1.20:50000".parse().unwrap()
+    );
+    assert_eq!(read(""), Err(AddressError::Format));
+    assert_eq!(read("192.168.1"), Err(AddressError::Format));
+    assert_eq!(read("192.168.1.20:0"), Err(AddressError::Format));
+    assert_eq!(read("192.168.1.20:99999"), Err(AddressError::Format));
+    assert_eq!(read("agent002.local"), Err(AddressError::HostName));
+    assert_eq!(read("fd00::1"), Err(AddressError::Ipv6));
+    assert_eq!(read("[fe80::1]:47652"), Err(AddressError::Ipv6));
+    assert_eq!(
+        read("8.8.8.8"),
+        Err(AddressError::NotLocal("8.8.8.8".to_string()))
+    );
+    assert_eq!(
+        read("127.0.0.1"),
+        Err(AddressError::NotLocal("127.0.0.1".to_string()))
+    );
+    assert!(parse_peer_address("127.0.0.1:4000", true).is_ok());
+}
+
 /// Keys of both sides of one handshake; `tamper` changes the hello text of A
 /// on its way to B.
 fn handshake_pair(

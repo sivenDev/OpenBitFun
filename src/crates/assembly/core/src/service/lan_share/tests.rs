@@ -744,3 +744,147 @@ mod shared_with_me_store {
         assert_eq!(std::fs::read(&path).unwrap(), b"{ not json");
     }
 }
+
+mod added_device_store {
+    use super::super::added_devices::AddedDeviceStore;
+    use super::{key, peer};
+
+    #[tokio::test]
+    async fn devices_are_added_moved_and_forgotten_by_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AddedDeviceStore::new(dir.path().join("added-devices.json"));
+        let owner = peer(7, "Owner");
+        store
+            .add(owner.clone(), "172.17.9.12:47652".to_string())
+            .await
+            .unwrap();
+        // Adding the same key again moves it rather than listing it twice.
+        store
+            .add(owner.clone(), "172.17.9.40:47652".to_string())
+            .await
+            .unwrap();
+        let devices = store.devices().await.unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].address, "172.17.9.40:47652");
+
+        assert!(store
+            .set_address(
+                &key(7).to_ascii_uppercase(),
+                "172.17.9.41:47652".to_string()
+            )
+            .await
+            .unwrap());
+        assert!(!store
+            .set_address(&key(7), "172.17.9.41:47652".to_string())
+            .await
+            .unwrap());
+        assert!(!store
+            .set_address(&key(8), "172.17.9.42:47652".to_string())
+            .await
+            .unwrap());
+        assert_eq!(
+            store
+                .device_with_key(&key(7))
+                .await
+                .unwrap()
+                .unwrap()
+                .address,
+            "172.17.9.41:47652"
+        );
+
+        assert!(store.remove(&owner.device_id).await.unwrap().is_some());
+        assert!(store.remove(&owner.device_id).await.unwrap().is_none());
+        assert!(store.devices().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_file_is_reported_and_left_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("added-devices.json");
+        std::fs::write(&path, "not json").unwrap();
+        let store = AddedDeviceStore::new(path.clone());
+        assert!(store.devices().await.is_err());
+        assert!(store
+            .add(peer(7, "Owner"), "172.17.9.12:47652".to_string())
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
+    }
+}
+
+#[cfg(feature = "lan-share")]
+mod browse_state {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use openbitfun_services_integrations::lan_share::{DiscoveredPeer, PROTOCOL_VERSION};
+
+    use super::super::browse::{BrowseState, DeviceStatus};
+
+    fn device(seed: u8, address: [u8; 4], port: u16) -> DiscoveredPeer {
+        let public_key = [seed; 32];
+        DiscoveredPeer {
+            device_id: super::super::share_device_id(&hex::encode(public_key)).unwrap(),
+            device_name: "Owner's Mac".to_string(),
+            display_name: "Owner".to_string(),
+            public_key,
+            fingerprint: "AB23CD".to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            addresses: vec![Ipv4Addr::from(address)],
+            port,
+        }
+    }
+
+    #[test]
+    fn a_device_found_and_added_is_listed_once_and_reached_both_ways() {
+        let mut browse = BrowseState::default();
+        let added = device(7, [172, 17, 9, 12], 47652);
+        let found = device(7, [172, 16, 23, 9], 47652);
+        let id = added.device_id.clone();
+
+        assert!(browse.add(added.clone(), "172.17.9.12:47652".to_string()));
+        browse.found(found.clone());
+        let devices = browse.devices();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].status, DeviceStatus::Connecting);
+        assert_eq!(
+            devices[0].added_address.as_deref(),
+            Some("172.17.9.12:47652")
+        );
+        assert_eq!(browse.readable_peers().len(), 1);
+        assert_eq!(
+            browse.addresses(&id),
+            vec![
+                SocketAddr::from(([172, 16, 23, 9], 47652)),
+                SocketAddr::from(([172, 17, 9, 12], 47652)),
+            ]
+        );
+        assert_eq!(
+            browse.device_with_key(&hex::encode([7; 32])),
+            Some(id.clone())
+        );
+
+        // Bonjour losing it leaves the added device.
+        browse.lost(&id);
+        assert_eq!(browse.devices().len(), 1);
+        assert_eq!(
+            browse.addresses(&id),
+            vec![SocketAddr::from(([172, 17, 9, 12], 47652))]
+        );
+
+        // Forgetting a device Bonjour lists keeps it, without the address.
+        browse.found(found);
+        assert!(browse.forget(&id));
+        let devices = browse.devices();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].added_address, None);
+        assert!(!browse.forget(&id));
+        browse.lost(&id);
+        assert!(browse.devices().is_empty());
+
+        // Forgetting one only added removes it.
+        browse.add(added, "172.17.9.12:47652".to_string());
+        assert!(browse.forget(&id));
+        assert!(browse.devices().is_empty());
+        assert!(browse.addresses(&id).is_empty());
+    }
+}

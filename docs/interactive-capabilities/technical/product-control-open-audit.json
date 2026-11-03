@@ -511,6 +511,10 @@
         "command:lan_share_discover_stop",
         "command:lan_share_discover_list",
         "command:lan_share_request",
+        "command:lan_share_probe_address",
+        "command:lan_share_add_device",
+        "command:lan_share_remove_device",
+        "command:lan_share_set_device_address",
         "command:lan_share_shared_with_me",
         "command:lan_share_remove",
         "command:lan_share_open_network_settings"

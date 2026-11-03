@@ -9,7 +9,10 @@
 //! As a user it browses while the Discover panel is open, reads the catalog
 //! of each compatible device with its advertised key pinned, asks for an
 //! assistant, and keeps the grants it receives in
-//! [`SharedWithMeStore`].
+//! [`SharedWithMeStore`]. Devices Bonjour cannot see, on another subnet, are
+//! added by address and kept in [`AddedDeviceStore`]; while an assistant
+//! shared with this device can be used, its owner is reconnected to in the
+//! background wherever it was last seen.
 //!
 //! Every change is announced through the host's [`EventEmitter`] as
 //! `lan_share://requests`, `lan_share://shared`,
@@ -28,14 +31,15 @@ use openbitfun_events::EventEmitter;
 use openbitfun_services_core::dispatch_contract::bind_dispatch_source_share_key;
 use openbitfun_services_integrations::lan_share::discovery::sharing_ipv4_addresses;
 use openbitfun_services_integrations::lan_share::{
-    connect, Advertisement, ChannelConfig, DiscoveredPeer, Discovery, DiscoveryEvent,
-    LanConnection, LanError, LanListener, LanPush, PeerIdentity, PeerSet, RequestHandler,
-    ShareIdentity,
+    connect, parse_peer_address, AddressError, Advertisement, ChannelConfig, DiscoveredPeer,
+    Discovery, DiscoveryEvent, LanConnection, LanError, LanListener, LanPush, PeerIdentity,
+    PeerSet, RequestHandler, ShareIdentity, DEFAULT_PORT, PROTOCOL_VERSION,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use super::added_devices::{AddedDevice, AddedDeviceStore};
 use super::browse::{peer_addresses, BrowseState, DeviceStatus, DiscoveredDevice};
 use super::protocol::{
     now_ms, to_local_clock, Access, AssistantBody, CatalogAssistant, CatalogResponse, Decision,
@@ -67,6 +71,8 @@ const MAX_CONNECTIONS_PER_DEVICE: usize = 4;
 /// How long after a request's deadline the asking side looks it up itself
 /// when no decision arrived.
 const STATUS_GRACE: Duration = Duration::from_secs(2);
+/// How often an owner that cannot be reached is tried again.
+const RECONNECT_INTERVAL: Duration = Duration::from_secs(30);
 /// The owner's executor answers within 110 seconds; this leaves room for the
 /// channel.
 const DISPATCH_CALL_TIMEOUT: Duration = Duration::from_secs(125);
@@ -134,6 +140,7 @@ pub struct LanShareOptions {
     pub identity_path: PathBuf,
     pub shares: SharedAssistantStore,
     pub shared_with_me: SharedWithMeStore,
+    pub added_devices: AddedDeviceStore,
     /// Where this device's assistants live, to check a share names one.
     pub assistants_base: PathBuf,
     pub events: Arc<dyn EventEmitter>,
@@ -141,6 +148,11 @@ pub struct LanShareOptions {
     pub allow_loopback: bool,
     /// Addresses to listen on; `None` means this device's private ones.
     pub listen_addresses: Option<Vec<Ipv4Addr>>,
+    /// The port to listen on when it is free; 0 takes any free port.
+    pub listen_port: u16,
+    /// How often owners of assistants shared with this device that cannot
+    /// be reached are tried again.
+    pub reconnect_interval: Duration,
     /// Advertise and browse over Bonjour. Off in tests that feed discovery
     /// themselves.
     pub bonjour: bool,
@@ -162,10 +174,13 @@ impl LanShareOptions {
                 .join(IDENTITY_FILE),
             shares: SharedAssistantStore::for_product_home(path_manager),
             shared_with_me: SharedWithMeStore::for_product_home(path_manager),
+            added_devices: AddedDeviceStore::for_product_home(path_manager),
             assistants_base: path_manager.assistant_workspace_base_dir(None),
             events,
             allow_loopback: false,
             listen_addresses: None,
+            listen_port: DEFAULT_PORT,
+            reconnect_interval: RECONNECT_INTERVAL,
             bonjour: true,
             request_window: Duration::from_secs(REQUEST_SECONDS),
             cooldown: Duration::from_secs(COOLDOWN_SECONDS),
@@ -189,6 +204,10 @@ pub struct HostStatus {
     /// Set while this device shares an assistant and listens.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// What people on another subnet type to add this device, one per
+    /// network: the address, with the port when it is not the default one.
+    /// Empty while this device does not listen.
+    pub addresses: Vec<String>,
     /// Why other devices cannot see or reach this one, when they cannot.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
@@ -245,8 +264,73 @@ struct Inner {
     /// owner is looked for and its channel kept in the background.
     keep: AtomicBool,
     browser: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// User side: tries again to reach owners that cannot be reached, while
+    /// an assistant shared with this device can be used.
+    reconnect: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Owner side: jobs other devices started that are watched for news.
     watched_jobs: Mutex<HashSet<String>>,
+}
+
+/// Why an address cannot be used to add a device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AddressProblem {
+    Format,
+    /// A name rather than an address.
+    HostName,
+    Ipv6,
+    /// A public, loopback or other address outside the local network.
+    NotLocal,
+    /// The address of this device.
+    ThisDevice,
+    /// Nothing answers: the device is off, or a proxy, VPN or firewall is in
+    /// the way.
+    Unreachable,
+    /// Something answers that is not a sharing device.
+    NotOpenBitFun,
+    NeedsUpdate,
+    /// Whoever answers holds another key than the device added.
+    IdentityChanged,
+}
+
+/// A device reached at an address someone typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddressedDevice {
+    /// Where it answered (`ip:port`).
+    pub address: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub display_name: String,
+    /// The code the person compares with the one the device shows.
+    pub fingerprint: String,
+    pub public_key: String,
+    /// How many assistants it shares.
+    pub assistants: usize,
+    /// Whether it was already added by address.
+    pub added: bool,
+}
+
+/// What came of trying an address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum AddressOutcome {
+    Reached {
+        device: AddressedDevice,
+    },
+    Problem {
+        problem: AddressProblem,
+        message: String,
+    },
+}
+
+impl AddressOutcome {
+    fn problem(problem: AddressProblem, message: impl ToString) -> Self {
+        Self::Problem {
+            problem,
+            message: message.to_string(),
+        }
+    }
 }
 
 /// An assistant shared with this device, and whether its owner can be
@@ -289,6 +373,7 @@ impl LanShareHost {
                 panel: AtomicBool::new(false),
                 keep: AtomicBool::new(false),
                 browser: Mutex::new(None),
+                reconnect: Mutex::new(None),
                 watched_jobs: Mutex::new(HashSet::new()),
             }),
         };
@@ -305,12 +390,31 @@ impl LanShareHost {
 
     pub async fn status(&self) -> HostStatus {
         let identity = self.identity();
+        let (port, addresses) = match self.inner.listener.lock().await.as_ref() {
+            Some(listener) => {
+                let port = listener.port();
+                let addresses = listener
+                    .addresses()
+                    .iter()
+                    .map(|address| {
+                        if port == DEFAULT_PORT {
+                            address.to_string()
+                        } else {
+                            format!("{address}:{port}")
+                        }
+                    })
+                    .collect();
+                (Some(port), addresses)
+            }
+            None => (None, Vec::new()),
+        };
         HostStatus {
             device_id: identity.device_id().to_string(),
             device_name: identity.device_name().to_string(),
             display_name: identity.display_name().to_string(),
             fingerprint: identity.fingerprint(),
-            port: self.port().await,
+            port,
+            addresses,
             problem: self.inner.problem.lock().expect("problem lock").clone(),
         }
     }
@@ -389,6 +493,7 @@ impl LanShareHost {
     pub async fn shutdown(&self) {
         self.inner.panel.store(false, Ordering::SeqCst);
         self.inner.keep.store(false, Ordering::SeqCst);
+        self.stop_reconnecting();
         self.stop_browser().await;
         if let Some(listener) = self.inner.listener.lock().await.take() {
             listener.shutdown();
@@ -923,6 +1028,7 @@ impl LanShareHost {
             self.inner.panel.store(false, Ordering::SeqCst);
             return Err(error);
         }
+        self.list_added_devices().await;
         // Devices found in the background are read now, and the others again:
         // the panel shows where this device stands today.
         let peers = self
@@ -1054,8 +1160,98 @@ impl LanShareHost {
             if let Err(error) = self.start_browser() {
                 warn!("LAN sharing cannot look for owners: {}", error);
             }
-        } else if was && !self.inner.panel.load(Ordering::SeqCst) {
-            self.stop_browser().await;
+            self.start_reconnecting();
+        } else {
+            self.stop_reconnecting();
+            if was && !self.inner.panel.load(Ordering::SeqCst) {
+                self.stop_browser().await;
+            }
+        }
+    }
+
+    /// Starts trying again, every [`LanShareOptions::reconnect_interval`], to
+    /// reach the owners of assistants shared with this device that cannot be
+    /// reached. Bonjour cannot see an owner on another subnet, and may miss
+    /// one that comes back.
+    fn start_reconnecting(&self) {
+        let mut reconnect = self.inner.reconnect.lock().expect("reconnect lock");
+        if reconnect.as_ref().is_some_and(|task| !task.is_finished()) {
+            return;
+        }
+        let host = Arc::downgrade(&self.inner);
+        let interval = self.inner.options.reconnect_interval;
+        *reconnect = Some(tokio::spawn(async move {
+            loop {
+                {
+                    let Some(inner) = host.upgrade() else {
+                        break;
+                    };
+                    let host = LanShareHost { inner };
+                    if !host.inner.keep.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    host.reconnect_owners().await;
+                }
+                tokio::time::sleep(interval).await;
+            }
+        }));
+    }
+
+    fn stop_reconnecting(&self) {
+        if let Some(task) = self.inner.reconnect.lock().expect("reconnect lock").take() {
+            task.abort();
+        }
+    }
+
+    /// Opens a channel to every owner of an assistant shared with this
+    /// device that has none, and catches up on what changed meanwhile.
+    async fn reconnect_owners(&self) {
+        let assistants = match self.inner.options.shared_with_me.assistants().await {
+            Ok(assistants) => assistants,
+            Err(error) => {
+                warn!("Assistants shared with this device not read: {}", error);
+                return;
+            }
+        };
+        let mut owners: Vec<(String, Option<String>)> = Vec::new();
+        for assistant in assistants {
+            if assistant.state != SharedWithMeState::Available {
+                continue;
+            }
+            let key = assistant.owner.public_key.to_ascii_lowercase();
+            if !owners.iter().any(|(listed, _)| *listed == key) {
+                owners.push((key, assistant.last_address));
+            }
+        }
+        for (key, last_address) in owners {
+            if self.open_owner_connection(&key).is_some() {
+                continue;
+            }
+            let Some(public_key) = key_bytes(&key) else {
+                continue;
+            };
+            let mut addresses = self.owner_addresses(&key, last_address.as_deref());
+            if let Ok(Some(added)) = self.inner.options.added_devices.device_with_key(&key).await {
+                if let Ok(address) = added.address.parse::<SocketAddr>() {
+                    if !addresses.contains(&address) {
+                        addresses.push(address);
+                    }
+                }
+            }
+            if addresses.is_empty() {
+                continue;
+            }
+            match self.owner_connection(&key, &addresses, &public_key).await {
+                Ok(connection) => {
+                    debug!(
+                        "LAN sharing reached an owner again: device_id={}",
+                        connection.peer().device_id
+                    );
+                    self.deliver_removals(&key, &connection).await;
+                    self.refresh_catalog(&connection, None).await;
+                }
+                Err(error) => debug!("LAN sharing owner still unreachable: {}", error),
+            }
         }
     }
 
@@ -1136,19 +1332,22 @@ impl LanShareHost {
 
     async fn read_catalog(&self, peer: &DiscoveredPeer) {
         let key = hex::encode(peer.public_key);
+        let mut addresses = self
+            .inner
+            .browse
+            .lock()
+            .expect("browse lock")
+            .addresses(&peer.device_id);
+        if addresses.is_empty() {
+            addresses = peer_addresses(peer);
+        }
         let connection = match self
-            .owner_connection(&key, &peer_addresses(peer), &peer.public_key)
+            .owner_connection(&key, &addresses, &peer.public_key)
             .await
         {
             Ok(connection) => connection,
             Err(error) => {
-                let message = error.to_string();
-                let status = match error {
-                    LanError::NeedsUpdate { .. }
-                    | LanError::PeerNeedsUpdate { .. }
-                    | LanError::ProtocolVersion(_) => DeviceStatus::NeedsUpdate { message },
-                    _ => DeviceStatus::Unreachable { message },
-                };
+                let status = device_status(&error);
                 debug!(
                     "LAN sharing catalog unreachable: device_id={}, error={}",
                     peer.device_id, error
@@ -1273,22 +1472,21 @@ impl LanShareHost {
             .cloned()
             .ok_or_else(|| "that device is no longer on the local network".to_string())?;
         let key = hex::encode(peer.public_key);
+        let addresses = self
+            .inner
+            .browse
+            .lock()
+            .expect("browse lock")
+            .addresses(device_id);
         let connection = match self
-            .owner_connection(&key, &peer_addresses(&peer), &peer.public_key)
+            .owner_connection(&key, &addresses, &peer.public_key)
             .await
         {
             Ok(connection) => connection,
             Err(error) => {
                 // The Discover list says why, next to the device.
+                let status = device_status(&error);
                 let problem = unreachable_owner(error);
-                let status = match &problem {
-                    ShareDispatchError::NeedsUpdate(message) => DeviceStatus::NeedsUpdate {
-                        message: message.clone(),
-                    },
-                    other => DeviceStatus::Unreachable {
-                        message: other.to_string(),
-                    },
-                };
                 self.inner
                     .browse
                     .lock()
@@ -1534,6 +1732,7 @@ impl LanShareHost {
                     return match kept {
                         Ok(connection) => {
                             self.watch_pushes(&connection);
+                            self.follow_added_device(&connection).await;
                             if self.inner.keep.load(Ordering::SeqCst) {
                                 // The owner can be reached again.
                                 self.emit(EVENT_SHARED_WITH_ME, json!({})).await;
@@ -1871,14 +2070,13 @@ impl LanShareHost {
     /// Where the owner with `owner_key` may be: what Bonjour lists now, then
     /// where it was last reached.
     fn owner_addresses(&self, owner_key: &str, last_address: Option<&str>) -> Vec<SocketAddr> {
-        let mut addresses: Vec<SocketAddr> = self
-            .inner
-            .browse
-            .lock()
-            .expect("browse lock")
-            .peer_with_key(owner_key)
-            .map(peer_addresses)
-            .unwrap_or_default();
+        let mut addresses: Vec<SocketAddr> = {
+            let browse = self.inner.browse.lock().expect("browse lock");
+            browse
+                .device_with_key(owner_key)
+                .map(|device_id| browse.addresses(&device_id))
+                .unwrap_or_default()
+        };
         if let Some(last) = last_address.and_then(|address| address.parse().ok()) {
             if !addresses.contains(&last) {
                 addresses.push(last);
@@ -1897,6 +2095,273 @@ impl LanShareHost {
             .cloned()
     }
 
+    // ---- By address ----
+
+    /// Reaches whatever sharing device answers at `input`, an address
+    /// someone typed, and says who it is so the person can compare its
+    /// device code. Nothing is kept.
+    pub async fn probe_address(&self, input: &str) -> AddressOutcome {
+        let address = match self.typed_address(input).await {
+            Ok(address) => address,
+            Err(outcome) => return outcome,
+        };
+        let connection = match connect(&self.channel_config(), address, None, None).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                debug!("LAN sharing address not usable: error={}", error);
+                return AddressOutcome::problem(address_problem(&error), error);
+            }
+        };
+        let peer = connection.peer().clone();
+        let assistants = match connection.call(METHOD_CATALOG, json!({})).await {
+            Ok(body) => from_value::<CatalogResponse>(body)
+                .map(|catalog| catalog.assistants.len())
+                .unwrap_or_default(),
+            Err(error) => {
+                debug!("LAN sharing catalog not read at an address: {}", error);
+                0
+            }
+        };
+        connection.close().await;
+        if peer.device_id == self.identity().device_id() {
+            return AddressOutcome::problem(AddressProblem::ThisDevice, "this is this device");
+        }
+        let added = self
+            .inner
+            .options
+            .added_devices
+            .device_with_key(&hex::encode(peer.public_key))
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        AddressOutcome::Reached {
+            device: addressed_device(&peer, assistants, added),
+        }
+    }
+
+    /// Adds the device holding `public_key` at `input`, once the person
+    /// compared its device code: it is listed in Discover from now on, and
+    /// whoever answers there later must hold that key.
+    pub async fn add_device(
+        &self,
+        input: &str,
+        public_key: &str,
+    ) -> Result<AddressOutcome, String> {
+        let key = public_key.to_ascii_lowercase();
+        let pinned = key_bytes(&key).ok_or_else(|| "not a sharing key".to_string())?;
+        let address = match self.typed_address(input).await {
+            Ok(address) => address,
+            Err(outcome) => return Ok(outcome),
+        };
+        let device = match self.reach_pinned(address, &pinned).await {
+            Ok(device) => device,
+            Err(outcome) => return Ok(outcome),
+        };
+        let peer = SharePeer::new(
+            &key,
+            &device.fingerprint,
+            &device.display_name,
+            &device.device_name,
+        )
+        .map_err(|error| error.to_string())?;
+        let added = self
+            .inner
+            .options
+            .added_devices
+            .add(peer, address.to_string())
+            .await
+            .map_err(|error| error.to_string())?;
+        info!(
+            "LAN sharing device added by address: device_id={}",
+            added.peer.device_id
+        );
+        self.show_added_device(&added).await;
+        Ok(AddressOutcome::Reached {
+            device: AddressedDevice {
+                added: true,
+                ..device
+            },
+        })
+    }
+
+    /// Moves the device `device_id`, added by address, to `input`. The device
+    /// there must hold the same key.
+    pub async fn set_device_address(
+        &self,
+        device_id: &str,
+        input: &str,
+    ) -> Result<AddressOutcome, String> {
+        let device = self
+            .inner
+            .options
+            .added_devices
+            .devices()
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|device| device.peer.device_id == device_id)
+            .ok_or_else(|| "that device was not added by address".to_string())?;
+        let pinned =
+            key_bytes(&device.peer.public_key).ok_or_else(|| "not a sharing key".to_string())?;
+        let address = match self.typed_address(input).await {
+            Ok(address) => address,
+            Err(outcome) => return Ok(outcome),
+        };
+        let reached = match self.reach_pinned(address, &pinned).await {
+            Ok(reached) => reached,
+            Err(outcome) => return Ok(outcome),
+        };
+        self.inner
+            .options
+            .added_devices
+            .set_address(&device.peer.public_key, address.to_string())
+            .await
+            .map_err(|error| error.to_string())?;
+        self.show_added_device(&AddedDevice {
+            address: address.to_string(),
+            ..device
+        })
+        .await;
+        Ok(AddressOutcome::Reached {
+            device: AddressedDevice {
+                added: true,
+                ..reached
+            },
+        })
+    }
+
+    /// Forgets the device `device_id` added by address. Assistants it shared
+    /// with this device stay; Bonjour or the address they were last reached
+    /// at still find their owner.
+    pub async fn remove_device(&self, device_id: &str) -> Result<bool, String> {
+        let removed = self
+            .inner
+            .options
+            .added_devices
+            .remove(device_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let forgotten = self
+            .inner
+            .browse
+            .lock()
+            .expect("browse lock")
+            .forget(device_id);
+        if forgotten {
+            self.emit(EVENT_DISCOVERED, json!({})).await;
+        }
+        Ok(removed.is_some())
+    }
+
+    /// Reads typed text as an address another device may answer at.
+    async fn typed_address(&self, input: &str) -> Result<SocketAddr, AddressOutcome> {
+        let address =
+            parse_peer_address(input, self.inner.options.allow_loopback).map_err(|error| {
+                let problem = match error {
+                    AddressError::Format => AddressProblem::Format,
+                    AddressError::HostName => AddressProblem::HostName,
+                    AddressError::Ipv6 => AddressProblem::Ipv6,
+                    AddressError::NotLocal(_) => AddressProblem::NotLocal,
+                };
+                AddressOutcome::problem(problem, error)
+            })?;
+        let own = self
+            .inner
+            .listener
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|listener| {
+                listener.port() == address.port()
+                    && listener
+                        .addresses()
+                        .iter()
+                        .any(|own| std::net::IpAddr::V4(*own) == address.ip())
+            });
+        if own {
+            return Err(AddressOutcome::problem(
+                AddressProblem::ThisDevice,
+                "this is this device",
+            ));
+        }
+        Ok(address)
+    }
+
+    /// Reaches the device holding `pinned` at `address` and reads how many
+    /// assistants it shares, then lets the connection go.
+    async fn reach_pinned(
+        &self,
+        address: SocketAddr,
+        pinned: &[u8; 32],
+    ) -> Result<AddressedDevice, AddressOutcome> {
+        let connection = connect(&self.channel_config(), address, Some(pinned), None)
+            .await
+            .map_err(|error| AddressOutcome::problem(address_problem(&error), error))?;
+        let assistants = match connection.call(METHOD_CATALOG, json!({})).await {
+            Ok(body) => from_value::<CatalogResponse>(body)
+                .map(|catalog| catalog.assistants.len())
+                .unwrap_or_default(),
+            Err(_) => 0,
+        };
+        let device = addressed_device(connection.peer(), assistants, false);
+        connection.close().await;
+        Ok(device)
+    }
+
+    /// Lists every device added by address in Discover.
+    async fn list_added_devices(&self) {
+        let devices = match self.inner.options.added_devices.devices().await {
+            Ok(devices) => devices,
+            Err(error) => {
+                warn!("Devices added by address not read: {}", error);
+                return;
+            }
+        };
+        let mut browse = self.inner.browse.lock().expect("browse lock");
+        for device in devices {
+            if let Some(peer) = added_peer(&device) {
+                browse.add(peer, device.address);
+            }
+        }
+    }
+
+    /// Lists `device` in Discover, when it is open, and reads its catalog.
+    async fn show_added_device(&self, device: &AddedDevice) {
+        if !self.inner.browsing.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(peer) = added_peer(device) else {
+            return;
+        };
+        let read = self
+            .inner
+            .browse
+            .lock()
+            .expect("browse lock")
+            .add(peer.clone(), device.address.clone());
+        self.emit(EVENT_DISCOVERED, json!({})).await;
+        if read {
+            self.read_catalog(&peer).await;
+        }
+    }
+
+    /// Remembers where a device added by address answered last, so it is
+    /// found there next time.
+    async fn follow_added_device(&self, connection: &LanConnection) {
+        let peer = connection.peer();
+        let address = peer.address.to_string();
+        if let Err(error) = self
+            .inner
+            .options
+            .added_devices
+            .set_address(&hex::encode(peer.public_key), address)
+            .await
+        {
+            debug!("Address of a device added by address not kept: {}", error);
+        }
+    }
+
     // ---- Shared ----
 
     fn channel_config(&self) -> ChannelConfig {
@@ -1904,6 +2369,7 @@ impl LanShareHost {
         config.capabilities = vec![ASSISTANT_SHARE_CAPABILITY.to_string()];
         config.required_capabilities = config.capabilities.clone();
         config.allow_loopback = self.inner.options.allow_loopback;
+        config.listen_port = self.inner.options.listen_port;
         config
     }
 
@@ -2039,6 +2505,60 @@ fn share_device(public_key: &str) -> String {
 
 fn key_bytes(public_key: &str) -> Option<[u8; 32]> {
     hex::decode(public_key).ok()?.try_into().ok()
+}
+
+/// What the Discover list says about a device that could not be reached.
+fn device_status(error: &LanError) -> DeviceStatus {
+    let message = error.to_string();
+    match error {
+        LanError::NeedsUpdate { .. }
+        | LanError::PeerNeedsUpdate { .. }
+        | LanError::ProtocolVersion(_) => DeviceStatus::NeedsUpdate { message },
+        LanError::PeerKeyMismatch => DeviceStatus::IdentityChanged { message },
+        _ => DeviceStatus::Unreachable { message },
+    }
+}
+
+fn address_problem(error: &LanError) -> AddressProblem {
+    match error {
+        LanError::Unreachable(_) => AddressProblem::Unreachable,
+        LanError::NeedsUpdate { .. }
+        | LanError::PeerNeedsUpdate { .. }
+        | LanError::ProtocolVersion(_) => AddressProblem::NeedsUpdate,
+        LanError::PeerKeyMismatch => AddressProblem::IdentityChanged,
+        LanError::Refused(_) => AddressProblem::NotLocal,
+        _ => AddressProblem::NotOpenBitFun,
+    }
+}
+
+fn addressed_device(peer: &PeerIdentity, assistants: usize, added: bool) -> AddressedDevice {
+    AddressedDevice {
+        address: peer.address.to_string(),
+        device_id: peer.device_id.clone(),
+        device_name: peer.device_name.clone(),
+        display_name: peer.display_name.clone(),
+        fingerprint: peer.fingerprint.clone(),
+        public_key: hex::encode(peer.public_key),
+        assistants,
+        added,
+    }
+}
+
+/// How Discover reaches a device added by address.
+fn added_peer(device: &AddedDevice) -> Option<DiscoveredPeer> {
+    let SocketAddr::V4(address) = device.address.parse::<SocketAddr>().ok()? else {
+        return None;
+    };
+    Some(DiscoveredPeer {
+        device_id: device.peer.device_id.clone(),
+        device_name: device.peer.device_name.clone(),
+        display_name: device.peer.display_name.clone(),
+        public_key: key_bytes(&device.peer.public_key)?,
+        fingerprint: device.peer.fingerprint.clone(),
+        protocol_version: PROTOCOL_VERSION,
+        addresses: vec![*address.ip()],
+        port: address.port(),
+    })
 }
 
 fn unreachable_owner(error: LanError) -> ShareDispatchError {
