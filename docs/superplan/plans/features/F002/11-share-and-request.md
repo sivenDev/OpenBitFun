@@ -373,6 +373,12 @@ parent: "F002"
     - 其他发现：`mdns_sd` 的 DEBUG 日志约每 3 分钟写满 10 MB（日志轮转），留给后续把该模块日志级别降到 INFO。
     - 自动化：`cargo test --locked -p openbitfun-core --features lan-share --lib lan_share` 15 项通过（含时钟换算与说明长度两项新测试）；`--features lan-share,dispatch-store,agent-runtime,ssh-remote,git --test lan_share_flow` 5 项通过；`pnpm --dir src/web-ui run test:run src/app/scenes/profile src/infrastructure/lan-share src/app/components/LanShareRequestDialog` 60 项通过；`type-check:web`、`lint:web`（0 错误）、`i18n:audit`、`theme:color-audit:all` 通过。clippy 未能运行：1.95.0 未装 clippy，1.91.1 在无关 crate 的既有代码上报错。
     - 待办：F002-12 Task 4 完成后，用同一提交重新打 arm64 与 x64 dmg，复验第 2、3、5、6 条，再勾选本项。
+  - 复验（2026-11-03，4f4bf8517 之后的 arm64 dmg，sha256 `474a7b7b…6ce249d`）：x64 Mac 已换为 arm64 的 agent002（B，172.17.9.12，WKQTYK），A 为本机隔离副本（E2M4Y5）；两台在不同网段，经 F002-14 按地址添加互连（不走 Bonjour，第 2 条中 Bonjour 7 秒内列出的结果沿用第一轮）。B 共享「助理」，A 为使用者。
+    - 第 5 条通过：B 在共享管理中移除 A 并确认，A 的「发现」关着，A 的「来自共享」卡片 1 秒内变为「已停止共享」（第一轮 16 秒后仍未变、要重开「发现」）。
+    - 第 3 条通过：A 申请后 A 显示「等待确认 · 58 秒」，同一时刻 B 弹框「允许（58）」，两边倒数一致（第一轮差 3 秒）；B 不操作，07:06:45 弹框自动关闭，A 面板内显示「未获同意 · 60 秒后可再次申请」并逐秒倒数；07:07:46 冷却结束，方块自动变为「申请使用」，无需重开面板。
+    - 第 6 条通过：B 退出后 A 点「申请使用」，面板在设备名下显示「对方不在线：请确认它和你在同一网络中，并已打开 OpenBitFun。」，没有原始错误。B 重新启动后 10 秒内方块恢复为「申请使用」（F002-14 的重连）。
+    - 第 4 条再次通过：A 再申请、B 允许，A 的「发现」约 1 秒内自动关闭，「来自共享」恢复，提示「『助理』已加入你的助理列表」。
+    - 第 2 条发现问题并修复（b5da28def）：已获准、等待中、冷却中、对方不在线的方块是 `disabled` 按钮，收不到悬停与焦点，悬停说明（助理说明、来源、设备码）打不开；第一轮只悬停过可申请的方块。改为 `aria-disabled` 并忽略点击，组件测试 `keeps a tile that cannot be asked hoverable…` 覆盖，`DiscoverPanel.test.tsx` 14 项通过。含该提交的 dmg 真机确认待补。
 
 ## 风险
 
