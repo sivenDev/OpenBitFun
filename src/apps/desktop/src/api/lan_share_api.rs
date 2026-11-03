@@ -150,6 +150,13 @@ pub struct LanShareAssistantRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LanShareUnblockRequest {
+    pub assistant_id: String,
+    pub public_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LanShareRevokeRequest {
     pub assistant_id: String,
     pub public_key: String,
@@ -319,6 +326,14 @@ pub async fn lan_share_stop(request: LanShareAssistantRequest) -> Result<bool, S
 pub async fn lan_share_revoke(request: LanShareRevokeRequest) -> Result<(), String> {
     host()?
         .revoke(&request.assistant_id, &request.public_key, request.block)
+        .await
+}
+
+/// Lets a device the owner blocked ask for the assistant again.
+#[tauri::command]
+pub async fn lan_share_unblock(request: LanShareUnblockRequest) -> Result<(), String> {
+    host()?
+        .unblock(&request.assistant_id, &request.public_key)
         .await
 }
 

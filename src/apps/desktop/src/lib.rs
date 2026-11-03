@@ -2075,6 +2075,7 @@ pub async fn run() {
             api::lan_share_api::lan_share_update,
             api::lan_share_api::lan_share_stop,
             api::lan_share_api::lan_share_revoke,
+            api::lan_share_api::lan_share_unblock,
             api::lan_share_api::lan_share_delete_tenant,
             api::lan_share_api::lan_share_requests,
             api::lan_share_api::lan_share_decide,

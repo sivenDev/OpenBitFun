@@ -460,6 +460,7 @@ pub(super) const OPERATIONS: &[OperationDefinition] = &[
     op("lan_share_share",                                            Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_shared_with_me",                                   Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_stop",                                             Agnostic,    ControllerLocal,  REFUSED),
+    op("lan_share_unblock",                                          Agnostic,    ControllerLocal,  REFUSED),
     op("lan_share_update",                                           Agnostic,    ControllerLocal,  REFUSED),
     op("list_agent_companion_pets",                                  Unaudited,   ControllerLocal,  REFUSED),
     op("list_agent_tool_names",                                      Unaudited,   Proxied,          CLI_NOT_IMPLEMENTED),

@@ -535,6 +535,21 @@ impl SharedAssistantStore {
         Ok(removed)
     }
 
+    /// Lets `public_key` ask for `id` again. Returns whether it was blocked.
+    pub async fn unblock(&self, id: &str, public_key: &str) -> Result<bool, ShareStoreError> {
+        let mut unblocked = false;
+        self.update_share(id, |share| {
+            let before = share.blocked.len();
+            share
+                .blocked
+                .retain(|blocked| blocked.peer.public_key != public_key);
+            unblocked = share.blocked.len() != before;
+            Ok(())
+        })
+        .await?;
+        Ok(unblocked)
+    }
+
     /// Blocks `peer` from requesting `id` again, withdrawing its grant.
     pub async fn block(&self, id: &str, peer: SharePeer) -> Result<(), ShareStoreError> {
         peer.validate().map_err(ShareStoreError::Invalid)?;

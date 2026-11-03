@@ -8,12 +8,18 @@ import AssistantShareManageDialog from './AssistantShareManageDialog';
 
 const mocks = vi.hoisted(() => ({
   revoke: vi.fn(),
+  unblock: vi.fn(),
   deleteTenant: vi.fn(),
   stop: vi.fn(),
   error: vi.fn(),
 }));
 vi.mock('@/infrastructure/api/service-api/LanShareAPI', () => ({
-  lanShareAPI: { revoke: mocks.revoke, deleteTenant: mocks.deleteTenant, stop: mocks.stop },
+  lanShareAPI: {
+    revoke: mocks.revoke,
+    unblock: mocks.unblock,
+    deleteTenant: mocks.deleteTenant,
+    stop: mocks.stop,
+  },
 }));
 vi.mock('@/infrastructure/lan-share/lanShareStore', () => ({
   useLanShareStore: (select: (state: unknown) => unknown) => select({
@@ -89,6 +95,7 @@ beforeEach(() => {
   useConfirmDialogStore.setState({ isOpen: false, options: null, resolve: null });
   for (const mock of Object.values(mocks)) mock.mockReset();
   mocks.revoke.mockResolvedValue(undefined);
+  mocks.unblock.mockResolvedValue(undefined);
   mocks.deleteTenant.mockResolvedValue(true);
   mocks.stop.mockResolvedValue(true);
   onClose.mockReset();
@@ -126,6 +133,31 @@ describe('managing a shared assistant', () => {
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('nursery.share.manage.removeMessage Ann');
     await confirm();
     expect(mocks.revoke).toHaveBeenCalledWith('workspace', ann.publicKey);
+  });
+
+  it('lists blocked devices and lets one ask again without a confirmation', async () => {
+    const bea = {
+      publicKey: 'cd'.repeat(32),
+      deviceId: 'abcdefabcdefabcdefabcdefabcdefab',
+      fingerprint: 'ZX3VRN',
+      displayName: 'Bea',
+      deviceName: "Bea's Mac",
+      blockedAt: '2026-11-03T00:00:00Z',
+    };
+    await render({ ...share, blocked: [bea] });
+    const rows = document.querySelectorAll('[data-testid="assistant-share-blocked-device"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain('Bea');
+    expect(rows[0].textContent).toContain("Bea's Mac ZX3VRN");
+    await click(buttonIn('[data-testid="assistant-share-blocked-device"]', 'nursery.share.manage.unblock'));
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(mocks.unblock).toHaveBeenCalledWith('workspace', bea.publicKey);
+  });
+
+  it('shows no blocked section when nobody is blocked', async () => {
+    await render();
+    expect(document.querySelector('[data-testid="assistant-share-blocked-device"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('nursery.share.manage.blocked');
   });
 
   it('deletes what a removed device left after confirmation', async () => {

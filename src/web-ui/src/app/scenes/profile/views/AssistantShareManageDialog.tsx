@@ -11,7 +11,12 @@ import {
 } from '@openbitfun/ui';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { confirmDanger } from '@/infrastructure/confirm-dialog';
-import { lanShareAPI, type OwnedShare, type ShareGrant } from '@/infrastructure/api/service-api/LanShareAPI';
+import {
+  lanShareAPI,
+  type BlockedDevice,
+  type OwnedShare,
+  type ShareGrant,
+} from '@/infrastructure/api/service-api/LanShareAPI';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { useNotification } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
@@ -72,6 +77,10 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
     );
     if (!confirmed) return;
     await run(`remove:${grant.publicKey}`, () => lanShareAPI.revoke(share.id, grant.publicKey));
+  };
+
+  const handleUnblock = async (device: BlockedDevice) => {
+    await run(`unblock:${device.publicKey}`, () => lanShareAPI.unblock(share.id, device.publicKey));
   };
 
   const handleDeleteData = async (deviceId: string) => {
@@ -152,6 +161,37 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
             </ul>
           )}
         </section>
+
+        {share.blocked.length > 0 ? (
+          <section className="assistant-share-manage__section" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="section">
+            <h3 className="assistant-share-manage__heading" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="heading">{t('nursery.share.manage.blocked')}</h3>
+            <p className="assistant-share-manage__empty" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="empty">{t('nursery.share.manage.blockedHint')}</p>
+            <ul className="assistant-share-manage__list" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="list">
+              {share.blocked.map((device) => (
+                <li key={device.publicKey} className="assistant-share-manage__row" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="row" data-testid="assistant-share-blocked-device">
+                  <span className="assistant-share-manage__who" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="who">
+                    <span>{device.displayName}</span>
+                    <span className="assistant-share-manage__meta" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="meta">
+                      {t('nursery.share.manage.device', { device: device.deviceName, code: device.fingerprint })}
+                      {' · '}
+                      {t('nursery.share.manage.blockedAt', { time: when(device.blockedAt) })}
+                    </span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="fill"
+                    loading={busy === `unblock:${device.publicKey}`}
+                    disabled={busy !== null}
+                    onClick={() => { void handleUnblock(device); }}
+                    data-testid="assistant-share-unblock"
+                  >
+                    {t('nursery.share.manage.unblock')}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         {leftDevices.length > 0 ? (
           <section className="assistant-share-manage__section" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="section">

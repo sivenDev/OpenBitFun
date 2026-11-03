@@ -286,6 +286,18 @@ async fn access_is_granted_by_public_key_and_ends_with_revoke_block_or_stop() {
         .unwrap()
         .is_ok());
 
+    // Unblocking lets the device ask again without granting it anything.
+    f.store.block("workspace", bea.clone()).await.unwrap();
+    assert!(f.store.unblock("workspace", &key(1)).await.unwrap());
+    let unblocked = f.store.share_of("workspace").await.unwrap().unwrap();
+    assert!(!unblocked.is_blocked(&key(1)));
+    assert_eq!(
+        f.store.authorize("workspace", &key(1)).await.unwrap(),
+        Err(ShareRefusal::NotGranted("workspace".into()))
+    );
+    assert!(!f.store.unblock("workspace", &key(1)).await.unwrap());
+    f.store.grant("workspace", bea.clone()).await.unwrap();
+
     let stopped = f.store.stop("workspace").await.unwrap().unwrap();
     assert_eq!(stopped.grants.len(), 1);
     assert_eq!(

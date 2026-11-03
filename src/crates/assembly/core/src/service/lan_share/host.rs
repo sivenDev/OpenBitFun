@@ -705,6 +705,28 @@ impl LanShareHost {
         Ok(())
     }
 
+    /// Lets a device the owner blocked ask for share `id` again.
+    pub async fn unblock(&self, id: &str, public_key: &str) -> Result<(), String> {
+        let public_key = public_key.to_ascii_lowercase();
+        let unblocked = self
+            .inner
+            .options
+            .shares
+            .unblock(id, &public_key)
+            .await
+            .map_err(|error| error.to_string())?;
+        if !unblocked {
+            return Err("that device is not blocked for this assistant".to_string());
+        }
+        info!(
+            "Shared assistant device unblocked: assistant_id={}, device={}",
+            id,
+            share_device(&public_key)
+        );
+        self.emit(EVENT_SHARED, json!({})).await;
+        Ok(())
+    }
+
     /// The requests waiting for the owner, oldest first.
     pub async fn requests(&self) -> Vec<ShareRequestView> {
         self.expire_requests().await;

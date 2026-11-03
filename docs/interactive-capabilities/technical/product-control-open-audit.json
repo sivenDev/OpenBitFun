@@ -488,6 +488,7 @@
         "command:lan_share_update",
         "command:lan_share_stop",
         "command:lan_share_revoke",
+        "command:lan_share_unblock",
         "command:lan_share_delete_tenant",
         "command:lan_share_requests",
         "command:lan_share_decide",

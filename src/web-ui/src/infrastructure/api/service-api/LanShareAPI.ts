@@ -258,6 +258,11 @@ class LanShareAPI {
     return invoke('lan_share_revoke', { assistantId, publicKey, block });
   }
 
+  /** Lets a device the owner blocked ask for the assistant again. */
+  unblock(assistantId: string, publicKey: string): Promise<void> {
+    return invoke('lan_share_unblock', { assistantId, publicKey });
+  }
+
   /** Deletes what a device without access left under a shared assistant. */
   deleteTenant(assistantId: string, deviceId: string): Promise<boolean> {
     return invoke('lan_share_delete_tenant', { assistantId, deviceId });
