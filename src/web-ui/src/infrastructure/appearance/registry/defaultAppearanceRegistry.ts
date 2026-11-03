@@ -120,6 +120,7 @@ import { lanShareRequestAppearanceDescriptor } from '@/app/components/LanShareRe
 import { assistantShareDialogAppearanceDescriptor } from '@/app/scenes/profile/views/AssistantShareDialog.appearance';
 import { assistantShareManageAppearanceDescriptor } from '@/app/scenes/profile/views/AssistantShareManageDialog.appearance';
 import { discoverPanelAppearanceDescriptor } from '@/app/scenes/profile/views/DiscoverPanel.appearance';
+import { lanShareAddressAppearanceDescriptor } from '@/app/scenes/profile/views/LanShareAddress.appearance';
 import { sharedAssistantCardAppearanceDescriptor } from '@/app/scenes/profile/views/SharedAssistantCard.appearance';
 import { miniAppCustomizePanelAppearanceDescriptor } from '@/app/scenes/miniapps/customization/MiniAppCustomizePanel.appearance';
 import { userMessageEditComposerAppearanceDescriptor } from '@/flow_chat/components/modern/UserMessageEditComposer.appearance';
@@ -399,6 +400,7 @@ export function createDefaultAppearanceRegistry(): AppearanceRegistry {
     .registerComponent(assistantShareDialogAppearanceDescriptor)
     .registerComponent(assistantShareManageAppearanceDescriptor)
     .registerComponent(discoverPanelAppearanceDescriptor)
+    .registerComponent(lanShareAddressAppearanceDescriptor)
     .registerComponent(sharedAssistantCardAppearanceDescriptor)
     .registerComponent(miniAppCustomizePanelAppearanceDescriptor)
     .registerComponent(userMessageEditComposerAppearanceDescriptor)

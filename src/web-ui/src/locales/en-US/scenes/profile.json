@@ -273,7 +273,7 @@
       "description": "Assistants that other devices on your local network share. Click one to ask to use it.",
       "searching": "Looking…",
       "emptyTitle": "No device is sharing an assistant",
-      "emptyHint": "Check that the other device is on the same network and has shared an assistant. On macOS, OpenBitFun also needs Local Network access in System Settings.",
+      "emptyHint": "Check that the other device is on the same network and has shared an assistant. On macOS, OpenBitFun also needs Local Network access in System Settings. If it is on another subnet, add it by address below.",
       "openSettings": "Open System Settings",
       "problem": "Other devices cannot be found right now",
       "settingsFailed": "Could not open System Settings: {{reason}}",
@@ -297,7 +297,44 @@
       "nameLabel": "The name other devices see",
       "nameSave": "Save",
       "nameCancel": "Cancel",
-      "nameFailed": "Could not change the name: {{reason}}"
+      "nameFailed": "Could not change the name: {{reason}}",
+      "identityChanged": "This is no longer the same device. If OpenBitFun was reinstalled there, remove it and add it again.",
+      "addedBadge": "Added by address · {{address}}",
+      "changeAddress": "Change address",
+      "removeDevice": "Remove",
+      "removeDeviceTitle": "Remove {{name}}?",
+      "removeDeviceMessage": "It will no longer appear in Discover. Assistants already in your list are not affected.",
+      "removeDeviceFailed": "Could not remove it: {{reason}}",
+      "byAddress": {
+        "open": "Not listed? Add by address",
+        "hint": "If the other device is on another subnet, enter the address it shows at the bottom of Discover or in its sharing settings.",
+        "label": "Address of the other device",
+        "placeholder": "For example 172.17.9.12",
+        "look": "Find",
+        "cancel": "Cancel",
+        "found": "Device: {{name}} ({{device}})",
+        "compare": "Check that the other screen shows this device code: {{code}}",
+        "sharing": "Sharing {{count}} assistants",
+        "sharing_one": "Sharing {{count}} assistant",
+        "sharing_other": "Sharing {{count}} assistants",
+        "nothingShared": "It shares no assistants yet. Add it, and they will appear once it does.",
+        "alreadyAdded": "This device was already added.",
+        "add": "Codes match, add",
+        "mismatch": "They differ",
+        "added": "Added the device of {{name}}",
+        "failed": "Could not add it: {{reason}}",
+        "problems": {
+          "format": "Enter an address such as 172.17.9.12, optionally with a port.",
+          "hostName": "Enter the device's address, not its name.",
+          "ipv6": "Only IPv4 addresses are supported for now.",
+          "notLocal": "This is not a local network address. Only devices on your local network can be added.",
+          "thisDevice": "This is the address of this device.",
+          "unreachable": "Nothing answers at this address. Check that OpenBitFun is open there and sharing an assistant; a proxy, VPN or firewall may be blocking it.",
+          "notOpenBitFun": "No OpenBitFun sharing assistants answers at this address.",
+          "needsUpdate": "The OpenBitFun versions on the two devices do not work together. Update both to the latest version.",
+          "identityChanged": "A different device answers at this address. If OpenBitFun was reinstalled there, remove it and add it again."
+        }
+      }
     },
     "sharedWithMe": {
       "title": "Shared with you",
@@ -313,6 +350,13 @@
       "removeMessage": "It will be removed from your assistants, and {{owner}} will be told. You can ask again in Discover.",
       "removeRevokedMessage": "It will be removed from your assistants.",
       "removeFailed": "Could not remove it: {{reason}}"
+    },
+    "lanAddress": {
+      "label": "This device",
+      "code": "Device code {{code}}",
+      "hint": "Devices on another subnet can add this one by entering this address in Discover.",
+      "copy": "Copy address",
+      "copied": "Copied"
     }
   }
 }

@@ -132,6 +132,17 @@ under **Shared with you**, marked with their source. On macOS, OpenBitFun needs
 **Local Network** access (System Settings > Privacy & Security) to find other
 devices; when nothing is found, Discover links to that setting.
 
+Bonjour only reaches devices on the same subnet. For a device on another
+subnet, use **Not listed? Add by address** at the bottom of Discover and enter
+the address shown under **This device** in the other device's Discover panel or
+sharing settings (a sharing device listens on port 47652 when it is free, and
+shows the port otherwise). Compare the device code with the one on the other
+screen before adding it. Added devices are remembered with their key: a
+different device at that address is refused, and the owner of an assistant
+shared with you is reconnected to every 30 seconds while it is unreachable. If
+nothing answers, a proxy, VPN or firewall may be routing or blocking the
+connection.
+
 Other devices' shared assistants are found with **Discover** next to **New
 assistant**. macOS asks once for local network access; if it was denied, enable
 OpenBitFun in **System Settings → Privacy & Security → Local Network**. In Peer

@@ -64,6 +64,11 @@ export interface LanShareHostStatus {
   fingerprint: string;
   /** Set while this device shares an assistant and listens. */
   port?: number;
+  /**
+   * What people on another subnet type to add this device, one per network;
+   * empty while this device does not listen.
+   */
+  addresses: string[];
   /** Why other devices cannot see or reach this device. */
   problem?: string;
 }
@@ -105,7 +110,9 @@ export type DiscoveredDeviceStatus =
   | { state: 'connecting' }
   | { state: 'ready' }
   | { state: 'needsUpdate'; message: string }
-  | { state: 'unreachable'; message: string };
+  | { state: 'unreachable'; message: string }
+  /** Whoever answers at the device's address holds another key. */
+  | { state: 'identityChanged'; message: string };
 
 /** A sharing device on the local network. */
 export interface DiscoveredDevice {
@@ -116,6 +123,49 @@ export interface DiscoveredDevice {
   publicKey: string;
   status: DiscoveredDeviceStatus;
   assistants: DiscoveredAssistant[];
+  /** Set when the device was added by address (`ip:port`). */
+  addedAddress?: string;
+}
+
+/** Why an address cannot be used to add a device. */
+export type AddressProblem =
+  | 'format'
+  | 'hostName'
+  | 'ipv6'
+  | 'notLocal'
+  | 'thisDevice'
+  | 'unreachable'
+  | 'notOpenBitFun'
+  | 'needsUpdate'
+  | 'identityChanged';
+
+/** A device reached at an address someone typed. */
+export interface AddressedDevice {
+  /** Where it answered (`ip:port`). */
+  address: string;
+  deviceId: string;
+  deviceName: string;
+  displayName: string;
+  /** The code the person compares with the one the device shows. */
+  fingerprint: string;
+  publicKey: string;
+  /** How many assistants it shares. */
+  assistants: number;
+  /** Whether it was already added by address. */
+  added: boolean;
+}
+
+export type AddressOutcome =
+  | { state: 'reached'; device: AddressedDevice }
+  | { state: 'problem'; problem: AddressProblem; message: string };
+
+/** The port sharing devices listen on unless another program holds it. */
+export const DEFAULT_LAN_SHARE_PORT = 47652;
+
+/** An address as people read it: without the port when it is the default. */
+export function shownAddress(address: string): string {
+  const suffix = `:${DEFAULT_LAN_SHARE_PORT}`;
+  return address.endsWith(suffix) ? address.slice(0, -suffix.length) : address;
 }
 
 /** The answer to a request: open until `deadlineMs`, or already decided. */
@@ -249,6 +299,26 @@ class LanShareAPI {
 
   remove(ownerKey: string, assistantId: string): Promise<void> {
     return invoke('lan_share_remove', { ownerKey, assistantId });
+  }
+
+  /** Says who answers at an address someone typed. Nothing is kept. */
+  probeAddress(address: string): Promise<AddressOutcome> {
+    return invoke('lan_share_probe_address', { address });
+  }
+
+  /** Adds the device holding `publicKey` at `address`, after its code was compared. */
+  addDevice(address: string, publicKey: string): Promise<AddressOutcome> {
+    return invoke('lan_share_add_device', { address, publicKey });
+  }
+
+  /** Forgets a device added by address. */
+  removeDevice(deviceId: string): Promise<boolean> {
+    return invoke('lan_share_remove_device', { deviceId });
+  }
+
+  /** Moves a device added by address; the device there must be the same one. */
+  setDeviceAddress(deviceId: string, address: string): Promise<AddressOutcome> {
+    return invoke('lan_share_set_device_address', { deviceId, address });
   }
 
   /** Opens the system settings that let this app use the local network. */

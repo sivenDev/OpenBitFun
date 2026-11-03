@@ -273,7 +273,7 @@
       "description": "同一局域网内其他设备共享的助理。点一下即可申请使用。",
       "searching": "正在查找…",
       "emptyTitle": "没有找到正在共享助理的设备",
-      "emptyHint": "请确认对方和你在同一个网络中，并且已经共享了助理。在 macOS 上，还需要在系统设置中允许 OpenBitFun 访问本地网络。",
+      "emptyHint": "请确认对方和你在同一个网络中，并且已经共享了助理。在 macOS 上，还需要在系统设置中允许 OpenBitFun 访问本地网络。对方在其他网段时，可以在下方按地址添加。",
       "openSettings": "打开系统设置",
       "problem": "暂时无法查找其他设备",
       "settingsFailed": "无法打开系统设置：{{reason}}",
@@ -297,7 +297,44 @@
       "nameLabel": "你在其他设备上显示的名字",
       "nameSave": "保存",
       "nameCancel": "取消",
-      "nameFailed": "无法修改名字：{{reason}}"
+      "nameFailed": "无法修改名字：{{reason}}",
+      "identityChanged": "对方设备的身份已变化，不是原来那台设备。如果对方重装过 OpenBitFun，请移除后重新添加。",
+      "addedBadge": "按地址添加 · {{address}}",
+      "changeAddress": "修改地址",
+      "removeDevice": "移除",
+      "removeDeviceTitle": "移除「{{name}}」？",
+      "removeDeviceMessage": "它不再出现在「发现」中。已经加入你助理列表的助理不受影响。",
+      "removeDeviceFailed": "无法移除：{{reason}}",
+      "byAddress": {
+        "open": "找不到对方？按地址添加",
+        "hint": "对方在其他网段时，输入对方「发现」面板底部或共享管理中显示的本机地址。",
+        "label": "对方的地址",
+        "placeholder": "例如 172.17.9.12",
+        "look": "查找",
+        "cancel": "取消",
+        "found": "对方设备：{{name}}（{{device}}）",
+        "compare": "请核对对方屏幕上显示的设备码：{{code}}",
+        "sharing": "正在共享 {{count}} 个助理",
+        "sharing_one": "正在共享 {{count}} 个助理",
+        "sharing_other": "正在共享 {{count}} 个助理",
+        "nothingShared": "对方现在没有共享助理，添加后等对方共享即可看到。",
+        "alreadyAdded": "这台设备已经添加过了。",
+        "add": "设备码一致，添加",
+        "mismatch": "不一致",
+        "added": "已添加「{{name}}」的设备",
+        "failed": "无法添加：{{reason}}",
+        "problems": {
+          "format": "地址格式不对，请输入类似 172.17.9.12 的地址，可以带端口。",
+          "hostName": "请输入对方的地址，而不是设备名。",
+          "ipv6": "暂只支持 IPv4 地址。",
+          "notLocal": "这不是局域网地址，只能添加同一局域网里的设备。",
+          "thisDevice": "这是本机的地址。",
+          "unreachable": "这个地址没有回应。请确认对方已打开 OpenBitFun 并共享了助理；如果开着代理、VPN 或防火墙，可能被它拦截。",
+          "notOpenBitFun": "这个地址上没有正在共享助理的 OpenBitFun。",
+          "needsUpdate": "对方的 OpenBitFun 版本与本机不兼容，请把两台设备都更新到最新版本。",
+          "identityChanged": "这个地址上已经不是原来那台设备。如果对方重装过 OpenBitFun，请移除后重新添加。"
+        }
+      }
     },
     "sharedWithMe": {
       "title": "来自共享",
@@ -313,6 +350,13 @@
       "removeMessage": "它将从你的助理列表中移除，{{owner}} 会收到通知。之后可以在「发现」中重新申请。",
       "removeRevokedMessage": "它将从你的助理列表中移除。",
       "removeFailed": "无法移除：{{reason}}"
+    },
+    "lanAddress": {
+      "label": "本机地址",
+      "code": "设备码 {{code}}",
+      "hint": "其他网段的设备可以在「发现」中输入这个地址添加本机。",
+      "copy": "复制地址",
+      "copied": "已复制"
     }
   }
 }

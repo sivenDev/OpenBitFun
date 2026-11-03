@@ -129,3 +129,17 @@
   align-items: center;
   gap: var(--openbitfun-space-2);
 }
+
+.discover-panel__added {
+  flex-wrap: wrap;
+}
+
+.discover-panel__other-subnet {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--openbitfun-space-3);
+  margin-block-start: auto;
+  padding-block-start: var(--openbitfun-space-3);
+  border-block-start: 1px solid var(--openbitfun-color-border-subtle);
+}

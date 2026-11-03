@@ -15,6 +15,7 @@ import { lanShareAPI, type OwnedShare, type ShareGrant } from '@/infrastructure/
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { useNotification } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
+import { ThisDeviceAddress } from './LanShareAddress';
 import './AssistantShareDialog.scss';
 
 const log = createLogger('AssistantShareManageDialog');
@@ -116,6 +117,7 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
             tasks: share.maxConcurrentTasks,
           })}
         </p>
+        <ThisDeviceAddress />
 
         <section className="assistant-share-manage__section" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="section">
           <h3 className="assistant-share-manage__heading" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="heading">{t('nursery.share.manage.users')}</h3>

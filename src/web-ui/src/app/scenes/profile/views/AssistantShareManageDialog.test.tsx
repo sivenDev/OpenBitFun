@@ -16,8 +16,16 @@ vi.mock('@/infrastructure/api/service-api/LanShareAPI', () => ({
   lanShareAPI: { revoke: mocks.revoke, deleteTenant: mocks.deleteTenant, stop: mocks.stop },
 }));
 vi.mock('@/infrastructure/lan-share/lanShareStore', () => ({
-  useLanShareStore: (select: (state: { refreshOverview: () => Promise<void> }) => unknown) =>
-    select({ refreshOverview: async () => {} }),
+  useLanShareStore: (select: (state: unknown) => unknown) => select({
+    refreshOverview: async () => {},
+    overview: {
+      status: {
+        deviceId: 'me', deviceName: 'My Mac', displayName: 'Me', fingerprint: 'ZZ99ZZ',
+        port: 50123, addresses: ['172.16.23.235:50123'],
+      },
+      shares: [],
+    },
+  }),
 }));
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
   useI18n: () => ({
@@ -134,6 +142,14 @@ describe('managing a shared assistant', () => {
     await confirm();
     expect(mocks.stop).toHaveBeenCalledWith('workspace');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('shows the address and code people on another subnet add this device by', async () => {
+    await render();
+    expect(document.querySelector('[data-testid="lan-share-this-address"]')?.textContent)
+      .toContain('172.16.23.235:50123');
+    expect(document.querySelector('[data-testid="lan-share-this-device"]')?.textContent)
+      .toContain('nursery.lanAddress.code ZZ99ZZ');
   });
 
   it('says nobody uses it yet and opens the settings', async () => {

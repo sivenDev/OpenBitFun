@@ -16,9 +16,11 @@ import {
   Tooltip,
 } from '@openbitfun/ui';
 import { AssistantAvatar } from '@/app/components/AssistantAvatar';
+import { confirmDanger } from '@/infrastructure/confirm-dialog';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import {
   lanShareAPI,
+  shownAddress,
   type DiscoveredAssistant,
   type DiscoveredDevice,
   type ShareAccess,
@@ -26,6 +28,8 @@ import {
 import { currentAccess, secondsLeft, useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { useNotification } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
+import { AddByAddress, ThisDeviceAddress } from './LanShareAddress';
+import { useAddressProblemText } from './useAddressProblemText';
 import './DiscoverPanel.scss';
 
 const log = createLogger('DiscoverPanel');
@@ -65,6 +69,11 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // A device added by address whose address is being changed.
+  const [movingDevice, setMovingDevice] = useState<{ deviceId: string; address: string } | null>(null);
+  const [moveProblem, setMoveProblem] = useState<string | null>(null);
+  const [movingBusy, setMovingBusy] = useState(false);
+  const problemText = useAddressProblemText();
   const previous = useRef(new Map<string, { access: ShareAccess['state']; name: string }>());
 
   useEffect(() => {
@@ -149,6 +158,41 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
     void useLanShareStore.getState().refreshDiscovered();
   };
 
+  const saveAddress = async () => {
+    if (!movingDevice || !movingDevice.address.trim() || movingBusy) return;
+    setMovingBusy(true);
+    try {
+      const outcome = await lanShareAPI.setDeviceAddress(movingDevice.deviceId, movingDevice.address);
+      if (outcome.state === 'problem') {
+        setMoveProblem(problemText(outcome.problem));
+        return;
+      }
+      setMovingDevice(null);
+      setMoveProblem(null);
+      void useLanShareStore.getState().refreshDiscovered();
+    } catch (error) {
+      setMoveProblem(t('nursery.discover.byAddress.failed', { reason: message(error) }));
+    } finally {
+      setMovingBusy(false);
+    }
+  };
+
+  const removeDevice = async (device: DiscoveredDevice) => {
+    const confirmed = await confirmDanger(
+      t('nursery.discover.removeDeviceTitle', { name: device.displayName }),
+      t('nursery.discover.removeDeviceMessage'),
+      { confirmText: t('nursery.discover.removeDevice') },
+    );
+    if (!confirmed) return;
+    try {
+      await lanShareAPI.removeDevice(device.deviceId);
+      void useLanShareStore.getState().refreshDiscovered();
+    } catch (error) {
+      log.warn('Device added by address not removed', { deviceId: device.deviceId, error: message(error) });
+      notification.error(t('nursery.discover.removeDeviceFailed', { reason: message(error) }));
+    }
+  };
+
   const saveName = async () => {
     const name = editingName?.trim();
     if (!name || savingName) return;
@@ -197,6 +241,8 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
         return t('nursery.discover.needsUpdate');
       case 'unreachable':
         return t('nursery.discover.unreachable');
+      case 'identityChanged':
+        return t('nursery.discover.identityChanged');
       default:
         return device.assistants.length === 0 ? t('nursery.discover.nothingShared') : null;
     }
@@ -257,7 +303,55 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
                     <span className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta">
                       {t('nursery.discover.device', { device: device.deviceName, code: device.fingerprint })}
                     </span>
+                    {device.addedAddress ? (
+                      <span className="discover-panel__meta discover-panel__added" data-openbitfun-component="discover-panel" data-openbitfun-part="added" data-testid="discover-device-added">
+                        {t('nursery.discover.addedBadge', { address: shownAddress(device.addedAddress) })}
+                        <Button
+                          size="xs"
+                          variant="text"
+                          onClick={() => {
+                            setMoveProblem(null);
+                            setMovingDevice({ deviceId: device.deviceId, address: shownAddress(device.addedAddress ?? '') });
+                          }}
+                          data-testid="discover-device-move"
+                        >
+                          {t('nursery.discover.changeAddress')}
+                        </Button>
+                        <Button size="xs" variant="text" onClick={() => { void removeDevice(device); }} data-testid="discover-device-remove">
+                          {t('nursery.discover.removeDevice')}
+                        </Button>
+                      </span>
+                    ) : null}
                   </div>
+                  {movingDevice?.deviceId === device.deviceId ? (
+                    <span className="discover-panel__name-edit" data-openbitfun-component="discover-panel" data-openbitfun-part="nameEdit">
+                      <Input
+                        size="sm"
+                        value={movingDevice.address}
+                        maxLength={64}
+                        autoFocus
+                        aria-label={t('nursery.discover.byAddress.label')}
+                        onValueChange={(address) => {
+                          setMovingDevice({ deviceId: device.deviceId, address });
+                          setMoveProblem(null);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') void saveAddress();
+                          if (event.key === 'Escape') setMovingDevice(null);
+                        }}
+                        data-testid="discover-device-address-input"
+                      />
+                      <Button size="sm" variant="primary" loading={movingBusy} disabled={!movingDevice.address.trim()} onClick={() => { void saveAddress(); }}>
+                        {t('nursery.discover.nameSave')}
+                      </Button>
+                      <Button size="sm" variant="text" onClick={() => setMovingDevice(null)}>
+                        {t('nursery.discover.nameCancel')}
+                      </Button>
+                    </span>
+                  ) : null}
+                  {movingDevice?.deviceId === device.deviceId && moveProblem ? (
+                    <Alert tone="error" message={moveProblem} data-testid="discover-device-address-problem" />
+                  ) : null}
                   {note ? <p className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta" data-testid="discover-device-note">{note}</p> : null}
                   {device.assistants.length > 0 ? (
                     <div className="discover-panel__assistants" data-openbitfun-component="discover-panel" data-openbitfun-part="assistants" role="list">
@@ -311,6 +405,10 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
             })}
           </ul>
         )}
+        <section className="discover-panel__other-subnet" data-openbitfun-component="discover-panel" data-openbitfun-part="otherSubnet">
+          <ThisDeviceAddress />
+          <AddByAddress />
+        </section>
       </DialogBody>
       <DialogFooter className="discover-panel__footer">
         {editingName !== null ? (

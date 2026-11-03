@@ -1,0 +1,45 @@
+.lan-share-address__this-device,
+.lan-share-address__form,
+.lan-share-address__found {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbitfun-space-2);
+}
+
+.lan-share-address__addresses {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--openbitfun-space-2);
+}
+
+.lan-share-address__address {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  font-family: var(--openbitfun-type-code-sm-font-family);
+  font-size: var(--openbitfun-type-code-sm-font-size);
+  line-height: var(--openbitfun-type-code-sm-line-height);
+}
+
+.lan-share-address__meta {
+  margin: 0;
+  color: var(--openbitfun-color-content-muted);
+  font-family: var(--openbitfun-type-support-font-family);
+  font-size: var(--openbitfun-type-support-font-size);
+  font-weight: var(--openbitfun-type-support-font-weight);
+  line-height: var(--openbitfun-type-support-line-height);
+  letter-spacing: var(--openbitfun-type-support-letter-spacing);
+}
+
+.lan-share-address__row,
+.lan-share-address__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--openbitfun-space-2);
+}
+
+.lan-share-address__row > :first-child {
+  flex: 1;
+  min-inline-size: 0;
+}

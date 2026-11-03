@@ -273,7 +273,7 @@
       "description": "同一區域網路內其他裝置共享的助理。點一下即可申請使用。",
       "searching": "正在尋找…",
       "emptyTitle": "沒有找到正在共享助理的裝置",
-      "emptyHint": "請確認對方和你在同一個網路中，並且已經共享了助理。在 macOS 上，還需要在系統設定中允許 OpenBitFun 存取區域網路。",
+      "emptyHint": "請確認對方和你在同一個網路中，並且已經共享了助理。在 macOS 上，還需要在系統設定中允許 OpenBitFun 存取區域網路。對方在其他網段時，可以在下方依位址新增。",
       "openSettings": "打開系統設定",
       "problem": "暫時無法尋找其他裝置",
       "settingsFailed": "無法打開系統設定：{{reason}}",
@@ -297,7 +297,44 @@
       "nameLabel": "你在其他裝置上顯示的名字",
       "nameSave": "儲存",
       "nameCancel": "取消",
-      "nameFailed": "無法修改名字：{{reason}}"
+      "nameFailed": "無法修改名字：{{reason}}",
+      "identityChanged": "對方裝置的身分已變更，不是原來那台裝置。如果對方重新安裝過 OpenBitFun，請移除後重新新增。",
+      "addedBadge": "依位址新增 · {{address}}",
+      "changeAddress": "修改位址",
+      "removeDevice": "移除",
+      "removeDeviceTitle": "移除「{{name}}」？",
+      "removeDeviceMessage": "它不再出現在「發現」中。已經加入你助理列表的助理不受影響。",
+      "removeDeviceFailed": "無法移除：{{reason}}",
+      "byAddress": {
+        "open": "找不到對方？依位址新增",
+        "hint": "對方在其他網段時，輸入對方「發現」面板底部或共享管理中顯示的本機位址。",
+        "label": "對方的位址",
+        "placeholder": "例如 172.17.9.12",
+        "look": "尋找",
+        "cancel": "取消",
+        "found": "對方裝置：{{name}}（{{device}}）",
+        "compare": "請核對對方螢幕上顯示的裝置碼：{{code}}",
+        "sharing": "正在共享 {{count}} 個助理",
+        "sharing_one": "正在共享 {{count}} 個助理",
+        "sharing_other": "正在共享 {{count}} 個助理",
+        "nothingShared": "對方現在沒有共享助理，新增後等對方共享即可看到。",
+        "alreadyAdded": "這台裝置已經新增過了。",
+        "add": "裝置碼一致，新增",
+        "mismatch": "不一致",
+        "added": "已新增「{{name}}」的裝置",
+        "failed": "無法新增：{{reason}}",
+        "problems": {
+          "format": "位址格式不對，請輸入類似 172.17.9.12 的位址，可以帶連接埠。",
+          "hostName": "請輸入對方的位址，而不是裝置名稱。",
+          "ipv6": "暫時只支援 IPv4 位址。",
+          "notLocal": "這不是區域網路位址，只能新增同一區域網路裡的裝置。",
+          "thisDevice": "這是本機的位址。",
+          "unreachable": "這個位址沒有回應。請確認對方已打開 OpenBitFun 並共享了助理；如果開著代理、VPN 或防火牆，可能被它攔截。",
+          "notOpenBitFun": "這個位址上沒有正在共享助理的 OpenBitFun。",
+          "needsUpdate": "對方的 OpenBitFun 版本與本機不相容，請把兩台裝置都更新到最新版本。",
+          "identityChanged": "這個位址上已經不是原來那台裝置。如果對方重新安裝過 OpenBitFun，請移除後重新新增。"
+        }
+      }
     },
     "sharedWithMe": {
       "title": "來自共享",
@@ -313,6 +350,13 @@
       "removeMessage": "它將從你的助理列表中移除，{{owner}} 會收到通知。之後可以在「發現」中重新申請。",
       "removeRevokedMessage": "它將從你的助理列表中移除。",
       "removeFailed": "無法移除：{{reason}}"
+    },
+    "lanAddress": {
+      "label": "本機位址",
+      "code": "裝置碼 {{code}}",
+      "hint": "其他網段的裝置可以在「發現」中輸入這個位址新增本機。",
+      "copy": "複製位址",
+      "copied": "已複製"
     }
   }
 }

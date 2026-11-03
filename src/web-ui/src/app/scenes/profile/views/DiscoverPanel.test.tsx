@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   setDisplayName: vi.fn(),
   overview: vi.fn(),
   openNetworkSettings: vi.fn(),
+  probeAddress: vi.fn(),
+  addDevice: vi.fn(),
+  removeDevice: vi.fn(),
+  setDeviceAddress: vi.fn(),
+  confirmDanger: vi.fn(),
   success: vi.fn(),
   info: vi.fn(),
   error: vi.fn(),
@@ -27,8 +32,14 @@ vi.mock('@/infrastructure/api/service-api/LanShareAPI', () => ({
     setDisplayName: mocks.setDisplayName,
     overview: mocks.overview,
     openNetworkSettings: mocks.openNetworkSettings,
+    probeAddress: mocks.probeAddress,
+    addDevice: mocks.addDevice,
+    removeDevice: mocks.removeDevice,
+    setDeviceAddress: mocks.setDeviceAddress,
   },
+  shownAddress: (address: string) => address.replace(/:47652$/, ''),
 }));
+vi.mock('@/infrastructure/confirm-dialog', () => ({ confirmDanger: mocks.confirmDanger }));
 vi.mock('@/app/components/AssistantAvatar', () => ({ AssistantAvatar: () => null }));
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
   useI18n: () => ({
@@ -85,7 +96,7 @@ beforeEach(() => {
   useLanShareStore.setState({
     discovered: [],
     overview: {
-      status: { deviceId: 'me', deviceName: 'My Mac', displayName: 'Me', fingerprint: 'ZZ99ZZ' },
+      status: { deviceId: 'me', deviceName: 'My Mac', displayName: 'Me', fingerprint: 'ZZ99ZZ', addresses: [] },
       shares: [],
     },
   });
@@ -225,5 +236,98 @@ describe('discovering shared assistants', () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
     expect(mocks.setDisplayName).toHaveBeenCalledWith('Ann at work');
+  });
+});
+
+describe('devices on another subnet', () => {
+  const found = {
+    address: '172.17.9.12:47652',
+    deviceId: 'bea-device',
+    deviceName: "Bea's Mac",
+    displayName: 'Bea',
+    fingerprint: 'QW45ER',
+    publicKey: 'bea-key',
+    assistants: 2,
+    added: false,
+  };
+  const byId = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  const type = (id: string, value: string) => act(async () => {
+    const input = byId(id) as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  it('shows where this device can be added while it shares', async () => {
+    useLanShareStore.setState({
+      overview: {
+        status: {
+          deviceId: 'me', deviceName: 'My Mac', displayName: 'Me', fingerprint: 'ZZ99ZZ',
+          port: 47652, addresses: ['172.16.23.235'],
+        },
+        shares: [],
+      },
+    });
+    await render();
+    expect(byId('lan-share-this-address')?.textContent).toContain('172.16.23.235');
+    expect(byId('lan-share-this-device')?.textContent).toContain('ZZ99ZZ');
+  });
+
+  it('adds a device by address only after its code was shown', async () => {
+    mocks.probeAddress.mockResolvedValue({ state: 'reached', device: found });
+    mocks.addDevice.mockResolvedValue({ state: 'reached', device: { ...found, added: true } });
+    await render();
+    expect(byId('lan-share-this-device')).toBeNull();
+    await click(byId('discover-by-address-open')!);
+    await type('discover-by-address-input', '172.17.9.12');
+    await click(byId('discover-by-address-look')!);
+    expect(mocks.probeAddress).toHaveBeenCalledWith('172.17.9.12');
+    expect(mocks.addDevice).not.toHaveBeenCalled();
+    expect(byId('discover-by-address-code')?.textContent).toContain('QW45ER');
+    expect(byId('discover-by-address-found')?.textContent).toContain('nursery.discover.byAddress.sharing 2');
+
+    await click(byId('discover-by-address-add')!);
+    expect(mocks.addDevice).toHaveBeenCalledWith('172.17.9.12:47652', 'bea-key');
+    expect(mocks.success).toHaveBeenCalledWith('nursery.discover.byAddress.added Bea');
+    expect(byId('discover-by-address')).toBeNull();
+    expect(mocks.discovered).toHaveBeenCalled();
+  });
+
+  it('says in one sentence why an address cannot be used', async () => {
+    mocks.probeAddress.mockResolvedValue({ state: 'problem', problem: 'unreachable', message: 'connect refused' });
+    await render();
+    await click(byId('discover-by-address-open')!);
+    await type('discover-by-address-input', '172.17.9.99');
+    await click(byId('discover-by-address-look')!);
+    expect(byId('discover-by-address-problem')?.textContent)
+      .toContain('nursery.discover.byAddress.problems.unreachable');
+    expect(byId('discover-by-address-found')).toBeNull();
+  });
+
+  it('lets a device added by address move or go, and says when it changed', async () => {
+    mocks.confirmDanger.mockResolvedValue(true);
+    mocks.removeDevice.mockResolvedValue(true);
+    mocks.setDeviceAddress.mockResolvedValue({ state: 'problem', problem: 'identityChanged', message: 'key' });
+    await render();
+    await setDevices([{
+      ...device('Bea', [], { state: 'identityChanged', message: 'key' }),
+      addedAddress: '172.17.9.12:47652',
+    }]);
+    expect(byId('discover-device-added')?.textContent).toContain('nursery.discover.addedBadge 172.17.9.12');
+    expect(byId('discover-device-note')?.textContent).toBe('nursery.discover.identityChanged');
+
+    await click(byId('discover-device-move')!);
+    expect((byId('discover-device-address-input') as HTMLInputElement).value).toBe('172.17.9.12');
+    await type('discover-device-address-input', '172.17.9.13');
+    await act(async () => {
+      byId('discover-device-address-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(mocks.setDeviceAddress).toHaveBeenCalledWith('Bea-device', '172.17.9.13');
+    expect(byId('discover-device-address-problem')?.textContent)
+      .toContain('nursery.discover.byAddress.problems.identityChanged');
+
+    await click(byId('discover-device-remove')!);
+    expect(mocks.confirmDanger).toHaveBeenCalled();
+    expect(mocks.removeDevice).toHaveBeenCalledWith('Bea-device');
   });
 });
