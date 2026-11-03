@@ -355,6 +355,24 @@ parent: "F002"
 - 手工：Exit Criteria 第 1–6 条逐条记录。
 
 - [ ] 两台 Mac 真机验收逐条通过，或记录失败与修复
+  - 第一轮（2026-11-02，fc2a93987 的 1.0.8-plus dmg）：A 为本机 arm64（隔离数据目录运行的同一安装包），B 为 x64 Mac（macOS 12.7.6）；同一子网 172.16.20.0/22，真实 Bonjour。用 cua-driver 驱动两边界面，截图保存在本地任务目录，未入库。
+    - 与计划的差异：两台 Mac 的 OpenBitFun 都已登录账号（本机与用户真实应用共用钥匙串，不能退出）。共享与发现全程只走局域网，不读账号状态。
+    - 第 1 条通过：A 以普通、7 天、2 个任务共享「助理」，卡片显示「共享中」。
+    - 第 2 条部分通过：B 打开「发现」后 7 秒内出现「zhengxiwan MacBook-Pro-90 · E2M4Y5 / 助理」，悬停显示来源与设备码；但没有显示助理说明。原因：目录不带说明。已修复（ff493ccc4）：共享记录保存说明（取助理 IDENTITY 的 vibe，最长 200 字），名称同步时一并同步，目录带上说明。
+    - 第 3 条部分通过：
+      - B 申请后 A 1 秒内弹出确认框，「允许（59）」倒数；不操作 61 秒后自动关闭，A 提示已自动拒绝。B 显示冷却倒计时；A 点「拒绝」时 B 约 1.5 秒内显示冷却，冷却中方块不可点。
+      - 问题与修复（ff493ccc4）：
+        - 冷却结束后方块停在「0 秒后可再次申请」且一直不可点，因为冷却结束后没人重新读目录。现在面板把到期的冷却视为可申请。
+        - B 的倒计时是 62/63 秒，A 是 59/60 秒：截止时间按主人时钟给出，两台机时钟差 2–3 秒。现在目录与申请应答带上主人当前时间，使用者主机换算到本机时钟。
+        - 「对方没有同意」的提示被「发现」对话框盖住，关闭面板才看到。现在冷却文案改为「未获同意 · N 秒后可再次申请」，面板内直接可见。
+    - 第 4 条通过：冷却后 B 再次申请、A 允许，B 约 1.5 秒内方块变为「已在你的助理列表」，助理页出现「来自共享 · 助理 · 来自 zhengxiwan 的设备」。A 的卡片为「共享中 · 1 人在用」，管理视图列出「shimo · shimodeMac-mini · ZX3VRN」。
+    - 第 5 条部分通过：
+      - 失败：A 移除 B 后，B 的卡片 16 秒后仍是「来自共享」。A 日志为 `topic=revoked, delivered=false`：关闭「发现」时，没有进行中申请的主人通道都被关闭，主人无从推送。B 再打开「发现」读到目录后，卡片才变为「已停止共享」。根本修复是在使用者端有来自共享的助理时保持后台发现与主人通道，即 F002-12 Task 4 的范围；改为先做 Task 4，在其后的重新打包中复验本条。
+      - 通过：B 重新申请并获准后移除，A 的使用者列表立即变为「还没有人在用」；A 停止共享后，B 打开着的「发现」在 8 秒内不再列出 A。
+    - 第 6 条失败，已修复（626cc7a3f）：A 退出后 B 申请，得到的是原始错误「申请没有发出：the connection failed … Connection refused (os error 61)」，而且同样在关闭面板后才看到。现在申请连不上主人时，「发现」列表把该设备标为不在线（或需要更新），面板在设备名下说明「对方不在线」；其他申请失败改为面板内提示。回环测试 `tasks_are_refused_to_devices_without_access_and_offline_owners_are_reported` 覆盖。
+    - 其他发现：`mdns_sd` 的 DEBUG 日志约每 3 分钟写满 10 MB（日志轮转），留给后续把该模块日志级别降到 INFO。
+    - 自动化：`cargo test --locked -p openbitfun-core --features lan-share --lib lan_share` 15 项通过（含时钟换算与说明长度两项新测试）；`--features lan-share,dispatch-store,agent-runtime,ssh-remote,git --test lan_share_flow` 5 项通过；`pnpm --dir src/web-ui run test:run src/app/scenes/profile src/infrastructure/lan-share src/app/components/LanShareRequestDialog` 60 项通过；`type-check:web`、`lint:web`（0 错误）、`i18n:audit`、`theme:color-audit:all` 通过。clippy 未能运行：1.95.0 未装 clippy，1.91.1 在无关 crate 的既有代码上报错。
+    - 待办：F002-12 Task 4 完成后，用同一提交重新打 arm64 与 x64 dmg，复验第 2、3、5、6 条，再勾选本项。
 
 ## 风险
 
