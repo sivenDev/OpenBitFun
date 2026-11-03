@@ -33,6 +33,7 @@ vi.mock('@/shared/utils/logger', () => ({
 
 import {
   assistantShareId,
+  currentAccess,
   secondsLeft,
   shareForWorkspace,
   subscribeLanShare,
@@ -96,5 +97,15 @@ describe('LAN sharing store', () => {
     await useLanShareStore.getState().refreshOverview();
     expect(useLanShareStore.getState().unavailable).toBe('sharing on the local network is still starting');
     expect(useLanShareStore.getState().overview).toBeNull();
+  });
+});
+
+describe('currentAccess', () => {
+  it('turns a passed cooldown into a chance to ask, and leaves the rest alone', () => {
+    expect(currentAccess({ state: 'cooling', retryAtMs: 1_000 }, 999)).toEqual({ state: 'cooling', retryAtMs: 1_000 });
+    expect(currentAccess({ state: 'cooling', retryAtMs: 1_000 }, 1_000)).toEqual({ state: 'available' });
+    const pending = { state: 'pending' as const, requestId: 'r', deadlineMs: 1_000 };
+    expect(currentAccess(pending, 5_000)).toBe(pending);
+    expect(currentAccess({ state: 'granted' }, 5_000)).toEqual({ state: 'granted' });
   });
 });

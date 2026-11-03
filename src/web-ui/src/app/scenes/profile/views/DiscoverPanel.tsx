@@ -23,7 +23,7 @@ import {
   type DiscoveredDevice,
   type ShareAccess,
 } from '@/infrastructure/api/service-api/LanShareAPI';
-import { secondsLeft, useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import { currentAccess, secondsLeft, useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { useNotification } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
 import './DiscoverPanel.scss';
@@ -88,7 +88,10 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
   }, [open]);
 
   const counting = devices.some((device) => device.assistants.some(
-    (assistant) => assistant.access.state === 'pending' || assistant.access.state === 'cooling',
+    (assistant) => {
+      const access = currentAccess(assistant.access, now);
+      return access.state === 'pending' || access.state === 'cooling';
+    },
   ));
   useEffect(() => {
     if (!open || !counting) return undefined;
@@ -246,7 +249,8 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
                     <div className="discover-panel__assistants" data-openbitfun-component="discover-panel" data-openbitfun-part="assistants" role="list">
                       {device.assistants.map((assistant) => {
                         const key = accessKey(device, assistant);
-                        const askable = assistant.access.state === 'available'
+                        const access = currentAccess(assistant.access, now);
+                        const askable = access.state === 'available'
                           && device.status.state === 'ready';
                         return (
                           <Tooltip
@@ -269,11 +273,11 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
                               data-openbitfun-part="assistant"
                               className={[
                                 'discover-panel__assistant',
-                                `discover-panel__assistant--${assistant.access.state}`,
+                                `discover-panel__assistant--${access.state}`,
                               ].join(' ')}
                               disabled={!askable || asking !== null}
                               aria-busy={asking === key}
-                              aria-label={`${assistant.name}, ${accessText(assistant.access)}`}
+                              aria-label={`${assistant.name}, ${accessText(access)}`}
                               onClick={() => { void ask(device, assistant); }}
                               data-testid="discover-assistant"
                             >
@@ -281,7 +285,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
                                 <AssistantAvatar stableKey={key} name={assistant.name} size={44} />
                               </span>
                               <span className="discover-panel__assistant-name" data-openbitfun-component="discover-panel" data-openbitfun-part="assistantName">{assistant.name}</span>
-                              <span className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta">{accessText(assistant.access)}</span>
+                              <span className="discover-panel__meta" data-openbitfun-component="discover-panel" data-openbitfun-part="meta">{accessText(access)}</span>
                             </button>
                           </Tooltip>
                         );

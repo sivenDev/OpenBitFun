@@ -285,7 +285,7 @@
       "ask": "申請使用",
       "pending": "等待確認 · {{seconds}} 秒",
       "added": "已在你的助理列表",
-      "cooling": "{{seconds}} 秒後可再次申請",
+      "cooling": "未獲同意 · {{seconds}} 秒後可再次申請",
       "from": "來自 {{name}}（{{device}}）",
       "code": "裝置碼 {{code}}",
       "privacy": "對方可以查看你和這個助理的對話",

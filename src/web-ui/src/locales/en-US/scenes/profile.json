@@ -285,7 +285,7 @@
       "ask": "Ask to use",
       "pending": "Waiting · {{seconds}}s",
       "added": "In your assistants",
-      "cooling": "Ask again in {{seconds}}s",
+      "cooling": "Not approved · ask again in {{seconds}}s",
       "from": "From {{name}} ({{device}})",
       "code": "Device code {{code}}",
       "privacy": "The owner can see your conversations with this assistant",

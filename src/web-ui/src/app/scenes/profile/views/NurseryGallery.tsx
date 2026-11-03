@@ -35,6 +35,11 @@ import './NurseryView.scss';
 
 const log = createLogger('NurseryGallery');
 
+/** What other devices see of an assistant when they look it up. */
+function assistantDescription(workspace: WorkspaceInfo): string {
+  return workspace.identity?.vibe?.trim() ?? '';
+}
+
 /** Whether an assistant lives on this device and can be shared from here. */
 function isShareable(workspace: WorkspaceInfo): boolean {
   return !workspace.connectionId && (!workspace.sshHost || workspace.sshHost === 'localhost');
@@ -79,20 +84,23 @@ const NurseryGallery: React.FC = () => {
     [t],
   );
 
-  // Other devices see the assistant under the name its owner sees. Each name
-  // is sent once; the host may shorten it.
+  // Other devices see the assistant under the name and description its owner
+  // sees. Each version is sent once; the host may shorten it.
   const sentShareNames = useRef(new Map<string, string>());
   useEffect(() => {
     if (!lanShareOverview) return;
     for (const workspace of assistantWorkspacesList) {
       const share = shareForWorkspace(lanShareOverview, workspace.rootPath);
+      if (!share) continue;
       const name = assistantName(workspace);
-      if (share && share.displayName !== name && sentShareNames.current.get(share.id) !== name) {
-        sentShareNames.current.set(share.id, name);
-        void lanShareAPI.update(share.id, { name }).catch((error: unknown) => {
-          log.warn('Shared assistant name not updated', { assistantId: share.id, error });
-        });
-      }
+      const description = assistantDescription(workspace);
+      const sent = `${name}\n${description}`;
+      const current = share.displayName === name && (share.description ?? '') === description;
+      if (current || sentShareNames.current.get(share.id) === sent) continue;
+      sentShareNames.current.set(share.id, sent);
+      void lanShareAPI.update(share.id, { name, description }).catch((error: unknown) => {
+        log.warn('Shared assistant name not updated', { assistantId: share.id, error });
+      });
     }
   }, [assistantName, assistantWorkspacesList, lanShareOverview]);
 
@@ -395,6 +403,7 @@ const NurseryGallery: React.FC = () => {
           open
           assistantId={assistantShareId(shareTarget.rootPath)}
           name={assistantName(shareTarget)}
+          description={assistantDescription(shareTarget)}
           share={editShare}
           onClose={() => setShareTarget(null)}
         />

@@ -45,6 +45,8 @@ interface AssistantShareDialogProps {
   assistantId: string;
   /** The assistant's name, as other devices will see it. */
   name: string;
+  /** What other devices see when they look the assistant up. */
+  description?: string;
   /** The current share, when changing its settings. */
   share?: OwnedShare;
   onClose: () => void;
@@ -66,6 +68,7 @@ const AssistantShareDialog: React.FC<AssistantShareDialogProps> = ({
   open,
   assistantId,
   name,
+  description,
   share,
   onClose,
 }) => {
@@ -113,7 +116,7 @@ const AssistantShareDialog: React.FC<AssistantShareDialogProps> = ({
         await lanShareAPI.update(assistantId, { name, settings, confirmations });
         notification.success(t('nursery.share.dialog.saved'));
       } else {
-        await lanShareAPI.share(assistantId, name, settings, confirmations);
+        await lanShareAPI.share(assistantId, name, settings, confirmations, description || undefined);
         notification.success(t('nursery.share.dialog.shared', { name }));
       }
       void refreshOverview();

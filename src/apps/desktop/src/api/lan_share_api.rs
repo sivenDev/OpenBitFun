@@ -104,6 +104,9 @@ pub struct LanShareOverview {
 pub struct LanShareShareRequest {
     pub assistant_id: String,
     pub name: String,
+    /// What the assistant is like; other devices see it when they look it up.
+    #[serde(default)]
+    pub description: Option<String>,
     pub settings: ShareSettings,
     #[serde(default)]
     pub confirmations: ShareConfirmations,
@@ -115,6 +118,8 @@ pub struct LanShareUpdateRequest {
     pub assistant_id: String,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub settings: Option<ShareSettings>,
     #[serde(default)]
@@ -212,14 +217,28 @@ fn owned_shares(
 
 #[tauri::command]
 pub async fn lan_share_share(request: LanShareShareRequest) -> Result<SharedAssistant, String> {
-    host()?
+    let host = host()?;
+    let share = host
         .share(
             &request.assistant_id,
             &request.name,
             request.settings,
             request.confirmations,
         )
-        .await
+        .await?;
+    match &request.description {
+        Some(description) => {
+            host.set_assistant_description(&request.assistant_id, description)
+                .await?;
+            Ok(host
+                .shares()
+                .share_of(&request.assistant_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .unwrap_or(share))
+        }
+        None => Ok(share),
+    }
 }
 
 /// Changes a share's settings, the name other devices see, or both.
@@ -228,6 +247,10 @@ pub async fn lan_share_update(request: LanShareUpdateRequest) -> Result<SharedAs
     let host = host()?;
     if let Some(name) = &request.name {
         host.set_assistant_name(&request.assistant_id, name).await?;
+    }
+    if let Some(description) = &request.description {
+        host.set_assistant_description(&request.assistant_id, description)
+            .await?;
     }
     match request.settings {
         Some(settings) => {

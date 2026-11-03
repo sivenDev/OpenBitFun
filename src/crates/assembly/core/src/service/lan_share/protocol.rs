@@ -60,10 +60,47 @@ pub enum Access {
     Cooling { retry_at_ms: u64 },
 }
 
+impl Access {
+    /// The same standing with its times moved from the clock of a device
+    /// that read `remote_now_ms` onto this one's, which read `local_now_ms`.
+    pub fn on_local_clock(self, remote_now_ms: u64, local_now_ms: u64) -> Self {
+        let local = |time| to_local_clock(time, remote_now_ms, local_now_ms);
+        match self {
+            Self::Pending {
+                request_id,
+                deadline_ms,
+            } => Self::Pending {
+                request_id,
+                deadline_ms: local(deadline_ms),
+            },
+            Self::Cooling { retry_at_ms } => Self::Cooling {
+                retry_at_ms: local(retry_at_ms),
+            },
+            other => other,
+        }
+    }
+}
+
+/// `time_ms` on the clock of a device that read `remote_now_ms`, moved onto
+/// a clock that read `local_now_ms` at the same moment. Two devices' clocks
+/// differ by seconds; only how far ahead a time lies is shared. An unknown
+/// remote time (0) leaves `time_ms` as it is.
+pub fn to_local_clock(time_ms: u64, remote_now_ms: u64, local_now_ms: u64) -> u64 {
+    if remote_now_ms == 0 {
+        return time_ms;
+    }
+    (i128::from(time_ms) - i128::from(remote_now_ms) + i128::from(local_now_ms))
+        .clamp(0, i128::from(u64::MAX)) as u64
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogResponse {
     pub assistants: Vec<CatalogAssistant>,
+    /// The owner's clock when it answered; the times in `assistants` are on
+    /// that clock.
+    #[serde(default)]
+    pub now_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +118,9 @@ pub struct RequestOpened {
     pub deadline_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted: Option<bool>,
+    /// The owner's clock when it answered; `deadline_ms` is on that clock.
+    #[serde(default)]
+    pub now_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

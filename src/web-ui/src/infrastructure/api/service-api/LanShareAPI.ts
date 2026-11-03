@@ -44,6 +44,8 @@ export interface OwnedShare extends ShareSettings {
   id: string;
   /** The name other devices see. */
   displayName?: string;
+  /** What other devices see when they look the assistant up. */
+  description?: string;
   externalAgentUsageConfirmed: boolean;
   sharedAt: string;
   grants: ShareGrant[];
@@ -162,18 +164,28 @@ class LanShareAPI {
     name: string,
     settings: ShareSettings,
     confirmations: ShareConfirmations = {},
+    description?: string,
   ): Promise<OwnedShare> {
-    return invoke('lan_share_share', { assistantId, name, settings, confirmations });
+    return invoke('lan_share_share', { assistantId, name, description, settings, confirmations });
   }
 
-  /** Changes a share's settings, the name other devices see, or both. */
+  /**
+   * Changes a share's settings or what other devices see of it: its name and
+   * description. An empty description clears it.
+   */
   update(
     assistantId: string,
-    changes: { name?: string; settings?: ShareSettings; confirmations?: ShareConfirmations },
+    changes: {
+      name?: string;
+      description?: string;
+      settings?: ShareSettings;
+      confirmations?: ShareConfirmations;
+    },
   ): Promise<OwnedShare> {
     return invoke('lan_share_update', {
       assistantId,
       name: changes.name,
+      description: changes.description,
       settings: changes.settings,
       confirmations: changes.confirmations ?? {},
     });

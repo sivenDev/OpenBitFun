@@ -4,6 +4,7 @@ import {
   type DiscoveredDevice,
   type LanShareOverview,
   type OwnedShare,
+  type ShareAccess,
   type ShareRequest,
   type SharedWithMe,
 } from '@/infrastructure/api/service-api/LanShareAPI';
@@ -117,6 +118,16 @@ export function shareForWorkspace(
   if (!overview) return undefined;
   const id = assistantShareId(rootPath);
   return overview.shares.find((share) => share.rootPath === rootPath || share.id === id);
+}
+
+/**
+ * Where this device stands with a discovered assistant at `nowMs`: a
+ * cooldown that has passed means it may ask again, even before the owner's
+ * catalog is read again.
+ */
+export function currentAccess(access: ShareAccess, nowMs: number): ShareAccess {
+  if (access.state === 'cooling' && access.retryAtMs <= nowMs) return { state: 'available' };
+  return access;
 }
 
 /** Seconds left until `deadlineMs`, never negative. */

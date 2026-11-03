@@ -38,11 +38,11 @@ use serde_json::{json, Value};
 
 use super::browse::{peer_addresses, BrowseState, DeviceStatus, DiscoveredDevice};
 use super::protocol::{
-    now_ms, Access, AssistantBody, CatalogAssistant, CatalogResponse, Decision, DispatchBody,
-    JobUpdated, RequestOpened, RequestState, RequestStatus, RequestStatusBody, Revoked,
-    ASSISTANT_SHARE_CAPABILITY, COOLDOWN_SECONDS, METHOD_CATALOG, METHOD_DISPATCH, METHOD_REMOVE,
-    METHOD_REQUEST, METHOD_REQUEST_STATUS, PUSH_DECISION, PUSH_JOB_UPDATED, PUSH_REVOKED,
-    REQUEST_SECONDS,
+    now_ms, to_local_clock, Access, AssistantBody, CatalogAssistant, CatalogResponse, Decision,
+    DispatchBody, JobUpdated, RequestOpened, RequestState, RequestStatus, RequestStatusBody,
+    Revoked, ASSISTANT_SHARE_CAPABILITY, COOLDOWN_SECONDS, METHOD_CATALOG, METHOD_DISPATCH,
+    METHOD_REMOVE, METHOD_REQUEST, METHOD_REQUEST_STATUS, PUSH_DECISION, PUSH_JOB_UPDATED,
+    PUSH_REVOKED, REQUEST_SECONDS,
 };
 use super::requests::{Opened, PendingRequest, RequestQueue, RequestRefusal};
 use super::shared_assistants::{
@@ -462,6 +462,32 @@ impl LanShareHost {
         Ok(share)
     }
 
+    /// Keeps the description other devices see for the shared assistant
+    /// `id` in line with the owner's. Returns whether it changed.
+    pub async fn set_assistant_description(
+        &self,
+        id: &str,
+        description: &str,
+    ) -> Result<bool, String> {
+        let store = &self.inner.options.shares;
+        let Some(current) = store
+            .share_of(id)
+            .await
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(false);
+        };
+        let updated = store
+            .set_description(id, description)
+            .await
+            .map_err(|error| error.to_string())?;
+        if updated.description == current.description {
+            return Ok(false);
+        }
+        self.emit(EVENT_SHARED, json!({})).await;
+        Ok(true)
+    }
+
     /// Keeps the name other devices see for the shared assistant `id` in
     /// line with the owner's. Returns whether it changed.
     pub async fn set_assistant_name(&self, id: &str, name: &str) -> Result<bool, String> {
@@ -670,7 +696,7 @@ impl LanShareHost {
                 .map(|share| CatalogAssistant {
                     id: share.id.clone(),
                     name: share_name(share),
-                    description: None,
+                    description: share.description.clone(),
                     access: if share.grant(public_key).is_some() {
                         Access::Granted
                     } else {
@@ -680,6 +706,7 @@ impl LanShareHost {
                     },
                 })
                 .collect(),
+            now_ms: now,
         })
     }
 
@@ -703,6 +730,7 @@ impl LanShareHost {
                 request_id: uuid::Uuid::new_v4().simple().to_string(),
                 deadline_ms: now,
                 granted: Some(true),
+                now_ms: now,
             });
         }
         let asking = share_peer(peer)?;
@@ -721,6 +749,7 @@ impl LanShareHost {
                     request_id: request.request_id,
                     deadline_ms: request.deadline_ms,
                     granted: None,
+                    now_ms: now,
                 })
             }
             Ok(Opened::Declined { request_id }) => {
@@ -733,6 +762,7 @@ impl LanShareHost {
                     request_id,
                     deadline_ms: now,
                     granted: Some(false),
+                    now_ms: now,
                 })
             }
             Err(RequestRefusal::AlreadyPending {
@@ -742,6 +772,7 @@ impl LanShareHost {
                 request_id,
                 deadline_ms,
                 granted: None,
+                now_ms: now,
             }),
             Err(refusal) => Err(refusal.to_string()),
         }
@@ -1018,7 +1049,14 @@ impl LanShareHost {
                 Err(error) => Err(error.to_string()),
             };
         match catalog {
-            Ok(catalog) => {
+            Ok(mut catalog) => {
+                let local_now = now_ms();
+                for assistant in &mut catalog.assistants {
+                    assistant.access = assistant
+                        .access
+                        .clone()
+                        .on_local_clock(catalog.now_ms, local_now);
+                }
                 self.sync_grants(&owner, &catalog.assistants, asked).await;
                 self.inner
                     .browse
@@ -1110,7 +1148,7 @@ impl LanShareHost {
             .owner_connection(&key, &peer_addresses(&peer), &peer.public_key)
             .await
             .map_err(|error| error.to_string())?;
-        let opened: RequestOpened = from_value(
+        let mut opened: RequestOpened = from_value(
             connection
                 .call(
                     METHOD_REQUEST,
@@ -1121,6 +1159,10 @@ impl LanShareHost {
                 .await
                 .map_err(remote_message)?,
         )?;
+        // From here on the deadline is on this device's clock.
+        let local_now = now_ms();
+        opened.deadline_ms = to_local_clock(opened.deadline_ms, opened.now_ms, local_now);
+        opened.now_ms = local_now;
         match opened.granted {
             Some(granted) => {
                 self.refresh_catalog(&connection, granted.then_some(assistant_id))

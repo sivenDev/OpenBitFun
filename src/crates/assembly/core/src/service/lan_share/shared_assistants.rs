@@ -23,6 +23,8 @@ const DELEGATION_DIR: &str = "delegation";
 const SHARED_ASSISTANTS_FILE: &str = "shared-assistants.json";
 const SCHEMA_VERSION: u32 = 1;
 const MAX_NAME_CHARS: usize = 64;
+/// The longest description other devices see for a shared assistant.
+const MAX_DESCRIPTION_CHARS: usize = 200;
 const FINGERPRINT_CHARS: usize = 6;
 
 /// How long a shared assistant's sessions are kept after their last turn
@@ -156,13 +158,17 @@ pub fn is_share_device_id(value: &str) -> bool {
 }
 
 fn bounded_name(value: &str) -> String {
+    bounded_text(value, MAX_NAME_CHARS)
+}
+
+fn bounded_text(value: &str, max_chars: usize) -> String {
     value
         .chars()
         .filter(|ch| !ch.is_control())
         .collect::<String>()
         .trim()
         .chars()
-        .take(MAX_NAME_CHARS)
+        .take(max_chars)
         .collect()
 }
 
@@ -198,6 +204,10 @@ pub struct SharedAssistant {
     /// Kept current by the share host; `None` until it is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// What the assistant is like, as the owner sees it; other devices see
+    /// it when they look the assistant up. Kept current by the share host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(flatten)]
     pub settings: ShareSettings,
     /// The owner confirmed that tasks may call external agents with this
@@ -395,6 +405,7 @@ impl SharedAssistantStore {
             settings,
             external_agent_usage_confirmed: confirmations.external_agent_usage,
             display_name: None,
+            description: None,
             shared_at: now(),
             grants: Vec::new(),
             blocked: Vec::new(),
@@ -438,6 +449,21 @@ impl SharedAssistantStore {
         let name = bounded_name(display_name);
         self.update_share(id, |share| {
             share.display_name = (!name.is_empty()).then_some(name);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Sets the description other devices see for the share `id`; an empty
+    /// one clears it.
+    pub async fn set_description(
+        &self,
+        id: &str,
+        description: &str,
+    ) -> Result<SharedAssistant, ShareStoreError> {
+        let description = bounded_text(description, MAX_DESCRIPTION_CHARS);
+        self.update_share(id, |share| {
+            share.description = (!description.is_empty()).then_some(description);
             Ok(())
         })
         .await

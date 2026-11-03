@@ -193,6 +193,20 @@ async fn full_trust_needs_its_risk_confirmed_and_usage_confirmation_is_kept() {
     assert_eq!(named.display_name.as_deref(), Some("Ann"));
     let cleared = f.store.set_display_name("workspace", "  ").await.unwrap();
     assert_eq!(cleared.display_name, None);
+
+    let described = f
+        .store
+        .set_description(
+            "workspace",
+            &format!(" Writes\twith care{} ", "!".repeat(300)),
+        )
+        .await
+        .unwrap();
+    let description = described.description.unwrap();
+    assert!(description.starts_with("Writeswith care!"));
+    assert_eq!(description.chars().count(), 200);
+    let cleared = f.store.set_description("workspace", " ").await.unwrap();
+    assert_eq!(cleared.description, None);
 }
 
 #[tokio::test]
@@ -439,6 +453,48 @@ async fn workspaces_without_a_grant_go_once_their_sessions_are_gone() {
     store.revoke("workspace", &key(1)).await.unwrap_err();
     assert!(prune_tenants(&path_manager, &store).await.is_err());
     assert!(granted_dir.exists());
+}
+
+mod clocks {
+    use super::super::protocol::{to_local_clock, Access};
+
+    #[test]
+    fn times_move_onto_this_devices_clock_and_keep_how_far_ahead_they_lie() {
+        // The owner's clock runs 3 s ahead of this device's.
+        let owner_now = 1_000_000;
+        let local_now = 997_000;
+        assert_eq!(to_local_clock(1_060_000, owner_now, local_now), 1_057_000);
+        // An owner that did not say what time it was is taken at its word.
+        assert_eq!(to_local_clock(1_060_000, 0, local_now), 1_060_000);
+        assert_eq!(to_local_clock(10, 1_000_000, 0), 0);
+
+        let cooling = Access::Cooling {
+            retry_at_ms: 1_060_000,
+        }
+        .on_local_clock(owner_now, local_now);
+        assert_eq!(
+            cooling,
+            Access::Cooling {
+                retry_at_ms: 1_057_000
+            }
+        );
+        let pending = Access::Pending {
+            request_id: "r".into(),
+            deadline_ms: 1_060_000,
+        }
+        .on_local_clock(owner_now, local_now);
+        assert_eq!(
+            pending,
+            Access::Pending {
+                request_id: "r".into(),
+                deadline_ms: 1_057_000
+            }
+        );
+        assert_eq!(
+            Access::Granted.on_local_clock(owner_now, local_now),
+            Access::Granted
+        );
+    }
 }
 
 mod request_queue {

@@ -151,6 +151,20 @@ describe('discovering shared assistants', () => {
     expect(tiles()[1].textContent).toContain('nursery.discover.pending 40');
   });
 
+  it('lets a device ask again once its cooldown has passed, before the catalog is read again', async () => {
+    await render();
+    await setDevices([device('Ann', [{ state: 'cooling', retryAtMs: NOW + 2_000 }])]);
+    expect(tiles()[0].disabled).toBe(true);
+    expect(tiles()[0].textContent).toContain('nursery.discover.cooling 2');
+
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(tiles()[0].disabled).toBe(false);
+    expect(tiles()[0].textContent).toContain('nursery.discover.ask');
+    mocks.request.mockResolvedValue({ requestId: 'r2', deadlineMs: NOW + 63_000 });
+    await click(tiles()[0]);
+    expect(mocks.request).toHaveBeenCalledWith('Ann-device', 'workspace-0');
+  });
+
   it('asks for an assistant and says how it ended', async () => {
     await render();
     await setDevices([device('Ann', [{ state: 'available' }, { state: 'available' }])]);

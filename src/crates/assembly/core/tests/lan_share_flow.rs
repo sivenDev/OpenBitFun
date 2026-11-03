@@ -175,6 +175,10 @@ async fn an_assistant_is_shared_requested_answered_withdrawn_and_stopped() {
         .await
         .unwrap();
     assert!(owner.port().await.is_some());
+    assert!(owner
+        .set_assistant_description("workspace", "Writes with care")
+        .await
+        .unwrap());
 
     // Discover and read the catalog.
     user.discover_start().await.unwrap();
@@ -186,6 +190,10 @@ async fn an_assistant_is_shared_requested_answered_withdrawn_and_stopped() {
     let devices = user.discovered();
     assert_eq!(devices[0].status, DeviceStatus::Ready);
     assert_eq!(devices[0].assistants[0].name, "Writer");
+    assert_eq!(
+        devices[0].assistants[0].description.as_deref(),
+        Some("Writes with care")
+    );
 
     // The request runs out and the user hears at once; asking again waits.
     ask(&user, &owner, &owner_id).await;

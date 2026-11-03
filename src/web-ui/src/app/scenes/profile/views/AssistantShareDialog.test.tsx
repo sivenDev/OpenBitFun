@@ -38,7 +38,7 @@ const onClose = vi.fn();
 
 const render = (share?: OwnedShare) => act(async () => {
   root.render(
-    <AssistantShareDialog open assistantId="workspace" name="Writer" share={share} onClose={onClose} />,
+    <AssistantShareDialog open assistantId="workspace" name="Writer" description="Writes with care" share={share} onClose={onClose} />,
   );
 });
 const flush = () => act(async () => { await Promise.resolve(); });
@@ -93,6 +93,7 @@ describe('sharing an assistant', () => {
       'Writer',
       { trust: 'normal', sessionRetentionDays: 7, maxConcurrentTasks: 2 },
       { fullTrustRisk: false, externalAgentUsage: false },
+      'Writes with care',
     );
     expect(mocks.success).toHaveBeenCalledWith('nursery.share.dialog.shared');
     expect(onClose).toHaveBeenCalled();
@@ -111,6 +112,7 @@ describe('sharing an assistant', () => {
       'Writer',
       expect.objectContaining({ trust: 'full' }),
       { fullTrustRisk: true, externalAgentUsage: false },
+      'Writes with care',
     );
   });
 
@@ -127,6 +129,7 @@ describe('sharing an assistant', () => {
       'Writer',
       expect.anything(),
       { fullTrustRisk: false, externalAgentUsage: true },
+      'Writes with care',
     );
   });
 
