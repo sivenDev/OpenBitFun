@@ -34,6 +34,7 @@ import { useNurseryStore } from '../nurseryStore';
 import './NurseryView.scss';
 
 const log = createLogger('NurseryGallery');
+const SHARED_WITH_ME_ZONE = 'nursery-shared-with-me-zone';
 
 /** What other devices see of an assistant when they look it up. */
 function assistantDescription(workspace: WorkspaceInfo): string {
@@ -76,8 +77,23 @@ const NurseryGallery: React.FC = () => {
   const [manageTarget, setManageTarget] = useState<WorkspaceInfo | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const sharedWithMe = useLanShareStore((state) => state.sharedWithMe);
+  // An assistant just shared with this person: show it once it is listed.
+  const [revealShared, setRevealShared] = useState(false);
 
   useEffect(() => (sharingAvailable ? subscribeLanShare() : undefined), [sharingAvailable]);
+
+  const handleShareGranted = useCallback(() => {
+    setDiscovering(false);
+    setRevealShared(true);
+  }, []);
+
+  useEffect(() => {
+    if (!revealShared) return;
+    const zone = document.getElementById(SHARED_WITH_ME_ZONE);
+    if (!zone) return;
+    zone.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    setRevealShared(false);
+  }, [revealShared, sharedWithMe]);
 
   const assistantName = useCallback(
     (workspace: WorkspaceInfo) => resolveAssistantName(workspace, t('shared:agents.Claw')),
@@ -380,7 +396,7 @@ const NurseryGallery: React.FC = () => {
 
         {sharingAvailable && sharedWithMe.length > 0 ? (
           <GalleryZone
-            id="nursery-shared-with-me-zone"
+            id={SHARED_WITH_ME_ZONE}
             className="nursery-gallery__assistant-zone"
             title={t('nursery.sharedWithMe.title')}
             titleAdornment={<NumberBadge value={sharedWithMe.length} />}
@@ -408,7 +424,7 @@ const NurseryGallery: React.FC = () => {
           onClose={() => setShareTarget(null)}
         />
       ) : null}
-      {discovering ? <DiscoverPanel open onClose={() => setDiscovering(false)} /> : null}
+      {discovering ? <DiscoverPanel open onClose={() => setDiscovering(false)} onGranted={handleShareGranted} /> : null}
       {manageTarget && manageShare ? (
         <AssistantShareManageDialog
           open

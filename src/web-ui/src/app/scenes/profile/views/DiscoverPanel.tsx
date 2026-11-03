@@ -40,6 +40,8 @@ const SEARCH_MS = 4000;
 interface DiscoverPanelProps {
   open: boolean;
   onClose: () => void;
+  /** An owner allowed a request: the assistant is now in the person's list. */
+  onGranted?: () => void;
 }
 
 function message(error: unknown): string {
@@ -55,7 +57,7 @@ function accessKey(device: DiscoveredDevice, assistant: DiscoveredAssistant): st
  * Finder's "Shared" list. Asking for one sends a request the owner answers
  * within a minute; the answer arrives here at once.
  */
-const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
+const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose, onGranted }) => {
   const { t } = useI18n('scenes/profile');
   const notification = useNotification();
   const devices = useLanShareStore((state) => state.discovered);
@@ -116,6 +118,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
   // Say how a request ended when its answer arrives.
   useEffect(() => {
     const current = new Map<string, { access: ShareAccess['state']; name: string }>();
+    let granted = false;
     for (const device of devices) {
       for (const assistant of device.assistants) {
         const key = accessKey(device, assistant);
@@ -123,13 +126,15 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
         if (previous.current.get(key)?.access !== 'pending') continue;
         if (assistant.access.state === 'granted') {
           notification.success(t('nursery.discover.granted', { name: assistant.name }));
+          granted = true;
         } else if (assistant.access.state !== 'pending') {
           notification.info(t('nursery.discover.declined', { name: assistant.name }));
         }
       }
     }
     previous.current = current;
-  }, [devices, notification, t]);
+    if (granted) onGranted?.();
+  }, [devices, notification, onGranted, t]);
 
   const ask = async (device: DiscoveredDevice, assistant: DiscoveredAssistant) => {
     const key = accessKey(device, assistant);
@@ -140,6 +145,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
       const opened = await lanShareAPI.request(device.deviceId, assistant.id);
       if (opened.granted === true) {
         notification.success(t('nursery.discover.granted', { name: assistant.name }));
+        onGranted?.();
       } else if (opened.granted === false) {
         notification.info(t('nursery.discover.declined', { name: assistant.name }));
       }

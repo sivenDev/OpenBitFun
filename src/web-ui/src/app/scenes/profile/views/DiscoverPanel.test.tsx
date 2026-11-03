@@ -75,7 +75,10 @@ function device(
 let root: Root;
 let container: HTMLDivElement;
 const onClose = vi.fn();
-const render = () => act(async () => { root.render(<DiscoverPanel open onClose={onClose} />); });
+const onGranted = vi.fn();
+const render = () => act(async () => {
+  root.render(<DiscoverPanel open onClose={onClose} onGranted={onGranted} />);
+});
 const setDevices = (discovered: DiscoveredDevice[]) =>
   act(async () => { useLanShareStore.setState({ discovered }); });
 const tiles = () => [...document.querySelectorAll<HTMLButtonElement>('[data-testid="discover-assistant"]')];
@@ -101,6 +104,7 @@ beforeEach(() => {
     },
   });
   onClose.mockReset();
+  onGranted.mockReset();
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -187,9 +191,19 @@ describe('discovering shared assistants', () => {
       { state: 'pending', requestId: 'r1', deadlineMs: NOW + 60_000 },
       { state: 'pending', requestId: 'r2', deadlineMs: NOW + 60_000 },
     ])]);
+    expect(onGranted).not.toHaveBeenCalled();
     await setDevices([device('Ann', [{ state: 'granted' }, { state: 'cooling', retryAtMs: NOW + 60_000 }])]);
     expect(mocks.success).toHaveBeenCalledWith('nursery.discover.granted Ann helper 0');
     expect(mocks.info).toHaveBeenCalledWith('nursery.discover.declined Ann helper 1');
+    // The person is taken to the assistant they now have, once.
+    expect(onGranted).toHaveBeenCalledTimes(1);
+  });
+
+  it('neither leaves for an assistant granted before it opened nor for a declined one', async () => {
+    await render();
+    await setDevices([device('Ann', [{ state: 'granted' }, { state: 'pending', requestId: 'r1', deadlineMs: NOW + 60_000 }])]);
+    await setDevices([device('Ann', [{ state: 'granted' }, { state: 'cooling', retryAtMs: NOW + 60_000 }])]);
+    expect(onGranted).not.toHaveBeenCalled();
   });
 
   it('reports a request that was answered at once or not sent', async () => {
@@ -200,6 +214,7 @@ describe('discovering shared assistants', () => {
     mocks.request.mockResolvedValueOnce({ requestId: 'r1', deadlineMs: NOW, granted: false });
     await click(tiles()[0]);
     expect(mocks.info).toHaveBeenCalledWith('nursery.discover.declined Ann helper 0');
+    expect(onGranted).not.toHaveBeenCalled();
 
     // Said in the panel: a toast would sit under the dialog.
     mocks.request.mockRejectedValueOnce(new Error('the owner is busy'));
@@ -217,6 +232,15 @@ describe('discovering shared assistants', () => {
     expect(document.querySelector('[data-testid="discover-request-problem"]')).toBeNull();
     expect(document.querySelector('[data-testid="discover-device-note"]')?.textContent)
       .toBe('nursery.discover.unreachable');
+  });
+
+  it('leaves for the assistant when the owner had already allowed this device', async () => {
+    await render();
+    await setDevices([device('Ann', [{ state: 'available' }])]);
+    mocks.request.mockResolvedValueOnce({ requestId: 'r1', deadlineMs: NOW, granted: true });
+    await click(tiles()[0]);
+    expect(mocks.success).toHaveBeenCalledWith('nursery.discover.granted Ann helper 0');
+    expect(onGranted).toHaveBeenCalledTimes(1);
   });
 
   it('shows the privacy note and changes the name others see', async () => {
