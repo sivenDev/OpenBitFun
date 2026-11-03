@@ -82,6 +82,7 @@ const render = () => act(async () => {
 const setDevices = (discovered: DiscoveredDevice[]) =>
   act(async () => { useLanShareStore.setState({ discovered }); });
 const tiles = () => [...document.querySelectorAll<HTMLButtonElement>('[data-testid="discover-assistant"]')];
+const unaskable = (tile: HTMLButtonElement) => tile.getAttribute('aria-disabled') === 'true';
 const click = (element: HTMLElement) => act(async () => { element.click(); });
 const text = () => document.querySelector('[data-testid="discover-panel"]')!.textContent ?? '';
 
@@ -158,7 +159,7 @@ describe('discovering shared assistants', () => {
     expect(labels[1]).toContain('nursery.discover.pending 42');
     expect(labels[2]).toContain('nursery.discover.added');
     expect(labels[3]).toContain('nursery.discover.cooling 30');
-    expect(tiles().map((tile) => tile.disabled)).toEqual([false, true, true, true, true]);
+    expect(tiles().map(unaskable)).toEqual([false, true, true, true, true]);
     expect(text()).toContain('nursery.discover.needsUpdate');
     expect(text()).toContain('nursery.discover.unreachable');
 
@@ -166,14 +167,23 @@ describe('discovering shared assistants', () => {
     expect(tiles()[1].textContent).toContain('nursery.discover.pending 40');
   });
 
+  it('keeps a tile that cannot be asked hoverable, so its details still show, and ignores clicks on it', async () => {
+    await render();
+    await setDevices([device('Ann', [{ state: 'granted' }])]);
+    expect(tiles()[0].disabled).toBe(false);
+    expect(unaskable(tiles()[0])).toBe(true);
+    await click(tiles()[0]);
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
   it('lets a device ask again once its cooldown has passed, before the catalog is read again', async () => {
     await render();
     await setDevices([device('Ann', [{ state: 'cooling', retryAtMs: NOW + 2_000 }])]);
-    expect(tiles()[0].disabled).toBe(true);
+    expect(unaskable(tiles()[0])).toBe(true);
     expect(tiles()[0].textContent).toContain('nursery.discover.cooling 2');
 
     await act(async () => { vi.advanceTimersByTime(3_000); });
-    expect(tiles()[0].disabled).toBe(false);
+    expect(unaskable(tiles()[0])).toBe(false);
     expect(tiles()[0].textContent).toContain('nursery.discover.ask');
     mocks.request.mockResolvedValue({ requestId: 'r2', deadlineMs: NOW + 63_000 });
     await click(tiles()[0]);

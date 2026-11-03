@@ -79,7 +79,7 @@
   text-align: center;
   cursor: pointer;
 
-  &:hover:not(:disabled),
+  &:hover:not([aria-disabled='true']),
   &:focus-visible {
     background: var(--openbitfun-color-action-quiet-hover);
   }
@@ -89,7 +89,7 @@
     outline-offset: 1px;
   }
 
-  &:disabled {
+  &[aria-disabled='true'] {
     cursor: default;
   }
 }

@@ -389,10 +389,12 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose, onGranted 
                                 'discover-panel__assistant',
                                 `discover-panel__assistant--${access.state}`,
                               ].join(' ')}
-                              disabled={!askable || asking !== null}
+                              // Not `disabled`: a disabled button gets no hover or
+                              // focus, and the tooltip must still show who shares it.
+                              aria-disabled={!askable || asking !== null}
                               aria-busy={asking === key}
                               aria-label={`${assistant.name}, ${accessText(access)}`}
-                              onClick={() => { void ask(device, assistant); }}
+                              onClick={() => { if (askable && asking === null) void ask(device, assistant); }}
                               data-testid="discover-assistant"
                             >
                               <span className="discover-panel__avatar" data-openbitfun-component="discover-panel" data-openbitfun-part="avatar" aria-hidden="true">
