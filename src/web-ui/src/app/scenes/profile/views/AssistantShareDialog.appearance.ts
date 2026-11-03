@@ -4,5 +4,6 @@ export const assistantShareDialogAppearanceDescriptor: AppearanceSurfaceDescript
   id: 'assistant-share-dialog',
   parts: [
     { id: 'fields' },
+    { id: 'setting' },
   ],
 };
