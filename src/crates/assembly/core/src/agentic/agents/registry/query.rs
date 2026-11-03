@@ -436,9 +436,10 @@ impl AgentRegistry {
     }
 
     /// Registry-management listing plus the external agents the host's
-    /// executor can run for `host` and the agents other devices of this
-    /// account opened to this one. The Task catalog adds both itself, after
-    /// checking that the parent session may delegate to them.
+    /// executor can run for `host` and the Assistant category: this
+    /// device's assistants and the ones other devices share with it. The
+    /// Task catalog adds both itself, after checking that the parent session
+    /// may delegate to them.
     pub async fn get_subagents_for_management(
         &self,
         query: &SubagentQueryContext<'_>,
@@ -457,22 +458,28 @@ impl AgentRegistry {
                 .await;
             result = Self::merge_acp_agents(result, descriptors, query.include_disabled);
         }
-        // Remote agents run on their own device, so the workspace host does
-        // not decide whether they are listed. The short-lived cache keeps the
-        // listing from waiting on every device each time it is opened.
-        if let Some(port) = coordinator
+        // Assistants run in their own workspace or on their owner's device,
+        // so the workspace host does not decide whether they are listed, and
+        // one that cannot take work stays listed with its reason. The
+        // short-lived cache keeps the listing from waiting on every device
+        // each time it is opened.
+        let shared = match coordinator
             .as_ref()
             .and_then(|coordinator| coordinator.remote_agent_port())
         {
-            let descriptors = port
-                .list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
-                .await;
-            result = super::remote_agents::merge_remote_agents(
-                result,
-                descriptors,
-                query.include_disabled,
-            );
-        }
+            Some(port) => {
+                port.list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
+                    .await
+            }
+            None => Vec::new(),
+        };
+        let assistants = super::assistants::assistant_category(
+            &result,
+            super::assistants::local_assistant_entries().await,
+            shared,
+            &super::assistants::AssistantCaller::default(),
+        );
+        result.extend(assistants);
         Self::sort_subagents_for_presentation(result)
     }
 

@@ -1,25 +1,27 @@
 //! Host boundary for delegating subagent turns to assistants another device
-//! shares with this one.
+//! shares with this one over the local network.
 //!
-//! The kernel addresses such an agent as `remote:<deviceId>/<openAgentId>`
-//! and drives it as a detached dispatch job on that device: submit once, observe
-//! the job's event log by cursor, answer its permission prompts, cancel it, or
-//! continue it with a follow-up turn. Device discovery, transport, and the
-//! dispatch wire stay in the implementing host.
+//! The kernel addresses such an assistant as
+//! `shared:<ownerDeviceId>/<assistantId>` and drives it as a detached
+//! dispatch job on the owner's device: submit once, observe the job's event
+//! log by cursor, answer its permission prompts, cancel it, or continue it
+//! with a follow-up turn. Discovery, transport, and the dispatch wire stay in
+//! the implementing host.
 
 use crate::PortResult;
 use async_trait::async_trait;
 use openbitfun_product_domains::tool_permissions::{PermissionReply, PermissionRequest};
 use serde::{Deserialize, Serialize};
 
-pub const REMOTE_AGENT_TYPE_PREFIX: &str = "remote:";
-/// One open agent on one device.
+pub const REMOTE_AGENT_TYPE_PREFIX: &str = "shared:";
+/// One shared assistant on its owner's device.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAgentAddress {
-    /// The id of the device that shares the agent.
+    /// The share id of the device that owns the assistant.
     pub device_id: String,
-    pub open_agent_id: String,
+    /// The assistant's id on its owner's device.
+    pub assistant_id: String,
 }
 
 impl RemoteAgentAddress {
@@ -27,14 +29,14 @@ impl RemoteAgentAddress {
     pub fn agent_type(&self) -> String {
         format!(
             "{REMOTE_AGENT_TYPE_PREFIX}{}/{}",
-            self.device_id, self.open_agent_id
+            self.device_id, self.assistant_id
         )
     }
 
-    /// Parses `remote:<deviceId>/<openAgentId>`. Open agent ids never contain
-    /// `/`, so the last separator splits the two parts.
+    /// Parses `shared:<ownerDeviceId>/<assistantId>`. Assistant ids never
+    /// contain `/`, so the last separator splits the two parts.
     pub fn parse(agent_type: &str) -> Option<Self> {
-        let (device_id, open_agent_id) = agent_type
+        let (device_id, assistant_id) = agent_type
             .strip_prefix(REMOTE_AGENT_TYPE_PREFIX)?
             .rsplit_once('/')?;
         let valid = |value: &str| {
@@ -43,27 +45,31 @@ impl RemoteAgentAddress {
                     .chars()
                     .any(|ch| ch.is_whitespace() || ch.is_control())
         };
-        (valid(device_id) && valid(open_agent_id)).then(|| Self {
+        (valid(device_id) && valid(assistant_id)).then(|| Self {
             device_id: device_id.to_string(),
-            open_agent_id: open_agent_id.to_string(),
+            assistant_id: assistant_id.to_string(),
         })
     }
 }
 
-/// Why a remote agent cannot take work right now.
+/// Why a shared assistant cannot take work right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteAgentUnavailableReason {
-    /// The device cannot be reached.
+    /// The owner's device cannot be reached.
     Offline,
-    /// The device runs an OpenBitFun version without agent delegation, or
-    /// without a dispatch capability this host requires.
+    /// The owner's device runs an OpenBitFun version this one cannot work
+    /// with; one of the two needs an update.
     Incompatible,
     /// The device is online but did not answer in time or refused the query.
     Unreachable,
-    /// The device answered, but cannot run the assistant it opened right
-    /// now, such as one that was removed.
+    /// The device answered, but cannot run the assistant right now, such as
+    /// one that was removed.
     AgentUnavailable,
+    /// The owner stopped sharing the assistant with this device.
+    Revoked,
+    /// The owner's device has no executor to run delegated tasks.
+    ExecutorMissing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,13 +98,13 @@ pub enum RemoteAgentListing {
     Refreshed,
 }
 
-/// One agent another device shares with this device.
+/// One assistant another device shares with this device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAgentDescriptor {
     pub address: RemoteAgentAddress,
     pub device_name: String,
-    /// The target-side agent the open agent runs, for example `Standard`.
+    /// The owner-side agent the assistant runs as, `assistant:<id>`.
     pub agent_type: String,
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -200,8 +206,8 @@ pub struct RemoteAgentJobSnapshot {
 
 #[async_trait]
 pub trait RemoteAgentDelegationPort: Send + Sync {
-    /// Agents other devices of this account opened to this device, including
-    /// ones that are currently unavailable.
+    /// Assistants other devices share with this device, including ones that
+    /// are currently unavailable.
     async fn list_agents(&self, listing: RemoteAgentListing) -> Vec<RemoteAgentDescriptor>;
 
     /// Submits a delegated job. Fails before anything runs when the device is

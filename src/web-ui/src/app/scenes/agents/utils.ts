@@ -1,6 +1,5 @@
-import { isPrimaryAgent } from './agentVisibility';
+import { isPrimaryAgent, type AgentListSource } from './agentVisibility';
 import type { TFunction } from 'i18next';
-import type { AgentSource } from '@/infrastructure/api/service-api/CustomAgentAPI';
 import {
   CAPABILITY_CATEGORIES,
   type AgentKind,
@@ -46,7 +45,7 @@ function getCapabilityLabel(
 function getAgentBadge(
   t: TFunction<'scenes/agents'>,
   agentKind?: AgentKind,
-  source?: AgentSource,
+  source?: AgentListSource,
 ): AgentBadgeConfig {
   if (agentKind === 'harness') return { variant: 'accent', label: t('nav.harness') };
   if (agentKind === 'agent') {
@@ -60,6 +59,8 @@ function getAgentBadge(
   }
 
   switch (source) {
+    case 'assistant':
+      return { variant: 'neutral', label: t('shared:agents.Claw') };
     case 'external':
       return { variant: 'neutral', label: t('agentCard.badges.externalSubagent') };
     case 'user':

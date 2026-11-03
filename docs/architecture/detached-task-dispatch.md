@@ -553,11 +553,15 @@ share was stopped); then its job and its session are removed, while the tenant w
 stays for the device's other sessions. A tenant workspace whose device holds no grant
 and that has no session left is removed by the same cleanup.
 
-On the requesting side, a `remote:<deviceId>/<openAgentId>` subagent drives the job
-(the `RemoteAgentDelegationPort` the host registers; with none registered the
-list of remote assistants is empty). Its addressing moves to shared assistants with
-F002-12. Every prompt such a job raises is answered by the owner of the device it runs
-on, never by the requester. Job ids start with `delegation-`. A delegated job writes no
+On the requesting side, a `shared:<ownerDeviceId>/<assistantId>` subagent drives the
+job (the `RemoteAgentDelegationPort` the host registers; with none registered no
+shared assistant is listed). It belongs to the Assistant category of callable
+subagents together with the device's own assistants (`assistant:<id>`); an
+assistant that cannot take work stays listed with its reason (offline, revoked,
+needs an update, no executor), and a call to it fails for that reason. A task
+another device delegated here sees the category only when the owner fully trusts
+that share. Every prompt such a job raises is answered by the owner of the device
+it runs on, never by the requester. Job ids start with `delegation-`. A delegated job writes no
 outbound record; its link (device, job, session, cursor) lives in the coordination
 database's `remote_job` column, which a restarted requester reads to observe it again.
 Delegated jobs are left out of the Dispatch panel's job list and target-job adoption,

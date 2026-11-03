@@ -6,7 +6,7 @@
 
 | Type | Plans | Approved | In Progress | Complete | Superseded |
 | --- | --- | --- | --- | --- | --- |
-| `feature` | 18 | 2 | 2 | 5 | 9 |
+| `feature` | 18 | 1 | 3 | 5 | 9 |
 
 ## Plan Groups
 
@@ -30,5 +30,5 @@
 | `F002-10` | [局域网共享助理的基础：设备共享身份、Bonjour 发现、加密通道，安装包内带执行器](features/F002/10-lan-foundation.md) | `complete` | 2026-11-02 |
 | `F002-11` | [共享与申请：共享设置、发现面板、倒计时确认框、授权按设备公钥，删除第 5 版 AI协作](features/F002/11-share-and-request.md) | `in_progress` | 2026-11-02 |
 | `F002-12` | [使用共享的助理：直接对话、对话列表、审批与排队状态、离线展示](features/F002/12-use-shared-assistants.md) | `approved` | 2026-11-02 |
-| `F002-13` | [助理之间相互调用：「助理」类目的子智能体、本机助理任务会话、调用链环检测、不可用时如实列出](features/F002/13-assistants-call-each-other.md) | `approved` | 2026-11-02 |
+| `F002-13` | [助理之间相互调用：「助理」类目的子智能体、本机助理任务会话、调用链环检测、不可用时如实列出](features/F002/13-assistants-call-each-other.md) | `in_progress` | 2026-11-02 |
 | `F002-14` | [按地址添加：不同网段的设备按局域网地址添加、核对设备码、记住并自动重连](features/F002/14-add-by-address.md) | `in_progress` | 2026-11-03 |

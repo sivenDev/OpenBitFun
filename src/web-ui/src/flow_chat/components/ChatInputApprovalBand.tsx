@@ -156,7 +156,7 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
     || !PERMISSION_ACTION_LABEL_KEYS[request.action];
   const remoteOwner = remoteAgentFromAgentType(request.delegation?.subagentType);
   const ownerLabel = remoteOwner
-    ? t('toolCards.taskTool.remoteAgentLabel', { agent: remoteOwner.openAgentId })
+    ? t('toolCards.taskTool.remoteAgentLabel', { agent: remoteOwner.assistantId })
     : request.delegation
       ? t('permission.subagentOwner', { subagent: request.delegation.subagentType })
       : showSourceIdentity ? request.source.identity : undefined;

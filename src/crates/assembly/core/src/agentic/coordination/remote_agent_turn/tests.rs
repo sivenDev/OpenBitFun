@@ -303,7 +303,7 @@ async fn a_task_resumed_after_restart_waits_for_the_owner_without_answering() {
             task_pk: task.task_pk,
             session_id: "child",
             turn_id: "child-turn",
-            agent_type: "remote:laptop/helper",
+            agent_type: "shared:laptop/helper",
         },
         &link(),
         &port,

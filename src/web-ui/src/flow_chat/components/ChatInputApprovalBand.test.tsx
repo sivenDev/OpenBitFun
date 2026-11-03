@@ -33,7 +33,7 @@ vi.mock('react-i18next', async importOriginal => ({
   useTranslation: () => ({
     t: (key: string, values?: Record<string, string>) => {
       if (key === 'permission.subagentOwner') return `${values?.subagent} subagent`;
-      if (key === 'toolCards.taskTool.remoteAgentLabel') return `${values?.agent} (remote agent)`;
+      if (key === 'toolCards.taskTool.remoteAgentLabel') return `${values?.agent} (shared assistant)`;
       if (key === 'permission.allowAlwaysTooltip') {
         return `Remember approval in ${values?.projectPath}, limited to:\n${values?.resources}`;
       }
@@ -178,7 +178,7 @@ describe('ChatInputApprovalBand', () => {
     );
   });
 
-  it('names a remote agent by its open agent instead of its address', async () => {
+  it('names a shared assistant by its id instead of its address', async () => {
     await act(async () => {
       root.render(
         <ChatInputApprovalBand
@@ -187,7 +187,7 @@ describe('ChatInputApprovalBand', () => {
               parentSessionId: 'session-1',
               parentDialogTurnId: 'turn-1',
               parentToolCallId: 'task-1',
-              subagentType: 'remote:00000000000000000000000000000a04/helper',
+              subagentType: 'shared:00000000000000000000000000000a04/helper',
             },
           })]}
           onRespond={vi.fn(async () => undefined)}
@@ -197,8 +197,8 @@ describe('ChatInputApprovalBand', () => {
     });
 
     const band = container.querySelector<HTMLElement>('[data-testid="chat-input-approval-band"]');
-    expect(band?.textContent).toContain('helper (remote agent)');
-    expect(band?.textContent).not.toContain('remote:');
+    expect(band?.textContent).toContain('helper (shared assistant)');
+    expect(band?.textContent).not.toContain('shared:');
   });
 
   it('answers only the request in front of the reader by default', async () => {

@@ -287,24 +287,70 @@ impl AgentExecutionTool {
         }
     }
 
-    /// Why the parent may not delegate to a remote agent beyond the checks it
-    /// shares with external agents, or `None` when it may.
-    pub(super) fn remote_agent_parent_refusal(context: &ToolUseContext) -> Option<&'static str> {
-        let delegated_here = context
-            .custom_data
-            .get(crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY)
-            .and_then(Value::as_bool)
-            == Some(true);
-        delegated_here.then_some(
-            "is not available in a turn another device delegated here: delegation does not chain across devices",
+    /// Admission checks every assistant call shares: an assistant runs its
+    /// own tools, so it takes the parent checks of external agents; an
+    /// external task calls one only under full trust; and it runs only in
+    /// the background with the model it configured.
+    fn ensure_assistant_admissible(
+        context: &ToolUseContext,
+        agent_type: &str,
+        run_in_background: bool,
+        facts: &ExternalAgentAdmissionFacts<'_>,
+    ) -> OpenBitFunResult<crate::agentic::agents::AssistantCaller> {
+        let caller = Self::assistant_caller(context);
+        if let Some(refusal) = Self::external_agent_parent_refusal(
+            context,
+            facts.parent_ceiling,
+            facts.parent_is_swarm,
         )
+        .or_else(|| caller.refusal())
+        {
+            return Err(OpenBitFunError::tool(format!(
+                "assistant {agent_type} {refusal}"
+            )));
+        }
+        if facts.model_override_requested {
+            return Err(OpenBitFunError::tool(
+                "external_subagent_model_override_unsupported: assistants use the model they configured"
+                    .to_string(),
+            ));
+        }
+        if !run_in_background {
+            return Err(OpenBitFunError::tool(format!(
+                "assistant {agent_type} runs only in the background; set run_in_background to true and collect the result with AgentWait"
+            )));
+        }
+        Ok(caller)
     }
 
-    /// Admits a `remote:<deviceId>/<openAgentId>` subagent under the same
-    /// parent checks as external agents: the target device runs its own
-    /// tools, so a parent restriction could not be held to them. A remote
-    /// agent also runs only in the background, never from a delegated turn,
-    /// and only when the host lists it as open to this device and available.
+    /// Admits an `assistant:<id>` subagent: one of this device's assistants
+    /// other than the caller itself.
+    pub(super) async fn ensure_local_assistant_available(
+        context: &ToolUseContext,
+        agent_type: &str,
+        run_in_background: bool,
+        facts: ExternalAgentAdmissionFacts<'_>,
+    ) -> OpenBitFunResult<crate::agentic::agents::LocalAssistantEntry> {
+        let caller =
+            Self::ensure_assistant_admissible(context, agent_type, run_in_background, &facts)?;
+        let id = crate::service::delegation::assistant_directory(agent_type).unwrap_or_default();
+        if caller.own_assistant_id.as_deref() == Some(id) {
+            return Err(OpenBitFunError::tool(format!(
+                "assistant {agent_type} is the assistant making this call; it cannot call itself"
+            )));
+        }
+        crate::agentic::agents::local_assistant_entries()
+            .await
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| {
+                OpenBitFunError::tool(format!("assistant {agent_type} is not on this device"))
+            })
+    }
+
+    /// Admits a `shared:<ownerDeviceId>/<assistantId>` subagent: an
+    /// assistant the host lists as shared with this device and able to take
+    /// work. An unavailable one fails with the reason the list shows.
     pub(super) async fn ensure_remote_agent_available(
         coordinator: &crate::agentic::coordination::ConversationCoordinator,
         context: &ToolUseContext,
@@ -313,31 +359,10 @@ impl AgentExecutionTool {
         facts: ExternalAgentAdmissionFacts<'_>,
     ) -> OpenBitFunResult<openbitfun_runtime_ports::RemoteAgentDescriptor> {
         let agent_type = address.agent_type();
-        if let Some(refusal) = Self::external_agent_parent_refusal(
-            context,
-            facts.parent_ceiling,
-            facts.parent_is_swarm,
-        )
-        .or_else(|| Self::remote_agent_parent_refusal(context))
-        {
-            return Err(OpenBitFunError::tool(format!(
-                "remote agent {agent_type} {refusal}"
-            )));
-        }
-        if facts.model_override_requested {
-            return Err(OpenBitFunError::tool(
-                "external_subagent_model_override_unsupported: remote agents use the model their device configured"
-                    .to_string(),
-            ));
-        }
-        if !run_in_background {
-            return Err(OpenBitFunError::tool(format!(
-                "remote agent {agent_type} runs only in the background; set run_in_background to true and collect the result with AgentWait"
-            )));
-        }
+        Self::ensure_assistant_admissible(context, &agent_type, run_in_background, &facts)?;
         let port = coordinator.remote_agent_port().ok_or_else(|| {
             OpenBitFunError::tool(format!(
-                "remote agent {agent_type} is unavailable: this host cannot delegate to other devices"
+                "assistant {agent_type} is unavailable: this host cannot reach assistants on other devices"
             ))
         })?;
         let descriptor = port
@@ -347,14 +372,18 @@ impl AgentExecutionTool {
             .find(|descriptor| &descriptor.address == address)
             .ok_or_else(|| {
                 OpenBitFunError::tool(format!(
-                    "remote agent {agent_type} is not open to this device"
+                    "assistant {agent_type} is not shared with this device"
                 ))
             })?;
         match &descriptor.availability {
             openbitfun_runtime_ports::RemoteAgentAvailability::Available => Ok(descriptor),
             openbitfun_runtime_ports::RemoteAgentAvailability::Unavailable { reason, detail } => {
+                let reason = serde_json::to_value(reason)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_default();
                 Err(OpenBitFunError::tool(format!(
-                    "remote agent {agent_type} is unavailable ({reason:?}): {detail}"
+                    "assistant {agent_type} is unavailable ({reason}): {detail}"
                 )))
             }
         }
@@ -627,6 +656,30 @@ impl AgentExecutionTool {
                     let subagent_type = address.agent_type();
                     logical_subagent_type = Some(subagent_type.clone());
                     Some(subagent_type)
+                } else if let Some(agent_type) =
+                    invocation.subagent_type.as_deref().filter(|agent_type| {
+                        crate::service::delegation::assistant_directory(agent_type).is_some()
+                    })
+                {
+                    let parent_ceiling =
+                        Self::derive_parent_permission_runtime_ceiling(context).await?;
+                    Self::ensure_local_assistant_available(
+                        context,
+                        agent_type,
+                        run_in_background,
+                        ExternalAgentAdmissionFacts {
+                            parent_is_swarm,
+                            model_override_requested: external_subagent_model_override_requested(
+                                model_id.as_deref(),
+                                inherit_parent_model,
+                            ),
+                            parent_ceiling: &parent_ceiling,
+                        },
+                    )
+                    .await?;
+                    return Err(OpenBitFunError::tool(format!(
+                        "assistant {agent_type} cannot be called from this version yet"
+                    )));
                 } else if let Some(client_id) = requested_external_agent.as_deref() {
                     let subagent_type = invocation.subagent_type.clone().unwrap_or_default();
                     let parent_ceiling =

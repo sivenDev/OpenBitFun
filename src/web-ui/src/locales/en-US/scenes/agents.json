@@ -297,7 +297,9 @@
       "unreachable": "Device not responding",
       "agentUnavailable": "Agent not available on the device",
       "device": "On {{device}}",
-      "managedOnDevice": "{{device}} opened this agent to this device. Change or close it on {{device}}."
+      "managedOnDevice": "{{device}} shares this assistant with this device. Change it or stop sharing it on {{device}}.",
+      "revoked": "No longer shared",
+      "executorMissing": "The device cannot run tasks"
     },
     "deleteConfirm": "Delete custom agent \"{{name}}\"? This cannot be undone.",
     "deleteSuccess": "Deleted \"{{name}}\"",
@@ -377,6 +379,11 @@
       "permissionsStandard": "Standard permissions · adjust access",
       "customizeTools": "Customize selected tools",
       "createNamePlaceholder": "For example, Research helper"
+    },
+    "assistant": {
+      "mine": "My assistant",
+      "managedHere": "Change this assistant in Assistant management.",
+      "availability": "Assistants on this device are always available"
     }
   },
   "reviewTeams": {

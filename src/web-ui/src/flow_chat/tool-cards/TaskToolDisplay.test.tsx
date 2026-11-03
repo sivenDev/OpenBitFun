@@ -44,10 +44,10 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => {
       return 'Chosen by the external agent';
     }
     if (key === 'toolCards.taskTool.remoteAgentLabel') {
-      return `${options?.agent} (remote agent)`;
+      return `${options?.agent} (shared assistant)`;
     }
     if (key === 'toolCards.taskTool.remoteAgentModel') {
-      return 'Chosen by the remote device';
+      return 'Chosen by the device that shares it';
     }
     if (key === 'toolCards.taskTool.waitingConfirm') {
       return 'Waiting for confirmation';
@@ -261,8 +261,8 @@ vi.mock('../store/FlowChatStore', () => ({
           sessionId: 'remote-child-processing',
           sessionKind: 'subagent',
           parentSessionId: 'parent-session',
-          mode: 'remote:laptop/helper',
-          config: { agentType: 'remote:laptop/helper', modelName: 'fast' },
+          mode: 'shared:laptop/helper',
+          config: { agentType: 'shared:laptop/helper', modelName: 'fast' },
           dialogTurns: [{
             id: 'remote-turn-processing',
             status: 'processing',
@@ -499,17 +499,17 @@ describeWithJsdom('TaskToolDisplay', () => {
     }
   });
 
-  it('names a remote agent by its open agent and leaves the model to its device', async () => {
+  it('names a shared assistant by its id and leaves the model to its device', async () => {
     const item = externalAgentTaskItem('remote-child-processing');
-    item.toolCall.input = { ...item.toolCall.input, subagent_type: 'remote:laptop/helper' };
+    item.toolCall.input = { ...item.toolCall.input, subagent_type: 'shared:laptop/helper' };
     await act(async () => root.render(
       <TaskToolDisplay toolItem={item} config={config} sessionId="parent-session" />,
     ));
 
     const text = await previewText();
-    expect(text).toContain('helper (remote agent)');
-    expect(text).toContain('Chosen by the remote device');
-    expect(text).not.toContain('remote:laptop/helper');
+    expect(text).toContain('helper (shared assistant)');
+    expect(text).toContain('Chosen by the device that shares it');
+    expect(text).not.toContain('shared:laptop/helper');
   });
 
   it('opens the external agent child session from its task card', async () => {

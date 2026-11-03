@@ -39,20 +39,27 @@ export type ExternalAgentAvailability =
   | { state: 'available' }
   | { state: 'unavailable'; reason: ExternalAgentUnavailableReason | string; detail: string };
 
-export type RemoteAgentUnavailableReason = 'offline' | 'incompatible' | 'unreachable' | 'agent_unavailable';
+export type RemoteAgentUnavailableReason =
+  | 'offline'
+  | 'incompatible'
+  | 'unreachable'
+  | 'agent_unavailable'
+  | 'revoked'
+  | 'executor_missing';
 
-/** Whether the device that opened a remote agent can take work now. */
+/** Whether an assistant can take work now. */
 export type RemoteAgentAvailability =
   | { state: 'available' }
   | { state: 'unavailable'; reason: RemoteAgentUnavailableReason | string; detail: string };
 
-/** The device and open agent behind a `remote:<deviceId>/<openAgentId>` subagent. */
-export interface RemoteAgentInfo {
-  deviceId: string;
-  deviceName: string;
-  openAgentId: string;
-  /** The assistant the open agent runs as on its device (`assistant:<directory>`). */
-  agentType: string;
+/**
+ * The assistant behind an entry of the Assistant category: one of this
+ * device's (`assistant:<id>`, no `owner`) or one another device shares
+ * (`shared:<ownerDeviceId>/<assistantId>`).
+ */
+export interface AssistantAgentInfo {
+  assistantId: string;
+  owner?: { deviceId: string; deviceName: string };
   availability: RemoteAgentAvailability;
 }
 
@@ -82,11 +89,12 @@ export interface SubagentInfo {
   supportsFollowUp?: boolean;
   /**
    * `acp` for external agents that run their own model loop and tools;
-   * `remote` for agents another device of this account opened to this one.
+   * `assistant` for this device's assistants; `remote` for assistants
+   * another device shares with this one.
    */
   executionKind?: string;
   externalAvailability?: ExternalAgentAvailability;
-  remoteAgent?: RemoteAgentInfo;
+  assistant?: AssistantAgentInfo;
 }
 
 export interface ListSubagentsOptions {

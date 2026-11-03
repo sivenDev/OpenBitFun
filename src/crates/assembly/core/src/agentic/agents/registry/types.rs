@@ -115,21 +115,32 @@ pub struct AgentInfo {
     /// Host-level availability of an external agent; absent for native agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_availability: Option<openbitfun_runtime_ports::ExternalAgentAvailability>,
-    /// The device and open agent behind a `remote:` agent; absent otherwise.
+    /// The assistant behind an entry of the Assistant category: one of this
+    /// device's (`assistant:<id>`) or one another device shares with it
+    /// (`shared:<ownerDeviceId>/<assistantId>`); absent for other agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote_agent: Option<RemoteAgentInfo>,
+    pub assistant: Option<AssistantAgentInfo>,
 }
 
-/// Where a `remote:` agent runs and whether it can take work now.
+/// Whose assistant an Assistant-category entry is and whether it can take
+/// work now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoteAgentInfo {
+pub struct AssistantAgentInfo {
+    /// The assistant's id on the device that owns it.
+    pub assistant_id: String,
+    /// The device that shares it; absent for this device's own assistants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<AssistantOwnerInfo>,
+    pub availability: openbitfun_runtime_ports::RemoteAgentAvailability,
+}
+
+/// The device that shares an assistant with this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantOwnerInfo {
     pub device_id: String,
     pub device_name: String,
-    pub open_agent_id: String,
-    /// The target-side agent the open agent runs.
-    pub agent_type: String,
-    pub availability: openbitfun_runtime_ports::RemoteAgentAvailability,
 }
 
 fn default_true() -> bool {
@@ -246,7 +257,7 @@ impl AgentInfo {
             supports_follow_up: true,
             execution_kind: None,
             external_availability: None,
-            remote_agent: None,
+            assistant: None,
         }
     }
 }

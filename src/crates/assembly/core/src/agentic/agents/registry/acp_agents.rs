@@ -44,7 +44,7 @@ pub(crate) fn acp_agent_info(descriptor: ExternalAgentDescriptor) -> AgentInfo {
         supports_follow_up: true,
         execution_kind: Some(ACP_EXECUTION_KIND.to_string()),
         external_availability: Some(descriptor.availability),
-        remote_agent: None,
+        assistant: None,
     }
 }
 

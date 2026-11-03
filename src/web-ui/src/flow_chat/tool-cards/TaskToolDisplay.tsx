@@ -28,7 +28,7 @@ import {
   subagentTurnAwaitsApproval,
 } from '../utils/subagentProjection';
 import { acpClientIdFromAgentType } from '../utils/acpSession';
-import { remoteAgentFromAgentType } from '../utils/remoteAgent';
+import { localAssistantFromAgentType, remoteAgentFromAgentType } from '../utils/remoteAgent';
 import { sessionLineageLifecycleForSession } from '../utils/sessionLineage';
 import {
   SubagentAvatar,
@@ -294,6 +294,8 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
       ? t('toolCards.taskTool.externalAgentModel')
       : remoteAgentFromAgentType(agentType)
       ? t('toolCards.taskTool.remoteAgentModel')
+      : localAssistantFromAgentType(agentType)
+      ? t('toolCards.taskTool.assistantModel')
       : readStringValue(toolItem.subagentModelDisplayName) ||
       readStringValue(linkedSubagentSession?.config?.modelName) ||
       readStringValue(toolItem.subagentModelId) ||
@@ -397,10 +399,13 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
     let agentTypeLabel: string;
     const externalClientId = acpClientIdFromAgentType(raw);
     const remoteAgent = remoteAgentFromAgentType(raw);
+    const localAssistant = localAssistantFromAgentType(raw);
     if (externalClientId) {
       agentTypeLabel = t('toolCards.taskTool.externalAgentLabel', { clientId: externalClientId });
     } else if (remoteAgent) {
-      agentTypeLabel = t('toolCards.taskTool.remoteAgentLabel', { agent: remoteAgent.openAgentId });
+      agentTypeLabel = t('toolCards.taskTool.remoteAgentLabel', { agent: remoteAgent.assistantId });
+    } else if (localAssistant) {
+      agentTypeLabel = t('toolCards.taskTool.assistantLabel', { agent: localAssistant });
     } else if (raw && raw !== 'Not provided') {
       const rc = taskInput?.isReviewCoverageTask ? null : taskInput?.reviewerContext;
       agentTypeLabel = taskInput?.isReviewCoverageTask

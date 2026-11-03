@@ -15,24 +15,24 @@ use std::sync::Mutex;
 fn agent_types_round_trip_and_reject_malformed_addresses() {
     let address = RemoteAgentAddress {
         device_id: "device-a".to_string(),
-        open_agent_id: "helper".to_string(),
+        assistant_id: "helper".to_string(),
     };
-    assert_eq!(address.agent_type(), "remote:device-a/helper");
+    assert_eq!(address.agent_type(), "shared:device-a/helper");
     assert_eq!(
-        RemoteAgentAddress::parse("remote:device-a/helper"),
+        RemoteAgentAddress::parse("shared:device-a/helper"),
         Some(address)
     );
-    // Device ids may contain `/`; open agent ids never do.
+    // Device ids may contain `/`; assistant ids never do.
     assert_eq!(
-        RemoteAgentAddress::parse("remote:org/device/helper").map(|a| a.device_id),
+        RemoteAgentAddress::parse("shared:org/device/helper").map(|a| a.device_id),
         Some("org/device".to_string())
     );
     for malformed in [
-        "remote:",
-        "remote:device-a",
-        "remote:/helper",
-        "remote:device-a/",
-        "remote:device a/helper",
+        "shared:",
+        "shared:device-a",
+        "shared:/helper",
+        "shared:device-a/",
+        "shared:device a/helper",
         "acp:claude-code",
         "Standard",
     ] {
@@ -45,7 +45,7 @@ fn availability_and_descriptors_use_stable_wire_names() {
     let descriptor = RemoteAgentDescriptor {
         address: RemoteAgentAddress {
             device_id: "laptop".to_string(),
-            open_agent_id: "helper".to_string(),
+            assistant_id: "helper".to_string(),
         },
         device_name: "Laptop".to_string(),
         agent_type: "assistant:workspace".to_string(),
@@ -57,7 +57,7 @@ fn availability_and_descriptors_use_stable_wire_names() {
         },
     };
     let value = serde_json::to_value(&descriptor).unwrap();
-    assert_eq!(value["address"]["openAgentId"], "helper");
+    assert_eq!(value["address"]["assistantId"], "helper");
     assert_eq!(value["availability"]["state"], "unavailable");
     assert_eq!(value["availability"]["reason"], "offline");
     assert!(!descriptor.availability.is_available());
@@ -65,6 +65,16 @@ fn availability_and_descriptors_use_stable_wire_names() {
         serde_json::from_value::<RemoteAgentDescriptor>(value).unwrap(),
         descriptor
     );
+    for (reason, wire) in [
+        (RemoteAgentUnavailableReason::Revoked, "revoked"),
+        (
+            RemoteAgentUnavailableReason::ExecutorMissing,
+            "executor_missing",
+        ),
+        (RemoteAgentUnavailableReason::Incompatible, "incompatible"),
+    ] {
+        assert_eq!(serde_json::to_value(reason).unwrap(), wire);
+    }
 }
 
 #[test]
@@ -195,7 +205,7 @@ fn submit_request(device_id: &str) -> RemoteAgentSubmitRequest {
     RemoteAgentSubmitRequest {
         address: RemoteAgentAddress {
             device_id: device_id.to_string(),
-            open_agent_id: "helper".to_string(),
+            assistant_id: "helper".to_string(),
         },
         job_id: "job-1".to_string(),
         session_id: "session-1".to_string(),

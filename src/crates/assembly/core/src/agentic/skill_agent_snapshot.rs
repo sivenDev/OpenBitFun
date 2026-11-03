@@ -452,6 +452,7 @@ mod tests {
         let catalog = crate::agentic::tools::implementations::task::ExternalAgentCatalog {
             executor: Some(std::sync::Arc::new(ListedExternalAgent)),
             remote_agents: None,
+            local_assistants: Vec::new(),
             parent_ceiling: Default::default(),
         };
         let executor = &catalog;
@@ -484,10 +485,10 @@ mod tests {
             vec![openbitfun_runtime_ports::RemoteAgentDescriptor {
                 address: openbitfun_runtime_ports::RemoteAgentAddress {
                     device_id: "laptop".to_string(),
-                    open_agent_id: "helper".to_string(),
+                    assistant_id: "helper".to_string(),
                 },
                 device_name: "Laptop".to_string(),
-                agent_type: "Standard".to_string(),
+                agent_type: "assistant:helper".to_string(),
                 display_name: "Helper".to_string(),
                 description: None,
                 availability: openbitfun_runtime_ports::RemoteAgentAvailability::Available,
@@ -538,29 +539,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subagent_projection_lists_admissible_remote_agents() {
+    async fn subagent_projection_lists_admissible_assistants() {
         let restrictions = ToolRuntimeRestrictions::default();
         let catalog = crate::agentic::tools::implementations::task::ExternalAgentCatalog {
             executor: None,
             remote_agents: Some(std::sync::Arc::new(ListedRemoteAgent)),
+            local_assistants: Vec::new(),
             parent_ceiling: Default::default(),
         };
-        let is_remote = |agent: &super::AgentSnapshotEntry| agent.id.starts_with("remote:");
+        let is_remote = |agent: &super::AgentSnapshotEntry| agent.id.starts_with("shared:");
 
         let standard = description_context("Standard", &restrictions);
         let agents = load_subagent_entries(None, &standard, &restrictions, Some(&catalog)).await;
         assert!(
             agents
                 .iter()
-                .any(|agent| agent.id == "remote:laptop/helper"),
-            "the turn listing must offer the remote agents AgentSpawn admits"
+                .any(|agent| agent.id == "shared:laptop/helper"),
+            "the turn listing must offer the assistants AgentSpawn admits"
         );
 
         let review = description_context("DeepReview", &restrictions);
         let agents = load_subagent_entries(None, &review, &restrictions, Some(&catalog)).await;
         assert!(!agents.iter().any(is_remote));
 
-        // A turn another device delegated here never delegates onward.
+        // A turn another device delegated here under normal trust calls no
+        // assistant.
         let mut delegated = description_context("Standard", &restrictions);
         delegated.custom_data.insert(
             crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),

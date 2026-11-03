@@ -2,12 +2,11 @@ import { modelSelectionsConfigPath, effectiveModelSelections } from '@/infrastru
 import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { modelPoolAPI, readableModelPools, supportsModelPools, type ModelPoolDefinition } from '@/infrastructure/api/service-api/ModelPoolAPI';
 import { primaryAgentKind, agentName } from '@/shared/agents/identity';
-import { isPrimaryAgent, isOrdinaryAgent } from '../agentVisibility';
+import { agentListSource, isPrimaryAgent, isOrdinaryAgent, type AgentListSource } from '../agentVisibility';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
 import { agentAPI, type ModeInfo } from '@/infrastructure/api/service-api/AgentAPI';
 import { api } from '@/infrastructure/api/service-api/ApiClient';
-import type { AgentSource } from '@/infrastructure/api/service-api/CustomAgentAPI';
 import { SubagentAPI, type SubagentInfo } from '@/infrastructure/api/service-api/SubagentAPI';
 import { configAPI } from '@/infrastructure/api/service-api/ConfigAPI';
 import type {
@@ -33,7 +32,7 @@ import { createLogger } from '@/shared/utils/logger';
 
 const toolLog = createLogger('useAgentsList');
 
-export type FilterLevel = 'all' | 'builtin' | 'user' | 'project' | 'external';
+export type FilterLevel = 'all' | 'builtin' | 'user' | 'project' | 'external' | 'assistant';
 export type FilterType = 'all' | 'agent' | 'subagent';
 
 /**
@@ -122,9 +121,9 @@ function buildModeConfigsByProfile(
 }
 
 function resolveAgentSource(
-  agent: Pick<AgentWithCapabilities, 'source' | 'subagentSource'>,
-): AgentSource {
-  return agent.source ?? agent.subagentSource ?? 'builtin';
+  agent: Pick<AgentWithCapabilities, 'source' | 'subagentSource' | 'assistant'>,
+): AgentListSource {
+  return agentListSource(agent);
 }
 
 function configuredModelName(
@@ -648,6 +647,7 @@ export function useAgentsList({
     user: overviewAgents.filter((agent) => resolveAgentSource(agent) === 'user').length,
     project: overviewAgents.filter((agent) => resolveAgentSource(agent) === 'project').length,
     external: overviewAgents.filter((agent) => resolveAgentSource(agent) === 'external').length,
+    assistant: overviewAgents.filter((agent) => resolveAgentSource(agent) === 'assistant').length,
     agent: overviewAgents.filter(isOrdinaryAgent).length,
     subagent: overviewAgents.filter((agent) => agent.agentKind === 'subagent').length,
   }), [overviewAgents]);

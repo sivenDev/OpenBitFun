@@ -80,13 +80,15 @@ impl Default for AgentExecutionTool {
     }
 }
 
-/// The host delegation ports and parent permission ceiling that decide which
-/// external (`acp:`) and remote (`remote:`) agents a parent may be offered.
+/// The host delegation ports, this device's assistants, and the parent
+/// permission ceiling that decide which external agents (`acp:`) and which
+/// assistants (`assistant:`, `shared:`) a parent may be offered.
 pub(crate) struct ExternalAgentCatalog {
     pub(crate) executor:
         Option<std::sync::Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>>,
     pub(crate) remote_agents:
         Option<std::sync::Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>>,
+    pub(crate) local_assistants: Vec<crate::agentic::agents::LocalAssistantEntry>,
     pub(crate) parent_ceiling: openbitfun_runtime_ports::PermissionRuntimeCeiling,
 }
 
@@ -151,8 +153,8 @@ impl AgentExecutionTool {
         }
     }
 
-    /// Lists external and remote agents only when admission would accept the
-    /// parent, so the catalog never offers a delegation that is refused.
+    /// Lists external agents and assistants only when admission would accept
+    /// the parent, so the catalog never offers a delegation that is refused.
     async fn append_external_agents(
         context: &ToolUseContext,
         agents: Vec<AgentInfo>,
@@ -161,21 +163,24 @@ impl AgentExecutionTool {
         Self::append_external_agents_from(catalog.as_ref(), context, agents).await
     }
 
-    /// Resolves the host delegation ports and the parent's permission ceiling
-    /// that gate external and remote agent listings for `context`.
+    /// Resolves the host delegation ports, this device's assistants, and the
+    /// parent's permission ceiling that gate external agent and assistant
+    /// listings for `context`.
     pub(crate) async fn external_agent_catalog(
         context: &ToolUseContext,
     ) -> Option<ExternalAgentCatalog> {
         let coordinator = get_global_coordinator()?;
         let executor = coordinator.external_agent_executor();
         let remote_agents = coordinator.remote_agent_port();
-        if executor.is_none() && remote_agents.is_none() {
+        let local_assistants = crate::agentic::agents::local_assistant_entries().await;
+        if executor.is_none() && remote_agents.is_none() && local_assistants.is_empty() {
             return None;
         }
         match Self::derive_parent_permission_runtime_ceiling(context).await {
             Ok(parent_ceiling) => Some(ExternalAgentCatalog {
                 executor,
                 remote_agents,
+                local_assistants,
                 parent_ceiling,
             }),
             Err(error) => {
@@ -221,20 +226,46 @@ impl AgentExecutionTool {
             agents =
                 crate::agentic::agents::AgentRegistry::merge_acp_agents(agents, descriptors, false);
         }
-        if let Some(port) = catalog.remote_agents.as_ref() {
-            if let Some(reason) = Self::remote_agent_parent_refusal(context) {
-                debug!(
-                    "Remote agents omitted from catalog: agent_type={:?}, reason={}",
-                    context.agent_type, reason
-                );
-            } else {
-                let descriptors = port
-                    .list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
-                    .await;
-                agents = crate::agentic::agents::merge_remote_agents(agents, descriptors, false);
-            }
+        let caller = Self::assistant_caller(context);
+        if let Some(reason) = caller.refusal() {
+            debug!(
+                "Assistants omitted from catalog: agent_type={:?}, reason={}",
+                context.agent_type, reason
+            );
+            return agents;
         }
+        let shared = match catalog.remote_agents.as_ref() {
+            Some(port) => {
+                port.list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
+                    .await
+            }
+            None => Vec::new(),
+        };
+        let assistants = crate::agentic::agents::assistant_category(
+            &agents,
+            catalog.local_assistants.clone(),
+            shared,
+            &caller,
+        );
+        agents.extend(assistants);
         agents
+    }
+
+    /// Which assistant, if any, the parent turn runs as, and under which
+    /// share trust when another device delegated it.
+    pub(crate) fn assistant_caller(
+        context: &ToolUseContext,
+    ) -> crate::agentic::agents::AssistantCaller {
+        let delegation =
+            crate::service::delegation::DelegatedTurnFacts::from_tool_data(&context.custom_data);
+        let assistant_base = crate::infrastructure::try_get_path_manager_arc()
+            .ok()
+            .map(|path_manager| path_manager.assistant_workspace_base_dir(None));
+        crate::agentic::agents::AssistantCaller::of_turn(
+            context.workspace_root(),
+            delegation.as_ref(),
+            assistant_base.as_deref(),
+        )
     }
 
     async fn get_agents_types(&self, context: Option<&ToolUseContext>) -> Vec<String> {

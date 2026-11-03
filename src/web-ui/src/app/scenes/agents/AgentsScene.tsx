@@ -52,8 +52,8 @@ import './AgentsScene.scss';
 import './components/AgentDetailDialog.scss';
 import { useGallerySceneAutoRefresh } from '@/app/hooks/useGallerySceneAutoRefresh';
 import {
+  agentListSource,
   isAcpExternalAgent,
-  isRemoteDeviceAgent,
   isAgentInOverviewZone,
   isLocallyManageableSubagent,
 } from './agentVisibility';
@@ -135,10 +135,12 @@ function skillRuntimeStatusLabel(
 }
 
 function subagentSourceLabel(
-  source: SubagentInfo['source'] | undefined,
+  source: ReturnType<typeof agentListSource> | undefined,
   t: TFunction<'scenes/agents'>,
 ): string {
   switch (source) {
+    case 'assistant':
+      return t('shared:agents.Claw');
     case 'project':
       return t('filters.project');
     case 'user':
@@ -189,6 +191,10 @@ function remoteAvailabilityLabel(
       return t('agentsOverview.remote.unreachable');
     case 'agent_unavailable':
       return t('agentsOverview.remote.agentUnavailable');
+    case 'revoked':
+      return t('agentsOverview.remote.revoked');
+    case 'executor_missing':
+      return t('agentsOverview.remote.executorMissing');
     default:
       return t('agentsOverview.remote.unavailable');
   }
@@ -204,7 +210,7 @@ function subagentTooltipFields(
   t: TFunction<'scenes/agents'>,
   isExternal: boolean,
 ): AgentCapabilityTooltipField[] {
-  const source = subagent.subagentSource ?? subagent.source;
+  const source = agentListSource(subagent);
   return [
     {
       label: t('agentsOverview.capabilityTooltip.source'),
@@ -216,8 +222,8 @@ function subagentTooltipFields(
     },
     ...(isExternal ? [{
       label: t('agentsOverview.capabilityTooltip.status'),
-      value: subagent.remoteAgent
-        ? remoteAvailabilityLabel(subagent.remoteAgent.availability, t)
+      value: subagent.assistant
+        ? remoteAvailabilityLabel(subagent.assistant.availability, t)
         : subagent.externalAvailability
           ? acpAvailabilityLabel(subagent.externalAvailability, t)
           : t('agentsOverview.capabilityTooltip.externalManaged'),
@@ -339,6 +345,7 @@ const AgentsHomeView: React.FC = () => {
     { value: 'user', label: t('filters.user') },
     { value: 'project', label: t('filters.project') },
     { value: 'external', label: t('filters.external') },
+    { value: 'assistant', label: t('shared:agents.Claw') },
   ], [t]);
 
   const typeFilterOptions = useMemo(() => [
@@ -371,7 +378,7 @@ const AgentsHomeView: React.FC = () => {
     selectedAgent?.source ?? selectedAgent?.subagentSource
   ) === 'external';
   const selectedAgentIsAcp = isAcpExternalAgent(selectedAgent);
-  const selectedRemoteAgent = isRemoteDeviceAgent(selectedAgent) ? selectedAgent?.remoteAgent : undefined;
+  const selectedAssistant = selectedAgent?.assistant;
   const selectedAgentModeConfig = useMemo(
     () => (isPrimaryAgent(selectedAgent) ? getModeConfig(selectedAgent.id) : null),
     [getModeConfig, selectedAgent],
@@ -476,13 +483,13 @@ const AgentsHomeView: React.FC = () => {
     return hasAgentCollaborationTool(configuredTools) ? (agent.visibleSubagentCount ?? 0) : 0;
   }, [getModeConfig]);
   const selectedAgentSourceLabel = selectedAgent
-    ? subagentSourceLabel(selectedAgent.source ?? selectedAgent.subagentSource, t)
+    ? subagentSourceLabel(agentListSource(selectedAgent), t)
     : '';
   const selectedAgentBadge = selectedAgent
     ? getAgentBadge(
       t,
       selectedAgent.agentKind,
-      selectedAgent.source ?? selectedAgent.subagentSource,
+      agentListSource(selectedAgent),
     )
     : null;
   const selectedSubagentModelValue = selectedAgent?.agentKind === 'subagent'
@@ -1063,7 +1070,7 @@ const AgentsHomeView: React.FC = () => {
                       }}
                     />
                   </Tooltip>
-                ) : selectedRemoteAgent ? null : (showingHarnessPreview || activeDetailSection === 'basic') && selectedAgentIsExternal ? (
+                ) : selectedAssistant ? null : (showingHarnessPreview || activeDetailSection === 'basic') && selectedAgentIsExternal ? (
                   <Tooltip content={t('agentsOverview.manageExternalAgent')}>
                     <IconButton
                       aria-label={t('agentsOverview.manageExternalAgent')}
@@ -1168,23 +1175,31 @@ const AgentsHomeView: React.FC = () => {
                     <Tooltip content={t('agentsOverview.detail.source')}>
                       <StatusPill tone="neutral">{selectedAgentSourceLabel}</StatusPill>
                     </Tooltip>
-                    {selectedRemoteAgent ? (
+                    {selectedAssistant ? (
                       <>
-                        <Tooltip content={t('agentsOverview.remote.managedOnDevice', { device: selectedRemoteAgent.deviceName })}>
+                        <Tooltip
+                          content={selectedAssistant.owner
+                            ? t('agentsOverview.remote.managedOnDevice', { device: selectedAssistant.owner.deviceName })
+                            : t('agentsOverview.assistant.managedHere')}
+                        >
                           <StatusPill tone="neutral" data-testid="agent-detail-remote-device">
-                            {t('agentsOverview.remote.device', { device: selectedRemoteAgent.deviceName })}
+                            {selectedAssistant.owner
+                              ? t('agentsOverview.remote.device', { device: selectedAssistant.owner.deviceName })
+                              : t('agentsOverview.assistant.mine')}
                           </StatusPill>
                         </Tooltip>
                         <Tooltip
-                          content={selectedRemoteAgent.availability.state === 'unavailable'
-                            ? selectedRemoteAgent.availability.detail
-                            : t('agentsOverview.remote.availability')}
+                          content={selectedAssistant.availability.state === 'unavailable'
+                            ? selectedAssistant.availability.detail
+                            : selectedAssistant.owner
+                              ? t('agentsOverview.remote.availability')
+                              : t('agentsOverview.assistant.availability')}
                         >
                           <StatusPill
-                            tone={selectedRemoteAgent.availability.state === 'available' ? 'success' : 'warning'}
+                            tone={selectedAssistant.availability.state === 'available' ? 'success' : 'warning'}
                             data-testid="agent-detail-remote-availability"
                           >
-                            {remoteAvailabilityLabel(selectedRemoteAgent.availability, t)}
+                            {remoteAvailabilityLabel(selectedAssistant.availability, t)}
                           </StatusPill>
                         </Tooltip>
                       </>

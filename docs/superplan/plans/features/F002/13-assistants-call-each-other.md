@@ -2,7 +2,7 @@
 id: "F002-13"
 title: "助理之间相互调用：「助理」类目的子智能体、本机助理任务会话、调用链环检测、不可用时如实列出"
 type: "feature"
-status: "approved"
+status: "in_progress"
 summary: "主人自己的每个助理，以及别人共享给主人的每个助理，都以「助理」类目出现在可调用的子智能体列表中；助理在后台调用它们并经 AgentWait 收回结果。调用自己的助理时在本机该助理名下建一个标明来源的任务会话；调用共享给我的助理时复用 F002-12 的授权与通道。每次调用携带调用链，出现循环时明确拒绝；不可用的助理仍列出并标明原因。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-02"
@@ -100,7 +100,16 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-core --features lan-share --lib agentic::agents::registry`
 - `cargo test --locked -p openbitfun-core --lib agentic::tools::implementations::task`
 
-- [ ] 类目条目、来源、不可用原因、排除自身、普通信任程度下不生成均有测试
+- [x] 类目条目、来源、不可用原因、排除自身、普通信任程度下不生成均有测试
+
+**证据（2026-11-03）：**
+- 地址：`RemoteAgentAddress` 改为 `shared:<ownerDeviceId>/<assistantId>`（字段 `assistant_id`，线上名 `assistantId`），不可用原因增加 `revoked`、`executor_missing`；`cargo +1.95.0 test --locked -p openbitfun-runtime-ports --features remote-agent-port --test remote_agent_port_contracts` 5 通过（该测试目标需要 `remote-agent-port` 特性，计划中的命令缺这一项）。
+- 类目：`registry/assistants.rs` 取代 `remote_agents.rs`。本机助理来自工作区服务的助理工作区（名称与界面一致，说明取 `IDENTITY.md` 的 vibe，与共享时发给对方的说明相同）；共享给我的助理来自 `RemoteAgentDelegationPort::list_agents`。可用的在前，不可用的排在后面并在说明中写「Unavailable now: …」。`AssistantCaller::of_turn` 按会话所在的助理工作区（外部任务按委派事实中的助理工作区）排除自身，外部任务普通信任程度下整个类目不生成。
+- 条目形状：`AgentInfo` 新增可选字段 `assistant {assistantId, owner?, availability}`，替代 `remoteAgent`；没有新增 `AgentSource`/`SubAgentSource` 枚举值，旧版本的对端读到新列表不会因未知枚举值失败。
+- `Task`/`AgentSpawn`：说明改为列出 `assistant:<id>` 与 `shared:<device_id>/<assistant_id>`；目录与准入共用 `ensure_assistant_admissible`（父会话限制、普通信任程度拒绝「this share does not allow calling other assistants」、只能后台、不能指定模型）；调用不可用的共享助理返回列表中的原因，例如 `assistant shared:laptop/writer is unavailable (offline): Laptop is offline`。原来「委派来的回合一律不能再调用」的拒绝改为按信任程度。
+- 界面：智能体页来源筛选新增「助理」（共享词条 `shared:agents.Claw`），详情显示「我的助理」或「位于 某设备」与可用性（含已停止共享、对方设备无法执行任务）；任务卡片与审批条按新地址显示「（共享的助理）」「（我的助理）」。
+- 验证：`cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git --lib agentic::agents::registry` 66 通过；同特性 `--lib agentic::tools::implementations::task` 98 通过、`--lib skill_agent_snapshot` 6 通过；`--features agent-runtime,git,remote-workspace --lib agentic::coordination::remote_agent_turn` 8 通过；`cargo check -p openbitfun-core --features lan-share --tests` 通过（计划中带 `--features lan-share` 的 `--lib agentic::...` 命令在默认特性下不编译 agentic 模块，匹配 0 个测试，改用 core AGENTS.md 中的特性组合）；Web UI `tsc`、`eslint`、`pnpm --dir src/web-ui run test:run src/app/scenes/agents src/flow_chat/utils src/flow_chat/tool-cards/TaskToolDisplay.test.tsx src/flow_chat/components/ChatInputApprovalBand.test.tsx` 89 个文件 860 通过；`pnpm run i18n:audit` 通过。
+- 留给后续任务：`assistant:<id>` 的调用在准入后明确返回「cannot be called from this version yet」，由 Task 2 接上执行；共享助理在真机上的列表要等 Task 3 用 `LanDispatchRpc` 实现并注册端口后才出现；完全信任下外部任务调用的计数与审计在 Task 4。
 
 ## Task 2: 调用自己的助理
 

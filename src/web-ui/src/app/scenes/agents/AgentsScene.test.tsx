@@ -743,56 +743,74 @@ describeWithJsdom('AgentsScene', () => {
     openDestination.mockRestore();
     openScene.mockRestore();
   });
-  it('shows the device, availability, and task kinds of a remote agent without local management', async () => {
-    const remoteAgent = {
-      key: 'remote:laptop/helper',
-      id: 'remote:laptop/helper',
-      name: 'Helper',
-      description: 'Agent Helper that another device of this account opened for delegation.',
-      isReadonly: false,
-      isReview: false,
-      toolCount: 0,
-      defaultTools: [],
-      defaultEnabled: false,
-      effectiveEnabled: false,
-      source: 'external',
-      subagentSource: 'external',
-      externalProviderLabel: 'Laptop',
-      supportsFollowUp: true,
-      executionKind: 'remote',
-      remoteAgent: {
-        deviceId: 'laptop',
-        deviceName: 'Laptop',
-        openAgentId: 'helper',
-        agentType: 'assistant:workspace',
-        availability: {
-          state: 'unavailable',
-          reason: 'offline',
-          detail: 'Laptop is offline',
-        },
-      },
-      agentKind: 'subagent' as const,
-      capabilities: [],
-    };
-    mockAgentsList({ allAgents: [remoteAgent], filteredAgents: [remoteAgent] });
-    const { default: AgentsScene } = await import('./AgentsScene');
+  const assistantEntry = (
+    id: string,
+    assistant: Record<string, unknown>,
+  ) => ({
+    key: id,
+    id,
+    name: 'Helper',
+    description: 'Assistant "Helper".',
+    isReadonly: false,
+    isReview: false,
+    toolCount: 0,
+    defaultTools: [],
+    defaultEnabled: false,
+    effectiveEnabled: false,
+    source: 'external',
+    subagentSource: 'external',
+    supportsFollowUp: true,
+    executionKind: 'remote',
+    assistant,
+    agentKind: 'subagent' as const,
+    capabilities: [],
+  });
 
+  const openDetail = async (agent: { name: string }) => {
+    const { default: AgentsScene } = await import('./AgentsScene');
     await act(async () => {
       root.render(<AgentsScene />);
     });
     await act(async () => {
       Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === remoteAgent.name)
+        .find((button) => button.textContent === agent.name)
         ?.click();
     });
+    return document.querySelector<HTMLElement>('[role="dialog"]');
+  };
 
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+  it('shows the owner device and why a shared assistant is unavailable, without local management', async () => {
+    const shared = assistantEntry('shared:laptop/helper', {
+      assistantId: 'helper',
+      owner: { deviceId: 'laptop', deviceName: 'Laptop' },
+      availability: { state: 'unavailable', reason: 'revoked', detail: 'Laptop no longer shares it' },
+    });
+    mockAgentsList({ allAgents: [shared], filteredAgents: [shared] });
+    const dialog = await openDetail(shared);
+
     expect(dialog?.querySelector('[data-testid="agent-detail-remote-device"]')?.textContent)
       .toBe('agentsOverview.remote.device');
     expect(dialog?.querySelector('[data-testid="agent-detail-remote-availability"]')?.textContent)
-      .toBe('agentsOverview.remote.offline');
-    // The device that opened the agent manages it; nothing here edits it.
+      .toBe('agentsOverview.remote.revoked');
+    // The device that shares the assistant manages it; nothing here edits it.
     expect(dialog?.querySelector('[data-testid="agent-detail-manage-acp"]')).toBeNull();
     expect(dialog?.querySelector('[aria-label="agentsOverview.manageExternalAgent"]')).toBeNull();
+  });
+
+  it('labels this device\'s own assistants as mine', async () => {
+    const mine = {
+      ...assistantEntry('assistant:workspace-writer', {
+        assistantId: 'workspace-writer',
+        availability: { state: 'available' },
+      }),
+      executionKind: 'assistant',
+    };
+    mockAgentsList({ allAgents: [mine], filteredAgents: [mine] });
+    const dialog = await openDetail(mine);
+
+    expect(dialog?.querySelector('[data-testid="agent-detail-remote-device"]')?.textContent)
+      .toBe('agentsOverview.assistant.mine');
+    expect(dialog?.querySelector('[data-testid="agent-detail-remote-availability"]')?.textContent)
+      .toBe('agentsOverview.remote.available');
   });
 });

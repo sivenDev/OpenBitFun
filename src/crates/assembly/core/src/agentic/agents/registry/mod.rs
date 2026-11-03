@@ -1,4 +1,5 @@
 mod acp_agents;
+mod assistants;
 mod availability;
 mod builtin;
 pub(super) mod catalog;
@@ -6,7 +7,6 @@ mod custom;
 mod custom_watch;
 mod external;
 mod query;
-mod remote_agents;
 mod resolution;
 mod support;
 #[cfg(test)]
@@ -25,6 +25,9 @@ use std::sync::RwLock;
 use std::sync::{Arc, OnceLock};
 
 pub use acp_agents::ExternalAgentHost;
+pub(crate) use assistants::{
+    assistant_category, local_assistant_entries, AssistantCaller, LocalAssistantEntry,
+};
 #[cfg(feature = "external-sources")]
 pub(crate) use external::external_subagent_runtime_key;
 pub use external::{
@@ -32,7 +35,6 @@ pub use external::{
     ExternalSubagentInvocationBinding, ExternalSubagentModelBinding, ExternalSubagentRegistration,
     ExternalSubagentRoute,
 };
-pub(crate) use remote_agents::merge_remote_agents;
 
 /// Full file-backed custom agent definition for editing.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -297,7 +297,9 @@
       "unreachable": "设备无响应",
       "agentUnavailable": "该设备上的智能体当前不可用",
       "device": "位于 {{device}}",
-      "managedOnDevice": "{{device}} 向本设备开放了这个智能体，请在 {{device}} 上修改或关闭。"
+      "managedOnDevice": "{{device}} 向本设备共享了这个助理，请在 {{device}} 上修改或停止共享。",
+      "revoked": "已停止共享",
+      "executorMissing": "对方设备无法执行任务"
     },
     "deleteConfirm": "确定删除自定义智能体「{{name}}」？此操作不可恢复。",
     "deleteSuccess": "已删除「{{name}}」",
@@ -377,6 +379,11 @@
       "permissionsStandard": "标准权限 · 调整访问范围",
       "customizeTools": "调整已选工具",
       "createNamePlaceholder": "例如：资料研究助手"
+    },
+    "assistant": {
+      "mine": "我的助理",
+      "managedHere": "在助理管理中修改这个助理。",
+      "availability": "本设备上的助理随时可用"
     }
   },
   "reviewTeams": {

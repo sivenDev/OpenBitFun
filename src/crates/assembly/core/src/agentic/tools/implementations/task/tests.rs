@@ -2577,16 +2577,16 @@ impl openbitfun_runtime_ports::RemoteAgentDelegationPort for ListedRemoteAgents 
 }
 
 fn remote_descriptor(
-    open_agent_id: &str,
+    assistant_id: &str,
     availability: openbitfun_runtime_ports::RemoteAgentAvailability,
 ) -> openbitfun_runtime_ports::RemoteAgentDescriptor {
     openbitfun_runtime_ports::RemoteAgentDescriptor {
         address: openbitfun_runtime_ports::RemoteAgentAddress {
             device_id: "laptop".to_string(),
-            open_agent_id: open_agent_id.to_string(),
+            assistant_id: assistant_id.to_string(),
         },
         device_name: "Laptop".to_string(),
-        agent_type: "Standard".to_string(),
+        agent_type: format!("assistant:{assistant_id}"),
         display_name: "Helper".to_string(),
         description: None,
         availability,
@@ -2595,7 +2595,7 @@ fn remote_descriptor(
 
 struct RemoteAdmission<'a> {
     context: ToolUseContext,
-    open_agent_id: &'a str,
+    assistant_id: &'a str,
     run_in_background: bool,
     model_override_requested: bool,
     parent_ceiling: openbitfun_runtime_ports::PermissionRuntimeCeiling,
@@ -2605,7 +2605,7 @@ impl RemoteAdmission<'_> {
     fn new() -> Self {
         Self {
             context: test_tool_context("Standard"),
-            open_agent_id: "helper",
+            assistant_id: "helper",
             run_in_background: true,
             model_override_requested: false,
             parent_ceiling: Default::default(),
@@ -2621,7 +2621,7 @@ impl RemoteAdmission<'_> {
             &self.context,
             &openbitfun_runtime_ports::RemoteAgentAddress {
                 device_id: "laptop".to_string(),
-                open_agent_id: self.open_agent_id.to_string(),
+                assistant_id: self.assistant_id.to_string(),
             },
             self.run_in_background,
             super::execution::ExternalAgentAdmissionFacts {
@@ -2637,12 +2637,12 @@ impl RemoteAdmission<'_> {
 }
 
 #[tokio::test]
-async fn remote_agent_admission_requires_an_open_available_agent() {
+async fn shared_assistant_admission_requires_a_shared_available_assistant() {
     use openbitfun_runtime_ports::{RemoteAgentAvailability, RemoteAgentUnavailableReason};
 
     let (unregistered, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
     let error = RemoteAdmission::new().run(&unregistered).await.unwrap_err();
-    assert!(error.contains("this host cannot delegate to other devices"));
+    assert!(error.contains("this host cannot reach assistants on other devices"));
 
     let (coordinator, _) = crate::agentic::coordination::coordinator::tests::test_coordinator();
     coordinator.set_remote_agent_port(Arc::new(ListedRemoteAgents(vec![
@@ -2658,21 +2658,26 @@ async fn remote_agent_admission_requires_an_open_available_agent() {
     RemoteAdmission::new()
         .run(&coordinator)
         .await
-        .expect("an open, available remote agent is admitted");
+        .expect("a shared, available assistant is admitted");
 
     let mut closed = RemoteAdmission::new();
-    closed.open_agent_id = "closed";
+    closed.assistant_id = "closed";
     let error = closed.run(&coordinator).await.unwrap_err();
-    assert!(error.contains("remote:laptop/closed is not open to this device"));
+    assert!(error.contains("shared:laptop/closed is not shared with this device"));
 
+    // The call fails for the reason the listing shows.
     let mut offline = RemoteAdmission::new();
-    offline.open_agent_id = "writer";
+    offline.assistant_id = "writer";
     let error = offline.run(&coordinator).await.unwrap_err();
-    assert!(error.contains("is unavailable (Offline): Laptop is offline"));
+    assert!(
+        error
+            .contains("assistant shared:laptop/writer is unavailable (offline): Laptop is offline"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
-async fn remote_agent_admission_keeps_parent_limits_and_never_chains() {
+async fn shared_assistant_admission_keeps_parent_limits_and_share_trust() {
     use openbitfun_runtime_ports::{
         PermissionEffect, PermissionRule, PermissionRuntimeCeiling, RemoteAgentAvailability,
     };
@@ -2708,28 +2713,204 @@ async fn remote_agent_admission_keeps_parent_limits_and_never_chains() {
     let error = review.run(&coordinator).await.unwrap_err();
     assert!(error.contains("not available to review agents"));
 
+    // A task another device delegated here calls assistants only when the
+    // owner fully trusts that share.
     let mut delegated = RemoteAdmission::new();
-    delegated.context.custom_data.insert(
+    mark_delegated(&mut delegated.context, None);
+    let error = delegated.run(&coordinator).await.unwrap_err();
+    assert!(error.contains("this share does not allow calling other assistants"));
+
+    let mut trusted = RemoteAdmission::new();
+    mark_delegated(&mut trusted.context, Some("full"));
+    trusted
+        .run(&coordinator)
+        .await
+        .expect("a fully trusted external task may call a shared assistant");
+}
+
+/// Marks `context` as a turn another device delegated here, under `trust`.
+fn mark_delegated(context: &mut ToolUseContext, trust: Option<&str>) {
+    context.custom_data.insert(
         crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
         serde_json::Value::Bool(true),
     );
-    let error = delegated.run(&coordinator).await.unwrap_err();
-    assert!(error.contains("delegation does not chain across devices"));
+    if let Some(trust) = trust {
+        context.custom_data.insert(
+            crate::service::delegation::DELEGATION_TRUST_CONTEXT_KEY.to_string(),
+            serde_json::Value::String(trust.to_string()),
+        );
+    }
+}
+
+fn assistant_catalog(
+    shared: Vec<openbitfun_runtime_ports::RemoteAgentDescriptor>,
+) -> super::ExternalAgentCatalog {
+    super::ExternalAgentCatalog {
+        executor: None,
+        remote_agents: Some(Arc::new(ListedRemoteAgents(shared))),
+        local_assistants: vec![crate::agentic::agents::LocalAssistantEntry {
+            id: "workspace-writer".to_string(),
+            name: "Writer".to_string(),
+            description: None,
+        }],
+        parent_ceiling: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn the_catalog_lists_assistants_with_their_source_and_unavailable_reason() {
+    use openbitfun_runtime_ports::{RemoteAgentAvailability, RemoteAgentUnavailableReason};
+
+    let catalog = assistant_catalog(vec![
+        remote_descriptor(
+            "writer",
+            RemoteAgentAvailability::Unavailable {
+                reason: RemoteAgentUnavailableReason::Revoked,
+                detail: "Laptop no longer shares this assistant".to_string(),
+            },
+        ),
+        remote_descriptor("helper", RemoteAgentAvailability::Available),
+    ]);
+    let context = test_tool_context("Standard");
+    let agents =
+        AgentExecutionTool::append_external_agents_from(Some(&catalog), &context, Vec::new()).await;
+    let ids: Vec<&str> = agents.iter().map(|agent| agent.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "assistant:workspace-writer",
+            "shared:laptop/helper",
+            "shared:laptop/writer"
+        ]
+    );
+    assert!(agents[0].assistant.as_ref().unwrap().owner.is_none());
+    assert_eq!(
+        agents[1]
+            .assistant
+            .as_ref()
+            .unwrap()
+            .owner
+            .as_ref()
+            .unwrap()
+            .device_name,
+        "Laptop"
+    );
+    assert!(agents[2]
+        .description
+        .contains("Unavailable now: Laptop no longer shares this assistant"));
+
+    let rendered = AgentExecutionTool::format_agent_descriptions(&agents);
+    assert!(rendered.contains("<agent type=\"shared:laptop/writer\">"));
+    assert!(rendered.contains("Unavailable now:"));
+}
+
+#[tokio::test]
+async fn external_tasks_are_offered_assistants_only_under_full_trust() {
+    let catalog = assistant_catalog(vec![remote_descriptor(
+        "helper",
+        openbitfun_runtime_ports::RemoteAgentAvailability::Available,
+    )]);
+    let has_assistants = |agents: &[crate::agentic::agents::AgentInfo]| {
+        agents.iter().any(|agent| agent.assistant.is_some())
+    };
+
+    let mut normal = test_tool_context("Standard");
+    mark_delegated(&mut normal, Some("normal"));
+    let agents =
+        AgentExecutionTool::append_external_agents_from(Some(&catalog), &normal, Vec::new()).await;
+    assert!(!has_assistants(&agents));
+
+    let mut full = test_tool_context("Standard");
+    mark_delegated(&mut full, Some("full"));
+    let agents =
+        AgentExecutionTool::append_external_agents_from(Some(&catalog), &full, Vec::new()).await;
+    assert!(has_assistants(&agents));
+
+    // A restricted parent is offered none, as for every external agent.
+    let review = test_tool_context("DeepReview");
+    let agents =
+        AgentExecutionTool::append_external_agents_from(Some(&catalog), &review, Vec::new()).await;
+    assert!(!has_assistants(&agents));
+}
+
+#[tokio::test]
+async fn local_assistant_admission_refuses_the_caller_itself_and_normal_trust() {
+    let facts = |ceiling| super::execution::ExternalAgentAdmissionFacts {
+        parent_is_swarm: false,
+        model_override_requested: false,
+        parent_ceiling: ceiling,
+    };
+    let open = openbitfun_runtime_ports::PermissionRuntimeCeiling::default();
+
+    let mut normal = test_tool_context("Standard");
+    mark_delegated(&mut normal, None);
+    let error = AgentExecutionTool::ensure_local_assistant_available(
+        &normal,
+        "assistant:workspace-writer",
+        true,
+        facts(&open),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("this share does not allow calling other assistants"));
+
+    let error = AgentExecutionTool::ensure_local_assistant_available(
+        &test_tool_context("Standard"),
+        "assistant:workspace-writer",
+        false,
+        facts(&open),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("runs only in the background"));
+
+    let mut own = test_tool_context("Standard");
+    let full = crate::service::delegation::DelegatedTurnFacts {
+        assistant_workspace: crate::infrastructure::try_get_path_manager_arc()
+            .ok()
+            .map(|paths| {
+                paths
+                    .assistant_workspace_base_dir(None)
+                    .join("workspace-writer")
+            }),
+        tenant_workspace: None,
+        trust: crate::service::delegation::DelegationTrust::Full,
+    };
+    if let Some(root) = full.assistant_workspace.as_ref() {
+        mark_delegated(&mut own, Some("full"));
+        own.custom_data.insert(
+            crate::service::delegation::DELEGATION_ASSISTANT_CONTEXT_KEY.to_string(),
+            serde_json::Value::String(root.to_string_lossy().into_owned()),
+        );
+        let error = AgentExecutionTool::ensure_local_assistant_available(
+            &own,
+            "assistant:workspace-writer",
+            true,
+            facts(&open),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("cannot call itself"), "{error}");
+    }
 }
 
 #[test]
-fn task_description_documents_remote_agent_types() {
+fn task_description_documents_assistant_types() {
     let description = AgentExecutionTool::new().render_description();
-    assert!(description.contains("`remote:<device_id>/<open_agent_id>`"));
+    assert!(description.contains("`assistant:<id>`"));
+    assert!(description.contains("`shared:<device_id>/<assistant_id>`"));
     assert!(description.contains("run_in_background=true"));
 }
 
 #[test]
-fn remote_agents_take_no_task_kind() {
+fn assistants_take_no_task_kind() {
     // Delegated tasks are message tasks; the parameter is gone.
     let error = AgentSpawnTool::task_input(&json!({
         "agent_id": "helper",
-        "agent_type": "remote:laptop/helper",
+        "agent_type": "shared:laptop/helper",
         "prompt": "Summarize the notes",
         "task_kind": "coding",
     }))

@@ -1,3 +1,4 @@
+import type { AgentSource } from '@/infrastructure/api/service-api/CustomAgentAPI';
 /** Agent IDs hidden from the Agents overview UI (not listed, not counted). */
 export const STATIC_HIDDEN_AGENT_IDS = new Set<string>();
 
@@ -49,9 +50,16 @@ export function isAcpExternalAgent(
   return subagent?.executionKind === 'acp';
 }
 
-/** Agents another device of this account opened here; that device manages them. */
-export function isRemoteDeviceAgent(
-  subagent: { executionKind?: string | null } | null | undefined,
-): boolean {
-  return subagent?.executionKind === 'remote';
+/** Where an agent comes from in the Agents list; assistants are their own category. */
+export type AgentListSource = AgentSource | 'assistant';
+
+/**
+ * The list source of an agent: `assistant` for this device's assistants and
+ * the ones other devices share, which are managed in Assistant management.
+ */
+export function agentListSource(
+  agent: { source?: AgentSource | null; subagentSource?: AgentSource | null; assistant?: unknown } | null | undefined,
+): AgentListSource {
+  if (agent?.assistant) return 'assistant';
+  return agent?.source ?? agent?.subagentSource ?? 'builtin';
 }

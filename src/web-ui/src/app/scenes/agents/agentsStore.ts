@@ -30,7 +30,7 @@ type PrimaryAgentEntry = ModeInfo & {
   supportsFollowUp?: never;
   executionKind?: never;
   externalAvailability?: never;
-  remoteAgent?: never;
+  assistant?: never;
 };
 
 /** Invocation roles retain their own metadata instead of fabricating SubagentInfo for a Harness. */
@@ -48,7 +48,7 @@ export const CAPABILITY_COLORS: Record<CapabilityCategory, string> = CAPABILITY_
 
 export type AgentsScenePage = 'home' | 'createAgent';
 export type AgentEditorMode = 'create' | 'edit';
-export type AgentFilterLevel = 'all' | 'builtin' | 'user' | 'project' | 'external';
+export type AgentFilterLevel = 'all' | 'builtin' | 'user' | 'project' | 'external' | 'assistant';
 export type AgentFilterType = 'all' | 'agent' | 'subagent';
 
 interface AgentsStoreState {

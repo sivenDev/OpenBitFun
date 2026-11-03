@@ -2405,8 +2405,8 @@
       "defaultAgentKind": "Sub-agent",
       "externalAgentLabel": "{{clientId}} (external agent)",
       "externalAgentModel": "Chosen by the external agent",
-      "remoteAgentLabel": "{{agent}} (remote agent)",
-      "remoteAgentModel": "Chosen by the remote device",
+      "remoteAgentLabel": "{{agent}} (shared assistant)",
+      "remoteAgentModel": "Chosen by the device that shares it",
       "cancelSession": "Cancel session: {{sessionId}}",
       "waitingConfirm": "Waiting for confirmation",
       "executing": "Executing...",
@@ -2426,7 +2426,9 @@
       "reviewCheckUnavailable": "This additional check could not be completed. The main review can continue.",
       "reviewPartialTimeout": "Timed out after returning partial details",
       "reviewTimedOut": "Timed out",
-      "reviewStopped": "Stopped"
+      "reviewStopped": "Stopped",
+      "assistantLabel": "{{agent}} (my assistant)",
+      "assistantModel": "Set by the assistant itself"
     },
     "taskDetailPanel": {
       "untitled": "Untitled Task",

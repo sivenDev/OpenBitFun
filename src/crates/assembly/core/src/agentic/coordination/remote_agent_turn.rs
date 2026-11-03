@@ -1,6 +1,6 @@
 //! Delegated subagent turns that run as an assistant another device shares.
 //!
-//! A subagent whose agent type is `remote:<deviceId>/<openAgentId>` keeps the
+//! A subagent whose agent type is `shared:<ownerDeviceId>/<assistantId>` keeps the
 //! native background subagent lifecycle (session, cancellation, AgentWait);
 //! only the turn body is replaced. The turn submits a detached dispatch job
 //! to the device (or continues the session's earlier job), observes its event

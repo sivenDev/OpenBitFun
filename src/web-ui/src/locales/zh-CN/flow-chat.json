@@ -2405,8 +2405,8 @@
       "defaultAgentKind": "子代理",
       "externalAgentLabel": "{{clientId}}（外部智能体）",
       "externalAgentModel": "由外部智能体选择",
-      "remoteAgentLabel": "{{agent}}（远程智能体）",
-      "remoteAgentModel": "由远程设备选择",
+      "remoteAgentLabel": "{{agent}}（共享的助理）",
+      "remoteAgentModel": "由共享该助理的设备选择",
       "cancelSession": "取消会话：{{sessionId}}",
       "waitingConfirm": "等待确认",
       "executing": "执行中...",
@@ -2426,7 +2426,9 @@
       "reviewCheckUnavailable": "这项补充检查未能完成，主审核仍可继续。",
       "reviewPartialTimeout": "已超时，但返回了部分详情",
       "reviewTimedOut": "已超时",
-      "reviewStopped": "已停止"
+      "reviewStopped": "已停止",
+      "assistantLabel": "{{agent}}（我的助理）",
+      "assistantModel": "由该助理自己的设置决定"
     },
     "taskDetailPanel": {
       "untitled": "未命名任务",
