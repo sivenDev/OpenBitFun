@@ -44,7 +44,7 @@ export default function DelegatedTaskList({
   workspace: WorkspaceInfo;
   waitingOnly?: boolean;
 }) {
-  const { t } = useI18n('common');
+  const { t, formatDate } = useI18n('common');
   const peerActive = usePeerDeviceModeOptional()?.peerMode?.active === true;
   const enabled = isTauriRuntime() && !peerActive && !workspace.connectionId;
   const [tasks, setTasks] = useState<DelegatedTask[]>([]);
@@ -92,46 +92,89 @@ export default function DelegatedTaskList({
     device: task.source.deviceName,
   });
 
+  // Expanded, the tasks are grouped by the device that sent them, in the
+  // order of each device's newest task; collapsed, each row names its source.
+  const grouped = !waitingOnly;
+  const groups: DelegatedTask[][] = [];
+  if (grouped) {
+    const byDevice = new Map<string, DelegatedTask[]>();
+    for (const task of shown) {
+      const group = byDevice.get(task.source.deviceId);
+      if (group) group.push(task);
+      else {
+        const created = [task];
+        byDevice.set(task.source.deviceId, created);
+        groups.push(created);
+      }
+    }
+  } else {
+    groups.push(shown);
+  }
+  const latest = (group: DelegatedTask[]): string | null => {
+    const times = group
+      .map(task => (task.startedAt ? Date.parse(task.startedAt) : Number.NaN))
+      .filter(time => Number.isFinite(time));
+    if (times.length === 0) return null;
+    return formatDate(new Date(Math.max(...times)), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
+  const renderTask = (task: DelegatedTask) => {
+    const waiting = task.pendingPermissionCount > 0;
+    // Selected like a session row while its session is the one shown.
+    const active = isActive(task);
+    const detail = [
+      t('nav.sessions.delegated.external'),
+      grouped ? null : source(task),
+      waiting ? t('nav.sessions.delegated.waiting', { count: task.pendingPermissionCount }) : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <button
+        key={task.jobId}
+        type="button"
+        className={['openbitfun-nav-panel__inline-item', 'assistant-session-history__delegated-item', waiting && 'is-waiting', active && 'is-active']
+          .filter(Boolean).join(' ')}
+        data-openbitfun-component="sessions-section"
+        data-openbitfun-part="row"
+        data-testid="nav-delegated-task"
+        data-openbitfun-state={active ? 'active' : undefined}
+        aria-current={active ? 'true' : undefined}
+        title={detail}
+        onClick={() => {
+          void openDelegatedTask(task, workspace.rootPath, workspace.id)
+            .then(opened => { if (!opened) notificationService.warning(t('nav.sessions.delegated.unavailable')); })
+            .catch(error => {
+              log.warn('Failed to open a delegated task', { jobId: task.jobId, error });
+              notificationService.warning(t('nav.sessions.delegated.unavailable'));
+            });
+        }}
+      >
+        <span className="assistant-session-history__delegated-title">
+          {task.title || t('nav.sessions.delegated.untitled')}
+        </span>
+        <span className="assistant-session-history__delegated-detail">{detail}</span>
+      </button>
+    );
+  };
+
   return (
     <div
       className="assistant-session-history__delegated"
       data-testid="nav-delegated-tasks"
     >
-      {shown.map(task => {
-        const waiting = task.pendingPermissionCount > 0;
-        // Selected like a session row while its session is the one shown.
-        const active = isActive(task);
-        const detail = [
-          t('nav.sessions.delegated.external'),
-          source(task),
-          waiting ? t('nav.sessions.delegated.waiting', { count: task.pendingPermissionCount }) : null,
+      {groups.map(group => {
+        if (!grouped) return group.map(renderTask);
+        const first = group[0];
+        const time = latest(group);
+        const heading = [
+          source(first),
+          t('nav.sessions.delegated.count', { count: group.length }),
+          time,
         ].filter(Boolean).join(' · ');
         return (
-          <button
-            key={task.jobId}
-            type="button"
-            className={['openbitfun-nav-panel__inline-item', 'assistant-session-history__delegated-item', waiting && 'is-waiting', active && 'is-active']
-              .filter(Boolean).join(' ')}
-            data-openbitfun-component="sessions-section"
-            data-openbitfun-part="row"
-            data-testid="nav-delegated-task"
-            data-openbitfun-state={active ? 'active' : undefined}
-            aria-current={active ? 'true' : undefined}
-            title={detail}
-            onClick={() => {
-              void openDelegatedTask(task, workspace.rootPath, workspace.id)
-                .then(opened => { if (!opened) notificationService.warning(t('nav.sessions.delegated.unavailable')); })
-                .catch(error => {
-                  log.warn('Failed to open a delegated task', { jobId: task.jobId, error });
-                  notificationService.warning(t('nav.sessions.delegated.unavailable'));
-                });
-            }}
-          >
-            <span className="assistant-session-history__delegated-title">
-              {task.title || t('nav.sessions.delegated.untitled')}
-            </span>
-            <span className="assistant-session-history__delegated-detail">{detail}</span>
-          </button>
+          <div key={first.source.deviceId} className="assistant-session-history__delegated-group" data-testid="nav-delegated-group">
+            <span className="assistant-session-history__delegated-heading">{heading}</span>
+            {group.map(renderTask)}
+          </div>
         );
       })}
     </div>

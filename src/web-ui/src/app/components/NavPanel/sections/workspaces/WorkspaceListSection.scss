@@ -1461,6 +1461,21 @@
   }
 }
 
+// One group per device that sent tasks, headed by the device.
+.assistant-session-history__delegated-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.assistant-session-history__delegated-heading {
+  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) 0 30px;
+  overflow: hidden;
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .assistant-session-history__delegated-title,
 .assistant-session-history__delegated-detail {
   max-inline-size: 100%;

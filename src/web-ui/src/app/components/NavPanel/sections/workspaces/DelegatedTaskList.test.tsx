@@ -34,6 +34,7 @@ vi.mock('@/infrastructure/i18n', () => ({
   useI18n: () => ({
     t: (key: string, values?: Record<string, unknown>) =>
       values ? `${key}:${Object.values(values).join('|')}` : key,
+    formatDate: (date: Date) => date.toISOString(),
   }),
 }));
 
@@ -66,10 +67,10 @@ describe('DelegatedTaskList', () => {
   const render = async () => { await act(async () => root.render(<DelegatedTaskList workspace={workspace} />)); };
   const rows = () => Array.from(container.querySelectorAll('[data-testid="nav-delegated-task"]'));
 
-  it('lists the tasks this assistant runs for others, with their source', async () => {
+  it('lists the tasks this assistant runs for others, grouped by the device that sent them', async () => {
     mocks.listTasks.mockResolvedValue([
       task('a', { pendingPermissionCount: 2, source: { deviceId: '4567', fingerprint: 'EF45GH', displayName: 'Bea', deviceName: 'Studio' } }),
-      task('b'),
+      task('b', { startedAt: '2026-11-03T01:00:00Z' }),
       // The runner may spell the directory differently; the assistant type decides.
       task('c', { assistantWorkspace: `/private${ROOT}` }),
       task('other', { agentType: 'assistant:workspace-work', assistantWorkspace: `${ROOT}-work` }),
@@ -77,11 +78,17 @@ describe('DelegatedTaskList', () => {
     await render();
     expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
       .toEqual(['Task a', 'Task b', 'Task c']);
-    expect(rows()[0].textContent).toContain('nav.sessions.delegated.from:Bea');
+    // Each device heads its own tasks with how many and the latest start.
+    const headings = Array.from(container.querySelectorAll('[data-testid="nav-delegated-group"]'))
+      .map(group => group.querySelector('.assistant-session-history__delegated-heading')!.textContent);
+    expect(headings).toEqual([
+      'nav.sessions.delegated.from:Bea|Studio · nav.sessions.delegated.count:1',
+      'nav.sessions.delegated.from:Ann|Laptop · nav.sessions.delegated.count:2 · 2026-11-03T01:00:00.000Z',
+    ]);
+    expect(rows()[0].textContent).not.toContain('nav.sessions.delegated.from');
     expect(rows()[0].textContent).toContain('nav.sessions.delegated.waiting:2');
     expect(rows()[0].classList.contains('is-waiting')).toBe(true);
     expect(rows()[1].classList.contains('is-waiting')).toBe(false);
-    expect(rows()[1].textContent).toContain('nav.sessions.delegated.from:Ann');
 
     // A task opens as its own read-only session.
     mocks.openTask.mockResolvedValue(true);
@@ -114,6 +121,9 @@ describe('DelegatedTaskList', () => {
     await act(async () => root.render(<DelegatedTaskList workspace={workspace} waitingOnly />));
     expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
       .toEqual(['Task a']);
+    // Collapsed, rows are not grouped and each names its source.
+    expect(container.querySelector('[data-testid="nav-delegated-group"]')).toBeNull();
+    expect(rows()[0].textContent).toContain('nav.sessions.delegated.from:Ann');
   });
 
   it('follows reads other surfaces start', async () => {

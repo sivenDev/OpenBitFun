@@ -503,7 +503,8 @@
         "from": "from {{name}} · {{device}}",
         "waiting": "{{count}} awaiting approval",
         "untitled": "Untitled task",
-        "unavailable": "This external task session is no longer available"
+        "unavailable": "This external task session is no longer available",
+        "count": "{{count}} conversations"
       },
       "sharedAssistant": {
         "title": "Shared with you",

@@ -503,7 +503,8 @@
         "from": "来自 {{name}} · {{device}}",
         "waiting": "等待审批 {{count}} 项",
         "untitled": "未命名任务",
-        "unavailable": "这个外部任务的会话已不可用"
+        "unavailable": "这个外部任务的会话已不可用",
+        "count": "{{count}} 个会话"
       },
       "sharedAssistant": {
         "title": "来自共享",
