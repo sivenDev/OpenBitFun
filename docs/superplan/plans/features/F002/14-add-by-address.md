@@ -86,7 +86,10 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-services-integrations --features lan-share lan_share`
 - `cargo test --locked -p openbitfun-core --features lan-share --lib lan_share`
 
-- [ ] 默认端口可用时使用默认端口，占用时退回随机端口；本机地址按规则显示
+- [x] 默认端口可用时使用默认端口，占用时退回随机端口；本机地址按规则显示
+
+  证据（2026-11-03，981ae6aee）：`ChannelConfig.listen_port` 先在全部地址上绑定首选端口，任一失败即整体退回随机端口；`DEFAULT_PORT = 47652`（仓库与 `/etc/services` 中均未占用）；`HostStatus.addresses` 默认端口时只显示地址。`lan_share_contracts` 9 项通过（含首选端口与退回、只凭地址连上未知设备），`lan_share` 单元 18 项通过（含地址解析）。
+  差异：链路本地地址（169.254/16）未接受——通道的监听与准入都只用 RFC 1918（`is_sharing_address`），单独放宽输入会造成能输入却连不上；IPv6 见 Non-Goals。连接新增 `LanError::Unreachable`（TCP 连不上或超时），与「对方不是 OpenBitFun」区分。
 
 ## Task 2: 按地址探测、添加与记住的设备
 
@@ -108,7 +111,10 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-core --features lan-share --lib lan_share`
 - `cargo test --locked -p openbitfun-core --features lan-share,dispatch-store,agent-runtime,ssh-remote,git --test lan_share_flow`
 
-- [ ] 回环测试：关闭 Bonjour 时，使用者按地址探测、添加主人，申请并获准；公钥变化时拒绝；记住的设备在重新打开「发现」时列出；与 Bonjour 发现的同一设备只出现一次
+- [x] 回环测试：关闭 Bonjour 时，使用者按地址探测、添加主人，申请并获准；公钥变化时拒绝；记住的设备在重新打开「发现」时列出；与 Bonjour 发现的同一设备只出现一次
+
+  证据（981ae6aee）：`lan_share_flow::a_device_bonjour_cannot_see_is_added_by_address_and_asked` 覆盖格式、域名、IPv6、公网、本机、无人监听、非 OpenBitFun 七种原因，探测不保存，添加后申请获准，Bonjour 发现同一设备只列一次、Bonjour 丢失后仍列出，重开「发现」仍在，另一身份占用同一地址时显示身份已变化且修改地址被拒，移除后已获得的助理保留。单元测试 `added_device_store`（增改删、读不了不覆盖）与 `browse_state`（去重、地址合并、forget）。
+  差异：记住的地址跟随「最近一次成功连上的地址」更新（`follow_added_device`），而不是专门取 Bonjour 地址——两者在同网段时相同，跨网段时保留真正可达的地址。
 
 ## Task 3: 后台重连
 
@@ -124,7 +130,9 @@ parent: "F002"
 **Verification:**
 - `cargo test --locked -p openbitfun-core --features lan-share,dispatch-store,agent-runtime,ssh-remote,git --test lan_share_flow`
 
-- [ ] 回环测试：主人退出后使用者显示不在线；主人在同一端口重新启动后，不经 Bonjour 自动恢复在线；主人离线期间的撤销在重连后标出
+- [x] 回环测试：主人退出后使用者显示不在线；主人在同一端口重新启动后，不经 Bonjour 自动恢复在线；主人离线期间的撤销在重连后标出
+
+  证据（981ae6aee）：`lan_share_flow::an_owner_that_comes_back_is_reached_again_without_bonjour`（重连间隔测试中 200 ms）。`lan_share_flow` 8 项连续 5 次通过。重连地址依次为 Bonjour、按地址添加的地址、`last_address`；连上后投递待发送的移除并读取目录。
 
 ## Task 4: 桌面端命令与注册表
 
@@ -143,7 +151,9 @@ parent: "F002"
 - `node scripts/generate-interactive-capabilities.mjs --check`、`node --test scripts/interactive-capabilities.test.mjs`
 - `pnpm run check:core-boundaries`
 
-- [ ] 命令与注册表一致，生成物检查通过
+- [x] 命令与注册表一致，生成物检查通过
+
+  证据（981ae6aee）：`api::lan_share_api` 2 项、`remote_surface` 20 项、`capabilities:check`、`interactive-capabilities.test.mjs` 16 项、`check:core-boundaries` 通过；目录 `lan-discover` 证据加入 4 个命令。
 
 ## Task 5: 界面：本机地址、按地址添加与记住的设备
 
@@ -165,7 +175,13 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/app/scenes/profile src/infrastructure/lan-share`
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`、`pnpm run theme:color-audit:all`
 
-- [ ] 按地址添加、核对、出错、记住的设备操作、本机地址显示与 Peer Device Mode 禁用有组件测试
+- [x] 按地址添加、核对、出错、记住的设备操作、本机地址显示与 Peer Device Mode 禁用有组件测试
+
+  证据（de502c034、921a2fb83）：`DiscoverPanel.test.tsx` 新增 4 项（本机地址与设备码、探测后核对设备码才添加、出错一句话、按地址添加的设备修改地址与移除及身份变化），`AssistantShareManageDialog.test.tsx` 新增本机地址 1 项，`NurseryGallery.discover.test.tsx` 2 项（Peer Device Mode 下「发现」禁用、不打开面板）。`src/app/scenes/profile` + `src/infrastructure/lan-share` 共 63 项通过；`type-check:web` 0 错误，`lint:web` 无新增警告，`i18n:audit`、`theme:color-audit:all` 通过。
+  差异：
+  - 查找按钮用「查找」而不是「连接」：RFC「交互设计要点」要求页面不出现「连接」一词。
+  - Peer Device Mode 下不在面板内单独禁用：「发现」入口与共享按钮在对端模式下已禁用（F002-11），按地址添加与本机地址都在它们之内。
+  - 真机前置检查发现：本机到 172.17.9.0/24 的路由经代理 TUN（198.18.0.1），代理先在本地接受连接，再直连对方（对方看到的源地址是 172.16.23.235，属私有地址，可被接受）；对方端口没有监听时，本机看到的是「连上后被关闭」而不是「拒绝连接」，原先会误报为「不是 OpenBitFun」。921a2fb83 把「未发一字即关闭」归为连不上，提示代理、VPN 或防火墙。
 
 ## Task 6: 不同网段两台 Mac 真机验收
 
@@ -181,7 +197,18 @@ parent: "F002"
 **Verification:**
 - 手工：Exit Criteria 第 1 条逐项记录。
 
-- [ ] 不同网段两台 Mac 验收逐项通过，或记录失败与修复
+- [x] 不同网段两台 Mac 验收逐项通过，或记录失败与修复
+
+  证据（2026-11-03，arm64 dmg 由 921a2fb83 构建，sha256 `28d19b35…85ed06b8`；A = 本机隔离数据目录副本，有线 172.16.23.235/22 与 Wi-Fi 172.16.21.153；B = agent002，172.17.9.12/24；两台 Bonjour 互相看不到）：
+  - A 共享「助理」后，共享管理视图显示「本机地址 172.16.21.153 / 172.16.23.235」（各带复制按钮）、「设备码 E2M4Y5」和「其他网段的设备可以在『发现』中输入这个地址添加本机」。
+  - B「发现」→「找不到对方？按地址添加」→ 输入 172.16.23.235 →「查找」：显示「对方设备：zhengxiwan（MacBook-Pro-90）/ 请核对对方屏幕上显示的设备码：E2M4Y5 / 正在共享 1 个助理」，与 A 屏幕一致；「设备码一致，添加」后设备行显示「按地址添加 · 172.16.23.235」与「修改地址」「移除」，B 的 `~/.openbitfun/lan-share/added-devices.json` 记下地址 `172.16.23.235:47652` 与固定公钥。
+  - B 申请「助理」：A 立即弹出确认框（「agent（agent002-Mac-Mini）想使用你的助理『助理』/ 对方设备码 WKQTYK / 允许（57）」），B 显示「等待确认 · 57 秒」；A 允许后 B 显示「已在你的助理列表」，「来自共享」出现「助理 · 来自 zhengxiwan 的设备」。
+  - A 退出：8 秒内 B 的卡片显示「不在线」；A 重新打开（不依赖 Bonjour），约 1 分钟内的下一次检查时 B 已恢复为「来自共享」。
+  - A 在共享管理中移除 B：B 的卡片立即显示「已停止共享」（撤销状态的文案）。
+  - B 输入错误：`8.8.8.88.8.8` →「地址格式不对，请输入类似 172.17.9.12 的地址，可以带端口。」；`8.8.8.8` →「这不是局域网地址，只能添加同一局域网里的设备。」；`172.17.9.99`（无主机）→ 16 秒内「这个地址没有回应。请确认对方已打开 OpenBitFun 并共享了助理；如果开着代理、VPN 或防火墙，可能被它拦截。」。身份变化与「不是 OpenBitFun」两种原因真机上无法安全构造，由 `lan_share_flow::a_device_bonjour_cannot_see_is_added_by_address_and_asked` 覆盖（换钥后设备显示身份变化、探测返回 `identityChanged`；非 OpenBitFun 对端返回 `notOpenBitFun`）。
+  - 反方向：B 共享「助理」（监听 172.17.9.12:47652）；A 经代理 TUN 按地址查找 172.17.9.12，显示「对方设备：agent（agent002-Mac-Mini）/ 设备码 WKQTYK / 正在共享 1 个助理」，添加后申请，B 弹出确认框（对方设备码 E2M4Y5），B 允许后 A 显示「已在你的助理列表」，A 的「来自共享」出现「助理 · 来自 agent 的设备」。代理 TUN 不影响按地址添加。
+  - agent002 打开「发现」时 macOS 弹出「本地网络」权限请求，未作答（系统权限归主人）；按地址添加到其他网段的地址不受该权限影响，全程可用。
+  - 主人追加要求（验收中提出）：申请被允许后直接关闭「发现」，回到「助理」页并显示「来自共享」中的这个助理。797b70a73 实现（RFC D5 同步修改），组件测试覆盖：稍后允许与当场允许都关闭面板、拒绝与打开前已允许的不关闭、「助理」页滚动到「来自共享」。含该提交的 arm64 dmg（sha256 `f162e26d…6d22ddda`）已装到 agent002，真机确认待 agent002 解锁后补记。
 
 ## 风险
 
