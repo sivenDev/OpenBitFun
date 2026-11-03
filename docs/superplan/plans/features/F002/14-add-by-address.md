@@ -2,7 +2,7 @@
 id: "F002-14"
 title: "按地址添加：不同网段的设备按局域网地址添加、核对设备码、记住并自动重连"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "Bonjour 不跨网段。主人看到本机的局域网地址与设备码；使用者在「发现」中输入地址，核对设备码后添加该设备，之后申请、确认、对话、在线状态与推送与 Bonjour 发现的设备一致；添加过的设备记住地址与公钥，在后台自动重连。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-03"
