@@ -1144,10 +1144,31 @@ impl LanShareHost {
             .cloned()
             .ok_or_else(|| "that device is no longer on the local network".to_string())?;
         let key = hex::encode(peer.public_key);
-        let connection = self
+        let connection = match self
             .owner_connection(&key, &peer_addresses(&peer), &peer.public_key)
             .await
-            .map_err(|error| error.to_string())?;
+        {
+            Ok(connection) => connection,
+            Err(error) => {
+                // The Discover list says why, next to the device.
+                let problem = unreachable_owner(error);
+                let status = match &problem {
+                    ShareDispatchError::NeedsUpdate(message) => DeviceStatus::NeedsUpdate {
+                        message: message.clone(),
+                    },
+                    other => DeviceStatus::Unreachable {
+                        message: other.to_string(),
+                    },
+                };
+                self.inner
+                    .browse
+                    .lock()
+                    .expect("browse lock")
+                    .failed(device_id, status);
+                self.emit(EVENT_DISCOVERED, json!({})).await;
+                return Err(problem.to_string());
+            }
+        };
         let mut opened: RequestOpened = from_value(
             connection
                 .call(

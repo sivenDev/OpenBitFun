@@ -59,6 +59,9 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
   const [problem, setProblem] = useState<string | null>(null);
   const [searching, setSearching] = useState(true);
   const [asking, setAsking] = useState<string | null>(null);
+  // Why the last request was not sent. Shown in the panel: a toast would sit
+  // under this dialog until it closes.
+  const [requestProblem, setRequestProblem] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -68,6 +71,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
     if (!open) return undefined;
     let active = true;
     setProblem(null);
+    setRequestProblem(null);
     setSearching(true);
     void lanShareAPI.discoverStart()
       .then((found) => {
@@ -122,6 +126,7 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
     const key = accessKey(device, assistant);
     if (asking) return;
     setAsking(key);
+    setRequestProblem(null);
     try {
       const opened = await lanShareAPI.request(device.deviceId, assistant.id);
       if (opened.granted === true) {
@@ -131,11 +136,17 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
       }
     } catch (error) {
       log.warn('Share request not sent', { deviceId: device.deviceId, assistantId: assistant.id, error: message(error) });
-      notification.error(t('nursery.discover.requestFailed', { reason: message(error) }));
+      await useLanShareStore.getState().refreshDiscovered();
+      // A device that went away says so under its name instead.
+      const now = useLanShareStore.getState().discovered.find((found) => found.publicKey === device.publicKey);
+      if (now?.status.state === 'ready') {
+        setRequestProblem(t('nursery.discover.requestFailed', { reason: message(error) }));
+      }
+      return;
     } finally {
       setAsking(null);
-      void useLanShareStore.getState().refreshDiscovered();
     }
+    void useLanShareStore.getState().refreshDiscovered();
   };
 
   const saveName = async () => {
@@ -214,6 +225,9 @@ const DiscoverPanel: React.FC<DiscoverPanelProps> = ({ open, onClose }) => {
               </span>
             )}
           />
+        ) : null}
+        {requestProblem ? (
+          <Alert tone="error" message={requestProblem} data-testid="discover-request-problem" />
         ) : null}
 
         {devices.length === 0 ? (

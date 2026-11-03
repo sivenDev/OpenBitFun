@@ -190,11 +190,22 @@ describe('discovering shared assistants', () => {
     await click(tiles()[0]);
     expect(mocks.info).toHaveBeenCalledWith('nursery.discover.declined Ann helper 0');
 
-    mocks.request.mockRejectedValueOnce(new Error('that device is no longer on the local network'));
+    // Said in the panel: a toast would sit under the dialog.
+    mocks.request.mockRejectedValueOnce(new Error('the owner is busy'));
     await click(tiles()[0]);
-    expect(mocks.error).toHaveBeenCalledWith(
-      'nursery.discover.requestFailed that device is no longer on the local network',
-    );
+    expect(document.querySelector('[data-testid="discover-request-problem"]')?.textContent)
+      .toContain('nursery.discover.requestFailed the owner is busy');
+    expect(mocks.error).not.toHaveBeenCalled();
+
+    // An owner that went away is said under its name, once.
+    mocks.discovered.mockResolvedValue([
+      device('Ann', [], { state: 'unreachable', message: 'not on the local network' }),
+    ]);
+    mocks.request.mockRejectedValueOnce(new Error('the device sharing this assistant is not on the local network'));
+    await click(tiles()[0]);
+    expect(document.querySelector('[data-testid="discover-request-problem"]')).toBeNull();
+    expect(document.querySelector('[data-testid="discover-device-note"]')?.textContent)
+      .toBe('nursery.discover.unreachable');
   });
 
   it('shows the privacy note and changes the name others see', async () => {

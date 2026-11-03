@@ -280,7 +280,7 @@
       "device": "{{device}} · {{code}}",
       "reading": "正在读取…",
       "needsUpdate": "这台设备的 OpenBitFun 版本与本机不兼容，请把两台设备都更新到最新版本。",
-      "unreachable": "暂时无法访问这台设备，请确认它在同一网络中并已打开 OpenBitFun。",
+      "unreachable": "对方不在线：请确认它和你在同一网络中，并已打开 OpenBitFun。",
       "nothingShared": "这台设备当前没有共享助理。",
       "ask": "申请使用",
       "pending": "等待确认 · {{seconds}} 秒",

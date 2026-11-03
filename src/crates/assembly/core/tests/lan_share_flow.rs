@@ -600,6 +600,17 @@ async fn tasks_are_refused_to_devices_without_access_and_offline_owners_are_repo
     })
     .await;
 
+    // Asking an owner that went away says so, and the Discover list shows it.
+    let refused = user.request(&owner_id, "workspace").await.unwrap_err();
+    assert!(refused.contains("not on the local network"), "{refused}");
+    let devices = user.discovered();
+    assert!(
+        matches!(devices[0].status, DeviceStatus::Unreachable { .. }),
+        "{:?}",
+        devices[0].status
+    );
+    assert!(devices[0].assistants.is_empty());
+
     user.discover_stop().await;
     user.shutdown().await;
 }

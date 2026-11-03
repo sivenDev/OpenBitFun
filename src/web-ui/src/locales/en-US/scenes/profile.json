@@ -280,7 +280,7 @@
       "device": "{{device}} · {{code}}",
       "reading": "Reading…",
       "needsUpdate": "This device runs a version of OpenBitFun that does not work with yours. Update both devices to the latest version.",
-      "unreachable": "This device cannot be reached right now. Check that it is on the same network and OpenBitFun is open.",
+      "unreachable": "This device is offline. Check that it is on the same network and OpenBitFun is open.",
       "nothingShared": "This device is not sharing an assistant right now.",
       "ask": "Ask to use",
       "pending": "Waiting · {{seconds}}s",
