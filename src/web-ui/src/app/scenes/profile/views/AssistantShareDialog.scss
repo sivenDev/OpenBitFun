@@ -4,6 +4,18 @@
   gap: var(--openbitfun-space-4);
 }
 
+// One setting and what it asks the owner to confirm.
+.assistant-share-dialog__setting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbitfun-space-3);
+}
+
+// The picker and the stepper line up at the same width.
+.assistant-share-dialog__control {
+  inline-size: 7.5rem;
+}
+
 .assistant-share-manage {
   display: flex;
   flex-direction: column;

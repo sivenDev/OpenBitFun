@@ -103,8 +103,9 @@ describe('sharing an assistant', () => {
     await render();
     await click(byText('nursery.share.dialog.trustFull'));
     expect(document.body.textContent).toContain('nursery.share.dialog.trustFullHint');
+    expect(document.body.textContent).toContain('nursery.share.dialog.fullRiskWarning');
     expect(submit().disabled).toBe(true);
-    await click(byText('nursery.share.dialog.fullRisk'));
+    await click(byText('nursery.share.dialog.fullRiskConfirm'));
     expect(submit().disabled).toBe(false);
     await click(submit());
     expect(mocks.share).toHaveBeenCalledWith(

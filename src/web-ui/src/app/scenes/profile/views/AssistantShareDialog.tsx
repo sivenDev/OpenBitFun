@@ -12,6 +12,8 @@ import {
   DialogHeading,
   DialogTitle,
   Field,
+  FieldGroup,
+  FieldRow,
   NumberInput,
   SegmentedControl,
   Select,
@@ -149,64 +151,84 @@ const AssistantShareDialog: React.FC<AssistantShareDialogProps> = ({
       </DialogHeader>
       <DialogBody data-testid="assistant-share-dialog">
         <div className="assistant-share-dialog" data-openbitfun-component="assistant-share-dialog" data-openbitfun-part="fields">
-        <Field
-          label={t('nursery.share.dialog.trust')}
-          description={t(settings.trust === 'full'
-            ? 'nursery.share.dialog.trustFullHint'
-            : 'nursery.share.dialog.trustNormalHint')}
-        >
-          <SegmentedControl
-            size="sm"
-            value={settings.trust}
-            options={[
-              { value: 'normal', label: t('nursery.share.dialog.trustNormal') },
-              { value: 'full', label: t('nursery.share.dialog.trustFull') },
-            ]}
-            onValueChange={(value) => {
-              setSettings((current) => ({ ...current, trust: value as ShareTrust }));
-              setFullRiskAccepted(false);
-            }}
-          />
-        </Field>
-        {turningFull ? (
-          <Checkbox
-            checked={fullRiskAccepted}
-            onCheckedChange={setFullRiskAccepted}
-            label={t('nursery.share.dialog.fullRisk')}
-            data-testid="assistant-share-full-risk"
-          />
-        ) : null}
-        <Field label={t('nursery.share.dialog.retention')}>
-          <Select
-            size="sm"
-            value={String(settings.sessionRetentionDays)}
-            options={RETENTION_DAY_CHOICES.map((days) => ({
-              value: String(days),
-              label: t('nursery.share.dialog.retentionDays', { count: days }),
-            }))}
-            onValueChange={(value) => setSettings((current) => ({
-              ...current,
-              sessionRetentionDays: Number(value),
-            }))}
-          />
-        </Field>
-        <Field
-          label={t('nursery.share.dialog.concurrency')}
-          description={t('nursery.share.dialog.concurrencyHint')}
-        >
-          <NumberInput
-            size="sm"
-            variant="stepper"
-            min={1}
-            max={MAX_CONCURRENT_TASKS}
-            step={1}
-            value={settings.maxConcurrentTasks}
-            onValueChange={(value) => setSettings((current) => ({
-              ...current,
-              maxConcurrentTasks: Math.min(MAX_CONCURRENT_TASKS, Math.max(1, Math.round(value))),
-            }))}
-          />
-        </Field>
+        <FieldGroup appearance="subtle">
+          <FieldRow padding="md">
+            <div className="assistant-share-dialog__setting" data-openbitfun-component="assistant-share-dialog" data-openbitfun-part="setting">
+              <Field
+                orientation="horizontal"
+                label={t('nursery.share.dialog.trust')}
+                description={t(settings.trust === 'full'
+                  ? 'nursery.share.dialog.trustFullHint'
+                  : 'nursery.share.dialog.trustNormalHint')}
+              >
+                <SegmentedControl
+                  size="sm"
+                  value={settings.trust}
+                  options={[
+                    { value: 'normal', label: t('nursery.share.dialog.trustNormal') },
+                    { value: 'full', label: t('nursery.share.dialog.trustFull') },
+                  ]}
+                  onValueChange={(value) => {
+                    setSettings((current) => ({ ...current, trust: value as ShareTrust }));
+                    setFullRiskAccepted(false);
+                  }}
+                />
+              </Field>
+              {turningFull ? (
+                <Alert
+                  tone="warning"
+                  message={t('nursery.share.dialog.fullRiskWarning')}
+                  description={(
+                    <Checkbox
+                      checked={fullRiskAccepted}
+                      onCheckedChange={setFullRiskAccepted}
+                      label={t('nursery.share.dialog.fullRiskConfirm')}
+                      data-testid="assistant-share-full-risk"
+                    />
+                  )}
+                />
+              ) : null}
+            </div>
+          </FieldRow>
+          <FieldRow padding="md">
+            <Field orientation="horizontal" label={t('nursery.share.dialog.retention')}>
+              <Select
+                size="sm"
+                className="assistant-share-dialog__control"
+                value={String(settings.sessionRetentionDays)}
+                options={RETENTION_DAY_CHOICES.map((days) => ({
+                  value: String(days),
+                  label: t('nursery.share.dialog.retentionDays', { count: days }),
+                }))}
+                onValueChange={(value) => setSettings((current) => ({
+                  ...current,
+                  sessionRetentionDays: Number(value),
+                }))}
+              />
+            </Field>
+          </FieldRow>
+          <FieldRow padding="md">
+            <Field
+              orientation="horizontal"
+              label={t('nursery.share.dialog.concurrency')}
+              description={t('nursery.share.dialog.concurrencyHint')}
+            >
+              <NumberInput
+                size="sm"
+                variant="stepper"
+                className="assistant-share-dialog__control"
+                min={1}
+                max={MAX_CONCURRENT_TASKS}
+                step={1}
+                value={settings.maxConcurrentTasks}
+                onValueChange={(value) => setSettings((current) => ({
+                  ...current,
+                  maxConcurrentTasks: Math.min(MAX_CONCURRENT_TASKS, Math.max(1, Math.round(value))),
+                }))}
+              />
+            </Field>
+          </FieldRow>
+        </FieldGroup>
         {showExternalAgents ? (
           <Alert
             tone="info"
