@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskToolDisplay } from './TaskToolDisplay';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import type { FlowToolItem, ToolCardConfig } from '../types/flow-chat';
 import flowChatEn from '../../locales/en-US/flow-chat.json';
 
@@ -45,6 +46,9 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => {
     }
     if (key === 'toolCards.taskTool.remoteAgentLabel') {
       return `${options?.agent} (shared assistant)`;
+    }
+    if (key === 'toolCards.taskTool.remoteAgentFromLabel') {
+      return `${options?.agent} (from ${options?.owner}'s device)`;
     }
     if (key === 'toolCards.taskTool.remoteAgentModel') {
       return 'Chosen by the device that shares it';
@@ -510,6 +514,37 @@ describeWithJsdom('TaskToolDisplay', () => {
     expect(text).toContain('helper (shared assistant)');
     expect(text).toContain('Chosen by the device that shares it');
     expect(text).not.toContain('shared:laptop/helper');
+  });
+
+  it('names a shared assistant as this device lists it, with its owner', async () => {
+    useLanShareStore.setState({
+      sharedWithMe: [{
+        owner: {
+          publicKey: 'ab'.repeat(32),
+          deviceId: 'laptop',
+          fingerprint: 'AB23CD',
+          displayName: 'Ann',
+          deviceName: "Ann's Mac",
+        },
+        assistantId: 'helper',
+        name: 'Writer',
+        grantedAt: '2026-11-01T00:00:00Z',
+        state: 'available',
+        online: true,
+      }],
+    });
+    const item = externalAgentTaskItem('remote-child-processing');
+    item.toolCall.input = { ...item.toolCall.input, subagent_type: 'shared:laptop/helper' };
+    try {
+      await act(async () => root.render(
+        <TaskToolDisplay toolItem={item} config={config} sessionId="parent-session" />,
+      ));
+      const text = await previewText();
+      expect(text).toContain("Writer (from Ann's device)");
+      expect(text).not.toContain('helper (shared assistant)');
+    } finally {
+      useLanShareStore.setState({ sharedWithMe: [] });
+    }
   });
 
   it('opens the external agent child session from its task card', async () => {

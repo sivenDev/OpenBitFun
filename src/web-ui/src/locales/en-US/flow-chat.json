@@ -2406,6 +2406,7 @@
       "externalAgentLabel": "{{clientId}} (external agent)",
       "externalAgentModel": "Chosen by the external agent",
       "remoteAgentLabel": "{{agent}} (shared assistant)",
+      "remoteAgentFromLabel": "{{agent}} (from {{owner}}'s device)",
       "remoteAgentModel": "Chosen by the device that shares it",
       "cancelSession": "Cancel session: {{sessionId}}",
       "waitingConfirm": "Waiting for confirmation",

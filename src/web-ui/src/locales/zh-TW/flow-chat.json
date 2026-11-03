@@ -2406,6 +2406,7 @@
       "externalAgentLabel": "{{clientId}}（外部智能體）",
       "externalAgentModel": "由外部智能體選擇",
       "remoteAgentLabel": "{{agent}}（共享的助理）",
+      "remoteAgentFromLabel": "{{agent}}（來自 {{owner}} 的裝置）",
       "remoteAgentModel": "由共享該助理的裝置選擇",
       "cancelSession": "取消會話：{{sessionId}}",
       "waitingConfirm": "等待確認",

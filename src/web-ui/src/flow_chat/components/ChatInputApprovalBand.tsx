@@ -36,7 +36,8 @@ import type {
 import { PERMISSION_ACTION_LABEL_KEYS, permissionActionLabel } from '@/shared/utils/permissionActionLabels';
 import { useCopyTextAction } from '../hooks/useCopyTextAction';
 import { CopyableTextPreview } from './CopyableTextPreview';
-import { remoteAgentFromAgentType } from '../utils/remoteAgent';
+import { remoteAgentFromAgentType, sharedAssistantNames } from '../utils/remoteAgent';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import './ChatInputApprovalBand.scss';
 
 export interface ChatInputApprovalBandProps {
@@ -155,8 +156,13 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
     || request.action === 'custom_tool'
     || !PERMISSION_ACTION_LABEL_KEYS[request.action];
   const remoteOwner = remoteAgentFromAgentType(request.delegation?.subagentType);
+  const remoteNames = remoteOwner
+    ? sharedAssistantNames(remoteOwner, useLanShareStore.getState().sharedWithMe)
+    : null;
   const ownerLabel = remoteOwner
-    ? t('toolCards.taskTool.remoteAgentLabel', { agent: remoteOwner.assistantId })
+    ? remoteNames
+      ? t('toolCards.taskTool.remoteAgentFromLabel', { agent: remoteNames.name, owner: remoteNames.owner })
+      : t('toolCards.taskTool.remoteAgentLabel', { agent: remoteOwner.assistantId })
     : request.delegation
       ? t('permission.subagentOwner', { subagent: request.delegation.subagentType })
       : showSourceIdentity ? request.source.identity : undefined;

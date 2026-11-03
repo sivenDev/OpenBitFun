@@ -28,7 +28,14 @@ import {
   subagentTurnAwaitsApproval,
 } from '../utils/subagentProjection';
 import { acpClientIdFromAgentType } from '../utils/acpSession';
-import { localAssistantFromAgentType, remoteAgentFromAgentType } from '../utils/remoteAgent';
+import {
+  localAssistantFromAgentType,
+  localAssistantName,
+  remoteAgentFromAgentType,
+  sharedAssistantNames,
+} from '../utils/remoteAgent';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { sessionLineageLifecycleForSession } from '../utils/sessionLineage';
 import {
   SubagentAvatar,
@@ -392,6 +399,7 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
   const stableAgentType = readStringValue(linkedSubagentSession?.mode)
     || readStringValue(linkedSubagentSession?.config?.agentType)
     || stableSubagentType;
+  const sharedWithMe = useLanShareStore((state) => state.sharedWithMe);
   const { taskSummaryLine, taskAgentTypeLabel, taskDesc } = useMemo(() => {
     const desc =
       (taskInput?.description || '').trim() || t('toolCards.taskDetailPanel.untitled');
@@ -403,9 +411,15 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
     if (externalClientId) {
       agentTypeLabel = t('toolCards.taskTool.externalAgentLabel', { clientId: externalClientId });
     } else if (remoteAgent) {
-      agentTypeLabel = t('toolCards.taskTool.remoteAgentLabel', { agent: remoteAgent.assistantId });
+      // The folder id is all the address carries; show the name and owner
+      // this device lists the assistant under once that list is read.
+      const names = sharedAssistantNames(remoteAgent, sharedWithMe);
+      agentTypeLabel = names
+        ? t('toolCards.taskTool.remoteAgentFromLabel', { agent: names.name, owner: names.owner })
+        : t('toolCards.taskTool.remoteAgentLabel', { agent: remoteAgent.assistantId });
     } else if (localAssistant) {
-      agentTypeLabel = t('toolCards.taskTool.assistantLabel', { agent: localAssistant });
+      const name = localAssistantName(localAssistant, workspaceManager.getState().assistantWorkspaces);
+      agentTypeLabel = t('toolCards.taskTool.assistantLabel', { agent: name ?? localAssistant });
     } else if (raw && raw !== 'Not provided') {
       const rc = taskInput?.isReviewCoverageTask ? null : taskInput?.reviewerContext;
       agentTypeLabel = taskInput?.isReviewCoverageTask
@@ -428,7 +442,7 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
       taskAgentTypeLabel: agentTypeLabel,
       taskDesc: desc,
     };
-  }, [taskInput, t, tAgents]);
+  }, [sharedWithMe, taskInput, t, tAgents]);
 
   const openTaskDetailPanel = useCallback(
     (e: React.MouseEvent) => {

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { localAssistantFromAgentType, remoteAgentFromAgentType } from './remoteAgent';
+import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
+import type { WorkspaceInfo } from '@/shared/types';
+import {
+  localAssistantFromAgentType,
+  localAssistantName,
+  remoteAgentFromAgentType,
+  sharedAssistantNames,
+} from './remoteAgent';
 
 describe('remoteAgentFromAgentType', () => {
   it('splits the owner device and assistant on the last separator', () => {
@@ -23,5 +30,32 @@ describe('localAssistantFromAgentType', () => {
     for (const value of ['assistant:', 'shared:laptop/helper', 'Standard', undefined]) {
       expect(localAssistantFromAgentType(value)).toBeNull();
     }
+  });
+});
+
+describe('assistant names', () => {
+  const shared = (deviceId: string, assistantId: string, name: string): SharedWithMe => ({
+    owner: { publicKey: 'ab', deviceId, fingerprint: 'AB23CD', displayName: 'Ann', deviceName: "Ann's Mac" },
+    assistantId,
+    name,
+    grantedAt: '2026-11-01T00:00:00Z',
+    state: 'available',
+    online: true,
+  });
+
+  it('finds a shared assistant by owner device and folder id', () => {
+    const list = [shared('desk', 'helper', 'Other'), shared('laptop', 'helper', 'Writer')];
+    expect(sharedAssistantNames({ deviceId: 'laptop', assistantId: 'helper' }, list))
+      .toEqual({ name: 'Writer', owner: 'Ann' });
+    expect(sharedAssistantNames({ deviceId: 'laptop', assistantId: 'gone' }, list)).toBeNull();
+    expect(sharedAssistantNames({ deviceId: 'laptop', assistantId: 'helper' }, [])).toBeNull();
+  });
+
+  it('finds a local assistant by its folder, never a remote workspace', () => {
+    const local = { rootPath: '/home/me/.openbitfun/personal_assistant/workspace-x', identity: { name: 'Planner' } } as WorkspaceInfo;
+    const remote = { rootPath: '/srv/workspace-y', connectionId: 'ssh-1', identity: { name: 'Remote' } } as WorkspaceInfo;
+    expect(localAssistantName('workspace-x', [remote, local])).toBe('Planner');
+    expect(localAssistantName('workspace-y', [remote, local])).toBeNull();
+    expect(localAssistantName('workspace-x', null)).toBeNull();
   });
 });
