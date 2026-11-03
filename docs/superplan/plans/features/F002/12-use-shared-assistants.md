@@ -193,7 +193,17 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-core --features lan-share --lib service::lan_share`
 - `cargo test --locked -p openbitfun-core --features lan-share --test lan_share_flow`
 
-- [ ] 主人主机停止后使用者端置为不在线，重新出现后恢复；推送触发补收
+- [x] 主人主机停止后使用者端置为不在线，重新出现后恢复；推送触发补收
+  - 证据（2026-11-02）：
+    - 起因：F002-11 Task 7 第一轮验收中，关闭「发现」后主人通道被关闭，撤销推送 `delivered=false`，使用者看不到撤销。因此本任务提前到 Task 3 之前完成。
+    - `host.rs`：Bonjour 浏览改为两个理由之一即运行，即「发现」面板打开，或有可用的来自共享的助理（`keep`）。启动时与来自共享的列表每次变化后同步一次。面板关闭时，若仍需保持，只关闭既无进行中申请、又不属于来自共享助理主人的通道；后台只连接这些主人，其他设备等面板打开时再读目录。面板打开时重读所有已发现设备的目录。通道打开或关闭（`LanConnection::closed()`）都会发出 `lan_share://shared_with_me`；`shared_with_me_now()` 给每个条目带上 `online`。
+    - 桌面端 `lan_share_shared_with_me` 返回带 `online` 的条目；Web UI `SharedWithMe.online`，卡片在主人不可达时显示「不在线」；`LanShareAPI.onJobUpdated` 订阅 `lan_share://job_updated`，供 Task 3 的对话界面补收。
+    - 桌面端日志把 `mdns_sd` 限到 INFO：验收中其 DEBUG 约每 3 分钟写满 10 MB，在「保留 2 个备份」的轮转下把有用日志挤掉。
+    - 测试：新增回环测试 `the_owner_of_an_assistant_shared_with_this_device_stays_in_reach`，覆盖面板关闭后撤销仍送达、无可用助理后放开通道、主人退出后变为不在线并发出事件。`cargo test --locked -p openbitfun-core --features lan-share,dispatch-store,agent-runtime,ssh-remote,git --test lan_share_flow` 6 项，连续 5 次通过；`--features lan-share --lib lan_share` 15 项通过；`cargo test --locked -p openbitfun-desktop --lib api::lan_share_api` 2 项通过；Web UI 相关 11 个文件 61 项通过（含「不在线」卡片测试）；`type-check:web`、`lint:web`（0 错误）、`i18n:audit`、`theme:color-audit:all`、`check:core-boundaries` 通过。
+  - 与计划的差异：
+    - 不新增 `lan_share://presence` 事件与命令：在线状态作为来自共享条目的 `online` 字段，随已有的 `lan_share://shared_with_me` 事件刷新，少一个命令及其注册表行。
+    - 在线由到主人的通道是否打开决定：Bonjour `Lost` 只更新发现列表，通道仍在时不置为不在线；主人退出时通道关闭，随即置为不在线。主人重新出现时 `Found` 会重新连接并读目录，读目录同时补上离线期间的撤销。
+    - 计划的验证命令 `--features lan-share --test lan_share_flow` 编译不了该测试，需要 `lan-share,dispatch-store,agent-runtime,ssh-remote,git`（与 Task 1 记录相同）。
 
 ## Task 5: 两台 Mac 真机验收
 

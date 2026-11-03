@@ -236,10 +236,27 @@ struct Inner {
     owners: Mutex<HashMap<String, LanConnection>>,
     my_requests: Mutex<HashMap<String, MyRequest>>,
     browse: Mutex<BrowseState>,
+    /// Whether Bonjour browsing runs: for the Discover panel, or to keep in
+    /// touch with the owners of assistants shared with this device.
     browsing: AtomicBool,
+    /// Whether the Discover panel is open.
+    panel: AtomicBool,
+    /// Whether an assistant shared with this device can be used, so its
+    /// owner is looked for and its channel kept in the background.
+    keep: AtomicBool,
     browser: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Owner side: jobs other devices started that are watched for news.
     watched_jobs: Mutex<HashSet<String>>,
+}
+
+/// An assistant shared with this device, and whether its owner can be
+/// reached now.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedWithMeNow {
+    #[serde(flatten)]
+    pub assistant: SharedWithMe,
+    pub online: bool,
 }
 
 /// The LAN share host. Clones share one host.
@@ -269,6 +286,8 @@ impl LanShareHost {
                 my_requests: Mutex::new(HashMap::new()),
                 browse: Mutex::new(BrowseState::default()),
                 browsing: AtomicBool::new(false),
+                panel: AtomicBool::new(false),
+                keep: AtomicBool::new(false),
                 browser: Mutex::new(None),
                 watched_jobs: Mutex::new(HashSet::new()),
             }),
@@ -276,6 +295,7 @@ impl LanShareHost {
         if let Err(error) = host.reconcile().await {
             warn!("LAN sharing not started: {}", error);
         }
+        host.sync_background().await;
         Ok(host)
     }
 
@@ -367,7 +387,9 @@ impl LanShareHost {
 
     /// Stops listening, advertising and browsing, and closes every channel.
     pub async fn shutdown(&self) {
-        self.discover_stop().await;
+        self.inner.panel.store(false, Ordering::SeqCst);
+        self.inner.keep.store(false, Ordering::SeqCst);
+        self.stop_browser().await;
         if let Some(listener) = self.inner.listener.lock().await.take() {
             listener.shutdown();
         }
@@ -896,8 +918,31 @@ impl LanShareHost {
     /// Opens the Discover session: browses the local network and reads the
     /// catalog of each sharing device found. Returns what is known so far.
     pub async fn discover_start(&self) -> Result<Vec<DiscoveredDevice>, String> {
+        self.inner.panel.store(true, Ordering::SeqCst);
+        if let Err(error) = self.start_browser() {
+            self.inner.panel.store(false, Ordering::SeqCst);
+            return Err(error);
+        }
+        // Devices found in the background are read now, and the others again:
+        // the panel shows where this device stands today.
+        let peers = self
+            .inner
+            .browse
+            .lock()
+            .expect("browse lock")
+            .readable_peers();
+        for peer in peers {
+            let host = self.clone();
+            tokio::spawn(async move { host.read_catalog(&peer).await });
+        }
+        info!("LAN sharing discovery started");
+        Ok(self.discovered())
+    }
+
+    /// Starts Bonjour browsing unless it runs.
+    fn start_browser(&self) -> Result<(), String> {
         if self.inner.browsing.swap(true, Ordering::SeqCst) {
-            return Ok(self.discovered());
+            return Ok(());
         }
         if self.inner.options.bonjour {
             let mut browser = match self
@@ -927,12 +972,12 @@ impl LanShareHost {
             });
             *self.inner.browser.lock().expect("browser lock") = Some(task);
         }
-        info!("LAN sharing discovery started");
-        Ok(self.discovered())
+        debug!("LAN sharing browsing started");
+        Ok(())
     }
 
-    /// Closes the Discover session. Channels kept for an open request stay.
-    pub async fn discover_stop(&self) {
+    /// Stops Bonjour browsing and closes the channels no request waits on.
+    async fn stop_browser(&self) {
         if !self.inner.browsing.swap(false, Ordering::SeqCst) {
             return;
         }
@@ -940,6 +985,13 @@ impl LanShareHost {
             task.abort();
         }
         self.inner.browse.lock().expect("browse lock").clear();
+        self.close_idle_owners(&HashSet::new()).await;
+        debug!("LAN sharing browsing stopped");
+    }
+
+    /// Closes the channels to owners that no request waits on and that are
+    /// not in `kept`.
+    async fn close_idle_owners(&self, kept: &HashSet<String>) {
         let waiting: Vec<String> = self
             .inner
             .my_requests
@@ -952,7 +1004,7 @@ impl LanShareHost {
             let mut owners = self.inner.owners.lock().expect("owners lock");
             let idle: Vec<String> = owners
                 .keys()
-                .filter(|key| !waiting.contains(key))
+                .filter(|key| !waiting.contains(key) && !kept.contains(*key))
                 .cloned()
                 .collect();
             idle.iter().filter_map(|key| owners.remove(key)).collect()
@@ -960,7 +1012,77 @@ impl LanShareHost {
         for connection in closing {
             connection.close().await;
         }
+    }
+
+    /// Closes the Discover session. Channels kept for an open request stay,
+    /// and so does what keeps this device in touch with the owners of
+    /// assistants shared with it.
+    pub async fn discover_stop(&self) {
+        if !self.inner.panel.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        if self.inner.keep.load(Ordering::SeqCst) {
+            let kept = self.kept_owners().await;
+            self.close_idle_owners(&kept).await;
+        } else {
+            self.stop_browser().await;
+        }
         info!("LAN sharing discovery stopped");
+    }
+
+    /// The owners of the assistants shared with this device that it can use.
+    async fn kept_owners(&self) -> HashSet<String> {
+        match self.inner.options.shared_with_me.assistants().await {
+            Ok(assistants) => assistants
+                .into_iter()
+                .filter(|assistant| assistant.state == SharedWithMeState::Available)
+                .map(|assistant| assistant.owner.public_key.to_ascii_lowercase())
+                .collect(),
+            Err(error) => {
+                warn!("Assistants shared with this device not read: {}", error);
+                HashSet::new()
+            }
+        }
+    }
+
+    /// Browses in the background while an assistant shared with this device
+    /// can be used, and stops when none can and the panel is closed.
+    async fn sync_background(&self) {
+        let keep = !self.kept_owners().await.is_empty();
+        let was = self.inner.keep.swap(keep, Ordering::SeqCst);
+        if keep {
+            if let Err(error) = self.start_browser() {
+                warn!("LAN sharing cannot look for owners: {}", error);
+            }
+        } else if was && !self.inner.panel.load(Ordering::SeqCst) {
+            self.stop_browser().await;
+        }
+    }
+
+    /// The list of assistants shared with this device changed.
+    async fn shared_with_me_changed(&self) {
+        self.emit(EVENT_SHARED_WITH_ME, json!({})).await;
+        self.sync_background().await;
+    }
+
+    /// Whether this device has an open channel to the owner with `owner_key`.
+    pub fn owner_online(&self, owner_key: &str) -> bool {
+        self.open_owner_connection(&owner_key.to_ascii_lowercase())
+            .is_some()
+    }
+
+    /// The assistants shared with this device, with whether each owner can
+    /// be reached now.
+    pub async fn shared_with_me_now(&self) -> Result<Vec<SharedWithMeNow>, String> {
+        Ok(self
+            .shared_with_me()
+            .await?
+            .into_iter()
+            .map(|assistant| SharedWithMeNow {
+                online: self.owner_online(&assistant.owner.public_key),
+                assistant,
+            })
+            .collect())
     }
 
     /// The devices and assistants the Discover session found.
@@ -968,8 +1090,8 @@ impl LanShareHost {
         self.inner.browse.lock().expect("browse lock").devices()
     }
 
-    /// Applies a discovery change, as Bonjour reports it. Ignored outside a
-    /// Discover session.
+    /// Applies a discovery change, as Bonjour reports it. Ignored while this
+    /// device does not browse.
     pub async fn observe(&self, event: DiscoveryEvent) {
         if !self.inner.browsing.load(Ordering::SeqCst) {
             return;
@@ -986,7 +1108,14 @@ impl LanShareHost {
                     .expect("browse lock")
                     .found(peer.clone());
                 self.emit(EVENT_DISCOVERED, json!({})).await;
-                if read {
+                // Outside the panel only the owners of assistants shared with
+                // this device are reached.
+                let wanted = self.inner.panel.load(Ordering::SeqCst)
+                    || self
+                        .kept_owners()
+                        .await
+                        .contains(&hex::encode(peer.public_key));
+                if read && wanted {
                     let host = self.clone();
                     tokio::spawn(async move { host.read_catalog(&peer).await });
                 }
@@ -1119,7 +1248,7 @@ impl LanShareHost {
         }
         .await;
         match result {
-            Ok(true) => self.emit(EVENT_SHARED_WITH_ME, json!({})).await,
+            Ok(true) => self.shared_with_me_changed().await,
             Ok(false) => {}
             Err(error) => warn!(
                 "Assistants shared with this device not updated: device_id={}, error={}",
@@ -1303,7 +1432,7 @@ impl LanShareHost {
             "Shared assistant removed from this device: assistant_id={}, owner_device_id={}",
             assistant_id, removed.owner.device_id
         );
-        self.emit(EVENT_SHARED_WITH_ME, json!({})).await;
+        self.shared_with_me_changed().await;
         let addresses = self.owner_addresses(&owner_key, removed.last_address.as_deref());
         let Some(public_key) = key_bytes(&owner_key) else {
             return Ok(());
@@ -1314,7 +1443,7 @@ impl LanShareHost {
         {
             Ok(connection) => {
                 self.deliver_removals(&owner_key, &connection).await;
-                if self.inner.browsing.load(Ordering::SeqCst) {
+                if self.inner.panel.load(Ordering::SeqCst) {
                     self.refresh_catalog(&connection, None).await;
                 }
             }
@@ -1405,6 +1534,10 @@ impl LanShareHost {
                     return match kept {
                         Ok(connection) => {
                             self.watch_pushes(&connection);
+                            if self.inner.keep.load(Ordering::SeqCst) {
+                                // The owner can be reached again.
+                                self.emit(EVENT_SHARED_WITH_ME, json!({})).await;
+                            }
                             Ok(connection)
                         }
                         Err(open) => {
@@ -1437,6 +1570,29 @@ impl LanShareHost {
                     break;
                 };
                 LanShareHost { inner }.on_push(&owner, push).await;
+            }
+        });
+        // The channel closed: the owner may have gone away.
+        let closing = connection.clone();
+        let owner = closing.peer().clone();
+        let host = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            closing.closed().await;
+            if let Some(inner) = host.upgrade() {
+                let host = LanShareHost { inner };
+                let key = hex::encode(owner.public_key);
+                host.inner
+                    .owners
+                    .lock()
+                    .expect("owners lock")
+                    .retain(|_, open| !open.is_closed());
+                debug!(
+                    "LAN sharing channel to an owner closed: device_id={}",
+                    owner.device_id
+                );
+                if host.kept_owners().await.contains(&key) {
+                    host.emit(EVENT_SHARED_WITH_ME, json!({})).await;
+                }
             }
         });
     }
@@ -1484,7 +1640,7 @@ impl LanShareHost {
                         Err(error) => Err(error),
                     };
                     match added {
-                        Ok(_) => self.emit(EVENT_SHARED_WITH_ME, json!({})).await,
+                        Ok(_) => self.shared_with_me_changed().await,
                         Err(error) => warn!("Granted assistant not recorded: {}", error),
                     }
                     let changed = self.inner.browse.lock().expect("browse lock").set_access(
@@ -1527,12 +1683,12 @@ impl LanShareHost {
                     .mark_revoked(&key, &revoked.assistant_id)
                     .await
                 {
-                    Ok(true) => self.emit(EVENT_SHARED_WITH_ME, json!({})).await,
+                    Ok(true) => self.shared_with_me_changed().await,
                     Ok(false) => {}
                     Err(error) => warn!("Withdrawn assistant not recorded: {}", error),
                 }
                 if let Some(connection) = self.open_owner_connection(&key) {
-                    if self.inner.browsing.load(Ordering::SeqCst) {
+                    if self.inner.panel.load(Ordering::SeqCst) {
                         self.refresh_catalog(&connection, None).await;
                     }
                 }

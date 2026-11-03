@@ -30,8 +30,8 @@ pub use browse::{DeviceStatus, DiscoveredAssistant, DiscoveredDevice};
 #[cfg(feature = "lan-share")]
 pub use host::{
     HostStatus, LanShareHost, LanShareOptions, RequestAnswer, ShareDispatch, ShareDispatchError,
-    ShareRequestView, EVENT_DISCOVERED, EVENT_JOB_UPDATED, EVENT_REQUESTS, EVENT_SHARED,
-    EVENT_SHARED_WITH_ME,
+    ShareRequestView, SharedWithMeNow, EVENT_DISCOVERED, EVENT_JOB_UPDATED, EVENT_REQUESTS,
+    EVENT_SHARED, EVENT_SHARED_WITH_ME,
 };
 pub use shared_assistants::{
     is_share_device_id, share_device_id, BlockedDevice, ShareConfirmations, ShareGrant, SharePeer,

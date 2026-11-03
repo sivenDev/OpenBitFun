@@ -614,3 +614,79 @@ async fn tasks_are_refused_to_devices_without_access_and_offline_owners_are_repo
     user.discover_stop().await;
     user.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_owner_of_an_assistant_shared_with_this_device_stays_in_reach() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let user_dir = tempfile::tempdir().unwrap();
+    let owner = host(owner_dir.path(), Arc::new(Events::default())).await;
+    let user_events = Arc::new(Events::default());
+    let user = host(user_dir.path(), user_events.clone()).await;
+    let user_key = hex::encode(user.identity().public_key());
+    let owner_key = hex::encode(owner.identity().public_key());
+    let owner_id = owner.identity().device_id().to_string();
+    owner
+        .share(
+            "workspace",
+            "Writer",
+            ShareSettings::default(),
+            ShareConfirmations::default(),
+        )
+        .await
+        .unwrap();
+
+    // Granted from the Discover panel, which then closes.
+    user.discover_start().await.unwrap();
+    user.observe(found(&owner).await).await;
+    eventually("the user reads the owner's catalog", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Available)
+    })
+    .await;
+    let request = ask(&user, &owner, &owner_id).await;
+    owner.decide(&request, RequestAnswer::Allow).await.unwrap();
+    eventually("the grant reaches the user", || async {
+        my_state(&user).await == Some(SharedWithMeState::Available)
+    })
+    .await;
+    user.discover_stop().await;
+
+    // The owner stays in reach, and its news still arrives.
+    assert!(user.owner_online(&owner_key));
+    let now = user.shared_with_me_now().await.unwrap();
+    assert!(now[0].online);
+    owner.revoke("workspace", &user_key, false).await.unwrap();
+    eventually(
+        "the withdrawal reaches a user without the panel open",
+        || async { my_state(&user).await == Some(SharedWithMeState::Revoked) },
+    )
+    .await;
+    // Nothing usable is left, so the channel closes.
+    eventually("the user lets the owner go", || async {
+        !user.owner_online(&owner_key)
+    })
+    .await;
+
+    // Granted again; the owner going away shows.
+    user.discover_start().await.unwrap();
+    user.observe(found(&owner).await).await;
+    let request = ask(&user, &owner, &owner_id).await;
+    owner.decide(&request, RequestAnswer::Allow).await.unwrap();
+    eventually("the second grant reaches the user", || async {
+        my_state(&user).await == Some(SharedWithMeState::Available)
+    })
+    .await;
+    user.discover_stop().await;
+    assert!(user.owner_online(&owner_key));
+    let before = user_events.count(EVENT_SHARED_WITH_ME);
+    owner.shutdown().await;
+    eventually("the user sees the owner offline", || async {
+        !user.shared_with_me_now().await.unwrap()[0].online
+    })
+    .await;
+    eventually("the user hears that the owner went away", || async {
+        user_events.count(EVENT_SHARED_WITH_ME) > before
+    })
+    .await;
+
+    user.shutdown().await;
+}

@@ -302,6 +302,7 @@
     "sharedWithMe": {
       "title": "Shared with you",
       "badge": "Shared",
+      "offline": "Offline",
       "from": "From {{name}}'s device",
       "revoked": "No longer shared",
       "revokedHint": "The owner stopped sharing this assistant. You can remove it from your list.",

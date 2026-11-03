@@ -19,7 +19,7 @@ use openbitfun_core::service::lan_share::protocol::RequestOpened;
 use openbitfun_core::service::lan_share::{
     delete_tenant, list_tenants, tenants_root, DiscoveredDevice, HostStatus, LanShareHost,
     LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch, ShareRequestView,
-    ShareSettings, SharedAssistant, SharedWithMe,
+    ShareSettings, SharedAssistant, SharedWithMeNow,
 };
 use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_SHARE_KEY_ARG;
 use serde::{Deserialize, Serialize};
@@ -331,8 +331,8 @@ pub async fn lan_share_request(request: LanShareAskRequest) -> Result<RequestOpe
 }
 
 #[tauri::command]
-pub async fn lan_share_shared_with_me() -> Result<Vec<SharedWithMe>, String> {
-    host()?.shared_with_me().await
+pub async fn lan_share_shared_with_me() -> Result<Vec<SharedWithMeNow>, String> {
+    host()?.shared_with_me_now().await
 }
 
 /// Removes an assistant shared with this device, and this device's records

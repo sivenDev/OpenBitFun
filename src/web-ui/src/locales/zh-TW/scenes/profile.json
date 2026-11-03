@@ -302,6 +302,7 @@
     "sharedWithMe": {
       "title": "來自共享",
       "badge": "來自共享",
+      "offline": "不在線",
       "from": "來自 {{name}} 的裝置",
       "revoked": "已停止共享",
       "revokedHint": "對方已停止共享這個助理，你可以把它從列表中移除。",

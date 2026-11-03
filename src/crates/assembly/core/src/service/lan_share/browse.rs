@@ -103,6 +103,15 @@ impl BrowseState {
         self.peers.remove(device_id)
     }
 
+    /// The devices found whose catalog this device can read.
+    pub fn readable_peers(&self) -> Vec<DiscoveredPeer> {
+        self.peers
+            .values()
+            .filter(|peer| peer.is_compatible())
+            .cloned()
+            .collect()
+    }
+
     pub fn peer(&self, device_id: &str) -> Option<&DiscoveredPeer> {
         self.peers.get(device_id)
     }

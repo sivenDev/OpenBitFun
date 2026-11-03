@@ -134,6 +134,14 @@ export interface SharedWithMe {
   grantedAt: string;
   state: 'available' | 'revoked';
   lastAddress?: string;
+  /** Whether its owner can be reached now. */
+  online: boolean;
+}
+
+/** A job this device started on a shared assistant has news. */
+export interface SharedJobUpdated {
+  ownerKey: string;
+  jobId: string;
 }
 
 export const LAN_SHARE_EVENTS = {
@@ -141,6 +149,7 @@ export const LAN_SHARE_EVENTS = {
   shared: 'lan_share://shared',
   sharedWithMe: 'lan_share://shared_with_me',
   discovered: 'lan_share://discovered',
+  jobUpdated: 'lan_share://job_updated',
 } as const;
 
 async function invoke<T>(command: string, request?: Record<string, unknown>): Promise<T> {
@@ -263,6 +272,10 @@ class LanShareAPI {
 
   onDiscovered(handler: () => void): () => void {
     return api.listen(LAN_SHARE_EVENTS.discovered, handler);
+  }
+
+  onJobUpdated(handler: (payload: SharedJobUpdated) => void): () => void {
+    return api.listen(LAN_SHARE_EVENTS.jobUpdated, handler);
   }
 }
 

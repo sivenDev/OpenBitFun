@@ -40,6 +40,7 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
   const [details, setDetails] = useState(false);
   const [removing, setRemoving] = useState(false);
   const revoked = assistant.state === 'revoked';
+  const offline = !revoked && !assistant.online;
   const source = t('nursery.sharedWithMe.from', { name: assistant.owner.displayName });
 
   const remove = async () => {
@@ -99,8 +100,12 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
             <span className="assistant-card__title-row" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="title">
               <OverflowText className="assistant-card__name">{assistant.name}</OverflowText>
               <span className="shared-assistant-card__badge" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="badge">
-                <StatusPill tone={revoked ? 'warning' : 'info'}>
-                  {revoked ? t('nursery.sharedWithMe.revoked') : t('nursery.sharedWithMe.badge')}
+                <StatusPill tone={revoked ? 'warning' : offline ? 'neutral' : 'info'}>
+                  {revoked
+                    ? t('nursery.sharedWithMe.revoked')
+                    : offline
+                      ? t('nursery.sharedWithMe.offline')
+                      : t('nursery.sharedWithMe.badge')}
                 </StatusPill>
               </span>
             </span>

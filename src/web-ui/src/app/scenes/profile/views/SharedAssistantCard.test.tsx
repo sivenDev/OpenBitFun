@@ -36,6 +36,7 @@ const shared: SharedWithMe = {
   description: 'Drafts and edits',
   grantedAt: '2026-11-02T00:00:00Z',
   state: 'available',
+  online: true,
 };
 
 let root: Root;
@@ -79,6 +80,13 @@ describe('an assistant shared with this device', () => {
     expect(details).toContain('Drafts and edits');
     expect(details).toContain("nursery.sharedWithMe.source Ann Ann's Mac AB23CD");
     expect(details).toContain('nursery.discover.privacy');
+  });
+
+  it('is marked while its owner cannot be reached', async () => {
+    await render({ ...shared, online: false });
+    const card = document.querySelector('[data-testid="shared-assistant-card"]')!;
+    expect(card.textContent).toContain('nursery.sharedWithMe.offline');
+    expect(card.textContent).not.toContain('nursery.sharedWithMe.badge');
   });
 
   it('is marked when the owner stopped sharing it', async () => {

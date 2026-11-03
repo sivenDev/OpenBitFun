@@ -651,6 +651,8 @@ fn configured_log_builder(log_targets: Vec<Target>) -> tauri_plugin_log::Builder
         .level_for("h2", log::LevelFilter::Info)
         .level_for("portable_pty", log::LevelFilter::Info)
         .level_for("russh", log::LevelFilter::Info)
+        // Bonjour traffic of every device on the network, many times a second.
+        .level_for("mdns_sd", log::LevelFilter::Info)
         .level_for("grep_searcher", log::LevelFilter::Warn)
         .targets(log_targets)
         .rotation_strategy(RotationStrategy::KeepSome(2)) // 1 active + 2 backups
