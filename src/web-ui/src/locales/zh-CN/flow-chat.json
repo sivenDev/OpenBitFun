@@ -846,6 +846,17 @@
         "compactRejected": "目标设备未能开始压缩，请稍后重试。",
         "sessionNotReady": "远程任务仍在准备中，请稍后再发送。",
         "submissionUnconfirmed": "暂时无法确认目标是否已接收任务。请稍后检查任务状态。"
+      },
+      "sharedAssistant": {
+        "sending": "正在发给「{{name}}」…",
+        "problems": {
+          "notShared": "「{{name}}」没有共享给你。可以在「发现」中申请使用。",
+          "revoked": "对方已停止共享「{{name}}」。可以在「发现」中重新申请，或把它从助理列表中移除。",
+          "offline": "「{{name}}」所在的设备不在线。等对方打开 OpenBitFun 后再发送。",
+          "needsUpdate": "你和「{{name}}」所在设备的 OpenBitFun 版本不兼容。请把两台设备都更新到最新版本。",
+          "expired": "这个对话已超过保留时间，对方设备上已删除。请开始新对话。",
+          "unavailable": "「{{name}}」现在不能接收任务，请稍后再试。"
+        }
       }
     },
     "harness": {

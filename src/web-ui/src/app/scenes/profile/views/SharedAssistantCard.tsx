@@ -23,6 +23,13 @@ import { confirmDanger } from '@/infrastructure/confirm-dialog';
 import { lanShareAPI, type SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { useNotification } from '@/shared/notification-system';
+import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
+import {
+  forgetSharedAssistantConversations,
+  openSharedAssistantConversation,
+  startSharedAssistantConversation,
+  type SharedAssistantRef,
+} from '@/features/dispatch/sharedAssistantConversation';
 import { createLogger } from '@/shared/utils/logger';
 import './SharedAssistantCard.scss';
 
@@ -33,15 +40,49 @@ interface SharedAssistantCardProps {
   style?: React.CSSProperties;
 }
 
-/** An assistant another device shares with this one, marked with its source. */
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * An assistant another device shares with this one, marked with its source.
+ * Opening it shows the latest conversation with it, or starts one.
+ */
 const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, style }) => {
   const { t, formatDate } = useI18n('scenes/profile');
   const notification = useNotification();
   const [details, setDetails] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const peerActive = usePeerDeviceModeOptional()?.peerMode.active ?? false;
   const revoked = assistant.state === 'revoked';
   const offline = !revoked && !assistant.online;
   const source = t('nursery.sharedWithMe.from', { name: assistant.owner.displayName });
+  const ref: SharedAssistantRef = {
+    ownerDeviceId: assistant.owner.deviceId,
+    assistantId: assistant.assistantId,
+    name: assistant.name,
+  };
+
+  const converse = async (fresh: boolean) => {
+    if (opening) return;
+    setOpening(true);
+    try {
+      const shown = fresh
+        ? await startSharedAssistantConversation(ref)
+        : await openSharedAssistantConversation(ref, !revoked);
+      // Nothing to show: no conversation yet and none can start.
+      if (!shown) setDetails(true);
+    } catch (error) {
+      log.error('Conversation with shared assistant not opened', {
+        assistantId: assistant.assistantId,
+        error: message(error),
+      });
+      notification.error(t('nursery.sharedWithMe.openFailed', { reason: message(error) }));
+    } finally {
+      setOpening(false);
+    }
+  };
 
   const remove = async () => {
     const confirmed = await confirmDanger(
@@ -56,9 +97,10 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
     try {
       await lanShareAPI.remove(assistant.owner.publicKey, assistant.assistantId);
       setDetails(false);
+      await forgetSharedAssistantConversations(ref);
       void useLanShareStore.getState().refreshSharedWithMe();
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = message(error);
       log.error('Shared assistant not removed', { assistantId: assistant.assistantId, error: reason });
       notification.error(t('nursery.sharedWithMe.removeFailed', { reason }));
     } finally {
@@ -80,8 +122,10 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
         <button
           type="button"
           className="assistant-card__main" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="main"
-          onClick={() => setDetails(true)}
+          onClick={() => { if (peerActive) setDetails(true); else void converse(false); }}
           aria-label={`${assistant.name}, ${source}`}
+          aria-busy={opening}
+          data-testid="shared-assistant-open"
         />
         <CardHeader
           align="center"
@@ -118,6 +162,27 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
         />
         <CardFooter align="end" className="assistant-card__footer">
           <span className="assistant-card__footer-actions" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="actions">
+            {revoked ? null : (
+              <Tooltip content={peerActive ? t('nursery.share.peerUnavailable') : t('nursery.sharedWithMe.newConversation')}>
+                <IconButton
+                  size="sm"
+                  aria-label={t('nursery.sharedWithMe.newConversation')}
+                  disabled={peerActive || opening}
+                  onClick={() => { void converse(true); }}
+                  icon={<Icon name="plus" size="sm" aria-hidden="true" />}
+                  data-testid="shared-assistant-new-conversation"
+                />
+              </Tooltip>
+            )}
+            <Tooltip content={t('nursery.sharedWithMe.details')}>
+              <IconButton
+                size="sm"
+                aria-label={t('nursery.sharedWithMe.details')}
+                onClick={() => setDetails(true)}
+                icon={<Icon name="info" size="sm" aria-hidden="true" />}
+                data-testid="shared-assistant-details-open"
+              />
+            </Tooltip>
             <Tooltip content={t('nursery.sharedWithMe.remove')}>
               <IconButton
                 size="sm"
@@ -158,6 +223,11 @@ const SharedAssistantCard: React.FC<SharedAssistantCardProps> = ({ assistant, st
             <p className="shared-assistant-card__meta" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="meta">
               {revoked ? t('nursery.sharedWithMe.revokedHint') : t('nursery.discover.privacy')}
             </p>
+            {peerActive ? (
+              <p className="shared-assistant-card__meta" data-openbitfun-component="shared-assistant-card" data-openbitfun-part="meta">
+                {t('nursery.sharedWithMe.peerUnavailable')}
+              </p>
+            ) : null}
           </DialogBody>
           <DialogFooter>
             <Button size="sm" variant="fill" tone="danger" loading={removing} onClick={() => { void remove(); }}>

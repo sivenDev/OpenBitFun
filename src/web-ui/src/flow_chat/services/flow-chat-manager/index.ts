@@ -32,6 +32,7 @@ export {
   getModelMaxTokens,
   resolveAgentTypeForSessionCreation,
   createChatSession,
+  createSharedAssistantSession,
   hydrateSessionHistoryForDetail,
   preloadHistoricalSessionForOpen,
   switchChatSession,
@@ -56,6 +57,7 @@ export {
 
 export { pendingQueueManager } from './PendingQueueModule';
 export type { EnqueueInput, PendingQueueListener } from './PendingQueueModule';
+export type { SharedAssistantSessionTarget } from './SessionModule';
 
 export {
   shouldProcessEvent,

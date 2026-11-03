@@ -11,6 +11,11 @@
  */
 
 import { useRuntimeStatusStore } from '../store/runtimeStatusStore';
+import {
+  sharedAssistantBlock,
+  useLanShareStore,
+  type SharedAssistantBlock,
+} from '@/infrastructure/lan-share/lanShareStore';
 import type { Session } from '../types/flow-chat';
 import { isAcpFlowSession } from '../utils/acpSession';
 import { resolveSessionDriverId, type SessionDriverId } from './resolve';
@@ -54,6 +59,13 @@ export interface ComposerCapabilities {
   worktreeBaselineLocked: boolean;
   /** Model choice comes from the target's probed model list. */
   targetModelSelection: boolean;
+  /**
+   * A shared assistant's owner decides its model, approvals and workspace,
+   * so the composer offers none of those choices.
+   */
+  ownerDecidesOptions: boolean;
+  /** Why a message cannot go to this shared assistant now, if it cannot. */
+  sharedAssistantBlocked?: SharedAssistantBlock;
 }
 
 export interface ComposerCapabilityInput {
@@ -78,6 +90,14 @@ export function useComposerCapabilities(input: ComposerCapabilityInput): Compose
   const { sessionId, session, hostMasksDispatch, displayAsChild } = input;
   const driverId = resolveSessionDriverId(sessionId ?? '', session);
   const dispatchTransport = !hostMasksDispatch && driverId === 'dispatch';
+  const targetRequest = session?.config.dispatchTargetRequest;
+  const sharedTarget = dispatchTransport && targetRequest?.kind === 'sharedAssistant'
+    ? targetRequest
+    : undefined;
+  const ownerDecidesOptions = sharedTarget !== undefined;
+  const sharedAssistantBlocked = useLanShareStore(state => (sharedTarget
+    ? sharedAssistantBlock(state, sharedTarget.ownerDeviceId, sharedTarget.assistantId)
+    : undefined));
   const threadGoalSupported = sessionSupportsThreadGoal(session);
 
   const transferInFlight = useRuntimeStatusStore(state => {
@@ -112,7 +132,9 @@ export function useComposerCapabilities(input: ComposerCapabilityInput): Compose
     transferInFlight,
     submissionOptionsLocked,
     sessionScopedApproval: dispatchTransport,
-    worktreeBaselineLocked: dispatchTransport,
-    targetModelSelection: dispatchTransport,
+    worktreeBaselineLocked: dispatchTransport && !ownerDecidesOptions,
+    targetModelSelection: dispatchTransport && !ownerDecidesOptions,
+    ownerDecidesOptions,
+    sharedAssistantBlocked,
   };
 }

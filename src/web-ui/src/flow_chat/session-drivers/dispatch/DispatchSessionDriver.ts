@@ -36,6 +36,7 @@ import type {
 import {
   isDispatchJobTerminal,
   isNonLocalDispatchTarget,
+  SHARED_ASSISTANT_JOB_ID_PREFIX,
   type DispatchTarget,
 } from '@/features/dispatch/types';
 import { dispatchApi } from '@/features/dispatch/dispatchApi';
@@ -43,6 +44,7 @@ import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
 import { forgetDispatchTranscript } from '@/features/dispatch/dispatchTranscriptCache';
 import { requestDispatchJobRefresh } from '@/features/dispatch/DispatchJobObserver';
 import { markOptimisticDispatchTurnMetadata } from '@/features/dispatch/optimisticDispatchTurn';
+import { explainSharedAssistantError } from '@/features/dispatch/sharedAssistantProblemText';
 import { openDispatchSessionFile, readDispatchSessionImage, downloadDispatchSessionFile } from '@/features/dispatch/dispatchFileNavigation';
 import { cleanupSaveState } from '../../services/flow-chat-manager/PersistenceModule';
 import { cleanupSessionBuffers } from '../../services/flow-chat-manager/TextChunkModule';
@@ -360,9 +362,12 @@ export const dispatchSessionDriver: SessionDriver = {
     const sessionId =
       globalThis.crypto?.randomUUID?.()
       ?? `dispatch-session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const jobIdPrefix = config.dispatchTargetRequest.kind === 'sharedAssistant'
+      ? SHARED_ASSISTANT_JOB_ID_PREFIX
+      : 'dispatch-';
     const jobId =
       config.dispatchJobId?.trim()
-      || `dispatch-${globalThis.crypto?.randomUUID?.()
+      || `${jobIdPrefix}${globalThis.crypto?.randomUUID?.()
         ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
     const approvalPolicy = config.dispatchApprovalPolicy;
     if (!approvalPolicy) {
@@ -370,20 +375,25 @@ export const dispatchSessionDriver: SessionDriver = {
         i18nService.t('flow-chat:chatInput.dispatch.errors.approvalRequired'),
       );
     }
+    // A conversation with a shared assistant belongs to that assistant, not
+    // to a workspace of this device, and takes no Git baseline.
+    const sharedAssistant = config.dispatchTargetRequest.kind === 'sharedAssistant';
+    const sourceWorkspaceId = sharedAssistant ? undefined : workspaceId ?? config.workspaceId;
+    const sourceWorkspacePath = sharedAssistant ? undefined : workspacePath;
     const resolvedConfig: SessionConfig = {
       ...config,
       // A dispatch projection must not inherit or resolve a controller-side
       // provider. The target selection, when explicit, lives in dispatchModel.
       modelName: undefined,
-      workspaceId: workspaceId ?? config.workspaceId,
-      workspacePath,
-      projectWorkspacePath,
+      workspaceId: sourceWorkspaceId,
+      workspacePath: sourceWorkspacePath,
+      projectWorkspacePath: sharedAssistant ? undefined : projectWorkspacePath,
       dispatchTargetRequest: config.dispatchTargetRequest,
       dispatchTarget,
       dispatchJobId: jobId,
       dispatchApprovalPolicy: approvalPolicy,
-      dispatchIncludeUncommitted: config.dispatchIncludeUncommitted ?? false,
-      dispatchBaseRef: config.dispatchBaseRef?.trim() || 'HEAD',
+      dispatchIncludeUncommitted: sharedAssistant ? false : config.dispatchIncludeUncommitted ?? false,
+      dispatchBaseRef: sharedAssistant ? undefined : config.dispatchBaseRef?.trim() || 'HEAD',
       dispatchJobState: 'submitting',
       dispatchCursor: 0,
     };
@@ -398,7 +408,7 @@ export const dispatchSessionDriver: SessionDriver = {
       sessionName,
       DISPATCH_OBSERVER_MAX_CONTEXT_TOKENS,
       agentType,
-      workspacePath,
+      sourceWorkspacePath,
       remoteConnectionId,
       remoteSshHost,
       titleDescriptor,
@@ -408,8 +418,8 @@ export const dispatchSessionDriver: SessionDriver = {
       sessionId,
       targetRequest: config.dispatchTargetRequest,
       target: dispatchTarget,
-      sourceWorkspacePath: workspacePath,
-      sourceWorkspaceId: resolvedConfig.workspaceId,
+      sourceWorkspacePath,
+      sourceWorkspaceId,
       title: sessionName,
       agentType,
       approvalPolicy,
@@ -699,24 +709,34 @@ export const dispatchSessionDriver: SessionDriver = {
         i18nService.t('flow-chat:chatInput.dispatch.errors.sessionUnavailable'),
       );
     }
+    const dispatchTarget = readySession.config.dispatchTarget;
+    const assistantName = dispatchTarget?.kind === 'sharedAssistant' ? dispatchTarget.displayName : '';
     const dispatchState = readySession.config.dispatchJobState;
     if (dispatchState === 'queued' || dispatchState === 'running') {
       // A turn is already in flight; this message steers it rather than
       // starting another one underneath it. Attachments ride along.
-      await appendToDispatchJob(
-        sessionId,
-        jobId,
-        message,
-        displayMessage,
-        dispatchAttachments(readySession, options?.imageContexts),
-      );
+      try {
+        await appendToDispatchJob(
+          sessionId,
+          jobId,
+          message,
+          displayMessage,
+          dispatchAttachments(readySession, options?.imageContexts),
+        );
+      } catch (error) {
+        throw explainSharedAssistantError(error, assistantName);
+      }
       return 'detached';
     }
     if (dispatchState && isDispatchJobTerminal(dispatchState)) {
       // The previous turn finished. A dispatch session is a conversation, so
       // this starts the next turn against the same target session, worktree,
       // and event log instead of refusing the message.
-      await continueDispatchJob(context, input, jobId);
+      try {
+        await continueDispatchJob(context, input, jobId);
+      } catch (error) {
+        throw explainSharedAssistantError(error, assistantName);
+      }
       return 'detached';
     }
     if (
@@ -755,27 +775,33 @@ export const dispatchSessionDriver: SessionDriver = {
     addSubmittedDialogTurn(context, input.surfaceScope, sessionId, optimisticTurn);
     tracker.createdLocalTurnId = optimisticTurnId;
 
-    const includeUncommitted = readySession.config.dispatchIncludeUncommitted ?? false;
-    const baseRef = readySession.config.dispatchBaseRef?.trim() || 'HEAD';
+    // A shared assistant works in its owner's workspace: no Git baseline.
+    const sharedAssistant = targetRequest.kind === 'sharedAssistant';
+    const includeUncommitted = !sharedAssistant && (readySession.config.dispatchIncludeUncommitted ?? false);
+    const baseRef = sharedAssistant
+      ? undefined
+      : readySession.config.dispatchBaseRef?.trim() || 'HEAD';
     const sourceWorkspacePath = sessionProjectWorkspacePath(readySession);
     const sourceWorkspaceId =
       readySession.workspaceId || readySession.config.workspaceId;
     const transferRoundId = `dispatch-transfer:${jobId}`;
-    // Provisioning is always more than a submit now — a worktree is created,
-    // the target checks out the baseline, and objects may be transferred —
-    // so the transfer label always applies.
+    // Provisioning is more than a submit — a worktree is created, the target
+    // checks out the baseline, and objects may be transferred — so the
+    // transfer label applies. A shared assistant takes only the message.
     showRuntimeStatus({
       sessionId,
       turnId: optimisticTurnId,
       roundId: transferRoundId,
-      label: i18nService.t('flow-chat:chatInput.dispatch.transferInProgress'),
+      label: sharedAssistant
+        ? i18nService.t('flow-chat:chatInput.dispatch.sharedAssistant.sending', { name: assistantName })
+        : i18nService.t('flow-chat:chatInput.dispatch.transferInProgress'),
     });
     let response: Awaited<ReturnType<typeof dispatchApi.submit>>;
     tracker.hostSubmitStarted = true;
     try {
       response = await dispatchApi.submit({
         target: targetRequest,
-        baseRef,
+        ...(baseRef ? { baseRef } : {}),
         includeUncommitted,
         jobId,
         sessionId,
@@ -788,6 +814,8 @@ export const dispatchSessionDriver: SessionDriver = {
         ...(sourceWorkspaceId ? { sourceWorkspaceId } : {}),
         ...(submitAttachments ? { attachments: submitAttachments } : {}),
       });
+    } catch (error) {
+      throw explainSharedAssistantError(error, assistantName);
     } finally {
       clearRuntimeStatusState({
         sessionId,

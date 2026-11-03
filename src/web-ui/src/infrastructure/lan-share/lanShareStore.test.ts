@@ -34,6 +34,7 @@ vi.mock('@/shared/utils/logger', () => ({
 import {
   assistantShareId,
   currentAccess,
+  sharedAssistantBlock,
   secondsLeft,
   shareForWorkspace,
   subscribeLanShare,
@@ -107,5 +108,29 @@ describe('currentAccess', () => {
     const pending = { state: 'pending' as const, requestId: 'r', deadlineMs: 1_000 };
     expect(currentAccess(pending, 5_000)).toBe(pending);
     expect(currentAccess({ state: 'granted' }, 5_000)).toEqual({ state: 'granted' });
+  });
+});
+
+describe('sharedAssistantBlock', () => {
+  const entry = (state: 'available' | 'revoked', online: boolean) => ({
+    owner: { publicKey: 'k', deviceId: 'ann', fingerprint: 'AB23CD', displayName: 'Ann', deviceName: 'Mac' },
+    assistantId: 'writer',
+    name: 'Writer',
+    grantedAt: '2026-11-03T00:00:00Z',
+    state,
+    online,
+  });
+
+  it('does not block before the list is read', () => {
+    expect(sharedAssistantBlock({ sharedWithMe: [], sharedWithMeLoaded: false }, 'ann', 'writer')).toBeUndefined();
+  });
+
+  it('says why a message cannot go to the assistant now', () => {
+    const loaded = (list: ReturnType<typeof entry>[]) => ({ sharedWithMe: list, sharedWithMeLoaded: true });
+    expect(sharedAssistantBlock(loaded([]), 'ann', 'writer')).toBe('notShared');
+    expect(sharedAssistantBlock(loaded([entry('revoked', true)]), 'ann', 'writer')).toBe('revoked');
+    expect(sharedAssistantBlock(loaded([entry('available', false)]), 'ann', 'writer')).toBe('offline');
+    expect(sharedAssistantBlock(loaded([entry('available', true)]), 'ann', 'writer')).toBeUndefined();
+    expect(sharedAssistantBlock(loaded([entry('available', true)]), 'bo', 'writer')).toBe('notShared');
   });
 });

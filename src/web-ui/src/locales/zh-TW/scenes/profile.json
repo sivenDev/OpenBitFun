@@ -350,7 +350,11 @@
       "removeTitle": "移除「{{name}}」？",
       "removeMessage": "它將從你的助理列表中移除，{{owner}} 會收到通知。之後可以在「發現」中重新申請。",
       "removeRevokedMessage": "它將從你的助理列表中移除。",
-      "removeFailed": "無法移除：{{reason}}"
+      "removeFailed": "無法移除：{{reason}}",
+      "newConversation": "新對話",
+      "details": "詳細資訊",
+      "openFailed": "無法開啟對話：{{reason}}",
+      "peerUnavailable": "控制其他裝置時，無法和共享的助理對話。"
     },
     "lanAddress": {
       "label": "本機位址",

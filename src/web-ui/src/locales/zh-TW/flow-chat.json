@@ -846,6 +846,17 @@
         "compactRejected": "目標裝置未能開始壓縮，請稍後重試。",
         "sessionNotReady": "遠端任務仍在準備中，請稍後再傳送。",
         "submissionUnconfirmed": "暫時無法確認目標是否已收到任務。請稍後檢查任務狀態。"
+      },
+      "sharedAssistant": {
+        "sending": "正在傳給「{{name}}」…",
+        "problems": {
+          "notShared": "「{{name}}」沒有共享給你。可以在「發現」中申請使用。",
+          "revoked": "對方已停止共享「{{name}}」。可以在「發現」中重新申請，或把它從助理清單中移除。",
+          "offline": "「{{name}}」所在的裝置不在線。等對方開啟 OpenBitFun 後再傳送。",
+          "needsUpdate": "你和「{{name}}」所在裝置的 OpenBitFun 版本不相容。請把兩台裝置都更新到最新版本。",
+          "expired": "這個對話已超過保留時間，對方裝置上已刪除。請開始新對話。",
+          "unavailable": "「{{name}}」目前無法接收任務，請稍後再試。"
+        }
       }
     },
     "harness": {

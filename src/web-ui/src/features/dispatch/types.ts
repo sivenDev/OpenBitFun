@@ -378,6 +378,9 @@ const SHARED_ASSISTANT_PROBLEM = new RegExp(
  * mark the backend puts on such errors.
  */
 export function sharedAssistantProblem(error: unknown): SharedAssistantProblem | undefined {
+  if (error instanceof Error && 'sharedAssistantProblem' in error) {
+    return (error as Error & { sharedAssistantProblem: SharedAssistantProblem }).sharedAssistantProblem;
+  }
   const message = error instanceof Error ? error.message : String(error ?? '');
   return SHARED_ASSISTANT_PROBLEM.exec(message)?.[1] as SharedAssistantProblem | undefined;
 }

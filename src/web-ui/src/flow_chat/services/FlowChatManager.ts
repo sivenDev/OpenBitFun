@@ -43,6 +43,8 @@ import {
   saveAllInProgressTurns,
   immediateSaveDialogTurn,
   createChatSession as createChatSessionModule,
+  createSharedAssistantSession as createSharedAssistantSessionModule,
+  type SharedAssistantSessionTarget,
   hydrateSessionHistoryForDetail as hydrateSessionHistoryForDetailModule,
   preloadHistoricalSessionForOpen as preloadHistoricalSessionForOpenModule,
   switchChatSession as switchChatSessionModule,
@@ -613,6 +615,11 @@ export class FlowChatManager {
 
   async createChatSession(config: SessionConfig, mode?: string): Promise<string> {
     return createChatSessionModule(this.context, config, mode);
+  }
+
+  /** A conversation with an assistant another device shares; no workspace of this device. */
+  async createSharedAssistantSession(target: SharedAssistantSessionTarget): Promise<string> {
+    return createSharedAssistantSessionModule(this.context, target);
   }
 
   /** User-facing new conversations acquire their host session on first submission. */

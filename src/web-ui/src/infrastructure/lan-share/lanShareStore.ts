@@ -18,6 +18,8 @@ interface LanShareState {
   unavailable: string | null;
   requests: ShareRequest[];
   sharedWithMe: SharedWithMe[];
+  /** Whether `sharedWithMe` has been read since startup. */
+  sharedWithMeLoaded: boolean;
   discovered: DiscoveredDevice[];
   refreshOverview: () => Promise<void>;
   refreshRequests: () => Promise<void>;
@@ -35,6 +37,7 @@ export const useLanShareStore = create<LanShareState>((set) => ({
   unavailable: null,
   requests: [],
   sharedWithMe: [],
+  sharedWithMeLoaded: false,
   discovered: [],
   refreshOverview: async () => {
     try {
@@ -53,7 +56,7 @@ export const useLanShareStore = create<LanShareState>((set) => ({
   },
   refreshSharedWithMe: async () => {
     try {
-      set({ sharedWithMe: await lanShareAPI.sharedWithMe() });
+      set({ sharedWithMe: await lanShareAPI.sharedWithMe(), sharedWithMeLoaded: true });
     } catch (error) {
       log.warn('Assistants shared with this device unavailable', { error: message(error) });
     }
@@ -133,4 +136,24 @@ export function currentAccess(access: ShareAccess, nowMs: number): ShareAccess {
 /** Seconds left until `deadlineMs`, never negative. */
 export function secondsLeft(deadlineMs: number, nowMs: number): number {
   return Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000));
+}
+
+/** Why this device cannot send to a shared assistant now, if it cannot. */
+export type SharedAssistantBlock = 'notShared' | 'revoked' | 'offline';
+
+/**
+ * Whether this device can send to `assistantId` of `ownerDeviceId` now,
+ * from the assistants shared with it. Unknown until the list is read.
+ */
+export function sharedAssistantBlock(
+  state: Pick<LanShareState, 'sharedWithMe' | 'sharedWithMeLoaded'>,
+  ownerDeviceId: string,
+  assistantId: string,
+): SharedAssistantBlock | undefined {
+  if (!state.sharedWithMeLoaded) return undefined;
+  const shared = state.sharedWithMe.find((entry) =>
+    entry.owner.deviceId === ownerDeviceId && entry.assistantId === assistantId);
+  if (!shared) return 'notShared';
+  if (shared.state === 'revoked') return 'revoked';
+  return shared.online ? undefined : 'offline';
 }

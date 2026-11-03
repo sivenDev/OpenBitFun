@@ -350,7 +350,11 @@
       "removeTitle": "Remove “{{name}}”?",
       "removeMessage": "It will be removed from your assistants, and {{owner}} will be told. You can ask again in Discover.",
       "removeRevokedMessage": "It will be removed from your assistants.",
-      "removeFailed": "Could not remove it: {{reason}}"
+      "removeFailed": "Could not remove it: {{reason}}",
+      "newConversation": "New conversation",
+      "details": "Details",
+      "openFailed": "Could not open the conversation: {{reason}}",
+      "peerUnavailable": "Conversations with shared assistants are not available while controlling another device."
     },
     "lanAddress": {
       "label": "This device",

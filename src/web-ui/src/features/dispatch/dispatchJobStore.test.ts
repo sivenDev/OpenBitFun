@@ -551,4 +551,40 @@ describe('dispatchJobStore', () => {
 
     expect(persistedState?.jobs?.['job-1']?.reasoningPreset).toBe('high');
   });
+
+  it('keeps a conversation with a shared assistant, which has no workspace, and drops other unowned records', () => {
+    const target = {
+      kind: 'sharedAssistant' as const,
+      ownerDeviceId: 'owner-device',
+      assistantId: 'writer',
+      displayName: 'Writer',
+    };
+    const record = {
+      promptPreview: 'Hello',
+      title: 'Hello',
+      lastCursor: 0,
+      lastState: 'running' as const,
+      createdAt: '2026-11-03T00:00:00Z',
+      updatedAt: '2026-11-03T00:00:01Z',
+    };
+    dispatchJobStore.getState().mergeOutboundRecords([
+      { ...record, jobId: 'delegation-1', sessionId: 'session-shared', target },
+      {
+        ...record,
+        jobId: 'job-unowned',
+        sessionId: 'session-unowned',
+        target: { kind: 'ssh', connectionId: 'ssh-1', workspacePath: '/repo', displayName: 'build-host' },
+      },
+    ]);
+
+    const jobs = dispatchJobStore.getState().jobs;
+    expect(jobs['job-unowned']).toBeUndefined();
+    expect(jobs['delegation-1']).toMatchObject({
+      sessionId: 'session-shared',
+      target,
+      targetRequest: { kind: 'sharedAssistant', ownerDeviceId: 'owner-device', assistantId: 'writer' },
+      sourceWorkspacePath: undefined,
+      sourceWorkspaceId: undefined,
+    });
+  });
 });

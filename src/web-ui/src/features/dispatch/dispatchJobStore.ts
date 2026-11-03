@@ -261,6 +261,12 @@ function requestFromTarget(target: DispatchTarget): DispatchTargetRequest {
         deviceId: target.deviceId,
         workspacePath: target.workspacePath,
       };
+    case 'sharedAssistant':
+      return {
+        kind: 'sharedAssistant',
+        ownerDeviceId: target.ownerDeviceId,
+        assistantId: target.assistantId,
+      };
     default:
       return { kind: 'local' };
   }
@@ -380,7 +386,13 @@ export const useDispatchJobStore = create<DispatchJobStoreState>()(
               record.sourceWorkspacePath?.trim()
               || record.baselineProjectWorkspacePath?.trim()
               || undefined;
-            if (!record.sourceWorkspaceId && !sourceWorkspacePath) {
+            // A conversation with a shared assistant belongs to that
+            // assistant, not to a workspace of this device (invariant 33).
+            if (
+              record.target.kind !== 'sharedAssistant'
+              && !record.sourceWorkspaceId
+              && !sourceWorkspacePath
+            ) {
               // A legacy/adopted record without controller-side ownership
               // cannot safely be projected into any workspace. In particular,
               // never assign it to whichever workspace happened to initialize

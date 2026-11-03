@@ -351,7 +351,13 @@ async function ensureProjection(
   // every navigation group while startup workspace state is still loading.
   // Ownership is the source workspace ID; the path is only its checkout label
   // and is enough on its own solely for pre-ID records.
-  if (!job.sourceWorkspaceId && !sourceWorkspacePath) {
+  // A conversation with a shared assistant has no workspace on this device
+  // and is listed under that assistant instead (invariant 33).
+  if (
+    job.target.kind !== 'sharedAssistant'
+    && !job.sourceWorkspaceId
+    && !sourceWorkspacePath
+  ) {
     return false;
   }
 

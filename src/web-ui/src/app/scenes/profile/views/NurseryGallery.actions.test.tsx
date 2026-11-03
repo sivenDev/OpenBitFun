@@ -27,6 +27,11 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
 }));
 vi.mock('@/shared/notification-system', () => ({ useNotification: () => ({ error: mocks.error }) }));
 vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ error: vi.fn(), warn: vi.fn(), debug: vi.fn() }) }));
+vi.mock('@/features/dispatch/sharedAssistantConversation', () => ({
+  openSharedAssistantConversation: vi.fn(),
+  startSharedAssistantConversation: vi.fn(),
+  forgetSharedAssistantConversations: vi.fn(),
+}));
 vi.mock('./AssistantCard', () => ({ default: () => null }));
 
 let root: Root;

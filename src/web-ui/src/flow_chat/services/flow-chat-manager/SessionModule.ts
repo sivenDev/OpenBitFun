@@ -545,6 +545,48 @@ export async function createChatSession(
   }
 }
 
+/** A shared assistant, as another device on the local network shares it. */
+export interface SharedAssistantSessionTarget {
+  ownerDeviceId: string;
+  assistantId: string;
+  displayName: string;
+}
+
+/**
+ * Starts a conversation with an assistant another device shares. It runs in
+ * the owner's workspace, so it has no workspace of this device and skips the
+ * workspace resolution of `createChatSession`.
+ */
+export async function createSharedAssistantSession(
+  context: FlowChatContext,
+  target: SharedAssistantSessionTarget,
+): Promise<string> {
+  const surfaceScope = getActiveSurfaceScope();
+  const titleDescriptor = createDefaultSessionTitleDescriptor(
+    (key, options) => i18nService.t(key, options),
+  );
+  const config: SessionConfig = {
+    dispatchTargetRequest: {
+      kind: 'sharedAssistant',
+      ownerDeviceId: target.ownerDeviceId,
+      assistantId: target.assistantId,
+    },
+    dispatchTarget: { kind: 'sharedAssistant', ...target },
+    // The driver gives the job its shared-assistant id.
+    dispatchApprovalPolicy: 'remote',
+  };
+  return driverForCreation(config).createSession(context, {
+    surfaceScope,
+    config,
+    // The owner's catalog decides the agent; this only names it locally.
+    agentType: `assistant:${target.assistantId}`,
+    sessionName: titleDescriptor.text,
+    titleDescriptor,
+    workspacePath: '',
+    projectWorkspacePath: '',
+  });
+}
+
 /**
  * Switch to specified session
  */

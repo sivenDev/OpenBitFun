@@ -1284,6 +1284,55 @@ describe('DispatchJobObserver', () => {
     cleanup();
   });
 
+  it('projects a conversation with a shared assistant, which has no workspace', async () => {
+    mocks.listJobs.mockResolvedValue([{
+      jobId: 'delegation-1',
+      sessionId: 'session-shared',
+      target: {
+        kind: 'sharedAssistant',
+        ownerDeviceId: 'owner-device',
+        assistantId: 'writer',
+        displayName: 'Writer',
+      },
+      promptPreview: 'Hello',
+      title: 'Hello',
+      agentType: 'Writer',
+      approvalPolicy: 'remote',
+      lastCursor: 0,
+      lastState: 'running',
+      createdAt: '2026-11-03T00:00:00Z',
+      updatedAt: '2026-11-03T00:00:01Z',
+    }]);
+    mocks.status.mockResolvedValue(status());
+    const sessions = new Map<string, any>();
+    const context = createContext();
+    context.flowChatStore.getState = vi.fn(() => ({ sessions }));
+    context.flowChatStore.applyDispatchSnapshot = vi.fn(() => ({ applied: true, cursor: 0 }));
+    context.flowChatStore.addExternalSession = vi.fn((sessionId: string, _title: string, _mode: string, workspacePath?: string) => {
+      sessions.set(sessionId, { sessionId, workspacePath, config: {} });
+    });
+
+    const cleanup = installDispatchJobObserver(context);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(context.flowChatStore.addExternalSession).toHaveBeenCalledWith(
+      'session-shared',
+      'Hello',
+      'Writer',
+      undefined,
+      expect.objectContaining({ projectWorkspacePath: undefined, workspaceId: undefined }),
+    );
+    expect(context.flowChatStore.updateSessionDispatchTarget).toHaveBeenCalledWith(
+      'session-shared',
+      expect.objectContaining({
+        jobId: 'delegation-1',
+        targetRequest: { kind: 'sharedAssistant', ownerDeviceId: 'owner-device', assistantId: 'writer' },
+      }),
+    );
+    expect(mocks.status).toHaveBeenCalledWith('delegation-1', 0);
+    cleanup();
+  });
+
   it('continues polling while hidden so background notifications can observe changes', async () => {
     registerRunningJob();
     mocks.status.mockResolvedValue(status({ state: 'running' }));

@@ -33,6 +33,7 @@ import {
 } from '../hooks/useSessionStateMachine';
 import { SessionExecutionEvent, SessionExecutionState } from '../state-machine/types';
 import { ModelSelector, type ModelSelectorAvailability } from './ModelSelector';
+import { sharedAssistantProblemText } from '@/features/dispatch/sharedAssistantProblemText';
 import { FlowChatStore } from '../store/FlowChatStore';
 import { useAcpPlan } from '../hooks/useAcpPlan';
 import { usePromptSuggestionsEnabled } from '../hooks/usePromptSuggestionsEnabled';
@@ -1291,10 +1292,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     getSessionContextUsageDisplay()
   );
   const [isModelSwitching, setIsModelSwitching] = useState(false);
-  const [modelAvailability, setModelAvailability] = useState<ModelSelectorAvailability>({
+  const [selectorModelAvailability, setModelAvailability] = useState<ModelSelectorAvailability>({
     status: 'loading',
     canSend: false,
   });
+  // A shared assistant's owner picks its model, so no selector reports here;
+  // whether it can take a message depends on the owner's device instead.
+  const modelAvailability = useMemo<ModelSelectorAvailability>(() => (caps.ownerDecidesOptions
+    ? { status: 'ready', canSend: !caps.sharedAssistantBlocked }
+    : selectorModelAvailability), [caps.ownerDecidesOptions, caps.sharedAssistantBlocked, selectorModelAvailability]);
   const maxImageCount = composerImageLimit(modelAvailability.maxImagesPerRequest);
   const admitComposerImages = useCallback((submittedContexts: readonly ContextItem[]) => {
     if (submittedContexts.filter(context => context.type === 'image').length <= maxImageCount) return true;
@@ -1321,6 +1327,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   // A task another device or account delegated here: watched and approved, never driven.
   const isDelegatedTarget = Boolean(effectiveTargetSessionId)
     && resolveSessionDriverId(effectiveTargetSessionId ?? '', effectiveTargetSession) === 'delegated';
+  const sharedAssistantTarget = effectiveTargetSession?.config.dispatchTarget;
+  const sharedAssistantBlockText = caps.sharedAssistantBlocked && sharedAssistantTarget?.kind === 'sharedAssistant'
+    ? sharedAssistantProblemText(caps.sharedAssistantBlocked, sharedAssistantTarget.displayName)
+    : undefined;
   const executionLevelPolicy = useMemo(
     () => resolveChatInputExecutionLevelPolicy({
       isAssistantWorkspace,
@@ -2874,6 +2884,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (!effectiveTargetSessionId || !effectiveTargetSession) return undefined;
     if (remoteWorkspaceSession) return undefined;
     if (isSubagentInputTarget || isAcpTargetSession) return undefined;
+    // A shared assistant works in its owner's workspace, not a worktree here.
+    if (caps.ownerDecidesOptions) return undefined;
     // A dispatch always executes against a managed worktree baseline of this
     // repository, so the chip reports that state instead of disappearing. It is
     // never togglable: the baseline is chosen with the target, not after.
@@ -2921,6 +2933,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     isSubagentInputTarget,
     remoteWorkspaceSession,
     tWorktrees,
+    caps.ownerDecidesOptions,
     caps.worktreeBaselineLocked,
     isWorkspaceSubmitting,
   ]);
@@ -2979,8 +2992,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     // state would block the common "let me see what it has so far" case.
     const jobId = effectiveTargetSession?.config.dispatchJobId;
     const jobState = effectiveTargetSession?.config.dispatchJobState;
+    // A shared assistant keeps its results on its owner's device.
     const syncableJobId =
       isNonLocalDispatchTarget(target)
+      && target.kind !== 'sharedAssistant'
       && jobId
       && (jobState === 'running'
         || jobState === 'succeeded'
@@ -6373,7 +6388,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           }
         : undefined}
       deferPassiveGitRefresh={deferChatStripPassiveGitRefresh}
-      permissionControl={showPermissionModeControl
+      permissionControl={showPermissionModeControl && !caps.ownerDecidesOptions
         ? caps.sessionScopedApproval
           ? {
               mode: dispatchPermissionMode,
@@ -6579,7 +6594,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </span>
               ) : (
                 <span className="openbitfun-chat-input__placeholder" data-openbitfun-component="chat-input" data-openbitfun-part="placeholder" aria-hidden>
-                  {isDelegatedTarget ? t('chatInput.delegated.readOnly') : t('input.placeholder')}
+                  {isDelegatedTarget
+                    ? t('chatInput.delegated.readOnly')
+                    : sharedAssistantBlockText ?? t('input.placeholder')}
                 </span>
               ))}
               <RichTextInput
@@ -7140,7 +7157,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
               <ChatComposerEndActions>
               <div className="openbitfun-chat-input__actions-right" data-openbitfun-component="chat-input" data-openbitfun-part="actionsRight">
-                {voiceInput.phase === 'idle' ? (
+                {voiceInput.phase === 'idle' && !caps.ownerDecidesOptions ? (
                   <div className="openbitfun-chat-input__model-usage-group" data-openbitfun-component="chat-input" data-openbitfun-part="model">
                   <ModelSelector
                     currentMode={effectiveSendAgentType}

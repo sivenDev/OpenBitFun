@@ -846,6 +846,17 @@
         "compactRejected": "The target could not start compaction. Try again shortly.",
         "sessionNotReady": "The remote task is still being prepared. Try sending again shortly.",
         "submissionUnconfirmed": "OpenBitFun cannot yet confirm whether the target received this task. Check the task status shortly."
+      },
+      "sharedAssistant": {
+        "sending": "Sending to “{{name}}”…",
+        "problems": {
+          "notShared": "“{{name}}” is not shared with you. You can ask for it in Discover.",
+          "revoked": "The owner stopped sharing “{{name}}”. You can ask again in Discover, or remove it from your assistants.",
+          "offline": "The device that shares “{{name}}” is offline. Send again once its owner opens OpenBitFun.",
+          "needsUpdate": "This device and the one that shares “{{name}}” run versions of OpenBitFun that do not match. Update both to the latest version.",
+          "expired": "This conversation passed its retention time and was deleted on the owner’s device. Start a new conversation.",
+          "unavailable": "“{{name}}” cannot take tasks right now. Try again later."
+        }
       }
     },
     "harness": {
