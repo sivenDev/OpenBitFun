@@ -169,3 +169,15 @@ dispatch.
     A call that cannot reach or use the assistant fails with a
     `[shared-assistant:<code>]` reason (`sharedAssistantProblem`); `expired`
     is also recorded as the job's state.
+34. Conversations with a shared assistant start and open through
+    `sharedAssistantConversation` (the assistant card and the navigation's
+    shared group), never through workspace session creation: the store and
+    the observer keep and project them without a workspace, and the driver
+    sends no `baseRef` and `includeUncommitted: false`. The composer offers no
+    model, approval or worktree choice (`ownerDecidesOptions`) and blocks
+    sending, with the reason in the input, while `sharedAssistantBlock` says
+    the assistant is offline, revoked or no longer shared. Marked failures
+    read as `sharedAssistantProblemText`. The owner's `job_updated` push
+    schedules an immediate read of that job; polling stays the fallback.
+    Removing the assistant deletes its conversations on this device like
+    deleting a session does.
