@@ -25,4 +25,9 @@ describe('what a conversation with a shared assistant waits on', () => {
     expect(sharedAssistantStatus(job('failed', { lastError: 'boom' }))).toEqual({ kind: 'failed' });
     expect(sharedAssistantStatus(job('succeeded'))).toEqual({ kind: 'idle' });
   });
+
+  it('reads nothing for a new conversation before its first message is sent', () => {
+    expect(sharedAssistantStatus(job('submitting'), false)).toEqual({ kind: 'idle' });
+    expect(sharedAssistantStatus(job('running'), false)).toEqual({ kind: 'running' });
+  });
 });

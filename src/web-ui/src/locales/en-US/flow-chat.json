@@ -3385,6 +3385,7 @@
     "defaultAction3Command": "Start a new feature",
     "noWorkspace": "No workspace open",
     "openOtherProject": "Open other project...",
+    "sharedAssistantHint": "{{name}} runs on {{owner}}'s device, with that device's models and workspace.",
     "noWorkspaceHint": "No project selected yet",
     "openOne": "Open one",
     "toStart": "to get started.",

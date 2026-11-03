@@ -162,8 +162,12 @@ dispatch.
     local network; it travels over the LAN share channel, not the relay. It has
     no Git baseline, result sync, `includeUncommitted`, model or approval
     choice (`GitDispatchTargetRequest` excludes it from target selection), and
-    its job ids start with `SHARED_ASSISTANT_JOB_ID_PREFIX`. Its outbound
-    records carry no workspace identity, so invariant 28 keeps them out of
+    its job ids start with `SHARED_ASSISTANT_JOB_ID_PREFIX`. That prefix is
+    also the one subagent-delegated jobs use, but `dispatch_list_jobs` still
+    returns these records: a call an assistant makes writes none, so a
+    `sharedAssistant` record is always the user's own conversation, and
+    `mergeOutboundRecords` would otherwise prune it once it is acknowledged.
+    Its outbound records carry no workspace identity, so invariant 28 keeps them out of
     every workspace's session list; they are listed under the shared assistant
     instead, and invariant 26 holds because no workspace installs this target.
     A call that cannot reach or use the assistant fails with a

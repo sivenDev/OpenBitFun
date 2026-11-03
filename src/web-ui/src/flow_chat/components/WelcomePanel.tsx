@@ -28,6 +28,8 @@ import { acpAgentTypeFromSession } from '../utils/acpSession';
 import { sessionProjectWorkspacePath } from '../utils/sessionWorkspace';
 import type { Session } from '../types/flow-chat';
 import { useChatInputState } from '../store/chatInputStateStore';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import { sharedAssistantNames } from '../utils/remoteAgent';
 import { computeFlowChatInputOverlayInsetPx } from '../utils/flowChatScrollLayout';
 import './WelcomePanel.css';
 
@@ -209,6 +211,17 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
   const sessionModeLower = (sessionMode || '').toLowerCase();
   const isCoworkSession = sessionModeLower === 'cowork';
   const isClawSession = sessionModeLower === 'claw';
+  // A shared assistant runs on its owner's device, in its owner's workspace.
+  const sharedTarget = session?.config.dispatchTarget?.kind === 'sharedAssistant'
+    ? session.config.dispatchTarget
+    : null;
+  const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
+  const sharedNames = sharedTarget
+    ? sharedAssistantNames(
+      { deviceId: sharedTarget.ownerDeviceId, assistantId: sharedTarget.assistantId },
+      sharedWithMe,
+    ) ?? { name: sharedTarget.displayName, owner: '' }
+    : null;
   const harnessProfile = canonicalHarnessId(sessionMode || 'Standard');
   const isModeExpanded = Boolean(harnessProfile && modeSelectorExpanded);
   const workspaceName = hasWorkspace ? workspace?.name.trim() : undefined;
@@ -328,7 +341,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
-    const showGreeting = isCoworkSession || isClawSession;
+    const showGreeting = isCoworkSession || isClawSession || Boolean(sharedTarget);
     if (hour >= 5 && hour < 12) return {
       title: showGreeting ? t('welcome.greetingMorning') : t('welcome.openingMorning'),
       subtitle: isCoworkSession ? t('welcome.subtitleMorningCowork') : undefined,
@@ -345,10 +358,11 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
       title: showGreeting ? t('welcome.greetingNight') : t('welcome.openingNight'),
       subtitle: isCoworkSession ? t('welcome.subtitleNightCowork') : undefined,
     };
-  }, [t, isCoworkSession, isClawSession]);
+  }, [t, isCoworkSession, isClawSession, sharedTarget]);
 
-  const showNarrative = !isClawSession && !hasWorkspace;
-  const showDetails = Boolean(greeting.subtitle) || showNarrative || isCoworkSession;
+  const showNarrative = !isClawSession && !sharedTarget && !hasWorkspace;
+  const showSharedHint = Boolean(sharedNames?.owner);
+  const showDetails = Boolean(greeting.subtitle) || showNarrative || showSharedHint || isCoworkSession;
 
   const aiPartnerKey = isCoworkSession ? 'welcome.aiPartnerCowork' : isClawSession ? 'welcome.aiPartnerClaw' : null;
 
@@ -370,7 +384,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
       observer?.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [greeting.title, workspaceName, aiPartnerKey, assistantName, t]);
+  }, [greeting.title, workspaceName, aiPartnerKey, assistantName, sharedNames?.name, t]);
 
   const handleOpenOtherFolder = useCallback(async () => {
     try {
@@ -411,7 +425,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
             data-harness-profile={harnessProfile ?? 'other'}
             aria-hidden
           >
-            {isClawSession
+            {isClawSession || sharedTarget
               ? <AssistantAvatar size="lg" className="welcome-panel__assistant-avatar" />
               : <Icon name="user" size="lg" />}
           </span>}
@@ -450,6 +464,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
                   />
                 ) : greeting.title}
                 {aiPartnerKey && <>，{t(aiPartnerKey)}{isClawSession && assistantName ? `，${assistantName}` : ''}</>}
+                {sharedNames?.name && <>，{sharedNames.name}</>}
               </span>}
             />
           </div>
@@ -488,6 +503,14 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
                     {t('welcome.openOne')}
                   </Button>
                   {' '}{t('welcome.toStart')}
+                </p>
+              </div>
+            )}
+
+            {showSharedHint && sharedNames && (
+              <div data-openbitfun-product-component="welcome-panel" data-openbitfun-product-part="narrative" className="welcome-panel__narrative">
+                <p className="welcome-panel__narrative-text" data-testid="welcome-shared-assistant-hint">
+                  {t('welcome.sharedAssistantHint', { name: sharedNames.name, owner: sharedNames.owner })}
                 </p>
               </div>
             )}

@@ -3385,6 +3385,7 @@
     "defaultAction3Command": "開始新功能",
     "noWorkspace": "未開啟工作區",
     "openOtherProject": "開啟其他項目...",
+    "sharedAssistantHint": "{{name}}在 {{owner}} 的裝置上執行，用的是那台裝置的模型和工作區。",
     "noWorkspaceHint": "還沒有選擇項目",
     "openOne": "開啟一個",
     "toStart": "開始吧。",

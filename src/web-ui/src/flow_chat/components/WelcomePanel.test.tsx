@@ -17,6 +17,7 @@ import { agentAPI } from '@/infrastructure/api/service-api/AgentAPI';
 import { chatInputModePreferenceService } from '../services/ChatInputModePreferenceService';
 import type { HarnessId } from '@/shared/agents/identity';
 import * as deviceSurface from '@/infrastructure/peer-device/deviceSurface';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -483,5 +484,29 @@ describe('WelcomePanel empty session presentation', () => {
     expect(document.querySelector(rule!.selectorText)).toBe(
       container.querySelector('[data-openbitfun-product-part="openWorkspaceAction"]'),
     );
+  });
+
+  it('greets a shared assistant conversation as that assistant, not as a missing project', async () => {
+    workspaceMocks.hasWorkspace = false;
+    useLanShareStore.setState({
+      sharedWithMe: [{
+        owner: { publicKey: 'key', deviceId: 'owner-device', fingerprint: 'F', displayName: 'Ada', deviceName: 'Mac' },
+        assistantId: 'workspace', name: 'Helper', grantedAt: '2026-11-03T00:00:00Z', state: 'available', online: true,
+      }],
+    });
+    const session: Session = {
+      sessionId: 'shared-session', mode: 'assistant:workspace',
+      config: {
+        dispatchTarget: { kind: 'sharedAssistant', ownerDeviceId: 'owner-device', assistantId: 'workspace', displayName: 'Helper' },
+      },
+      historyState: 'new', dialogTurns: [], status: 'idle', createdAt: 1, lastActiveAt: 1, error: null,
+    };
+
+    await act(async () => root.render(<WelcomePanel session={session} />));
+
+    expect(container.querySelector('[data-openbitfun-product-part="heading"]')?.textContent).toContain('Helper');
+    expect(container.querySelector('[data-testid="welcome-shared-assistant-hint"]')).not.toBeNull();
+    expect(container.querySelector('[data-openbitfun-product-part="openWorkspaceAction"]')).toBeNull();
+    useLanShareStore.setState({ sharedWithMe: [] });
   });
 });

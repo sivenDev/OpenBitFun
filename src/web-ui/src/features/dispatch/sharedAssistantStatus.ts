@@ -14,8 +14,13 @@ export type SharedAssistantStatus =
   | { kind: 'failed' }
   | { kind: 'idle' };
 
+/**
+ * `sent` is false for a new conversation whose first message has not been
+ * sent: its job waits in `submitting` without running anything.
+ */
 export function sharedAssistantStatus(
   job: Pick<DispatchObserverJob, 'state' | 'pendingPermissions' | 'hold' | 'lastError'>,
+  sent = true,
 ): SharedAssistantStatus {
   // The owner answers approvals; until then the task waits on them.
   if ((job.pendingPermissions?.length ?? 0) > 0) return { kind: 'approval' };
@@ -23,6 +28,7 @@ export function sharedAssistantStatus(
     case 'queued':
       return { kind: 'queued', limit: job.hold?.limit };
     case 'submitting':
+      return sent ? { kind: 'running' } : { kind: 'idle' };
     case 'submission_unknown':
     case 'running':
       return { kind: 'running' };

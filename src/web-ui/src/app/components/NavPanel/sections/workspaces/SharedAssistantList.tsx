@@ -123,7 +123,9 @@ export default function SharedAssistantList() {
             {conversations.length > 0 ? (
               <div className="assistant-session-history__delegated">
                 {conversations.map((job) => {
-                  const status = sharedAssistantStatus(job);
+                  // A conversation not loaded here has been sent before.
+                  const turns = sessions.get(job.sessionId)?.dialogTurns?.length;
+                  const status = sharedAssistantStatus(job, turns === undefined || turns > 0);
                   const detail = statusText(status, owner);
                   const active = isSessionNavRowActive({
                     rowSessionId: job.sessionId,

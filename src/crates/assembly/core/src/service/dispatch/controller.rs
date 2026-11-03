@@ -1646,7 +1646,7 @@ pub async fn list_jobs(
             .list()
             .await?
             .into_iter()
-            .filter(|record| listed_in_dispatch_panel(&record.job_id))
+            .filter(listed_in_dispatch_panel)
             .collect();
         return Ok(serde_json::to_value(records)?);
     };
@@ -1675,8 +1675,14 @@ pub async fn list_jobs(
 }
 
 /// Jobs a subagent delegated are observed by that subagent, not the panel.
-pub(super) fn listed_in_dispatch_panel(job_id: &str) -> bool {
-    !job_id.starts_with(crate::service::delegation::DELEGATED_JOB_ID_PREFIX)
+/// Conversations with a shared assistant share their job id prefix, because
+/// the owner admits only that prefix, but they are the user's own: a call
+/// one of this device's assistants makes writes no outbound record.
+pub(super) fn listed_in_dispatch_panel(record: &OutboundDispatchRecord) -> bool {
+    matches!(record.target, DispatchTarget::SharedAssistant { .. })
+        || !record
+            .job_id
+            .starts_with(crate::service::delegation::DELEGATED_JOB_ID_PREFIX)
 }
 
 pub(super) fn validate_submit_request(request: &DispatchSubmitRequest) -> anyhow::Result<()> {
@@ -2622,5 +2628,37 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn the_panel_lists_shared_assistant_conversations_but_not_delegated_jobs() {
+        let record = |job_id: &str, target: DispatchTarget| {
+            OutboundDispatchRecord::new(
+                job_id.to_string(),
+                target,
+                "session-1".to_string(),
+                String::new(),
+                "prompt",
+                "queued",
+            )
+            .unwrap()
+        };
+        let device = || DispatchTarget::Device {
+            device_id: "device-1".to_string(),
+            workspace_path: "/work".to_string(),
+            display_name: "Device".to_string(),
+        };
+        let conversation = record(
+            "delegation-1",
+            DispatchTarget::SharedAssistant {
+                owner_device_id: "owner-1".to_string(),
+                assistant_id: "workspace".to_string(),
+                display_name: "Assistant".to_string(),
+            },
+        );
+
+        assert!(listed_in_dispatch_panel(&conversation));
+        assert!(listed_in_dispatch_panel(&record("dispatch-1", device())));
+        assert!(!listed_in_dispatch_panel(&record("delegation-2", device())));
     }
 }
