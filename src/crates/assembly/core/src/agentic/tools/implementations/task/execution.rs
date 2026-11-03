@@ -365,11 +365,14 @@ impl AgentExecutionTool {
                 "assistant {agent_type} is unavailable: this host cannot reach assistants on other devices"
             ))
         })?;
+        // Text the owner's device supplied reaches the model only bounded,
+        // flattened, and quoted, exactly as the catalog lists it.
         let descriptor = port
             .list_agents(openbitfun_runtime_ports::RemoteAgentListing::Cached)
             .await
             .into_iter()
             .find(|descriptor| &descriptor.address == address)
+            .map(crate::agentic::agents::bounded_descriptor)
             .ok_or_else(|| {
                 OpenBitFunError::tool(format!(
                     "assistant {agent_type} is not shared with this device"
@@ -383,7 +386,7 @@ impl AgentExecutionTool {
                     .and_then(|value| value.as_str().map(str::to_string))
                     .unwrap_or_default();
                 Err(OpenBitFunError::tool(format!(
-                    "assistant {agent_type} is unavailable ({reason}): {detail}"
+                    "assistant {agent_type} is unavailable ({reason}); the device says: \"{detail}\""
                 )))
             }
         }

@@ -138,7 +138,7 @@ fn plain_description(value: Option<&str>) -> Option<String> {
 
 /// A shared assistant with every name its owner's device supplied bounded
 /// and flattened.
-fn bounded_descriptor(mut descriptor: RemoteAgentDescriptor) -> RemoteAgentDescriptor {
+pub(crate) fn bounded_descriptor(mut descriptor: RemoteAgentDescriptor) -> RemoteAgentDescriptor {
     descriptor.display_name = plain_text(&descriptor.display_name, NAME_CHARS);
     descriptor.device_name = plain_text(&descriptor.device_name, NAME_CHARS);
     descriptor.description = plain_description(descriptor.description.as_deref());
@@ -250,7 +250,7 @@ fn shared_assistant_description(descriptor: &RemoteAgentDescriptor) -> String {
         ));
     }
     if let RemoteAgentAvailability::Unavailable { detail, .. } = &descriptor.availability {
-        description.push_str(&format!("\nUnavailable now: {detail}"));
+        description.push_str(&format!("\nUnavailable now: \"{detail}\""));
     }
     description
 }
@@ -422,7 +422,7 @@ mod tests {
         assert!(!offline.effective_enabled);
         assert!(offline
             .description
-            .ends_with("Unavailable now: Laptop is offline"));
+            .ends_with("Unavailable now: \"Laptop is offline\""));
         assert_eq!(
             offline.assistant.as_ref().unwrap().availability,
             RemoteAgentAvailability::Unavailable {
