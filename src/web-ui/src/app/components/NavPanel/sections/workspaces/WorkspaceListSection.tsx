@@ -16,6 +16,7 @@ import {
   type SessionNavigationScope,
   type WorkspaceBackedSessionGroup,
 } from '../../sessionNavigationProjection';
+import SharedAssistantList from './SharedAssistantList';
 import './WorkspaceListSection.scss';
 
 interface WorkspaceListSectionProps {
@@ -352,6 +353,8 @@ const WorkspaceListSection: React.FC<WorkspaceListSectionProps> = ({ variant, sc
       data-workspace-list={variant}
     >
       {workspaces.length === 0 ? (
+        <>
+        <SharedAssistantList />
         <div
           data-openbitfun-component="workspace-list-section"
           data-openbitfun-part="empty"
@@ -361,9 +364,11 @@ const WorkspaceListSection: React.FC<WorkspaceListSectionProps> = ({ variant, sc
         >
           {emptyLabel}
         </div>
+        </>
       ) : (
         <>
           {pinnedGroups.map(group => renderGroupRow(group, true))}
+          <SharedAssistantList />
           {(reorderableGroups.length > 0 || workspaceScopes.length > 0) && (
             <SessionViewTransition grouping={grouping} surfaceId={surfaceId} scrollRootRef={scrollRootRef}>
               {visibleReorderableGroups.map(group => renderGroupRow(group, false))}

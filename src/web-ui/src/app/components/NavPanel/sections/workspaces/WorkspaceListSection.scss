@@ -1477,3 +1477,44 @@
 .assistant-session-history__delegated-item.is-waiting .assistant-session-history__delegated-detail {
   color: var(--openbitfun-color-status-warning-content);
 }
+
+// Assistants other devices share with this one, each with its conversations
+// (SharedAssistantList). Conversation rows reuse the delegated task rows.
+.shared-assistant-nav {
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--openbitfun-space-1);
+}
+
+.shared-assistant-nav__title {
+  padding: var(--openbitfun-space-1) var(--openbitfun-space-2);
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+}
+
+.shared-assistant-nav__header {
+  display: flex;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  padding-inline-end: var(--openbitfun-space-1);
+}
+
+.shared-assistant-nav__name.openbitfun-nav-panel__inline-item {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-inline-size: 0;
+  block-size: auto;
+  padding: var(--openbitfun-space-1) var(--openbitfun-space-2);
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--openbitfun-color-content-primary);
+    background: var(--openbitfun-color-action-quiet-hover);
+  }
+}

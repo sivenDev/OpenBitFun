@@ -504,6 +504,21 @@
         "waiting": "等待審核 {{count}} 項",
         "untitled": "未命名任務",
         "unavailable": "這個外部任務的會話已無法使用"
+      },
+      "sharedAssistant": {
+        "title": "來自共享",
+        "from": "來自 {{name}} 的裝置",
+        "newConversation": "新對話",
+        "offline": "不在線",
+        "revoked": "已停止共享",
+        "untitled": "新對話",
+        "openFailed": "無法開啟對話：{{reason}}",
+        "status": {
+          "approval": "等待 {{owner}} 核准",
+          "queued": "排隊中",
+          "queuedLimit": "排隊中 · {{owner}} 同時只處理 {{limit}} 個任務",
+          "expired": "已過期"
+        }
       }
     },
     "scheduledJobs": {

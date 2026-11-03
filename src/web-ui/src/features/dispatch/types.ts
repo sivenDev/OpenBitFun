@@ -234,6 +234,18 @@ export interface DispatchStatusResponse {
   eventLogComplete: boolean;
   omittedEventCount: number;
   lastError?: string;
+  /** Why a queued job waits, when its target says. Absent on older targets. */
+  hold?: DispatchHold;
+}
+
+/** Why a queued job waits on its target. */
+export interface DispatchHold {
+  /** `shareLimit`: the shared assistant runs as many tasks as its owner allows. */
+  reason: string;
+  /** How many tasks the owner allows at once, for a limit. */
+  limit?: number;
+  /** When it began to wait, in milliseconds since the epoch. */
+  sinceMs: number;
 }
 
 export interface DispatchContinueResponse {

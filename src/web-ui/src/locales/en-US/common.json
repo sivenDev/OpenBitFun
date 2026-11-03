@@ -504,6 +504,21 @@
         "waiting": "{{count}} awaiting approval",
         "untitled": "Untitled task",
         "unavailable": "This external task session is no longer available"
+      },
+      "sharedAssistant": {
+        "title": "Shared with you",
+        "from": "From {{name}}’s device",
+        "newConversation": "New conversation",
+        "offline": "Offline",
+        "revoked": "No longer shared",
+        "untitled": "New conversation",
+        "openFailed": "Could not open the conversation: {{reason}}",
+        "status": {
+          "approval": "Waiting for {{owner}} to approve",
+          "queued": "Queued",
+          "queuedLimit": "Queued · {{owner}} takes {{limit}} at a time",
+          "expired": "Expired"
+        }
       }
     },
     "scheduledJobs": {

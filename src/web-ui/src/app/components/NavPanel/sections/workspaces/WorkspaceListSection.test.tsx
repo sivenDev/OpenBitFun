@@ -35,6 +35,7 @@ vi.mock('@/app/stores/sceneStore', async () => {
 vi.mock('../../workspaceSessionView', () => ({
   useWorkspaceSessionViewStore: (selector: (value: typeof state) => unknown) => selector(state),
 }));
+vi.mock('./SharedAssistantList', () => ({ default: () => null }));
 vi.mock('./WorkspaceItem', () => ({
   default: ({ workspace, isActive, isSelected, draggable, sessionsCollapsed, onSessionsCollapsedChange }: {
     workspace: { id: string };

@@ -5,6 +5,7 @@ import {
 } from 'zustand/middleware';
 import type {
   DispatchApprovalPolicy,
+  DispatchHold,
   DispatchJobState,
   DispatchReachability,
   DispatchTarget,
@@ -156,6 +157,8 @@ export interface DispatchObserverJob {
   historyTruncated: boolean;
   omittedEventCount: number;
   appliedEventIds: string[];
+  /** Why the job waits in its target's queue, while it does. */
+  hold?: DispatchHold;
   createdAt: number;
   updatedAt: number;
 }
@@ -194,6 +197,8 @@ interface DispatchJobStoreState {
       eventLogComplete?: boolean;
       historyTruncated?: boolean;
       omittedEventCount?: number;
+      /** A status read: the target's hold, or `null` when it reports none. */
+      hold?: DispatchHold | null;
     },
   ) => void;
   hasAppliedEvent: (jobId: string, eventId: string) => boolean;
@@ -534,6 +539,7 @@ export const useDispatchJobStore = create<DispatchJobStoreState>()(
                   update.historyTruncated ?? current.historyTruncated ?? false,
                 omittedEventCount:
                   update.omittedEventCount ?? current.omittedEventCount ?? 0,
+                hold: update.hold === undefined ? current.hold : update.hold ?? undefined,
                 updatedAt: Date.now(),
               },
             },

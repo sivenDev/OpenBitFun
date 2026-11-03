@@ -504,6 +504,21 @@
         "waiting": "等待审批 {{count}} 项",
         "untitled": "未命名任务",
         "unavailable": "这个外部任务的会话已不可用"
+      },
+      "sharedAssistant": {
+        "title": "来自共享",
+        "from": "来自 {{name}} 的设备",
+        "newConversation": "新对话",
+        "offline": "不在线",
+        "revoked": "已停止共享",
+        "untitled": "新对话",
+        "openFailed": "无法打开对话：{{reason}}",
+        "status": {
+          "approval": "等待 {{owner}} 审批",
+          "queued": "排队中",
+          "queuedLimit": "排队中 · {{owner}} 同时只处理 {{limit}} 个任务",
+          "expired": "已过期"
+        }
       }
     },
     "scheduledJobs": {

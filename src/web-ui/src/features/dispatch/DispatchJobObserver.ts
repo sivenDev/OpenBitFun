@@ -893,6 +893,7 @@ async function refreshJobPage(
     pendingPermissions: response.pendingPermissions,
     eventLogComplete: response.eventLogComplete,
     historyTruncated: response.historyTruncated,
+    hold: response.hold ?? null,
     omittedEventCount: response.omittedEventCount,
   });
   // Both halves are committed here: the projection holds every event of this
