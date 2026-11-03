@@ -173,7 +173,16 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/features/dispatch src/app/scenes/profile/views src/infrastructure/lan-share`
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`、`pnpm run theme:color-audit:all`
 
-- [ ] 对话、续写、追加、状态显示、离线不可发送、移除清理有组件测试
+- [x] 对话、续写、追加、状态显示、离线不可发送、移除清理有组件测试
+  - 实现（694e3f7d0、68d4e387f、a639178c0、52d8a2de8、8eff774c4、2ad5f28d1）：
+    - 卡片点击打开该助理最近的对话，没有时开始新对话；卡片加「新对话」与「详情」按钮；移除助理时按删除会话的方式删除本机的对话（投影、出站记录、转录缓存）。入口 `features/dispatch/sharedAssistantConversation.ts`，会话由 `createSharedAssistantSession` 创建，不走工作区解析。
+    - 对话不属于本机任何工作区：任务存储与观察端保留并投影无工作区的记录；驱动不发 `baseRef`、`includeUncommitted` 恒为 false，任务 id 用 `delegation-` 前缀；进度标签为「正在发给「某某」…」。
+    - 输入框不显示模型、审批与工作树选择（`ownerDecidesOptions`）；助理不在线、已停止共享或已不在列表时禁用发送，并在输入框说明原因（`sharedAssistantBlock`）。带 `[shared-assistant:<code>]` 的失败显示原因与下一步（`sharedAssistantProblemText`）；附件按设备通道预算检查。
+    - 导航在自己的助理之后列出「来自共享」：每个助理及其对话（新到旧），状态显示「等待 某某 审批」、排队（目标返回 `hold` 时显示「某某 同时只处理 N 个任务」）、进行中、已过期、失败；可打开最近对话或新对话；Peer Device Mode 下不显示，卡片在该模式下只开详情并说明不可用。
+    - 收到主人的 `job_updated` 推送时立即补读该任务，轮询仍作兜底。
+    - 主人端：助理名下的外部任务按发来的设备分组，组标题「来自 某某 · 设备」、会话数与最近开始时间。每个任务本已带来源，桌面端命令未改动（与 Files 中 `delegation_tasks_api.rs` 的差异）。
+    - 与计划的差异：排队只显示主人的并发额度，不显示「第几位」——目标端 `hold` 只有原因、额度与开始等待时间，没有位置。
+  - 验证：`pnpm --dir src/web-ui run test:run src/features/dispatch src/app/scenes/profile/views src/infrastructure/lan-share src/flow_chat/session-drivers src/app/components/NavPanel` 79 个文件 621 项通过（其后的分组与附件改动所在文件复跑通过）；`type-check:web`（`tsc --noEmit`）、改动文件 eslint、`i18n:audit`（未提高基线，「运行中/失败」改用共享术语）、`theme:color-audit:all`、`appearance:contract-audit` 通过。真机对话验收在 Task 5。
 
 ## Task 4: 在线状态与推送
 
