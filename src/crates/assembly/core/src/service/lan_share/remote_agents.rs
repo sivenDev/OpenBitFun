@@ -44,12 +44,21 @@ const EXECUTOR_MISSING_TEXT: &str = "its task runner is missing";
 #[async_trait]
 pub trait SharedWithMePresence: Send + Sync {
     async fn shared_with_me_now(&self) -> Result<Vec<SharedWithMeNow>, String>;
+
+    /// This device's id, as owners know it.
+    fn local_device_id(&self) -> Option<String> {
+        None
+    }
 }
 
 #[async_trait]
 impl SharedWithMePresence for LanShareHost {
     async fn shared_with_me_now(&self) -> Result<Vec<SharedWithMeNow>, String> {
         LanShareHost::shared_with_me_now(self).await
+    }
+
+    fn local_device_id(&self) -> Option<String> {
+        Some(self.identity().device_id().to_string())
     }
 }
 
@@ -196,6 +205,7 @@ fn delegation_block(request: &RemoteAgentSubmitRequest) -> Value {
     json!({
         "assistantId": request.address.assistant_id,
         "source": source,
+        "callChain": request.call_chain,
     })
 }
 
@@ -214,6 +224,10 @@ impl RemoteAgentDelegationPort for SharedAssistantDirectory {
                 Vec::new()
             }
         }
+    }
+
+    fn local_device_id(&self) -> Option<String> {
+        self.presence.local_device_id()
     }
 
     async fn submit(&self, request: RemoteAgentSubmitRequest) -> PortResult<RemoteAgentJob> {
@@ -499,6 +513,7 @@ mod tests {
                 agent_type: "assistant:workspace-x".to_string(),
                 display_name: Some("X".to_string()),
             },
+            call_chain: vec!["me-device/workspace-x".to_string()],
         }
     }
 
@@ -567,6 +582,10 @@ mod tests {
         assert_eq!(
             payload["delegation"]["source"]["sessionId"],
             "caller-session"
+        );
+        assert_eq!(
+            payload["delegation"]["callChain"],
+            json!(["me-device/workspace-x"])
         );
 
         let mut wrong = request("workspace");

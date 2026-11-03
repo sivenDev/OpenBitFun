@@ -134,6 +134,11 @@ pub struct RemoteAgentSubmitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub source: RemoteAgentSource,
+    /// The assistants this call passes through, oldest first, each as
+    /// `<deviceId>/<assistantId>`; the caller is the last entry. A target
+    /// already in the chain refuses the call as a loop.
+    #[serde(default)]
+    pub call_chain: Vec<String>,
 }
 
 /// A submitted job. Persisted by the kernel so a restarted requester can
@@ -213,6 +218,11 @@ pub trait RemoteAgentDelegationPort: Send + Sync {
     /// Submits a delegated job. Fails before anything runs when the device is
     /// offline, incompatible, or refuses the delegation.
     async fn submit(&self, request: RemoteAgentSubmitRequest) -> PortResult<RemoteAgentJob>;
+
+    /// This device's id in call chains, or `None` when it has none.
+    fn local_device_id(&self) -> Option<String> {
+        None
+    }
 
     /// Reads the job's state and the events after `cursor`.
     async fn observe(

@@ -823,6 +823,7 @@ fn turn_metadata(
                 request.assistant_workspace.as_deref(),
                 &request.workspace_path,
                 trust,
+                &delegation.call_chain,
             ));
         }
         metadata.insert(DISPATCH_DELEGATION_CONTEXT_KEY.to_string(), facts);
@@ -926,6 +927,7 @@ mod tests {
                 delegation: delegated.then(|| DispatchDelegation {
                     assistant_id: "workspace".to_string(),
                     source: DispatchDelegationSource::default(),
+                    call_chain: Vec::new(),
                 }),
                 source_share_key: delegated.then(|| "ab".repeat(32)),
                 source_user: None,

@@ -1939,6 +1939,11 @@ impl LanShareHost {
                 .to_string()
         })?;
         let args = bind_dispatch_source_share_key(&body.command, body.args, public_key)?;
+        if body.command == "dispatch_target_submit" {
+            if let Some(refusal) = delegated_call_loop(self.identity().device_id(), &args) {
+                return Err(refusal);
+            }
+        }
         let asked_job = args
             .get("jobId")
             .and_then(Value::as_str)
@@ -2508,6 +2513,22 @@ impl RequestHandler for OwnerHandler {
     }
 }
 
+/// Why a delegated submission is refused as a loop: the assistant it names
+/// on this device is already on its call chain. The executor checks the
+/// chain's presence and shape; only this host knows the device's own id.
+fn delegated_call_loop(device_id: &str, args: &Value) -> Option<String> {
+    let delegation = args.get("delegation")?;
+    let assistant_id = delegation.get("assistantId")?.as_str()?;
+    let chain: Vec<String> = delegation
+        .get("callChain")
+        .and_then(|chain| serde_json::from_value(chain.clone()).ok())
+        .unwrap_or_default();
+    crate::service::delegation::call_chain_loop(
+        &chain,
+        &crate::service::delegation::call_chain_entry(device_id, assistant_id),
+    )
+}
+
 fn share_name(share: &SharedAssistant) -> String {
     share
         .display_name
@@ -2635,4 +2656,27 @@ fn to_value<T: Serialize>(value: T) -> Result<Value, String> {
 
 fn from_value<T: DeserializeOwned>(value: Value) -> Result<T, String> {
     serde_json::from_value(value).map_err(|error| format!("malformed message: {error}"))
+}
+
+#[cfg(test)]
+mod call_chain_tests {
+    use super::delegated_call_loop;
+    use serde_json::json;
+
+    #[test]
+    fn a_submission_naming_an_assistant_already_on_its_chain_is_a_loop() {
+        let looped = json!({ "delegation": {
+            "assistantId": "workspace-x",
+            "callChain": ["owner/workspace-x", "peer/workspace-y"],
+        }});
+        assert_eq!(
+            delegated_call_loop("owner", &looped).as_deref(),
+            Some("circular call: owner/workspace-x -> peer/workspace-y -> owner/workspace-x")
+        );
+        // The same assistant name on another device is a different assistant.
+        assert_eq!(delegated_call_loop("other", &looped), None);
+        let fresh = json!({ "delegation": { "assistantId": "workspace-x", "callChain": [] } });
+        assert_eq!(delegated_call_loop("owner", &fresh), None);
+        assert_eq!(delegated_call_loop("owner", &json!({ "jobId": "j" })), None);
+    }
 }

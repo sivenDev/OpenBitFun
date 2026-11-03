@@ -202,6 +202,7 @@ mod tests {
             delegation: Some(DispatchDelegation {
                 assistant_id: assistant_id.to_string(),
                 source: DispatchDelegationSource::default(),
+                call_chain: Vec::new(),
             }),
             source_share_key: seed.map(share_key),
             source_user: None,

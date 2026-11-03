@@ -529,8 +529,14 @@ delegated use. It is not a submission requirement and does not change the protoc
 version.
 
 Delegated submission adds an optional `delegation` field to `submit`:
-`{ assistantId, source? }`, where `source` (session id, agent type, display name) is
-requester-reported display context only. The target admits a delegated job before
+`{ assistantId, source?, callChain }`, where `source` (session id, agent type, display
+name) is requester-reported display context only, and `callChain` lists the assistants
+the call passed through as `<deviceId>/<assistantId>`, the calling assistant last
+(empty when a person asked). `submit` refuses a delegation without `callChain`;
+stored jobs written before it read it as empty. The owner's LAN share host refuses a
+submission whose chain already holds this device's `<deviceId>/<assistantId>` as a
+circular call before the executor sees it, since only the host knows the device id;
+the executor checks each entry's shape. The target admits a delegated job before
 creating anything: the assistant must be shared and granted to the bound key, not
 blocked; the request's agent must equal `assistant:<assistantId>`; the approval policy
 must be `remote`; and `workspacePath` must be empty. The target chooses the model and
@@ -546,7 +552,8 @@ trust a file read under the app's data directory asks the owner each time unless
 stays in the task's tenant workspace, the storage of its own sessions, or the
 assistant's workspace, so other devices' workspaces, other conversations, task logs and
 the sharing keys are not read silently; the owner's `USER.md` and memories always ask. The source
-is kept in the job record and in the `dispatchDelegation` turn context.
+is kept in the job record and in the `dispatchDelegation` turn context, together with
+the call chain, which a call from that task extends with its own assistant.
 
 Each finished task is kept for the share's retention period (the default when the
 share was stopped); then its job and its session are removed, while the tenant workspace
@@ -560,7 +567,9 @@ subagents together with the device's own assistants (`assistant:<id>`); an
 assistant that cannot take work stays listed with its reason (offline, revoked,
 needs an update, no executor), and a call to it fails for that reason. A task
 another device delegated here sees the category only when the owner fully trusts
-that share. Every prompt such a job raises is answered by the owner of the device
+that share. Before submitting, the requester builds the chain (the one its turn
+received, then itself) and refuses a target already on it, so a loop fails on either
+side without a count or depth limit. Every prompt such a job raises is answered by the owner of the device
 it runs on, never by the requester. Job ids start with `delegation-`. A delegated job writes no
 outbound record; its link (device, job, session, cursor) lives in the coordination
 database's `remote_job` column, which a restarted requester reads to observe it again.

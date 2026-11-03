@@ -166,6 +166,13 @@ pub(crate) struct DispatchDelegation {
     /// authorization.
     #[serde(default)]
     pub(crate) source: DispatchDelegationSource,
+    /// The assistants the call passed through, each `<deviceId>/<assistantId>`,
+    /// the caller last; empty when a person asked. Required so a requester
+    /// that does not track chains cannot slip past loop detection; the
+    /// submit command checks that it is present. Jobs stored before it
+    /// existed read it as empty.
+    #[serde(default)]
+    pub(crate) call_chain: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]

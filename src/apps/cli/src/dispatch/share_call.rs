@@ -197,6 +197,7 @@ mod tests {
             delegation: Some(DispatchDelegation {
                 assistant_id: "workspace".to_string(),
                 source: DispatchDelegationSource::default(),
+                call_chain: Vec::new(),
             }),
             source_share_key: share_key,
             source_user: None,

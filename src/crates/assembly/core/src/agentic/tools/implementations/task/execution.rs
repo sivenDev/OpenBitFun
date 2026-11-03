@@ -323,6 +323,28 @@ impl AgentExecutionTool {
         Ok(caller)
     }
 
+    /// The call chain a call from this turn carries: the chain the turn
+    /// received, then the calling assistant on this device. A turn that is
+    /// not an assistant's, or a device without an id, adds nothing.
+    pub(super) fn remote_call_chain(
+        port: &dyn openbitfun_runtime_ports::RemoteAgentDelegationPort,
+        context: &ToolUseContext,
+    ) -> Vec<String> {
+        let mut chain = crate::service::delegation::DelegatedTurnFacts::call_chain_from_tool_data(
+            &context.custom_data,
+        );
+        let caller = Self::assistant_caller(context);
+        if let (Some(device_id), Some(assistant_id)) =
+            (port.local_device_id(), caller.own_assistant_id.as_deref())
+        {
+            chain.push(crate::service::delegation::call_chain_entry(
+                &device_id,
+                assistant_id,
+            ));
+        }
+        chain
+    }
+
     /// Admits an `assistant:<id>` subagent: one of this device's assistants
     /// other than the caller itself.
     pub(super) async fn ensure_local_assistant_available(
@@ -365,6 +387,14 @@ impl AgentExecutionTool {
                 "assistant {agent_type} is unavailable: this host cannot reach assistants on other devices"
             ))
         })?;
+        let chain = Self::remote_call_chain(port.as_ref(), context);
+        let target =
+            crate::service::delegation::call_chain_entry(&address.device_id, &address.assistant_id);
+        if let Some(refusal) = crate::service::delegation::call_chain_loop(&chain, &target) {
+            return Err(OpenBitFunError::tool(format!(
+                "assistant {agent_type} cannot be called: {refusal}"
+            )));
+        }
         // Text the owner's device supplied reaches the model only bounded,
         // flattened, and quoted, exactly as the catalog lists it.
         let descriptor = port
@@ -1151,6 +1181,15 @@ impl AgentExecutionTool {
             })
             .unwrap_or_default();
         forward_subagent_invocation_context(context, &mut subagent_context);
+        if requested_remote_agent.is_some() && target_session_id.is_none() {
+            if let Some(port) = coordinator.remote_agent_port() {
+                subagent_context.insert(
+                    crate::agentic::coordination::REMOTE_AGENT_CALL_CHAIN_CONTEXT_KEY.to_string(),
+                    serde_json::to_string(&Self::remote_call_chain(port.as_ref(), context))
+                        .expect("call chain serializes"),
+                );
+            }
+        }
         let subagent_context = (!subagent_context.is_empty()).then_some(subagent_context);
         let permission_runtime_ceiling =
             Self::derive_parent_permission_runtime_ceiling(context).await?;

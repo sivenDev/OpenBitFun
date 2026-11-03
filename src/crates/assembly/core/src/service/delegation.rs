@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::infrastructure::PathManager;
 
 const MAX_ASSISTANT_ID_LEN: usize = 64;
+const MAX_DEVICE_ID_LEN: usize = 128;
 /// Turn context key a target sets on a delegated job's turns, naming the
 /// device that asked. A turn that carries it must not delegate onward.
 pub const DISPATCH_DELEGATION_CONTEXT_KEY: &str = "dispatchDelegation";
@@ -48,6 +49,34 @@ pub fn assistant_directory(agent_type: &str) -> Option<&str> {
 /// The agent type of the assistant in `directory`.
 pub fn assistant_agent_type(directory: &str) -> String {
     format!("{ASSISTANT_AGENT_TYPE_PREFIX}{directory}")
+}
+
+/// One assistant in a call chain: `<deviceId>/<assistantId>`.
+pub fn call_chain_entry(device_id: &str, assistant_id: &str) -> String {
+    format!("{device_id}/{assistant_id}")
+}
+
+/// Whether `entry` names an assistant on a device, the only form a call
+/// chain may hold.
+pub fn is_call_chain_entry(entry: &str) -> bool {
+    entry
+        .split_once('/')
+        .is_some_and(|(device_id, assistant_id)| {
+            !device_id.is_empty()
+                && device_id.len() <= MAX_DEVICE_ID_LEN
+                && device_id.chars().all(|ch| ch.is_ascii_alphanumeric())
+                && assistant_directory(&assistant_agent_type(assistant_id)).is_some()
+        })
+}
+
+/// Why calling `target` through `chain` is refused, or `None` when `target`
+/// is not in it yet. An assistant appears at most once on a chain, so a chain
+/// never grows past the assistants taking part.
+pub fn call_chain_loop(chain: &[String], target: &str) -> Option<String> {
+    chain
+        .iter()
+        .any(|entry| entry == target)
+        .then(|| format!("circular call: {} -> {target}", chain.join(" -> ")))
 }
 
 /// Root of the assistant an `assistant:<directory>` agent type names.
@@ -217,9 +246,13 @@ impl OwnerPrivatePaths {
 pub const DELEGATION_ASSISTANT_CONTEXT_KEY: &str = "dispatchDelegationAssistant";
 pub const DELEGATION_TENANT_CONTEXT_KEY: &str = "dispatchDelegationTenant";
 pub const DELEGATION_TRUST_CONTEXT_KEY: &str = "dispatchDelegationTrust";
+/// The call chain a delegated turn received, as a JSON array of
+/// `<deviceId>/<assistantId>` entries.
+pub const DELEGATION_CALL_CHAIN_CONTEXT_KEY: &str = "dispatchDelegationCallChain";
 const METADATA_ASSISTANT_FIELD: &str = "assistantWorkspace";
 const METADATA_TENANT_FIELD: &str = "tenantWorkspace";
 const METADATA_TRUST_FIELD: &str = "trust";
+const METADATA_CALL_CHAIN_FIELD: &str = "callChain";
 
 /// What the kernel knows about a turn another device delegated here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +296,15 @@ impl DelegatedTurnFacts {
                 context.insert(key.to_string(), value.to_string());
             }
         }
+        if let Some(chain) = delegation
+            .get(METADATA_CALL_CHAIN_FIELD)
+            .and_then(|chain| serde_json::from_value::<Vec<String>>(chain.clone()).ok())
+        {
+            context.insert(
+                DELEGATION_CALL_CHAIN_CONTEXT_KEY.to_string(),
+                serde_json::to_string(&chain).expect("call chain serializes"),
+            );
+        }
     }
 
     /// The metadata fields a target's worker adds for a delegated turn.
@@ -270,8 +312,13 @@ impl DelegatedTurnFacts {
         assistant_workspace: Option<&str>,
         tenant_workspace: &str,
         trust: DelegationTrust,
+        call_chain: &[String],
     ) -> serde_json::Map<String, Value> {
         let mut fields = serde_json::Map::new();
+        fields.insert(
+            METADATA_CALL_CHAIN_FIELD.to_string(),
+            Value::from(call_chain.to_vec()),
+        );
         if let Some(assistant_workspace) = assistant_workspace {
             fields.insert(
                 METADATA_ASSISTANT_FIELD.to_string(),
@@ -332,11 +379,23 @@ impl DelegatedTurnFacts {
     }
 
     /// Context keys a subagent inherits from its delegated parent turn.
-    pub const INHERITED_CONTEXT_KEYS: [&'static str; 3] = [
+    pub const INHERITED_CONTEXT_KEYS: [&'static str; 4] = [
         DELEGATION_ASSISTANT_CONTEXT_KEY,
         DELEGATION_TENANT_CONTEXT_KEY,
         DELEGATION_TRUST_CONTEXT_KEY,
+        DELEGATION_CALL_CHAIN_CONTEXT_KEY,
     ];
+
+    /// The call chain a delegated turn received, from a tool context's
+    /// custom data; empty for any other turn.
+    pub fn call_chain_from_tool_data(
+        data: &std::collections::HashMap<String, Value>,
+    ) -> Vec<String> {
+        data.get(DELEGATION_CALL_CHAIN_CONTEXT_KEY)
+            .and_then(Value::as_str)
+            .and_then(|chain| serde_json::from_str(chain).ok())
+            .unwrap_or_default()
+    }
 
     /// Whether the task may see the owner's memory summary. The owner's
     /// `USER.md` never enters a delegated task's prompt: its user profile is
@@ -463,11 +522,39 @@ mod tests {
     }
 
     #[test]
+    fn call_chains_hold_device_assistants_and_refuse_a_second_visit() {
+        assert!(is_call_chain_entry("a1b2/workspace"));
+        assert!(is_call_chain_entry("a1b2/workspace-x_1"));
+        for invalid in [
+            "",
+            "a1b2",
+            "/workspace",
+            "a1b2/",
+            "a1 b2/workspace",
+            "a1b2/../x",
+            "a1b2/workspace/x",
+        ] {
+            assert!(!is_call_chain_entry(invalid), "{invalid}");
+        }
+        let chain = vec![
+            call_chain_entry("laptop", "workspace"),
+            call_chain_entry("desk", "workspace-y"),
+        ];
+        assert_eq!(call_chain_loop(&chain, "desk/workspace-z"), None);
+        assert_eq!(
+            call_chain_loop(&chain, "laptop/workspace").as_deref(),
+            Some("circular call: laptop/workspace -> desk/workspace-y -> laptop/workspace")
+        );
+        assert_eq!(call_chain_loop(&[], "laptop/workspace"), None);
+    }
+
+    #[test]
     fn delegated_turn_facts_travel_from_metadata_to_context() {
         let fields = DelegatedTurnFacts::metadata_fields(
             Some("/home/a/.openbitfun/personal_assistant/workspace"),
             "/home/a/.openbitfun/delegation/tenants/workspace/0123",
             DelegationTrust::Normal,
+            &["laptop/writer".to_string()],
         );
         let mut delegation = json!({ "assistantId": "workspace" });
         delegation.as_object_mut().unwrap().extend(fields);
@@ -483,6 +570,15 @@ mod tests {
         );
         assert_eq!(facts.trust, DelegationTrust::Normal);
         assert!(!facts.includes_private_context());
+        let data = context
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+            .collect();
+        assert_eq!(
+            DelegatedTurnFacts::call_chain_from_tool_data(&data),
+            vec!["laptop/writer".to_string()]
+        );
+        assert!(DelegatedTurnFacts::call_chain_from_tool_data(&Default::default()).is_empty());
 
         // A turn without the delegation marker has no facts, and a missing or
         // unknown trust reads as normal.

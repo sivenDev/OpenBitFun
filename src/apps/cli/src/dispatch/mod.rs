@@ -92,6 +92,7 @@ async fn run_admitted_verb(verb: &str, input: serde_json::Value) -> Result<serde
             serde_json::to_value(probe(parse(input)?).await?).context("encode probe response")
         }
         "submit" => {
+            delegation::require_call_chain(&input)?;
             serde_json::to_value(submit(parse(input)?).await?).context("encode submit response")
         }
         "catalog" => {
@@ -1366,6 +1367,7 @@ mod tests {
                 request.delegation = Some(protocol::DispatchDelegation {
                     assistant_id: "workspace".to_string(),
                     source: Default::default(),
+                    call_chain: Vec::new(),
                 });
                 request.assistant_workspace = Some("/home/me/personal_assistant/workspace".into());
                 request.source_user = Some(protocol::DispatchShareUser {

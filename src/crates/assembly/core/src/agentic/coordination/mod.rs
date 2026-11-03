@@ -8,6 +8,7 @@ mod coordination_store;
 mod delegation_context;
 mod external_agent_turn;
 mod remote_agent_turn;
+pub(crate) use remote_agent_turn::REMOTE_AGENT_CALL_CHAIN_CONTEXT_KEY;
 mod remote_holds;
 pub use control_conversation::{
     ControlConversation, CreateControlConversationRequest, VoiceExchangeRequest,

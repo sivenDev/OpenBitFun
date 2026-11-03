@@ -3679,6 +3679,7 @@ mod tests {
             request.delegation = Some(DispatchDelegation {
                 assistant_id: assistant_id.to_string(),
                 source: DispatchDelegationSource::default(),
+                call_chain: Vec::new(),
             });
             request.source_share_key = Some("ab".repeat(32));
             store

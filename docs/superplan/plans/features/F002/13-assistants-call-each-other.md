@@ -158,6 +158,12 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/features/dispatch/dispatch.contract.test.ts`
 
 - [ ] 回环两主机：调用、审批提示、排队提示、跨设备循环拒绝、缺少调用链被拒绝、离线失败均有测试
+  - 进展（2026-11-03）：
+    - 29eb7cf5c：`remote_agents.rs` 的 `SharedAssistantDirectory` 实现端口（列出合并在线状态、撤销与近期拒绝原因；提交前走与对话相同的准入；不写外发记录），桌面端在局域网主机启动后注册；主人端的外部对话列表不再列出助理调用。
+    - 调用链：`RemoteAgentSubmitRequest.call_chain` 与端口的 `local_device_id()`；Task 工具准入时用「本轮收到的链 + 本机调用方助理」组链并先在本地查环，经子会话上下文交给远端回合；委派块带 `callChain`，对话提交发送 `[]`；`submit` 缺少该字段时拒绝（已存的任务记录缺少时读为空，保证升级后旧记录仍可读）；执行器检查每项为 `<deviceId>/<assistantId>`；任务回合的 `dispatchDelegation` 元数据与上下文保存收到的链，再调用时延续。
+    - 与 Change Map 的差异：目标端的环检测放在主人的局域网主机（转交执行器之前），因为只有它持有本机设备 id；执行器只检查字段存在与格式。行为与计划一致：主人端与请求端各查一次。
+    - 测试：`delegation` 链项与环（`call_chains_hold_device_assistants_and_refuse_a_second_visit`）、元数据到上下文、主人端环检测（`a_submission_naming_an_assistant_already_on_its_chain_is_a_loop`）、目录提交带链、CLI 缺少调用链与伪造链项被拒、端口合约的线上字段与旧请求读入。core `--lib`（lan-share,dispatch-store,agent-runtime,ssh-remote,git,remote-workspace）2313 项、`lan_share_flow` 9 项、CLI `dispatch::` 115 项、runtime-ports 合约 6 项通过；`openbitfun-desktop` 检查通过。
+    - 待补：回环两主机的调用、审批与排队提示、跨设备循环拒绝、离线失败的流程测试。
 
 ## Task 4: 外部任务的继续调用与计数
 

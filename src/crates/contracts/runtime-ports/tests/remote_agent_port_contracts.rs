@@ -216,7 +216,18 @@ fn submit_request(device_id: &str) -> RemoteAgentSubmitRequest {
             agent_type: "Standard".to_string(),
             display_name: None,
         },
+        call_chain: vec!["desk/writer".to_string()],
     }
+}
+
+#[test]
+fn submit_requests_carry_the_call_chain_and_older_ones_read_as_empty() {
+    let value = serde_json::to_value(submit_request("laptop")).unwrap();
+    assert_eq!(value["callChain"], serde_json::json!(["desk/writer"]));
+    let mut older = value;
+    older.as_object_mut().unwrap().remove("callChain");
+    let read: RemoteAgentSubmitRequest = serde_json::from_value(older).unwrap();
+    assert!(read.call_chain.is_empty());
 }
 
 #[tokio::test]

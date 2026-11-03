@@ -33,6 +33,20 @@ const OBSERVE_INTERVAL: Duration = Duration::from_millis(1500);
 /// Upper bound on the delay between retries while the device is unreachable.
 const MAX_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Child context key carrying the call chain of a call to another device's
+/// assistant, as a JSON array; set by the Task tool at admission.
+pub(crate) const REMOTE_AGENT_CALL_CHAIN_CONTEXT_KEY: &str = "remoteAgentCallChain";
+
+/// The call chain the Task tool admitted the call with.
+pub(crate) fn admitted_call_chain(
+    context: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    context
+        .get(REMOTE_AGENT_CALL_CHAIN_CONTEXT_KEY)
+        .and_then(|chain| serde_json::from_str(chain).ok())
+        .unwrap_or_default()
+}
+
 pub(crate) fn remote_agent_address(agent_type: &str) -> Option<RemoteAgentAddress> {
     RemoteAgentAddress::parse(agent_type)
 }
@@ -68,6 +82,7 @@ pub(crate) struct RemoteAgentTurn {
     pub(crate) dialog_turn_id: String,
     pub(crate) prompt: String,
     pub(crate) source: RemoteAgentSource,
+    pub(crate) call_chain: Vec<String>,
     pub(crate) cancel_token: CancellationToken,
 }
 
@@ -120,6 +135,7 @@ pub(crate) async fn run_remote_agent_turn(
                     prompt: turn.prompt.clone(),
                     title: None,
                     source: turn.source.clone(),
+                    call_chain: turn.call_chain.clone(),
                 })
                 .await
                 .map_err(|error| remote_error(&agent_type, error))?;

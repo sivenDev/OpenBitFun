@@ -11463,6 +11463,8 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             _ if remote_agent.is_some() => {
                 // The device's owner answers every permission prompt there;
                 // no local rule or mailbox decides them.
+                let call_chain =
+                    super::remote_agent_turn::admitted_call_chain(&execution_context.context);
                 drop((execution_engine, initial_messages, execution_context));
                 let parent_agent_type = self
                     .session_manager
@@ -11484,6 +11486,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                             agent_type: parent_agent_type,
                             display_name: None,
                         },
+                        call_chain,
                         cancel_token: subagent_cancel_token.clone(),
                     },
                 ))

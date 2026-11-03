@@ -217,7 +217,8 @@ pub async fn submit_shared_assistant(
         "agentType": agent.agent_type,
         "prompt": request.prompt,
         "approvalPolicy": SHARED_ASSISTANT_APPROVAL_POLICY,
-        "delegation": { "assistantId": assistant_id },
+        // A person asked, so no assistant is on the call chain yet.
+        "delegation": { "assistantId": assistant_id, "callChain": [] },
     });
     if let Some(title) = request.title.filter(|value| !value.trim().is_empty()) {
         payload["title"] = Value::String(title);
