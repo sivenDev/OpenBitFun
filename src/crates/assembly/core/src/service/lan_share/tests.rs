@@ -835,6 +835,41 @@ mod browse_state {
     }
 
     #[test]
+    fn only_devices_that_did_not_answer_are_tried_again() {
+        let mut browse = BrowseState::default();
+        let away = device(7, [172, 17, 9, 12], 47652);
+        let ready = device(8, [172, 17, 9, 13], 47652);
+        let changed = device(9, [172, 17, 9, 14], 47652);
+        browse.add(away.clone(), "172.17.9.12:47652".to_string());
+        browse.add(ready.clone(), "172.17.9.13:47652".to_string());
+        browse.add(changed.clone(), "172.17.9.14:47652".to_string());
+        assert!(browse.unreachable_peers().is_empty());
+
+        browse.failed(
+            &away.device_id,
+            DeviceStatus::Unreachable {
+                message: "timed out".to_string(),
+            },
+        );
+        browse.catalog(&ready.device_id, Vec::new());
+        browse.failed(
+            &changed.device_id,
+            DeviceStatus::IdentityChanged {
+                message: "another key".to_string(),
+            },
+        );
+        let again: Vec<String> = browse
+            .unreachable_peers()
+            .into_iter()
+            .map(|peer| peer.device_id)
+            .collect();
+        assert_eq!(again, vec![away.device_id.clone()]);
+
+        browse.catalog(&away.device_id, Vec::new());
+        assert!(browse.unreachable_peers().is_empty());
+    }
+
+    #[test]
     fn a_device_found_and_added_is_listed_once_and_reached_both_ways() {
         let mut browse = BrowseState::default();
         let added = device(7, [172, 17, 9, 12], 47652);

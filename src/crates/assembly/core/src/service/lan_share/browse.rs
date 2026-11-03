@@ -169,6 +169,21 @@ impl BrowseState {
             .collect()
     }
 
+    /// The listed devices whose catalog could not be read because they did
+    /// not answer: tried again while Discover is open, since one added by
+    /// address is never announced when it comes back.
+    pub fn unreachable_peers(&self) -> Vec<DiscoveredPeer> {
+        self.peers()
+            .filter(|peer| {
+                peer.is_compatible()
+                    && self.devices.get(&peer.device_id).is_some_and(|device| {
+                        matches!(device.status, DeviceStatus::Unreachable { .. })
+                    })
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Every listed device once: as Bonjour lists it, or as it was added.
     fn peers(&self) -> impl Iterator<Item = &DiscoveredPeer> {
         self.found.values().chain(

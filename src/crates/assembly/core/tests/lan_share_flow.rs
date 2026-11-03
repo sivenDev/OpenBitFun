@@ -933,3 +933,48 @@ async fn an_owner_that_comes_back_is_reached_again_without_bonjour() {
     owner.shutdown().await;
     user.shutdown().await;
 }
+
+#[tokio::test]
+async fn an_added_device_that_comes_back_while_discover_is_open_is_read_again() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let user_dir = tempfile::tempdir().unwrap();
+    let owner = host(owner_dir.path(), Arc::new(Events::default())).await;
+    let user = host(user_dir.path(), Arc::new(Events::default())).await;
+    let owner_key = hex::encode(owner.identity().public_key());
+    let owner_id = owner.identity().device_id().to_string();
+    share_writer(&owner).await;
+    let port = owner.port().await.unwrap();
+
+    user.discover_start().await.unwrap();
+    user.add_device(&format!("127.0.0.1:{port}"), &owner_key)
+        .await
+        .unwrap();
+    eventually("the added owner's catalog is read", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Available)
+    })
+    .await;
+    user.discover_stop().await;
+
+    // Discover opens while the owner is away.
+    owner.shutdown().await;
+    drop(owner);
+    user.discover_start().await.unwrap();
+    eventually("the owner is listed as unreachable", || async {
+        user.discovered().iter().any(|device| {
+            device.device_id == owner_id
+                && matches!(device.status, DeviceStatus::Unreachable { .. })
+        })
+    })
+    .await;
+
+    // It comes back while the panel stays open: read again without reopening.
+    let owner = host_on(owner_dir.path(), Arc::new(Events::default()), None, port).await;
+    eventually("the owner is read again", || async {
+        access_of(&user.discovered(), "workspace") == Some(Access::Available)
+    })
+    .await;
+
+    user.discover_stop().await;
+    owner.shutdown().await;
+    user.shutdown().await;
+}

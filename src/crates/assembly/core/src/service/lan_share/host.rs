@@ -1041,6 +1041,7 @@ impl LanShareHost {
             let host = self.clone();
             tokio::spawn(async move { host.read_catalog(&peer).await });
         }
+        self.start_reconnecting();
         info!("LAN sharing discovery started");
         Ok(self.discovered())
     }
@@ -1131,6 +1132,7 @@ impl LanShareHost {
             let kept = self.kept_owners().await;
             self.close_idle_owners(&kept).await;
         } else {
+            self.stop_reconnecting();
             self.stop_browser().await;
         }
         info!("LAN sharing discovery stopped");
@@ -1161,9 +1163,9 @@ impl LanShareHost {
                 warn!("LAN sharing cannot look for owners: {}", error);
             }
             self.start_reconnecting();
-        } else {
+        } else if !self.inner.panel.load(Ordering::SeqCst) {
             self.stop_reconnecting();
-            if was && !self.inner.panel.load(Ordering::SeqCst) {
+            if was {
                 self.stop_browser().await;
             }
         }
@@ -1171,7 +1173,8 @@ impl LanShareHost {
 
     /// Starts trying again, every [`LanShareOptions::reconnect_interval`], to
     /// reach the owners of assistants shared with this device that cannot be
-    /// reached. Bonjour cannot see an owner on another subnet, and may miss
+    /// reached and, while Discover is open, the devices it lists that did not
+    /// answer. Bonjour cannot see a device on another subnet, and may miss
     /// one that comes back.
     fn start_reconnecting(&self) {
         let mut reconnect = self.inner.reconnect.lock().expect("reconnect lock");
@@ -1187,10 +1190,17 @@ impl LanShareHost {
                         break;
                     };
                     let host = LanShareHost { inner };
-                    if !host.inner.keep.load(Ordering::SeqCst) {
+                    let keep = host.inner.keep.load(Ordering::SeqCst);
+                    let panel = host.inner.panel.load(Ordering::SeqCst);
+                    if !keep && !panel {
                         break;
                     }
-                    host.reconnect_owners().await;
+                    if keep {
+                        host.reconnect_owners().await;
+                    }
+                    if panel {
+                        host.read_unreachable();
+                    }
                 }
                 tokio::time::sleep(interval).await;
             }
@@ -1252,6 +1262,21 @@ impl LanShareHost {
                 }
                 Err(error) => debug!("LAN sharing owner still unreachable: {}", error),
             }
+        }
+    }
+
+    /// Reads again the catalog of each device Discover lists that did not
+    /// answer.
+    fn read_unreachable(&self) {
+        let peers = self
+            .inner
+            .browse
+            .lock()
+            .expect("browse lock")
+            .unreachable_peers();
+        for peer in peers {
+            let host = self.clone();
+            tokio::spawn(async move { host.read_catalog(&peer).await });
         }
     }
 
