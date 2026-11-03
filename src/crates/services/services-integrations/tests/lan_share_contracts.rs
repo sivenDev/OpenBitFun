@@ -271,3 +271,44 @@ async fn an_unknown_device_is_reached_by_address_alone() {
     assert_eq!(peer.fingerprint, server_identity.fingerprint());
     assert_eq!(peer.address, address);
 }
+
+#[tokio::test]
+async fn a_peer_that_closes_without_a_word_is_unreachable_and_one_that_answers_is_not() {
+    // What a proxy or VPN taking over the route looks like when nothing
+    // answers behind it: the connection is accepted, then closed.
+    let silent = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let silent_address = silent.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = silent.accept().await {
+            drop(stream);
+        }
+    });
+    let error = connect(&config("user"), silent_address, None, None)
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(error, LanError::Unreachable(_)), "{error:?}");
+
+    // Another program answers, just not as a sharing device.
+    let other = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let other_address = other.local_addr().unwrap();
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        while let Ok((mut stream, _)) = other.accept().await {
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let _ = stream
+                .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+                .await;
+        }
+    });
+    let error = connect(&config("user"), other_address, None, None)
+        .await
+        .err()
+        .unwrap();
+    assert!(!matches!(error, LanError::Unreachable(_)), "{error:?}");
+}

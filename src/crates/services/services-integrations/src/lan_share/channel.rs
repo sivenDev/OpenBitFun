@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, oneshot, watch, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{self, Message};
 use tokio_tungstenite::WebSocketStream;
 
 use super::handshake::{CheckedHello, FrameOpener, FrameSealer, Hello, LocalHandshake};
@@ -480,7 +480,7 @@ pub async fn connect(
             Some(config.websocket()),
         )
         .await
-        .map_err(|error| LanError::Io(error.to_string()))?;
+        .map_err(|error| opening_error(address, error))?;
         let session = handshake(&mut ws, config, true, expected_public_key).await?;
         Ok::<_, LanError>((ws, session))
     })
@@ -494,6 +494,33 @@ pub async fn connect(
         handler,
         config.max_frame_bytes,
     ))
+}
+
+/// Why the WebSocket opening failed. A peer that closes without a word is
+/// treated as unreachable: a proxy or VPN that takes over the route accepts
+/// every connection itself and closes it when nothing answers behind it,
+/// while any other program at the address answers something.
+fn opening_error(address: SocketAddr, error: tungstenite::Error) -> LanError {
+    use std::io::ErrorKind;
+    use tungstenite::Error;
+    let silent = match &error {
+        Error::ConnectionClosed | Error::AlreadyClosed => true,
+        Error::Io(io) => matches!(
+            io.kind(),
+            ErrorKind::UnexpectedEof
+                | ErrorKind::ConnectionReset
+                | ErrorKind::ConnectionAborted
+                | ErrorKind::BrokenPipe
+        ),
+        _ => false,
+    };
+    if silent {
+        LanError::Unreachable(format!(
+            "{address} closed the connection without answering: {error}"
+        ))
+    } else {
+        LanError::Io(error.to_string())
+    }
 }
 
 type Ws = WebSocketStream<TcpStream>;
