@@ -1773,7 +1773,7 @@ pub(super) fn validate_answer_request(request: &DispatchAnswerRequest) -> anyhow
     Ok(())
 }
 
-pub(super) fn validate_submit_ack(
+pub(crate) fn validate_submit_ack(
     response: &Value,
     job_id: &str,
     session_id: &str,

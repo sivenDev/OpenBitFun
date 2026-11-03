@@ -2659,8 +2659,8 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         self.tool_pipeline.permission_request_manager()
     }
 
-    /// Registers the host's delegation to agents other devices of this
-    /// account opened. A host that registers none offers no `remote:` agents.
+    /// Registers the host's delegation to assistants other devices share
+    /// with this one. A host that registers none offers no `shared:` agents.
     pub fn set_remote_agent_port(
         &self,
         port: Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>,

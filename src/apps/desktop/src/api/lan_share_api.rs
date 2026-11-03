@@ -16,6 +16,7 @@ use openbitfun_core::service::dispatch::{
 };
 use openbitfun_core::service::lan_share::dispatch_rpc::LanDispatchRpc;
 use openbitfun_core::service::lan_share::protocol::RequestOpened;
+use openbitfun_core::service::lan_share::remote_agents::SharedAssistantDirectory;
 use openbitfun_core::service::lan_share::{
     delete_tenant, list_tenants, tenants_root, AddressOutcome, DiscoveredDevice, HostStatus,
     LanShareHost, LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch,
@@ -56,10 +57,25 @@ pub async fn start(events: Arc<dyn EventEmitter>) {
         }
         Err(error) => Err(format!("resolve storage root: {error}")),
     };
-    if let Err(error) = &started {
-        log::warn!("LAN sharing unavailable: {}", error);
+    match &started {
+        Ok(host) => register_shared_assistant_calls(host),
+        Err(error) => log::warn!("LAN sharing unavailable: {}", error),
     }
     let _ = HOST.set(started);
+}
+
+/// Lets this device's agents call the assistants other devices share with
+/// it, and observe again the calls an earlier process left running.
+fn register_shared_assistant_calls(host: &LanShareHost) {
+    let Some(coordinator) = openbitfun_core::agentic::coordination::get_global_coordinator() else {
+        log::warn!("Shared assistants cannot be called: the conversation coordinator is not ready");
+        return;
+    };
+    coordinator.set_remote_agent_port(Arc::new(SharedAssistantDirectory::new(
+        Arc::new(host.clone()),
+        Arc::new(LanDispatchRpc::new(host.clone())),
+    )));
+    coordinator.resume_remote_background_tasks();
 }
 
 fn host() -> Result<&'static LanShareHost, String> {

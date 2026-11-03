@@ -23,6 +23,8 @@ use tokio::fs;
 use crate::infrastructure::PathManager;
 
 #[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
+pub(crate) use controller::validate_submit_ack;
+#[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
 pub use controller::{
     answer as answer_dispatch, append as append_dispatch, cancel as cancel_dispatch,
     continue_job as continue_dispatch_job, install_cli_cancel as cancel_dispatch_cli_install,
@@ -49,6 +51,11 @@ pub use device_controller::{
 pub use openbitfun_services_core::dispatch_contract::{
     DispatchAccountDaemonIdentity, DispatchAccountDaemonProvisionRequest,
     DISPATCH_ACCOUNT_DAEMON_PROVISIONING_SCHEMA_VERSION,
+};
+#[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
+pub(crate) use shared_assistant::{
+    admit_shared_assistant, explain as explain_shared_assistant_error,
+    SHARED_ASSISTANT_APPROVAL_POLICY,
 };
 #[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
 pub use shared_assistant::{

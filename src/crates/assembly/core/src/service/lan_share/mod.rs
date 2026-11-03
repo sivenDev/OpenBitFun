@@ -18,6 +18,13 @@ pub mod dispatch_rpc;
 #[cfg(feature = "lan-share")]
 pub mod host;
 pub mod protocol;
+#[cfg(all(
+    feature = "lan-share",
+    feature = "dispatch-store",
+    feature = "agent-runtime",
+    feature = "ssh-remote"
+))]
+pub mod remote_agents;
 pub mod requests;
 pub mod shared_assistants;
 pub mod shared_with_me;

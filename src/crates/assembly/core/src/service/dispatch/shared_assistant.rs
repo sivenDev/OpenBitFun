@@ -11,7 +11,7 @@
 
 use anyhow::anyhow;
 use openbitfun_services_core::dispatch_contract::{
-    DispatchCatalogResponse, DISPATCH_AGENT_DELEGATION_CAPABILITY,
+    DispatchCatalogAgent, DispatchCatalogResponse, DISPATCH_AGENT_DELEGATION_CAPABILITY,
 };
 use openbitfun_services_integrations::remote_ssh::dispatch_ssh;
 use serde_json::{json, Value};
@@ -32,7 +32,7 @@ use super::target::same_shared_assistant;
 use super::{DispatchTarget, DispatchTargetRequest, OutboundDispatchRecord, OutboundDispatchStore};
 
 /// The only approval policy of a shared assistant's tasks: its owner answers.
-const SHARED_ASSISTANT_APPROVAL_POLICY: &str = "remote";
+pub(crate) const SHARED_ASSISTANT_APPROVAL_POLICY: &str = "remote";
 
 /// Why a conversation with a shared assistant cannot go on. The message
 /// starts with `[shared-assistant:<code>]` so every surface can tell the
@@ -75,7 +75,7 @@ impl SharedAssistantProblem {
 
 /// Names the reason a call failed when the owner's answer says it. `job`
 /// is set for calls about a conversation this device has a record of.
-fn explain(error: anyhow::Error, job: bool) -> anyhow::Error {
+pub(crate) fn explain(error: anyhow::Error, job: bool) -> anyhow::Error {
     if error.downcast_ref::<SharedAssistantProblem>().is_some() {
         return error;
     }
@@ -97,6 +97,51 @@ fn explain(error: anyhow::Error, job: bool) -> anyhow::Error {
         return SharedAssistantProblem::Revoked.into();
     }
     error
+}
+
+/// Asks the owner's device whether it takes a task for `assistant_id` now,
+/// and returns the assistant as its catalog lists it. Every refusal is a
+/// [`SharedAssistantProblem`] or the owner's own reason.
+pub(crate) async fn admit_shared_assistant(
+    rpc: &dyn DeviceDispatchRpc,
+    owner: &str,
+    assistant_id: &str,
+) -> anyhow::Result<DispatchCatalogAgent> {
+    let protocol = rpc
+        .invoke(owner, "dispatch_target_probe", json!({}))
+        .await
+        .map_err(|error| explain(error, false))?;
+    dispatch_ssh::validate_dispatch_protocol(&protocol, Some(SHARED_ASSISTANT_APPROVAL_POLICY))
+        .map_err(|error| SharedAssistantProblem::NeedsUpdate(format!("{error:#}")))?;
+    let delegates = protocol
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .is_some_and(|capabilities| {
+            capabilities
+                .iter()
+                .any(|capability| capability.as_str() == Some(DISPATCH_AGENT_DELEGATION_CAPABILITY))
+        });
+    if !delegates {
+        return Err(SharedAssistantProblem::NeedsUpdate(
+            "the owner's device does not take tasks for shared assistants".to_string(),
+        )
+        .into());
+    }
+    let catalog: DispatchCatalogResponse = serde_json::from_value(
+        rpc.invoke(owner, "dispatch_target_catalog", json!({}))
+            .await
+            .map_err(|error| explain(error, false))?,
+    )
+    .map_err(|error| anyhow!("decode the shared assistants of the owner's device: {error}"))?;
+    let agent = catalog
+        .agents
+        .into_iter()
+        .find(|agent| agent.id == assistant_id)
+        .ok_or(SharedAssistantProblem::Revoked)?;
+    if let Some(reason) = agent.unavailable {
+        return Err(SharedAssistantProblem::Unavailable(reason).into());
+    }
+    Ok(agent)
 }
 
 fn shared_assistant_of(target: &DispatchTargetRequest) -> anyhow::Result<(&str, &str)> {
@@ -135,41 +180,7 @@ pub async fn submit_shared_assistant(
         anyhow::bail!("shared assistants do not take a Git baseline");
     }
     validate_device_attachment_budget(&request.attachments)?;
-
-    let protocol = rpc
-        .invoke(owner, "dispatch_target_probe", json!({}))
-        .await
-        .map_err(|error| explain(error, false))?;
-    dispatch_ssh::validate_dispatch_protocol(&protocol, Some(SHARED_ASSISTANT_APPROVAL_POLICY))
-        .map_err(|error| SharedAssistantProblem::NeedsUpdate(format!("{error:#}")))?;
-    let delegates = protocol
-        .get("capabilities")
-        .and_then(Value::as_array)
-        .is_some_and(|capabilities| {
-            capabilities
-                .iter()
-                .any(|capability| capability.as_str() == Some(DISPATCH_AGENT_DELEGATION_CAPABILITY))
-        });
-    if !delegates {
-        return Err(SharedAssistantProblem::NeedsUpdate(
-            "the owner's device does not take tasks for shared assistants".to_string(),
-        )
-        .into());
-    }
-    let catalog: DispatchCatalogResponse = serde_json::from_value(
-        rpc.invoke(owner, "dispatch_target_catalog", json!({}))
-            .await
-            .map_err(|error| explain(error, false))?,
-    )
-    .map_err(|error| anyhow!("decode the shared assistants of the owner's device: {error}"))?;
-    let agent = catalog
-        .agents
-        .into_iter()
-        .find(|agent| agent.id == assistant_id)
-        .ok_or(SharedAssistantProblem::Revoked)?;
-    if let Some(reason) = agent.unavailable {
-        return Err(SharedAssistantProblem::Unavailable(reason).into());
-    }
+    let agent = admit_shared_assistant(rpc, owner, assistant_id).await?;
 
     let target = DispatchTarget::SharedAssistant {
         owner_device_id: owner.to_string(),
@@ -342,6 +353,16 @@ pub async fn list_shared_assistant_jobs(
             .pointer("/delegation/assistantId")
             .and_then(Value::as_str)
             != Some(assistant_id)
+        {
+            continue;
+        }
+        // A task one of this device's assistants gave the shared assistant
+        // belongs to that assistant's call, not to this device's
+        // conversations; only the calling subagent observes it.
+        if entry
+            .pointer("/delegation/source/agentType")
+            .and_then(Value::as_str)
+            .is_some_and(|agent_type| !agent_type.is_empty())
         {
             continue;
         }
@@ -835,11 +856,16 @@ mod tests {
                 "delegation": { "assistantId": assistant },
             })
         };
+        // A task one of this device's assistants gave it is that call's.
+        let mut call = entry("delegation-c", "workspace-notes", "running");
+        call["delegation"]["source"] =
+            json!({ "sessionId": "caller", "agentType": "assistant:workspace" });
         let owner = Owner::new(vec![(
             "dispatch_target_list",
             Ok(json!([
                 entry("delegation-a", "workspace-notes", "succeeded"),
                 entry("delegation-b", "workspace-other", "running"),
+                call,
             ])),
         )]);
         let listed = list_shared_assistant_jobs(
