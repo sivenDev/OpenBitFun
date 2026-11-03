@@ -121,7 +121,9 @@ function dispatchAttachments(
       dataUrl,
     };
   });
-  if (session?.config.dispatchTarget?.kind === 'device') {
+  // Shared assistants travel over the same device channel and budget.
+  const targetKind = session?.config.dispatchTarget?.kind;
+  if (targetKind === 'device' || targetKind === 'sharedAssistant') {
     const total = attachments.reduce((sum, attachment) => sum + attachment.dataUrl.length, 0);
     if (total > DEVICE_ATTACHMENT_BUDGET_BYTES) {
       throw new Error(

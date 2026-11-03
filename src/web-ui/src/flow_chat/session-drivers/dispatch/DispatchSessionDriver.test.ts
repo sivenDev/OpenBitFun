@@ -104,6 +104,11 @@ describe('a conversation with a shared assistant', () => {
     expect(request.includeUncommitted).toBe(false);
     expect(request).not.toHaveProperty('sourceWorkspacePath');
 
+    const tooLarge = { ...input, options: { imageContexts: [{ id: 'i', mime_type: 'image/png', data_url: 'x'.repeat(200 * 1024) }] } };
+    await expect(dispatchSessionDriver.startTurn(context, tooLarge, tracker)).rejects.toThrow(
+      'flow-chat:chatInput.dispatch.errors.deviceAttachmentTooLarge',
+    );
+
     mocks.submit.mockRejectedValue(new Error('[shared-assistant:offline] connection refused'));
     await expect(dispatchSessionDriver.startTurn(context, input, tracker)).rejects.toThrow(
       'flow-chat:chatInput.dispatch.sharedAssistant.problems.offline Writer',
