@@ -82,6 +82,24 @@ export function calledAssistantName(
 }
 
 /**
+ * Whose assistant a call reaches: this device's own, or one shared from the
+ * named owner's device. Null when the call is not to an assistant.
+ */
+export function calledAssistantOwner(
+  agentType: string | null | undefined,
+  session: { delegatedBy?: SessionDelegatedBy } | null | undefined,
+  sharedWithMe: readonly SharedWithMe[],
+): { kind: 'mine' } | { kind: 'shared'; owner: string } | null {
+  const remote = remoteAgentFromAgentType(agentType);
+  if (remote) {
+    const owner = sharedAssistantNames(remote, sharedWithMe)?.owner;
+    return { kind: 'shared', owner: owner || remote.deviceId };
+  }
+  if (localAssistantFromAgentType(agentType) || session?.delegatedBy) return { kind: 'mine' };
+  return null;
+}
+
+/**
  * The name of this device's assistant whose session `session` is, when an
  * assistant call started it. Such a session runs as `Claw` in the called
  * assistant's workspace, so its own agent type never names the assistant.

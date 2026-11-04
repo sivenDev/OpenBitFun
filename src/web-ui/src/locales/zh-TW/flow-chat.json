@@ -2433,7 +2433,9 @@
       "reviewTimedOut": "已逾時",
       "reviewStopped": "已停止",
       "assistantLabel": "{{agent}}（我的助理）",
-      "assistantModel": "由該助理自己的設定決定"
+      "assistantModel": "由該助理自己的設定決定",
+      "assistantOwnerMine": "我的助理",
+      "assistantOwnerShared": "來自 {{owner}} 的裝置"
     },
     "taskDetailPanel": {
       "untitled": "未命名任務",

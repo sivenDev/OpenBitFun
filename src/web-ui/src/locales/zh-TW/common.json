@@ -493,8 +493,6 @@
       "sourceAgentFilter": "工作階段來源",
       "allSourceAgents": "全部 Agent",
       "sourceAgentLabel": "來自 {{name}} 的工作階段",
-      "delegatedByBadge": "來自 {{name}}",
-      "delegatedByTooltip": "{{name}} 呼叫這個助理時開始的工作階段",
       "discoveryPartial": "部分外部工作階段無法探索，既有工作階段仍可使用。",
       "discoveryWarningTitle": "外部工作階段探索",
       "discoveryReadFailed": "部分 {{source}} 工作階段記錄無法讀取，既有工作階段仍可使用。",

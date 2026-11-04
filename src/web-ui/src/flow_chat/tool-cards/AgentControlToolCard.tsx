@@ -22,6 +22,7 @@ import { AgentInteractionToolCard } from './AgentInteractionToolCard';
 import { resolveInteractionAgentSessionId } from './toolInteractionModel';
 import {
   calledAssistantName,
+  calledAssistantOwner,
   calledAssistantSessionName,
   localAssistantFromAgentType,
   remoteAgentFromAgentType,
@@ -169,6 +170,11 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const assistantName = calledAssistantName(calledType, assistantWorkspaces, sharedWithMe)
     ?? calledAssistantSessionName(linkedSession, assistantWorkspaces);
   const callsAssistant = requestsAssistant(calledType) || Boolean(linkedSession?.delegatedBy);
+  // Name whose assistant it is, never its internal type.
+  const assistantOwner = calledAssistantOwner(calledType, linkedSession, sharedWithMe);
+  const assistantOwnerLabel = assistantOwner?.kind === 'shared'
+    ? t('toolCards.taskTool.assistantOwnerShared', { owner: assistantOwner.owner })
+    : assistantOwner ? t('toolCards.taskTool.assistantOwnerMine') : null;
   const agentDisplayName = assistantName
     ?? (linkedSubagentSessionId
       ? t(resolveSubagentNameKey(linkedSubagentSessionId)) : t('toolCards.interaction.unknownAgent'));
@@ -195,6 +201,8 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
     openBtwSessionInAuxPane({
       childSessionId: linkedSubagentSessionId,
       parentSessionId: sessionId,
+      // A called assistant's session lives in that assistant's workspace.
+      workspaceId: linkedSession?.workspaceId,
       workspacePath: parentSession?.workspacePath,
       sessionKind: 'subagent',
       sessionTitle: agentDisplayName,
@@ -207,6 +215,7 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
     });
   }, [
     agentDisplayName,
+    linkedSession?.workspaceId,
     linkedSubagentSessionId,
     sessionId,
     stableAgentType,
@@ -256,7 +265,8 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
             <SubagentAvatar sessionId={linkedSubagentSessionId} name={agentDisplayName}
               size={40} showStatus={false} status={lifecycle} />
           ) : isSpawn ? <SubagentDelegationAvatar pending={false} motion={false} size={40} showStatus={false} /> : undefined,
-          agentType: stableSubagentType || stableAgentType || t('toolCards.taskTool.defaultAgentKind'),
+          agentType: assistantOwnerLabel
+            ?? (stableSubagentType || stableAgentType || t('toolCards.taskTool.defaultAgentKind')),
           model: modelName,
           labels: {
             agentType: t('subagentIdentity.preview.agentType'),

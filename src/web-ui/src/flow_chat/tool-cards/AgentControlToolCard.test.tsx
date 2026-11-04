@@ -380,6 +380,9 @@ describeWithJsdom('AgentControlToolCard', () => {
     ));
     expect(container.querySelector('[data-openbitfun-part="agentModel"]')?.textContent)
       .toBe('toolCards.taskTool.assistantModel');
+    expect(container.querySelector('[data-openbitfun-part="agentType"]')?.textContent)
+      .toBe('toolCards.taskTool.assistantOwnerMine');
+    expect(container.textContent).not.toContain('assistant:workspace-writer');
   });
 
   it('shows live type and model on the card while retaining the full preview and pane action', async () => {

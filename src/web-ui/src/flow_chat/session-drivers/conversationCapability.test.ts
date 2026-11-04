@@ -17,6 +17,10 @@ describe('session conversation capability', () => {
     expect(capability({ ...child, continuationPolicy: undefined }, 'local').access).toBe('unknown');
     expect(capability(undefined, 'local').access).toBe('unknown');
   });
+  it('keeps a session another assistant started by calling this one read-only', () => {
+    expect(capability({ config: {}, delegatedBy: { sessionId: 'caller' } }, 'local'))
+      .toEqual({ access: 'read-only', canSubmit: false, reason: 'fresh_only' });
+  });
   it('rejects archived sessions', () => {
     expect(capability({ ...child, persistedStatus: 'archived' }, 'local').reason).toBe('archived');
   });

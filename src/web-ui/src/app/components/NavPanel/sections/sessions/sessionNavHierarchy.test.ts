@@ -77,6 +77,17 @@ describe('workspace-owned navigation counts', () => {
     expect(hierarchy.childrenByParent.get('parent')?.map(row => row.sessionId)).toEqual(['child']);
   });
 
+  it('leaves a session another assistant started by calling this one out of the list', () => {
+    const records = [
+      session('own', 'assistant-b'),
+      session('called', 'assistant-b', {
+        delegatedBy: { assistant: 'assistant:a', assistantName: 'A', sessionId: 'caller', callChain: [] },
+      }),
+    ];
+    expect(getWorkspaceSessionHierarchy(records, ['assistant-b']).topLevelSessions.map(row => row.sessionId))
+      .toEqual(['own']);
+  });
+
   it('honors legacy config ownership and POSIX remote IDs without inferring ownership from paths', () => {
     const records = [
       session('legacy', '', { workspaceId: undefined, projectWorkspaceId: undefined, config: { workspaceId: 'ssh-main' } }),

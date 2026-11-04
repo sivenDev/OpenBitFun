@@ -188,6 +188,14 @@
       "newSessionTitle": "Start a conversation",
       "sessionsSectionTitle": "Sessions",
       "scheduledSessionsTitle": "Scheduled sessions",
+      "calledBy": {
+        "title": "Work for other assistants",
+        "show": "Show {{count}}",
+        "hide": "Hide",
+        "row": "Called by {{caller}} · {{title}} · {{when}}",
+        "unknownCaller": "another assistant",
+        "untitled": "Untitled"
+      },
       "scheduledSessionsNoWorkspace": "Select an assistant workspace to manage scheduled sessions.",
       "personaDocs": {
         "IDENTITY": "Identity",

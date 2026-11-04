@@ -16,7 +16,7 @@ export interface SessionConversationCapability {
 
 type ConversationSession = Pick<Session,
   'sessionKind' | 'continuationPolicy' | 'persistedStatus' | 'historyState' | 'config'
-  | 'isTransient' | 'agentBackedTransient'>;
+  | 'isTransient' | 'agentBackedTransient' | 'delegatedBy'>;
 
 /** Execution completion is deliberately not a conversation-lifetime signal. */
 export function deriveSessionConversationCapability(
@@ -29,6 +29,11 @@ export function deriveSessionConversationCapability(
   }
   if (session.isTransient && !session.agentBackedTransient) {
     return { access: 'read-only', canSubmit: false, reason: 'unsupported_route' };
+  }
+  if (session.delegatedBy) {
+    // Another assistant started it by calling this one; that caller drives
+    // it, and the person reads it here.
+    return { access: 'read-only', canSubmit: false, reason: 'fresh_only' };
   }
   if (driverId === 'delegated') {
     // The task belongs to whoever sent it; the owner watches and approves.

@@ -493,8 +493,6 @@
       "sourceAgentFilter": "会话来源",
       "allSourceAgents": "全部 Agent",
       "sourceAgentLabel": "来自 {{name}} 的会话",
-      "delegatedByBadge": "来自 {{name}}",
-      "delegatedByTooltip": "{{name}} 调用这个助理时开始的会话",
       "discoveryPartial": "部分外部会话无法发现，已有会话仍可使用。",
       "discoveryWarningTitle": "外部会话发现",
       "discoveryReadFailed": "部分 {{source}} 会话记录无法读取，已有会话仍可使用。",

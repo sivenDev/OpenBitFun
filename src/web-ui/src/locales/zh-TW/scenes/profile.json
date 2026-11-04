@@ -188,6 +188,14 @@
       "newSessionTitle": "發起會話",
       "sessionsSectionTitle": "會話",
       "scheduledSessionsTitle": "定時會話",
+      "calledBy": {
+        "title": "為其他助理做的任務",
+        "show": "顯示 {{count}} 項",
+        "hide": "收起",
+        "row": "{{caller}} 呼叫 · {{title}} · {{when}}",
+        "unknownCaller": "另一個助理",
+        "untitled": "未命名"
+      },
       "scheduledSessionsNoWorkspace": "請先選擇助理工作區後再管理定時會話。",
       "personaDocs": {
         "IDENTITY": "身份",

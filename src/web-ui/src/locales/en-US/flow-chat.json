@@ -2433,7 +2433,9 @@
       "reviewTimedOut": "Timed out",
       "reviewStopped": "Stopped",
       "assistantLabel": "{{agent}} (my assistant)",
-      "assistantModel": "Set by the assistant itself"
+      "assistantModel": "Set by the assistant itself",
+      "assistantOwnerMine": "My assistant",
+      "assistantOwnerShared": "From {{owner}}'s device"
     },
     "taskDetailPanel": {
       "untitled": "Untitled Task",

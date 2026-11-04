@@ -3,6 +3,7 @@ import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI'
 import type { WorkspaceInfo } from '@/shared/types';
 import {
   calledAssistantName,
+  calledAssistantOwner,
   calledAssistantSessionName,
   localAssistantFromAgentType,
   localAssistantName,
@@ -68,6 +69,15 @@ describe('assistant names', () => {
     expect(calledAssistantName('shared:laptop/helper', [local], list)).toBe('Writer');
     expect(calledAssistantName('Explore', [local], list)).toBeNull();
     expect(calledAssistantName('assistant:workspace-gone', [local], list)).toBeNull();
+  });
+
+  it('says whose assistant a call reaches, and nothing for other agents', () => {
+    const list = [shared('laptop', 'helper', 'Writer')];
+    expect(calledAssistantOwner('assistant:workspace-x', null, list)).toEqual({ kind: 'mine' });
+    expect(calledAssistantOwner('Claw', { delegatedBy: { sessionId: 'caller' } }, list)).toEqual({ kind: 'mine' });
+    expect(calledAssistantOwner('shared:laptop/helper', null, list)).toEqual({ kind: 'shared', owner: 'Ann' });
+    expect(calledAssistantOwner('shared:desk/gone', null, list)).toEqual({ kind: 'shared', owner: 'desk' });
+    expect(calledAssistantOwner('Explore', null, list)).toBeNull();
   });
 
   it('names a called assistant\'s session by the assistant whose workspace it is in', () => {

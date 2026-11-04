@@ -22,6 +22,7 @@ import {
 import SessionsSection from '@/app/components/NavPanel/sections/sessions/SessionsSection';
 import AssistantAvatarPicker from './AssistantAvatarPicker';
 import AssistantQuickInput from './AssistantQuickInput';
+import CalledByAssistantsSection from './CalledByAssistantsSection';
 import { useNurseryStore } from '../nurseryStore';
 import './NurseryView.scss';
 import {
@@ -544,6 +545,8 @@ const AssistantConfigPage: React.FC = () => {
               </Suspense>
             )}
           </section>
+
+          <CalledByAssistantsSection workspaceId={workspace?.id} />
 
           <section
             className="acp-section acp-sessions-area"

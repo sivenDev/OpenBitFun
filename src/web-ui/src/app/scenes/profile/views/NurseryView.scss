@@ -1247,6 +1247,15 @@ $nursery-scene-gutter: clamp(var(--openbitfun-space-4), 3cqi, var(--openbitfun-s
 
 // ── Empty / loading states ────────────────────────────────────────────────────
 
+.acp-called-by-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .acp-empty {
   font-size: var(--openbitfun-type-label-md-font-size);
   color: var(--openbitfun-color-content-muted);
