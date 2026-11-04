@@ -4,13 +4,14 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   registerJob: vi.fn(),
   updateProgress: vi.fn(),
+  updateTitle: vi.fn(),
   refresh: vi.fn(),
   finishPreview: vi.fn(),
 }));
 vi.mock('@/features/dispatch/dispatchApi', () => ({ dispatchApi: { submit: mocks.submit } }));
 vi.mock('@/features/dispatch/dispatchJobStore', () => ({
   dispatchJobStore: {
-    getState: () => ({ registerJob: mocks.registerJob, updateProgress: mocks.updateProgress, jobs: {} }),
+    getState: () => ({ registerJob: mocks.registerJob, updateProgress: mocks.updateProgress, updateTitle: mocks.updateTitle, jobs: {} }),
   },
 }));
 vi.mock('@/features/dispatch/DispatchJobObserver', () => ({ requestDispatchJobRefresh: mocks.refresh }));
@@ -34,6 +35,7 @@ const context = {
   flowChatStore: {
     createSession,
     applyDispatchSnapshot: vi.fn(),
+    getState: () => ({ sessions: new Map([['session-1', { title: 'Hello' }]]) }),
     updateSessionLastSubmittedMode: vi.fn(),
   },
 } as never;
@@ -137,5 +139,26 @@ describe('a conversation with a shared assistant', () => {
     } as never, {} as never);
 
     expect(mocks.finishPreview).toHaveBeenCalledWith(surfaceScope, 'session-1', 'dialog_1');
+  });
+
+  it('names the job after its first message, so the list keeps the name after a restart', async () => {
+    const session = {
+      sessionId: 'session-1',
+      config: { ...sharedConfig, dispatchJobId: 'delegation-1', dispatchJobState: 'submitting' },
+      dialogTurns: [],
+    } as unknown as Session;
+    mocks.submit.mockResolvedValue({ accepted: true, jobId: 'delegation-1', sessionId: 'session-1', state: 'queued' });
+
+    await dispatchSessionDriver.startTurn(context, {
+      surfaceScope,
+      sessionId: 'session-1',
+      message: 'Hello',
+      currentAgentType: 'assistant:writer',
+      acpClientId: null,
+      isFirstMessage: true,
+      readySession: session,
+    } as never, {} as never);
+
+    expect(mocks.updateTitle).toHaveBeenCalledWith('delegation-1', 'Hello', 'generated');
   });
 });

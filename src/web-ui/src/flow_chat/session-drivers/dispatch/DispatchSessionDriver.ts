@@ -752,6 +752,12 @@ export const dispatchSessionDriver: SessionDriver = {
     }
     if (isFirstMessage) {
       applyGeneratingTitlePlaceholder(context, sessionId, message);
+      // The navigation lists the job before its session is loaded again, so
+      // the job keeps the name too; a title the target generates replaces it.
+      const placeholder = context.flowChatStore.getState().sessions.get(sessionId)?.title;
+      if (placeholder) {
+        dispatchJobStore.getState().updateTitle(jobId, placeholder, 'generated');
+      }
     }
 
     const submitAttachments = dispatchAttachments(readySession, options?.imageContexts);
