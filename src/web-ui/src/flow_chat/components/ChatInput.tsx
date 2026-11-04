@@ -1331,6 +1331,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const sharedAssistantBlockText = caps.sharedAssistantBlocked && sharedAssistantTarget?.kind === 'sharedAssistant'
     ? sharedAssistantProblemText(caps.sharedAssistantBlocked, sharedAssistantTarget.displayName)
     : undefined;
+  // Once text is typed the placeholder no longer says why nothing is sent.
+  const sendButtonLabel = sharedAssistantBlockText ?? t('input.sendShortcut');
   const executionLevelPolicy = useMemo(
     () => resolveChatInputExecutionLevelPolicy({
       isAssistantWorkspace,
@@ -6316,9 +6318,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </Tooltip>
           </span>
           <span className="openbitfun-chat-input__send-action" data-openbitfun-component="chat-input" data-openbitfun-part="sendButton" data-openbitfun-action="send" data-openbitfun-state={!hasSendableInput || isModelSwitching || isModeChangePending || caps.transferInFlight || !targetCanSubmit || !modelAvailability.canSend ? 'disabled' : undefined}>
-            <Tooltip content={t('input.sendShortcut')}>
+            <Tooltip content={sendButtonLabel}>
               <ChatComposerActionButton
-                aria-label={t('input.sendShortcut')}
+                aria-label={sendButtonLabel}
                 className="openbitfun-chat-input__send-button"
                 onClick={() => void handleSendOrCancel()}
                 disabled={!hasSendableInput || isModelSwitching || isModeChangePending || caps.transferInFlight || !targetCanSubmit || !modelAvailability.canSend}
@@ -6334,9 +6336,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     
     return (
       <span className="openbitfun-chat-input__send-action" data-openbitfun-component="chat-input" data-openbitfun-part="sendButton" data-openbitfun-action="send" data-openbitfun-state={!hasSendableInput || isModelSwitching || isModeChangePending || caps.transferInFlight || !targetCanSubmit || !modelAvailability.canSend ? 'disabled' : undefined}>
-        <Tooltip content={t('input.sendShortcut')}>
+        <Tooltip content={sendButtonLabel}>
           <ChatComposerActionButton
-            aria-label={t('input.sendShortcut')}
+            aria-label={sendButtonLabel}
             className="openbitfun-chat-input__send-button"
             onClick={() => void handleSendOrCancel()}
             disabled={!hasSendableInput || isModelSwitching || isModeChangePending || caps.transferInFlight || !targetCanSubmit || !modelAvailability.canSend}
