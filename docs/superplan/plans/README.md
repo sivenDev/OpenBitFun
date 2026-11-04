@@ -4,9 +4,9 @@
 
 ## Status
 
-| Type | Plans | Approved | In Progress | Complete | Superseded |
-| --- | --- | --- | --- | --- | --- |
-| `feature` | 20 | 1 | 3 | 7 | 9 |
+| Type | Plans | Draft | Approved | In Progress | Complete | Superseded |
+| --- | --- | --- | --- | --- | --- | --- |
+| `feature` | 21 | 1 | 1 | 3 | 7 | 9 |
 
 ## Plan Groups
 
@@ -34,3 +34,4 @@
 | `F002-14` | [按地址添加：不同网段的设备按局域网地址添加、核对设备码、记住并自动重连](features/F002/14-add-by-address.md) | `complete` | 2026-11-03 |
 | `F002-15` | [导航中的共享助理：按设备分组精修与状态一眼可见](features/F002/15-tenant-nav-polish.md) | `in_progress` | 2026-11-04 |
 | `F002-16` | [助理的默认模型：每个助理自己的默认模型，用于它自己的新对话、被调用时与共享给别人时](features/F002/16-assistant-default-model.md) | `in_progress` | 2026-11-04 |
+| `F002-17` | [用「@」点名助理：在能调用子智能体的对话里点名自己的或共享的助理，由当前智能体调用](features/F002/17-mention-assistants.md) | `draft` | 2026-11-04 |
