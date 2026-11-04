@@ -4,9 +4,9 @@
 
 ## Status
 
-| Type | Plans | Approved | In Progress | Complete | Superseded |
-| --- | --- | --- | --- | --- | --- |
-| `feature` | 18 | 1 | 1 | 7 | 9 |
+| Type | Plans | Draft | Approved | In Progress | Complete | Superseded |
+| --- | --- | --- | --- | --- | --- | --- |
+| `feature` | 19 | 1 | 1 | 1 | 7 | 9 |
 
 ## Plan Groups
 
@@ -32,3 +32,4 @@
 | `F002-12` | [使用共享的助理：直接对话、对话列表、审批与排队状态、离线展示](features/F002/12-use-shared-assistants.md) | `approved` | 2026-11-02 |
 | `F002-13` | [助理之间相互调用：「助理」类目的子智能体、本机助理任务会话、调用链环检测、不可用时如实列出](features/F002/13-assistants-call-each-other.md) | `in_progress` | 2026-11-02 |
 | `F002-14` | [按地址添加：不同网段的设备按局域网地址添加、核对设备码、记住并自动重连](features/F002/14-add-by-address.md) | `complete` | 2026-11-03 |
+| `F002-15` | [导航中的共享助理：按设备分组精修与状态一眼可见](features/F002/15-tenant-nav-polish.md) | `draft` | 2026-11-04 |
