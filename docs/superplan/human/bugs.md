@@ -85,3 +85,15 @@
 4. 「设备与连接 → 手机或浏览器」把自建中继（`http://172.16.21.153:9701`）标为「官方中继」。
 
 线索：`ConnectionsConfig.tsx` 的 `grantedAssistants` 只看本机开放的助理；`connections.noAssistants` 文案。
+
+## B006: 在对话的模型菜单里换模型，会改掉全应用的默认模型
+
+- status: proposed
+- created: 2026-11-04
+
+复现步骤：模型设置里主力模型为 A；在任一对话的模型菜单里选模型 B；之后新建其他对话（任何模式），或让助理被调用。
+
+期望：在一个对话里换模型只影响这个对话；全应用的默认模型只在模型设置里改。／ 实际：选择被写回全局的 `ai.agent_model_selections.mode`（`rememberModeSelection`），之后新对话与被调用的助理都用 B，与模型设置里的主力模型不一致，用户看不出原因。
+
+线索：`src/web-ui/src/infrastructure/config/services/modelSelections.ts` 的 `rememberModeSelection`；`LocalSessionDriver.createSession` 读 `mode`。助理的运行由 F002-16 改为只取助理设置与主力模型，不受此影响；其他模式是否保留「记住最后选择」需要另行决定。
+
