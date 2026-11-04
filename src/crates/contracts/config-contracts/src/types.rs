@@ -193,6 +193,12 @@ pub struct AppConfig {
     /// An empty map also advertises support to older/newer controller surfaces.
     #[serde(default)]
     pub assistant_default_sessions: HashMap<String, String>,
+    /// Each assistant's own default model, keyed by owning workspace ID on this
+    /// host and holding a model configuration ID. An assistant without an entry
+    /// follows the primary model; an entry whose model is gone is kept and the
+    /// primary model is used until it is chosen again.
+    #[serde(default)]
+    pub assistant_default_models: HashMap<String, String>,
     /// Global, user-defined groups used to organize Agent tool pickers.
     #[serde(default, skip_serializing_if = "UserToolGroupsConfig::is_empty")]
     pub user_tool_groups: UserToolGroupsConfig,
@@ -2162,6 +2168,7 @@ impl Default for AppConfig {
             voice_call: VoiceCallConfig::default(),
             keybindings: None,
             assistant_default_sessions: HashMap::new(),
+            assistant_default_models: HashMap::new(),
             user_tool_groups: UserToolGroupsConfig::default(),
             user_skill_groups: UserSkillGroupsConfig::default(),
             skill_market: SkillMarketConfig::default(),
@@ -3138,6 +3145,37 @@ mod tests {
         assert_eq!(old_round_trip.language, upgraded.app.language);
         assert_eq!(old_round_trip.telemetry, upgraded.app.telemetry);
         assert!(old_round_trip.assistant_default_sessions.is_empty());
+    }
+
+    #[test]
+    fn assistant_default_models_preserve_legacy_config_and_round_trip() {
+        let mut old_payload = current_global_config_with(serde_json::json!({}));
+        old_payload["app"]
+            .as_object_mut()
+            .unwrap()
+            .remove("assistant_default_models");
+        let mut upgraded: GlobalConfig = serde_json::from_value(old_payload).unwrap();
+        assert!(upgraded.app.assistant_default_models.is_empty());
+        upgraded
+            .app
+            .assistant_default_models
+            .insert("assistant-a".into(), "model-a".into());
+        let serialized = serde_json::to_value(&upgraded).unwrap();
+        let restored: GlobalConfig = serde_json::from_value(serialized.clone()).unwrap();
+        assert_eq!(
+            restored.app.assistant_default_models["assistant-a"],
+            "model-a"
+        );
+        #[derive(serde::Deserialize, serde::Serialize)]
+        struct LegacyApp {
+            language: String,
+            telemetry: bool,
+        }
+        // An older build reads the new payload without this field.
+        let legacy: LegacyApp = serde_json::from_value(serialized["app"].clone()).unwrap();
+        let old_round_trip: super::AppConfig =
+            serde_json::from_value(serde_json::to_value(legacy).unwrap()).unwrap();
+        assert!(old_round_trip.assistant_default_models.is_empty());
     }
 
     #[test]

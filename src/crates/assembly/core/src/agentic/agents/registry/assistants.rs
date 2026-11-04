@@ -126,6 +126,78 @@ pub(crate) async fn local_assistant_workspace_id(id: &str) -> Option<String> {
         .map(|workspace| workspace.id)
 }
 
+/// Where an assistant's run model came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssistantModelSource {
+    /// The model chosen on the assistant's home page.
+    Assistant,
+    /// No model was chosen: the primary model.
+    Primary,
+    /// The chosen model is no longer enabled, so the primary model runs
+    /// until it is chosen again. The choice itself is kept.
+    ChosenUnavailable,
+}
+
+/// The model an assistant runs on, as a model reference the turn resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssistantModelChoice {
+    pub model_ref: String,
+    pub source: AssistantModelSource,
+}
+
+/// An assistant's run model: its own default when that model is enabled,
+/// otherwise the primary model. Never the last model picked in some chat,
+/// which rewrites the app-wide mode default.
+pub fn assistant_model_choice(
+    workspace_id: &str,
+    app: &crate::service::config::types::AppConfig,
+    ai: &crate::service::config::types::AIConfig,
+) -> AssistantModelChoice {
+    let primary = |source| AssistantModelChoice {
+        model_ref: "primary".to_string(),
+        source,
+    };
+    let Some(chosen) = app
+        .assistant_default_models
+        .get(workspace_id)
+        .map(|model| model.trim())
+        .filter(|model| !model.is_empty())
+    else {
+        return primary(AssistantModelSource::Primary);
+    };
+    match ai.resolve_model_reference(chosen) {
+        Some(model_ref) => AssistantModelChoice {
+            model_ref,
+            source: AssistantModelSource::Assistant,
+        },
+        None => primary(AssistantModelSource::ChosenUnavailable),
+    }
+}
+
+/// The run model of the assistant whose workspace is `workspace_id`, or
+/// `None` when that workspace is not one of this device's assistants.
+pub async fn assistant_model_for_workspace(workspace_id: &str) -> Option<AssistantModelChoice> {
+    let workspaces = crate::service::workspace::get_global_workspace_service()?;
+    let is_assistant = workspaces
+        .get_assistant_workspaces()
+        .await
+        .iter()
+        .any(|workspace| workspace.id == workspace_id);
+    if !is_assistant {
+        return None;
+    }
+    let config_service = crate::service::config::global::GlobalConfigManager::get_service()
+        .await
+        .ok()?;
+    let config: crate::service::config::GlobalConfig =
+        config_service.get_config(None).await.ok()?;
+    Some(assistant_model_choice(
+        workspace_id,
+        &config.app,
+        &config.ai,
+    ))
+}
+
 /// Text as one plain, bounded line, so it cannot pose as part of this
 /// host's instructions.
 fn plain_text(value: &str, max_chars: usize) -> String {
@@ -310,6 +382,57 @@ pub(crate) fn assistant_category(
 
 #[cfg(test)]
 mod tests {
+    use super::{assistant_model_choice, AssistantModelSource};
+    use crate::service::config::types::{AIConfig, AIModelConfig, AppConfig};
+
+    fn ai_with(models: &[(&str, bool)], primary: &str) -> AIConfig {
+        let mut ai = AIConfig::default();
+        ai.models = models
+            .iter()
+            .map(|(id, enabled)| AIModelConfig {
+                id: (*id).to_string(),
+                enabled: *enabled,
+                ..AIModelConfig::default()
+            })
+            .collect();
+        ai.default_models.primary = Some(primary.to_string());
+        ai
+    }
+
+    #[test]
+    fn an_assistant_runs_on_its_own_model_else_the_primary_model() {
+        let ai = ai_with(&[("sol", true), ("terra", true), ("luna", false)], "sol");
+        let mut app = AppConfig::default();
+
+        let unset = assistant_model_choice("xiaolan", &app, &ai);
+        assert_eq!(unset.model_ref, "primary");
+        assert_eq!(unset.source, AssistantModelSource::Primary);
+
+        app.assistant_default_models
+            .insert("xiaolan".into(), "terra".into());
+        let chosen = assistant_model_choice("xiaolan", &app, &ai);
+        assert_eq!(chosen.model_ref, "terra");
+        assert_eq!(chosen.source, AssistantModelSource::Assistant);
+        // Another assistant keeps following the primary model.
+        assert_eq!(
+            assistant_model_choice("xiaoqi", &app, &ai).source,
+            AssistantModelSource::Primary
+        );
+
+        app.assistant_default_models
+            .insert("xiaolan".into(), "luna".into());
+        let disabled = assistant_model_choice("xiaolan", &app, &ai);
+        assert_eq!(disabled.model_ref, "primary");
+        assert_eq!(disabled.source, AssistantModelSource::ChosenUnavailable);
+
+        app.assistant_default_models
+            .insert("xiaolan".into(), "removed".into());
+        assert_eq!(
+            assistant_model_choice("xiaolan", &app, &ai).source,
+            AssistantModelSource::ChosenUnavailable
+        );
+    }
+
     use super::*;
     use openbitfun_runtime_ports::{RemoteAgentAddress, RemoteAgentUnavailableReason};
 

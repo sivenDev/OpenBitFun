@@ -60,6 +60,10 @@ pub(crate) use registry::{
     AssistantCaller, LocalAssistantEntry,
 };
 pub use registry::{
+    assistant_model_choice, assistant_model_for_workspace, AssistantModelChoice,
+    AssistantModelSource,
+};
+pub use registry::{
     get_agent_registry, AgentRegistry, CustomAgentDetail, CustomSubagentDetail, ExternalAgentHost,
     ExternalPrimaryAgentTurnBinding, ExternalSubagentGenerationLease,
     ExternalSubagentInvocationBinding, ExternalSubagentModelBinding, ExternalSubagentRegistration,

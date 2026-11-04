@@ -29,6 +29,10 @@ pub(crate) use assistants::{
     assistant_category, bounded_descriptor, local_assistant_entries, local_assistant_workspace_id,
     AssistantCaller, LocalAssistantEntry,
 };
+pub use assistants::{
+    assistant_model_choice, assistant_model_for_workspace, AssistantModelChoice,
+    AssistantModelSource,
+};
 #[cfg(feature = "external-sources")]
 pub(crate) use external::external_subagent_runtime_key;
 pub use external::{

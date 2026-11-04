@@ -2,7 +2,7 @@
 id: "F002-16"
 title: "助理的默认模型：每个助理自己的默认模型，用于它自己的新对话、被调用时与共享给别人时"
 type: "feature"
-status: "draft"
+status: "in_progress"
 summary: "助理主页增加「默认模型」：选一个已配置的模型，或「跟随主力模型」（默认）。助理的一切运行——自己的新对话、被主人的其他助理调用、别人使用主人共享的它——都按「助理的默认模型 → 主力模型」取模型，不再跟随在某个对话里最后选过的模型。所选模型不可用时改用主力模型并在主页说明；调用卡片在运行前就写出具体模型名，共享调用显示对方回报的实际模型。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-04"
@@ -72,7 +72,10 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-config-contracts`（执行时按 crate 的 `AGENTS.md` 取最窄命令）
 - `cargo test --locked -p openbitfun-core --no-default-features --features agent-runtime,git,lan-share,dispatch-store,ssh-remote --lib -- assistant_model`
 
-- [ ] 旧配置读入、新旧往返、解析的三种来源均有测试
+- [x] 旧配置读入、新旧往返、解析的三种来源均有测试
+
+  证据（2026-11-04）：`AppConfig.assistant_default_models`（`#[serde(default)]`）；`assistant_default_models_preserve_legacy_config_and_round_trip`（旧配置读入、往返、旧版本读新配置忽略该项）通过。core `agents::registry::assistants` 的 `assistant_model_choice`/`assistant_model_for_workspace`：已启用的所选模型 → 它；未设置 → `primary`；所选模型停用或删除 → `primary` 并标 `ChosenUnavailable`，设置保留。`an_assistant_runs_on_its_own_model_else_the_primary_model` 通过。
+  基线核对：`main` 上 `1a76b2ade` 改了 IM 创建助理会话的位置，不涉及助理模型；未合并 PR 中无相关改动。Task 2 在后端创建会话处统一取默认，IM 入口合并后同样覆盖。
 
 ## Task 2: 本机生效：新对话与被调用
 
