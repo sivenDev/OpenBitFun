@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   deleteTenant: vi.fn(),
   stop: vi.fn(),
   error: vi.fn(),
+  refreshOverview: vi.fn(async () => {}),
 }));
 vi.mock('@/infrastructure/api/service-api/LanShareAPI', () => ({
   lanShareAPI: {
@@ -23,7 +24,7 @@ vi.mock('@/infrastructure/api/service-api/LanShareAPI', () => ({
 }));
 vi.mock('@/infrastructure/lan-share/lanShareStore', () => ({
   useLanShareStore: (select: (state: unknown) => unknown) => select({
-    refreshOverview: async () => {},
+    refreshOverview: mocks.refreshOverview,
     overview: {
       status: {
         deviceId: 'me', deviceName: 'My Mac', displayName: 'Me', fingerprint: 'ZZ99ZZ',
@@ -124,6 +125,11 @@ describe('managing a shared assistant', () => {
     const left = document.querySelectorAll('[data-testid="assistant-share-left-device"]');
     expect(left).toHaveLength(1);
     expect(left[0].textContent).toContain('fedcba98');
+  });
+
+  it('rereads who uses it when opened, since use is recorded outside this window', async () => {
+    await render();
+    expect(mocks.refreshOverview).toHaveBeenCalledTimes(1);
   });
 
   it('removes a person after confirmation', async () => {

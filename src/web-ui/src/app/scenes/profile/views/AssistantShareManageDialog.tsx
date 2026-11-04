@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -46,6 +46,12 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
   const notification = useNotification();
   const refreshOverview = useLanShareStore((state) => state.refreshOverview);
   const [busy, setBusy] = useState<string | null>(null);
+
+  // The owner's task worker records each use on disk, outside this window;
+  // reread on opening so "last used" is not the value from an earlier load.
+  useEffect(() => {
+    if (open) void refreshOverview();
+  }, [open, refreshOverview]);
 
   const run = async (key: string, action: () => Promise<unknown>) => {
     setBusy(key);
