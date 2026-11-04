@@ -96,7 +96,9 @@ parent: "F002"
 - Web：`pnpm --dir src/web-ui run test:run src/flow_chat/session-drivers/local`
 - `cargo check -p openbitfun-desktop`
 
-- [ ] 调用、新对话（Web 与后端入口）使用解析结果，对话菜单的最后选择不影响助理，均有测试
+- [x] 调用、新对话（Web 与后端入口）使用解析结果，对话菜单的最后选择不影响助理，均有测试
+
+  证据（2026-11-04）：协调器助理分支以 `assistant_model_for_workspace` 的结果作为被调用会话的模型；所有新会话最终经 `create_session_with_workspace_and_creator_internal`，在快照全局默认值之前对助理工作区应用 `apply_assistant_model_default`（显式模型或模型池优先）。手机端、IM、CLI 主机经运行时端口 `create_agent_session_from_runtime_request` 走同一路径。Web `LocalSessionDriver` 对助理工作区不再读 `mode`、不带模型，交由后端决定。测试：core `a_new_assistant_session_starts_on_the_assistants_model_not_the_mode_default` 与 `agentic::coordination` 共 287 项通过；Web `session-drivers/local` 15 项通过（新增「助理的新对话交由后端按助理模型开始」）；`openbitfun-desktop` 检查通过、`tsc` 与 `eslint` 通过。
 
 ## Task 3: 共享生效
 

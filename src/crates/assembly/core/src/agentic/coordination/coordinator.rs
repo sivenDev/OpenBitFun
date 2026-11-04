@@ -250,14 +250,23 @@ fn snapshot_normal_session_model(
     Ok(())
 }
 
-/// Apply an external primary profile's fixed model as a creation-time default.
-/// An explicit user selection always wins; inherited bindings continue through
-/// the existing product default path.
-fn apply_primary_agent_model_default(
+/// Start a new session in an assistant's workspace on that assistant's own
+/// model instead of the app-wide mode default, which follows the last model
+/// picked in any chat. An explicit model or pool still wins.
+fn apply_assistant_model_default(
     config: &mut SessionConfig,
-    binding: Option<&ExternalSubagentModelBinding>,
+    choice: Option<&crate::agentic::agents::AssistantModelChoice>,
 ) {
-    let has_explicit_model = config
+    if config.model_pool_id.is_some() || has_explicit_model(config) {
+        return;
+    }
+    if let Some(choice) = choice {
+        config.model_id = Some(choice.model_ref.clone());
+    }
+}
+
+fn has_explicit_model(config: &SessionConfig) -> bool {
+    config
         .model_id
         .as_deref()
         .map(str::trim)
@@ -265,8 +274,17 @@ fn apply_primary_agent_model_default(
             !model_id.is_empty()
                 && !model_id.eq_ignore_ascii_case("auto")
                 && !model_id.eq_ignore_ascii_case("default")
-        });
-    if has_explicit_model {
+        })
+}
+
+/// Apply an external primary profile's fixed model as a creation-time default.
+/// An explicit user selection always wins; inherited bindings continue through
+/// the existing product default path.
+fn apply_primary_agent_model_default(
+    config: &mut SessionConfig,
+    binding: Option<&ExternalSubagentModelBinding>,
+) {
+    if has_explicit_model(config) {
         return;
     }
 
@@ -3198,6 +3216,10 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             &mut config,
             primary_agent_binding.model_binding.as_ref(),
         );
+        if let Some(workspace_id) = config.workspace_id.clone() {
+            let choice = crate::agentic::agents::assistant_model_for_workspace(&workspace_id).await;
+            apply_assistant_model_default(&mut config, choice.as_ref());
+        }
         let defaults = Self::agent_model_defaults().await?;
         snapshot_normal_session_model(&mut config, &defaults)?;
         let session = if transient {
@@ -13163,8 +13185,14 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                                     "assistant {agent_type} is not on this device"
                                 ))
                             })?;
+                    // The called assistant runs on its own model, not the
+                    // caller's or the app-wide mode default.
+                    let model_id =
+                        crate::agentic::agents::assistant_model_for_workspace(&workspace_id)
+                            .await
+                            .map(|choice| choice.model_ref);
                     let mut session_config =
-                        Self::build_session_config_for_workspace(workspace_id, None).await?;
+                        Self::build_session_config_for_workspace(workspace_id, model_id).await?;
                     session_config.continuation_policy = SessionContinuationPolicy::FreshOnly;
                     let parent_session_id = request.subagent_parent_info.session_id.clone();
                     let delegation_policy = DelegationPolicy::top_level();
@@ -17096,11 +17124,11 @@ fn merge_prepended_messages_for_turn(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        append_skill_agent_listing_diff_reminders, apply_primary_agent_model_default,
-        btw_session_memory_mode, build_subagent_session_relationship,
-        commit_interrupted_turn_intent, delegation_policy_for_agent_turn,
-        external_delegation_agent_id, lineage_active_turn_after_transcript,
-        lineage_post_admission_cancellation_error,
+        append_skill_agent_listing_diff_reminders, apply_assistant_model_default,
+        apply_primary_agent_model_default, btw_session_memory_mode,
+        build_subagent_session_relationship, commit_interrupted_turn_intent,
+        delegation_policy_for_agent_turn, external_delegation_agent_id,
+        lineage_active_turn_after_transcript, lineage_post_admission_cancellation_error,
         lineage_session_is_settling_without_active_state, logical_subagent_type_or_runtime,
         merge_prepended_messages_for_turn, normalize_model_selection,
         normalize_subagent_max_concurrency, permission_mode_from_metadata,
@@ -17585,6 +17613,47 @@ pub(crate) mod tests {
             Some(&ExternalSubagentModelBinding::InheritParent),
         );
         assert_eq!(inherited.model_id, None);
+    }
+
+    #[test]
+    fn a_new_assistant_session_starts_on_the_assistants_model_not_the_mode_default() {
+        use crate::agentic::agents::{AssistantModelChoice, AssistantModelSource};
+        let mode_default = AgentModelSelections {
+            mode: openbitfun_core_types::model_pool::ModelSelection::Model {
+                model_ref: "last-picked-in-a-chat".into(),
+            },
+            ..AgentModelSelections::default()
+        };
+        let own = AssistantModelChoice {
+            model_ref: "terra".into(),
+            source: AssistantModelSource::Assistant,
+        };
+        let mut assistant = SessionConfig::default();
+        apply_assistant_model_default(&mut assistant, Some(&own));
+        snapshot_normal_session_model(&mut assistant, &mode_default).unwrap();
+        assert_eq!(assistant.model_id.as_deref(), Some("terra"));
+
+        let follows_primary = AssistantModelChoice {
+            model_ref: "primary".into(),
+            source: AssistantModelSource::Primary,
+        };
+        let mut unset = SessionConfig::default();
+        apply_assistant_model_default(&mut unset, Some(&follows_primary));
+        snapshot_normal_session_model(&mut unset, &mode_default).unwrap();
+        assert_eq!(unset.model_id.as_deref(), Some("primary"));
+
+        // A model picked for this session, and any other workspace, are untouched.
+        let mut explicit = SessionConfig {
+            tool_presentation_mode: Default::default(),
+            model_id: Some("sol".to_string()),
+            ..SessionConfig::default()
+        };
+        apply_assistant_model_default(&mut explicit, Some(&own));
+        assert_eq!(explicit.model_id.as_deref(), Some("sol"));
+        let mut project = SessionConfig::default();
+        apply_assistant_model_default(&mut project, None);
+        snapshot_normal_session_model(&mut project, &mode_default).unwrap();
+        assert_eq!(project.model_id.as_deref(), Some("last-picked-in-a-chat"));
     }
 
     #[tokio::test]

@@ -15,6 +15,7 @@ import { requireSessionOwningWorkspaceId, sessionOwningWorkspaceId } from '../..
  */
 
 import { agentAPI } from '@/infrastructure/api/service-api/AgentAPI';
+import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { ACPClientAPI } from '@/infrastructure/api/service-api/ACPClientAPI';
 import { sessionAPI } from '@/infrastructure/api/service-api/SessionAPI';
 import { worktreeAPI } from '@/infrastructure/api/service-api/WorktreeAPI';
@@ -54,6 +55,13 @@ import { inheritReviewPermissionMode } from '../../services/inheritReviewPermiss
 
 const log = createLogger('LocalSessionDriver');
 
+
+function isAssistantWorkspace(workspaceId: string | undefined): boolean {
+  if (!workspaceId) return false;
+  return (workspaceManager.getState().assistantWorkspaces ?? [])
+    .some(workspace => workspace.id === workspaceId && !workspace.connectionId);
+}
+
 export const localSessionDriver: SessionDriver = {
   id: 'local',
 
@@ -72,7 +80,11 @@ export const localSessionDriver: SessionDriver = {
     } = seed;
     surfaceScope.assertCurrent('start local session creation');
     let config = seedConfig;
-    if (!config.modelName && !config.modelPoolId && !acpClientIdFromAgentType(agentType)) {
+    // An assistant starts on its own default model, which the host resolves;
+    // the app-wide mode default follows the last model picked in any chat.
+    const startsOnAssistantModel = isAssistantWorkspace(workspaceId ?? config.workspaceId);
+    if (!config.modelName && !config.modelPoolId && !acpClientIdFromAgentType(agentType)
+      && !startsOnAssistantModel) {
       const { mode: selection } = await readModelSelections();
       surfaceScope.assertCurrent('resolve default model target');
       if (selection.kind === 'pool') {

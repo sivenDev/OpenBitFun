@@ -45,6 +45,7 @@ vi.mock('@/infrastructure/services/business/workspaceManager', () => ({
         id: 'project-workspace', rootPath: WORKSPACE_PATH, workspaceKind: 'normal',
       }]]),
       recentWorkspaces: [],
+      assistantWorkspaces: [{ id: 'xiaolan-workspace', rootPath: '/assistants/xiaolan', workspaceKind: 'assistant' }],
     }),
   },
 }));
@@ -136,6 +137,15 @@ describe('localSessionDriver conversation creation', () => {
       { ...seed(), config: {} })).rejects.toThrow('config unreadable');
     expect(createSession).not.toHaveBeenCalled();
     expect(mockCreateSession).not.toHaveBeenCalled();
+  });
+
+  it('leaves an assistant\'s new chat to the host, which starts it on the assistant\'s own model', async () => {
+    poolMocks.read.mockResolvedValue({ mode: { kind: 'model', model_ref: 'last-picked-in-a-chat' } });
+    const createSession = vi.fn();
+    await localSessionDriver.createSession({ flowChatStore: { createSession } } as any,
+      { ...seed('Claw'), config: {}, workspaceId: 'xiaolan-workspace' });
+    expect(poolMocks.read).not.toHaveBeenCalled();
+    expect(mockCreateSession.mock.calls[0][0].config.modelName).toBeUndefined();
   });
 
   it('keeps assistant bootstrap on the existing immediate creation path', async () => {
