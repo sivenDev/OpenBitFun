@@ -65,6 +65,23 @@ pub(crate) fn delegated_by(
     }
 }
 
+/// What the called assistant is told about the call: who is asking and on
+/// whose behalf, so it answers as itself to another assistant of the same
+/// person rather than as if that person were typing.
+pub(crate) fn call_reminder(context: &HashMap<String, String>) -> String {
+    let caller = context
+        .get(ASSISTANT_CALL_CALLER_NAME_CONTEXT_KEY)
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .map(|name| format!("\"{name}\""))
+        .unwrap_or_else(|| "Another assistant".to_string());
+    format!(
+        "The next message comes from {caller}, another assistant of the person you work for, on this same device. \
+         It is calling you for help with that person's work. Answer as yourself; your reply goes back to that assistant, \
+         which passes on what matters."
+    )
+}
+
 /// The context of the called assistant's turn. It is the owner's own task,
 /// not one another device delegated, so no delegation fact of the caller
 /// carries over; the call chain does, so a call back to an assistant on it

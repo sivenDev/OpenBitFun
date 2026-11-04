@@ -74,3 +74,12 @@ fn the_session_is_named_after_the_task_and_is_not_a_hidden_subagent() {
     assert_eq!(session_name(&"a".repeat(200)).chars().count(), 80);
     assert!(!created_by("caller-session").starts_with("session-"));
 }
+
+#[test]
+fn the_called_assistant_is_told_which_assistant_is_asking() {
+    let reminder = call_reminder(&call());
+    assert!(reminder.contains("\"X\", another assistant of the person you work for"));
+    assert!(reminder.contains("Answer as yourself"));
+    let unnamed = call_reminder(&HashMap::new());
+    assert!(unnamed.starts_with("The next message comes from Another assistant"));
+}

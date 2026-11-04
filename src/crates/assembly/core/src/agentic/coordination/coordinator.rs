@@ -13185,7 +13185,13 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         agent_type: run_agent_type.clone(),
                         logical_agent_type: run_agent_type,
                         session_config,
-                        initial_messages: vec![task_message.clone()],
+                        initial_messages: vec![
+                            Message::internal_reminder(
+                                InternalReminderKind::Generic,
+                                super::assistant_turn::call_reminder(&request.context),
+                            ),
+                            task_message.clone(),
+                        ],
                         user_input_text: task_description,
                         created_by: Some(super::assistant_turn::created_by(&parent_session_id)),
                         delegated_by: Some(super::assistant_turn::delegated_by(
