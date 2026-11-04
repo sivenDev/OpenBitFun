@@ -12,7 +12,6 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { OverflowText, Composer, ComposerToolbar, Icon, IconButton } from '@openbitfun/ui';
 import { useTranslation } from 'react-i18next';
-import { ModelSelector } from '@/flow_chat/components/ModelSelector';
 import { flowChatManager } from '@/flow_chat/services/FlowChatManager';
 import { openMainSession } from '@/flow_chat/services/sessionActivation';
 import { useImeOwnedKeyGuard } from '@/flow_chat/hooks/useImeOwnedKeyGuard';
@@ -112,7 +111,8 @@ const AssistantQuickInput: React.FC<AssistantQuickInputProps> = ({
                 data-openbitfun-component="assistant-quick-input"
                 data-openbitfun-part="footerLeft"
               >
-                <ModelSelector currentMode="Claw" className="aqi__model" />
+                {/* New assistant chats run on the assistant's default model,
+                    chosen in its own section on this page. */}
                 <OverflowText
                   className="aqi__hint"
                   data-openbitfun-component="assistant-quick-input"
