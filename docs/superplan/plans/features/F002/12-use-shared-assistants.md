@@ -264,6 +264,11 @@ parent: "F002"
         - 完全信任：`ListWorkspaces` 与列出主人默认工作区的会话可用。**未通过**：桌面控制与定时任务都失败，外部任务在 CLI 交付档运行（`deliveryProfile: cli`，「no live presentation adapter」）；`Cron` 报「Scheduled jobs are managed by the other running OpenBitFun instance」。完全信任说明「不再逐次询问」，但 `SessionControl` 与 `Cron` 仍逐次请求审批。
         - 提示中没有主人的记忆与 `USER.md`：由 `delegated_assistant_persona_takes_the_users_own_profile` 覆盖，本次回答也只用使用者的名字。
       - 测试后把共享恢复为普通信任、保留 7 天、同时 2 个任务。
+    - 第二轮之后的修复（2026-11-04，待第三轮真机复验）：
+      - 撤销与过期（3a328ec4c）：状态读取被主人答以 `revoked`/`notShared`/`expired` 时，请求方结束这个对话（后端外发记录记为 `failed`/`expired`，观察端不再当作传输失败反复重试），进行中的回合结束、停止按钮消失；导航显示「共享已停止」或「已过期」；过期的对话输入框禁止发送并说明原因；回合失败提示与发送失败的消息都显示主人端的原因，不再只有「发送失败」。
+      - 第 4 条「上次聊了什么」（7f06df3df）：人设提示改为说明之前的对话是这个工作区的会话，用 `SessionControl`（`list`，当前工作区的绝对路径）列出、用 `SessionHistory` 读取。主人端已登记租户工作区，绝对路径可以解析；第二轮失败的调用传的是 `default`。
+      - 请求方的审批（00453a5e9、19f1d8947）：共享助理的审批只显示请求内容，并说明「由 主人 在对方设备上审批，这里只能查看」，不再给出无效的按钮。
+      - 仍待处理：第 1 条追加消息不插入当前回合（需要决定追加的语义）；第 7 条完全信任下桌面控制与定时任务在 CLI 交付档不可用（需要架构决定）；完全信任仍逐次审批 `SessionControl`/`Cron`；普通信任下先审批再拒绝的 `SessionControl`；审批不显示参数；排队对话里没有排队提示；移除确认没说会删除对话；已移除设备只显示 id。
 
 ## 风险
 
