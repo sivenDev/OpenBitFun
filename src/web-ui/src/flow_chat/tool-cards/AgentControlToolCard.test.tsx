@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   childTurnStatus: 'processing' as DialogTurn['status'],
   needsUserAttention: false,
   childSubagentType: 'SwarmWorker',
+  parentTurns: [] as unknown[],
 }));
 
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
@@ -61,7 +62,7 @@ vi.mock('../store/FlowChatStore', () => ({
           remoteConnectionId: 'remote-1',
           remoteSshHost: 'host-1',
           config: { agentType: 'Ultimate' },
-          dialogTurns: [],
+          dialogTurns: mocks.parentTurns,
         }],
       ]);
       if (mocks.includeChildSession) {
@@ -181,6 +182,7 @@ describeWithJsdom('AgentControlToolCard', () => {
     mocks.childTurnStatus = 'processing';
     mocks.childSubagentType = 'SwarmWorker';
     mocks.needsUserAttention = false;
+    mocks.parentTurns = [];
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -282,6 +284,26 @@ describeWithJsdom('AgentControlToolCard', () => {
     expect(avatar?.querySelector('.subagent-avatar__status')).toBeNull();
     await act(async () => container.querySelector<HTMLButtonElement>('[data-agent-capsule-trigger]')!.click());
     expect(mocks.openBtwSessionInAuxPane).toHaveBeenCalledOnce();
+  });
+
+  it('shows how a call ended from a later wait when its session is not loaded after a restart', async () => {
+    mocks.includeChildSession = false;
+    mocks.parentTurns = [{ id: 'later', status: 'completed', modelRounds: [{ items: [{
+      id: 'wait', type: 'tool', toolName: 'AgentWait', status: 'completed', timestamp: 2,
+      toolCall: { id: 'wait', input: { bg_task_ids: ['worker_bg1'] } },
+      toolResult: { success: true, result: { status: 'completed', results: [
+        { bg_task_id: 'worker_bg1', agent_id: 'worker', outcome: 'interrupted' },
+      ] } },
+    }] }] }];
+    const spawn = agentToolItem('AgentSpawn', {
+      toolResult: { success: true, result: { status: 'started', bg_task_id: 'worker_bg1' } },
+    });
+    await act(async () => root.render(
+      <AgentControlToolCard toolItem={spawn} config={config} sessionId="parent-session" />,
+    ));
+    expect(container.querySelector('[data-openbitfun-part="agentStatus"]')?.getAttribute('data-status')).toBe('cancelled');
+    expect(container.querySelector('[data-agent-capsule-trigger]')?.getAttribute('aria-label'))
+      .toContain('flowChatHeader.agentTreeStatus.cancelled');
   });
 
   it('keeps an unlinked streaming launch non-interactive until its child is known', async () => {

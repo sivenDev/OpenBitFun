@@ -82,3 +82,35 @@ export function resolveAgentWaitAvatarTargets(
     }];
   });
 }
+
+/**
+ * The outcome the latest AgentWait in this session recorded for a background
+ * task, or null when no wait has reported it. After a restart the called
+ * session may not be loaded, but the caller's wait still says how it ended.
+ */
+export function recordedBackgroundOutcome(
+  parentSession: Pick<Session, 'dialogTurns'> | undefined,
+  bgTaskId: string,
+): string | null {
+  if (!bgTaskId) return null;
+  const turns = parentSession?.dialogTurns ?? [];
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex--) {
+    const rounds = turns[turnIndex].modelRounds;
+    for (let roundIndex = rounds.length - 1; roundIndex >= 0; roundIndex--) {
+      const items = rounds[roundIndex].items;
+      for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex--) {
+        const candidate = items[itemIndex];
+        if (candidate.type !== 'tool') continue;
+        const item = projectEffectiveToolItem(candidate);
+        if (item.toolName !== 'AgentWait') continue;
+        const results = readToolRecord(item.toolResult?.result).results;
+        if (!Array.isArray(results)) continue;
+        for (const value of results) {
+          const outcome = readToolRecord(value);
+          if (toolString(outcome.bg_task_id) === bgTaskId) return toolString(outcome.outcome) || null;
+        }
+      }
+    }
+  }
+  return null;
+}

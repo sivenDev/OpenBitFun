@@ -19,7 +19,8 @@ import {
 import { openBtwSessionInAuxPane } from '../services/btwSessionPane';
 import { AgentControlToolCard as AgentControlToolCardView } from '@openbitfun/ui/flow-chat';
 import { AgentInteractionToolCard } from './AgentInteractionToolCard';
-import { resolveInteractionAgentSessionId } from './toolInteractionModel';
+import { readToolRecord, resolveInteractionAgentSessionId, toolString } from './toolInteractionModel';
+import { recordedBackgroundOutcome } from './agentWaitAvatarTargets';
 import {
   calledAssistantName,
   calledAssistantOwner,
@@ -68,6 +69,21 @@ function fallbackLifecycle(status: FlowToolItem['status']): SessionLineageLifecy
       return 'idle';
     default:
       return 'running';
+  }
+}
+
+function lifecycleForOutcome(outcome: string | null): SessionLineageLifecycle | null {
+  switch (outcome) {
+    case 'completed':
+      return 'completed';
+    case 'failed':
+    case 'partial_timeout':
+      return 'error';
+    case 'cancelled':
+    case 'interrupted':
+      return 'cancelled';
+    default:
+      return null;
   }
 }
 
@@ -150,9 +166,18 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const linkedSession = linkedSubagentSessionId
     ? flowChatStore.getState().sessions.get(linkedSubagentSessionId)
     : undefined;
+  // A started spawn reads as completed; until the called session loads, a
+  // later wait in this session is what says how the work actually ended.
+  const readRecordedOutcome = useCallback(() => sessionId
+    ? recordedBackgroundOutcome(flowChatStore.getState().sessions.get(sessionId),
+      toolString(readToolRecord(toolItem.toolResult?.result).bg_task_id))
+    : null, [sessionId, toolItem.toolResult?.result]);
+  const recordedOutcome = useSyncExternalStore(
+    subscribeToFlowChatStore, readRecordedOutcome, readRecordedOutcome,
+  );
   const lifecycle = linkedSession
     ? sessionLineageLifecycleForSession(linkedSession)
-    : fallbackLifecycle(status);
+    : lifecycleForOutcome(recordedOutcome) ?? fallbackLifecycle(status);
   const stableAgentType = linkedSession?.mode?.trim()
     || linkedSession?.config?.agentType?.trim()
     || inputAgentType;
