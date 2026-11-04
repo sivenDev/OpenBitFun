@@ -978,3 +978,292 @@ async fn an_added_device_that_comes_back_while_discover_is_open_is_read_again() 
     owner.shutdown().await;
     user.shutdown().await;
 }
+
+/// An assistant on one device calls an assistant another device shares with
+/// it, through the port the Task tool uses, over the loopback channel.
+#[cfg(all(
+    feature = "dispatch-store",
+    feature = "agent-runtime",
+    feature = "ssh-remote"
+))]
+mod assistant_calls {
+    use super::*;
+    use openbitfun_core::service::lan_share::dispatch_rpc::LanDispatchRpc;
+    use openbitfun_core::service::lan_share::remote_agents::SharedAssistantDirectory;
+    use openbitfun_runtime_ports::{
+        RemoteAgentAddress, RemoteAgentAvailability, RemoteAgentDelegationPort,
+        RemoteAgentHoldReason, RemoteAgentJobState, RemoteAgentListing, RemoteAgentSource,
+        RemoteAgentSubmitRequest, RemoteAgentUnavailableReason,
+    };
+    use openbitfun_services_core::dispatch_contract::{
+        dispatch_required_target_capabilities, DISPATCH_AGENT_DELEGATION_CAPABILITY,
+        DISPATCH_PROTOCOL_VERSION,
+    };
+
+    /// The owner's task runner: takes calls for its shared assistant and
+    /// reports the job as `status` says.
+    struct Runner {
+        received: Mutex<Vec<(String, Value)>>,
+        status: Mutex<Value>,
+    }
+
+    impl Runner {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                received: Mutex::new(Vec::new()),
+                status: Mutex::new(json!({ "state": "queued", "cursor": 0, "events": [] })),
+            })
+        }
+
+        fn reports(&self, status: Value) {
+            *self.status.lock().unwrap() = status;
+        }
+
+        fn received(&self, command: &str) -> Vec<Value> {
+            self.received
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(name, _)| name == command)
+                .map(|(_, args)| args.clone())
+                .collect()
+        }
+    }
+
+    #[async_trait]
+    impl ShareDispatch for Runner {
+        async fn run(&self, command: &str, args: Value) -> Result<Value, String> {
+            self.received
+                .lock()
+                .unwrap()
+                .push((command.to_string(), args.clone()));
+            match command {
+                "dispatch_target_probe" => {
+                    let mut capabilities: Vec<_> =
+                        dispatch_required_target_capabilities().collect();
+                    capabilities.push(DISPATCH_AGENT_DELEGATION_CAPABILITY);
+                    Ok(json!({
+                        "productId": openbitfun_services_core::product_identity::product_id(),
+                        "dataNamespace": openbitfun_services_core::product_identity::data_namespace(),
+                        "protocolVersion": DISPATCH_PROTOCOL_VERSION,
+                        "capabilities": capabilities,
+                    }))
+                }
+                "dispatch_target_catalog" => Ok(json!({ "agents": [{
+                    "id": "workspace",
+                    "agentType": "assistant:workspace",
+                    "displayName": "Writer",
+                }] })),
+                "dispatch_target_submit" => Ok(json!({
+                    "accepted": true,
+                    "jobId": args["jobId"],
+                    "sessionId": args["sessionId"],
+                    "state": "queued",
+                })),
+                "dispatch_target_status" => Ok(self.status.lock().unwrap().clone()),
+                other => Err(format!("unexpected command {other}")),
+            }
+        }
+    }
+
+    /// An owner sharing "Writer" with a user who asked and was allowed.
+    async fn granted(
+        owner_dir: &Path,
+        user_dir: &Path,
+        runner: Arc<Runner>,
+    ) -> (LanShareHost, LanShareHost) {
+        let owner = host_with(owner_dir, Arc::new(Events::default()), Some(runner)).await;
+        let user = host(user_dir, Arc::new(Events::default())).await;
+        let owner_id = owner.identity().device_id().to_string();
+        owner
+            .share(
+                "workspace",
+                "Writer",
+                ShareSettings::default(),
+                ShareConfirmations::default(),
+            )
+            .await
+            .unwrap();
+        user.discover_start().await.unwrap();
+        user.observe(found(&owner).await).await;
+        eventually("the user reads the owner's catalog", || async {
+            access_of(&user.discovered(), "workspace") == Some(Access::Available)
+        })
+        .await;
+        let request = ask(&user, &owner, &owner_id).await;
+        owner.decide(&request, RequestAnswer::Allow).await.unwrap();
+        eventually("the grant reaches the user", || async {
+            my_state(&user).await == Some(SharedWithMeState::Available)
+        })
+        .await;
+        user.discover_stop().await;
+        (owner, user)
+    }
+
+    fn directory(user: &LanShareHost) -> SharedAssistantDirectory {
+        SharedAssistantDirectory::new(
+            Arc::new(user.clone()),
+            Arc::new(LanDispatchRpc::new(user.clone())),
+        )
+    }
+
+    fn call(owner_id: &str, job_id: &str, call_chain: Vec<String>) -> RemoteAgentSubmitRequest {
+        RemoteAgentSubmitRequest {
+            address: RemoteAgentAddress {
+                device_id: owner_id.to_string(),
+                assistant_id: "workspace".to_string(),
+            },
+            job_id: job_id.to_string(),
+            session_id: format!("session-{job_id}"),
+            prompt: "Draft the notes".to_string(),
+            title: Some("Notes".to_string()),
+            source: RemoteAgentSource {
+                session_id: "caller-session".to_string(),
+                agent_type: "assistant:workspace-x".to_string(),
+                display_name: Some("X".to_string()),
+            },
+            call_chain,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn an_assistant_calls_a_shared_assistant_and_sees_its_queue_and_approvals() {
+        let owner_dir = tempfile::tempdir().unwrap();
+        let user_dir = tempfile::tempdir().unwrap();
+        let runner = Runner::new();
+        let (owner, user) = granted(owner_dir.path(), user_dir.path(), runner.clone()).await;
+        let owner_id = owner.identity().device_id().to_string();
+        let user_id = user.identity().device_id().to_string();
+        let user_key = hex::encode(user.identity().public_key());
+        let directory = directory(&user);
+
+        assert_eq!(directory.local_device_id(), Some(user_id.clone()));
+        let listed = directory.list_agents(RemoteAgentListing::Cached).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].address.device_id, owner_id);
+        assert_eq!(listed[0].availability, RemoteAgentAvailability::Available);
+
+        let chain = vec![format!("{user_id}/workspace-x")];
+        let job = directory
+            .submit(call(&owner_id, "delegation-call-1", chain.clone()))
+            .await
+            .expect("the owner takes the call");
+        assert_eq!(job.device_id, owner_id);
+        let submitted = runner.received("dispatch_target_submit");
+        assert_eq!(submitted.len(), 1);
+        assert_eq!(submitted[0]["__sourceShareKey"], user_key);
+        assert_eq!(submitted[0]["delegation"]["callChain"], json!(chain));
+        assert_eq!(
+            submitted[0]["delegation"]["source"]["agentType"],
+            "assistant:workspace-x"
+        );
+
+        // Waiting for the owner's task limit reads as such on the task card.
+        runner.reports(json!({
+            "state": "queued", "cursor": 0, "events": [],
+            "hold": { "reason": "shareLimit", "limit": 1 },
+        }));
+        let queued = directory.observe(&job, 0).await.unwrap();
+        assert_eq!(queued.state, RemoteAgentJobState::Queued);
+        let hold = queued.hold.expect("the queue reason travels");
+        assert_eq!(hold.reason, RemoteAgentHoldReason::ShareLimit);
+        assert_eq!(hold.limit, Some(1));
+
+        // An approval the owner must answer is shown, and only the owner answers it.
+        runner.reports(json!({
+            "state": "running", "cursor": 1, "events": [],
+            "pendingPermissions": [{
+                "requestId": "permission-1", "roundId": "round-1", "order": 0,
+                "projectId": "project", "sessionId": "session-delegation-call-1",
+                "agentId": "assistant:workspace", "action": "write", "resources": ["notes.md"],
+                "source": { "kind": "tool_call", "identity": "Write" },
+            }],
+        }));
+        let waiting = directory.observe(&job, 0).await.unwrap();
+        assert_eq!(waiting.state, RemoteAgentJobState::Running);
+        assert_eq!(waiting.pending_permissions.len(), 1);
+        assert_eq!(waiting.pending_permissions[0].request_id, "permission-1");
+        assert!(directory
+            .answer(
+                &job,
+                "permission-1",
+                openbitfun_runtime_ports::PermissionReply::Once
+            )
+            .await
+            .is_err());
+        assert!(runner.received("dispatch_target_answer").is_empty());
+
+        user.shutdown().await;
+        owner.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_call_that_comes_back_to_an_assistant_on_its_chain_is_refused_by_the_owner() {
+        let owner_dir = tempfile::tempdir().unwrap();
+        let user_dir = tempfile::tempdir().unwrap();
+        let runner = Runner::new();
+        let (owner, user) = granted(owner_dir.path(), user_dir.path(), runner.clone()).await;
+        let owner_id = owner.identity().device_id().to_string();
+        let user_id = user.identity().device_id().to_string();
+        let directory = directory(&user);
+
+        // The owner's Writer called this device's X, which now calls Writer back.
+        let chain = vec![
+            format!("{owner_id}/workspace"),
+            format!("{user_id}/workspace-x"),
+        ];
+        let refused = directory
+            .submit(call(&owner_id, "delegation-loop-1", chain))
+            .await
+            .unwrap_err();
+        assert!(
+            refused.message.contains("circular call"),
+            "{}",
+            refused.message
+        );
+        assert!(runner.received("dispatch_target_submit").is_empty());
+
+        user.shutdown().await;
+        owner.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_call_to_an_owner_that_went_away_fails_and_lists_it_offline() {
+        let owner_dir = tempfile::tempdir().unwrap();
+        let user_dir = tempfile::tempdir().unwrap();
+        let runner = Runner::new();
+        let (owner, user) = granted(owner_dir.path(), user_dir.path(), runner.clone()).await;
+        let owner_id = owner.identity().device_id().to_string();
+        let user_id = user.identity().device_id().to_string();
+        let directory = directory(&user);
+
+        owner.shutdown().await;
+        eventually("the owner reads as offline", || async {
+            directory
+                .list_agents(RemoteAgentListing::Cached)
+                .await
+                .first()
+                .is_some_and(|agent| {
+                    matches!(
+                        agent.availability,
+                        RemoteAgentAvailability::Unavailable {
+                            reason: RemoteAgentUnavailableReason::Offline,
+                            ..
+                        }
+                    )
+                })
+        })
+        .await;
+        assert!(directory
+            .submit(call(
+                &owner_id,
+                "delegation-offline-1",
+                vec![format!("{user_id}/workspace-x")]
+            ))
+            .await
+            .is_err());
+        assert!(runner.received("dispatch_target_submit").is_empty());
+
+        user.shutdown().await;
+    }
+}
