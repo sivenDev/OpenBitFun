@@ -18,6 +18,7 @@ vi.mock('@/features/dispatch/sharedAssistantConversation', async () => {
   return {
     sharedAssistantConversations: actual.sharedAssistantConversations,
     openSharedAssistantConversation: mocks.open,
+    openSharedAssistantConversationJob: actual.openSharedAssistantConversationJob,
     startSharedAssistantConversation: mocks.start,
   };
 });

@@ -8,6 +8,7 @@
 
 import { flowChatManager } from '@/flow_chat/services/FlowChatManager';
 import { openMainSession } from '@/flow_chat/services/sessionActivation';
+import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
 import { dispatchJobStore, type DispatchObserverJob } from './dispatchJobStore';
 
 /** One shared assistant, as `SharedWithMe` names it. */
@@ -45,6 +46,31 @@ export async function startSharedAssistantConversation(assistant: SharedAssistan
 }
 
 /**
+ * Whether `job` is a new conversation whose first message never left this
+ * device and whose projection did not survive a restart: nothing records it
+ * but this store, so there is nothing to open.
+ */
+export function isUnsentConversation(job: DispatchObserverJob): boolean {
+  return job.state === 'submitting' && !flowChatStore.getState().sessions.has(job.sessionId);
+}
+
+/**
+ * Shows the conversation `job`. A new conversation that was never sent and
+ * no longer has a projection is dropped and replaced by a new one.
+ */
+export async function openSharedAssistantConversationJob(
+  job: DispatchObserverJob,
+  assistant: SharedAssistantRef,
+): Promise<string> {
+  if (isUnsentConversation(job)) {
+    dispatchJobStore.getState().removeJob(job.jobId);
+    return startSharedAssistantConversation(assistant);
+  }
+  await openMainSession(job.sessionId);
+  return job.sessionId;
+}
+
+/**
  * Shows the latest conversation with `assistant`, or starts one when there
  * is none and `canStart` allows it. Returns the session shown, if any.
  */
@@ -53,9 +79,8 @@ export async function openSharedAssistantConversation(
   canStart: boolean,
 ): Promise<string | undefined> {
   const [latest] = sharedAssistantConversations(dispatchJobStore.getState().jobs, assistant);
-  if (latest) {
-    await openMainSession(latest.sessionId);
-    return latest.sessionId;
+  if (latest && (canStart || !isUnsentConversation(latest))) {
+    return openSharedAssistantConversationJob(latest, assistant);
   }
   if (!canStart) return undefined;
   return startSharedAssistantConversation(assistant);

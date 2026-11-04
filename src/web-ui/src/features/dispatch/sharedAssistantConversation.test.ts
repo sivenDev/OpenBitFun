@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   remove: vi.fn(),
   open: vi.fn(),
+  removeJob: vi.fn(),
+  sessions: new Map<string, unknown>(),
 }));
 vi.mock('@/flow_chat/services/FlowChatManager', () => ({
   flowChatManager: {
@@ -15,12 +17,16 @@ vi.mock('@/flow_chat/services/FlowChatManager', () => ({
 }));
 vi.mock('@/flow_chat/services/sessionActivation', () => ({ openMainSession: mocks.open }));
 vi.mock('./dispatchJobStore', () => ({
-  dispatchJobStore: { getState: () => ({ jobs: mocks.jobs }) },
+  dispatchJobStore: { getState: () => ({ jobs: mocks.jobs, removeJob: mocks.removeJob }) },
+}));
+vi.mock('@/flow_chat/store/FlowChatStore', () => ({
+  flowChatStore: { getState: () => ({ sessions: mocks.sessions }) },
 }));
 
 import {
   forgetSharedAssistantConversations,
   openSharedAssistantConversation,
+  openSharedAssistantConversationJob,
   sharedAssistantConversations,
   startSharedAssistantConversation,
 } from './sharedAssistantConversation';
@@ -38,7 +44,8 @@ const withWriter = (jobId: string, updatedAt: number) => job(jobId, updatedAt, {
 });
 
 beforeEach(() => {
-  for (const mock of [mocks.create, mocks.remove, mocks.open]) mock.mockReset();
+  for (const mock of [mocks.create, mocks.remove, mocks.open, mocks.removeJob]) mock.mockReset();
+  mocks.sessions = new Map();
   mocks.create.mockResolvedValue('session-new');
   mocks.jobs = {
     old: withWriter('old', 1),
@@ -77,6 +84,26 @@ describe('conversations with a shared assistant', () => {
   it('start a new one on request even when one exists', async () => {
     await expect(startSharedAssistantConversation(writer)).resolves.toBe('session-new');
     expect(mocks.open).toHaveBeenCalledWith('session-new');
+  });
+
+  it('replace one whose first message never left this device once it no longer opens', async () => {
+    const unsent = { ...withWriter('unsent', 4), state: 'submitting' } as DispatchObserverJob;
+    mocks.jobs = { unsent };
+    await expect(openSharedAssistantConversationJob(unsent, writer)).resolves.toBe('session-new');
+    expect(mocks.removeJob).toHaveBeenCalledWith('unsent');
+    expect(mocks.open).toHaveBeenCalledWith('session-new');
+
+    // Still loaded in this run: it is the conversation being written.
+    mocks.removeJob.mockReset();
+    mocks.sessions.set('session-unsent', {});
+    await expect(openSharedAssistantConversationJob(unsent, writer)).resolves.toBe('session-unsent');
+    expect(mocks.removeJob).not.toHaveBeenCalled();
+  });
+
+  it('do not offer an unsent leftover as the latest when none may start', async () => {
+    mocks.jobs = { unsent: { ...withWriter('unsent', 4), state: 'submitting' } };
+    await expect(openSharedAssistantConversation(writer, false)).resolves.toBeUndefined();
+    expect(mocks.open).not.toHaveBeenCalled();
   });
 
   it('are deleted, and only they, when the assistant is forgotten', async () => {

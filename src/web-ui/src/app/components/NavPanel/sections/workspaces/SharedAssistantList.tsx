@@ -5,13 +5,13 @@ import { isSessionNavRowActive } from '@/app/components/NavPanel/sections/sessio
 import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
 import {
   openSharedAssistantConversation,
+  openSharedAssistantConversationJob,
   sharedAssistantConversations,
   startSharedAssistantConversation,
   type SharedAssistantRef,
 } from '@/features/dispatch/sharedAssistantConversation';
 import { sharedAssistantStatus, type SharedAssistantStatus } from '@/features/dispatch/sharedAssistantStatus';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
-import { openMainSession } from '@/flow_chat/services/sessionActivation';
 import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import { useI18n } from '@/infrastructure/i18n';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
@@ -124,9 +124,11 @@ export default function SharedAssistantList() {
             {conversations.length > 0 ? (
               <div className="assistant-session-history__delegated">
                 {conversations.map((job) => {
-                  // A conversation not loaded here has been sent before.
+                  // A conversation not loaded here has been sent before,
+                  // unless its first message never left this device.
                   const turns = sessions.get(job.sessionId)?.dialogTurns?.length;
-                  const status = sharedAssistantStatus(job, turns === undefined || turns > 0);
+                  const sent = turns === undefined ? job.state !== 'submitting' : turns > 0;
+                  const status = sharedAssistantStatus(job, sent);
                   const detail = statusText(status, owner);
                   const active = isSessionNavRowActive({
                     rowSessionId: job.sessionId,
@@ -150,7 +152,7 @@ export default function SharedAssistantList() {
                       data-openbitfun-state={active ? 'active' : undefined}
                       aria-current={active ? 'true' : undefined}
                       title={detail ? `${title} · ${detail}` : title}
-                      onClick={() => run(() => openMainSession(job.sessionId))}
+                      onClick={() => run(() => openSharedAssistantConversationJob(job, ref))}
                       data-testid="nav-shared-assistant-conversation"
                     >
                       <span className="assistant-session-history__delegated-title">{title}</span>
