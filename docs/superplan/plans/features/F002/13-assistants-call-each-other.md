@@ -216,6 +216,14 @@ parent: "F002"
 
 - [ ] 重启后从被调用助理的工作区收回结果、启动整理、结束事件、下一回合的说明、删除会话即取消均有测试；旧的后台任务记录（没有新字段）照常读入
 
+**进展（2026-11-04，未勾选）：**
+- 3c5810fa0：后台任务新增可空列 `child_storage_path`（原地追加，旧版本照常打开数据库），助理调用在建会话后记下被调用会话的存储位置；`AgentWait` 与过期整理都从那里读回合。原来按发起方的存储读，重启后内存结果清空即读不到。测试 `a_called_assistants_result_is_read_from_its_own_workspace_after_a_restart`。
+- c5ea4a3fa：桌面端启动时整理上一进程留下的本机助理调用（只限有 `child_storage_path` 的任务），回合已完成的保留结果，未完成的标为中断「The app restarted before this call finished」；发起方每次开始新回合时，上下文附一条 `BackgroundResult` 类提醒，列出已结束但未收回的助理调用（本机与共享），提示用 `AgentWait` 读取。测试 `a_call_cut_off_by_a_restart_is_settled_at_startup_and_named_to_the_callers_next_turn`（普通子智能体不在整理与提醒之列）。
+- 删除会话即取消：删除走会话维护流程，已经调用 `cancel_background_subagents_for_parent_session`，助理调用同在其中，无需改代码。
+- 4156f220d（真机发现）：被调用助理只看到任务正文，回答「我没有主人」；现在会话开头有一条提醒，说明来自哪个助理、为同一个人工作、回复交回那个助理。
+- 验证：core `--lib -- agentic::coordination agentic::tools::implementations::task` 385 通过；`openbitfun-desktop` 检查通过；legacy-migration-adapters 55 通过。
+- 未完成：结束事件与发起方空闲时的界面通知（卡片状态已随被调用会话的事件更新；发起方没有进行中的回合时的单独通知尚未做）。
+
 ## Task 5: 发起方展示、被调用助理主页的折叠记录、审批与提问送到发起方
 
 **Outcome:** 调用只在发起方的对话里展示；被调用助理的对话列表保持干净，主页折叠列出「为其他助理做的任务」；被调用助理的审批与提问在发起方处理。
@@ -238,6 +246,12 @@ parent: "F002"
 - `npx tsc --noEmit -p src/web-ui`、`pnpm run lint:web`、`pnpm run i18n:audit`
 
 - [ ] 列表不列出调用会话、主页折叠记录、卡片侧栏查看、审批归到发起方、提问归到发起方均有测试
+
+**进展（2026-11-04，未勾选）：**
+- 13bd28e6a：导航不列出带 `delegatedBy` 的会话，去掉列表里的「来自 X」标记与词条；助理主页在定时会话与会话之间增加默认折叠的「为其他助理做的任务」（只在有记录时出现），点开打开该会话；带 `delegatedBy` 的会话只读（`fresh_only`），由发起方驱动；调用卡片把类型位置换成归属「我的助理」/「来自 某某 的设备」，不再显示 `assistant:`/`shared:` 类型；点开时带被调用会话自己的 `workspaceId`。
+- 现状确认：被调用会话的审批带 `delegation.parentSessionId`，Web UI 归到发起方的输入区；提问的控制会话取自调用时的父信息，即发起方。两者待真机确认，尚未补专门测试。
+- 验证：Web UI `src/app/scenes/profile src/flow_chat/tool-cards src/flow_chat/utils/remoteAgent.test.ts src/app/components/NavPanel src/flow_chat/session-drivers` 通过；`tsc`、`eslint`、`pnpm run i18n:audit`、`pnpm run theme:color-audit:all` 通过。
+- 真机（2026-11-04，dmg b2935109，含 a6d34b04b 与 9cb86e77a）：小栖调用小岚，卡片名为「小岚」（此前为发起方名字「鹅鹅」）；导航不再出现「Remote Session」；小栖能说清可调用的助理各是谁的、在哪里运行，不把小岚当成自己；卡片仍显示 `assistant:workspace` 类型，已由 13bd28e6a 修复，待新包复核。
 
 ## Task 6: 外部任务的继续调用与计数（暂停至 Task 4、5 之后）
 
