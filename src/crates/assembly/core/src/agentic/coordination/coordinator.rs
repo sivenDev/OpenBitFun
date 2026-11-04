@@ -2679,6 +2679,32 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         self.remote_agent_port.get().map(Arc::clone)
     }
 
+    /// Settles, at startup, the calls to this device's other assistants that
+    /// an earlier process left running: a call whose session finished keeps
+    /// its result, and one cut off by the restart is reported as interrupted
+    /// right away instead of whenever its caller next waits.
+    pub fn settle_interrupted_assistant_calls(self: &Arc<Self>) {
+        let coordinator = Arc::clone(self);
+        tokio::spawn(async move {
+            match coordinator
+                .background_subagent_outcomes
+                .settle_orphaned_assistant_calls()
+                .await
+            {
+                Ok(settled) => {
+                    for (record, status) in settled {
+                        info!(
+                            "Settled an assistant call left by an earlier process: bg_task_id={}, status={}",
+                            record.bg_task_id,
+                            status.as_str()
+                        );
+                    }
+                }
+                Err(error) => warn!("Failed to settle assistant calls after restart: {error}"),
+            }
+        });
+    }
+
     /// Observes again the delegated background tasks an earlier process
     /// started, so their results still reach AgentWait or the parent's next
     /// turn instead of being reported as interrupted.
@@ -7027,6 +7053,25 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 InternalReminderKind::HookContext,
                 format!("<hook_context>\n{section}\n</hook_context>"),
             ));
+        }
+
+        // Calls to other assistants keep running after the turn that started
+        // them; tell the next turn which have finished unread. Older builds
+        // only know existing reminder kinds, so this reuses BackgroundResult.
+        match self
+            .background_subagent_outcomes
+            .unread_finished_calls_note(&session_id)
+            .await
+        {
+            Ok(Some(note)) => additional_prepended_messages.push(Message::internal_reminder(
+                InternalReminderKind::BackgroundResult,
+                note,
+            )),
+            Ok(None) => {}
+            Err(error) => warn!(
+                "Failed to list finished assistant calls for the next turn: session_id={}, error={}",
+                session_id, error
+            ),
         }
 
         // Ensure session history is loaded into memory

@@ -882,6 +882,49 @@ ORDER BY tasks.task_pk DESC LIMIT 1
         .await
     }
 
+    /// Calls to other assistants, on this device or another, that `parent_session_id`
+    /// started and that have finished without their result being read yet.
+    pub(crate) async fn unread_finished_assistant_calls(
+        &self,
+        parent_session_id: &str,
+    ) -> OpenBitFunResult<Vec<BackgroundTaskRecord>> {
+        let parent_session_id = parent_session_id.to_string();
+        self.with_connection(move |connection| {
+            let mut statement = connection
+                .prepare(&format!(
+                    "{} WHERE tasks.parent_session_id = ?1 AND tasks.status != 'running' AND tasks.delivered_at_ms IS NULL AND (tasks.child_storage_path IS NOT NULL OR tasks.remote_job IS NOT NULL) ORDER BY tasks.task_pk",
+                    BACKGROUND_TASK_SELECT
+                ))
+                .map_err(db_error)?;
+            let rows = statement
+                .query_map(params![parent_session_id], background_task_from_row)
+                .map_err(db_error)?;
+            collect_rows(rows)
+        })
+        .await
+    }
+
+    /// Calls to this device's other assistants that an earlier process left
+    /// running. They cannot be resumed and are settled at startup.
+    pub(crate) async fn orphaned_assistant_calls(
+        &self,
+    ) -> OpenBitFunResult<Vec<BackgroundTaskRecord>> {
+        let execution_owner_token = self.execution_owner_token.clone();
+        self.with_connection(move |connection| {
+            let mut statement = connection
+                .prepare(&format!(
+                    "{} WHERE tasks.status = 'running' AND tasks.remote_job IS NULL AND tasks.child_storage_path IS NOT NULL AND tasks.execution_owner_token != ?1",
+                    BACKGROUND_TASK_SELECT
+                ))
+                .map_err(db_error)?;
+            let rows = statement
+                .query_map(params![execution_owner_token], background_task_from_row)
+                .map_err(db_error)?;
+            collect_rows(rows)
+        })
+        .await
+    }
+
     /// Makes this process the owner of a delegated task an earlier process
     /// started. Only one caller wins.
     pub(crate) async fn adopt_remote_task(&self, task_pk: i64) -> OpenBitFunResult<bool> {

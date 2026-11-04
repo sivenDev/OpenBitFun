@@ -576,42 +576,110 @@ impl BackgroundSubagentOutcomeStore {
                 }
                 continue;
             }
-            let turn = self
-                .session_manager
-                .load_related_dialog_turn(
-                    &record.parent_session_id,
-                    &record.child_session_id,
-                    record.child_storage_path.as_deref(),
-                    &record.child_dialog_turn_id,
-                )
-                .await?;
-            let (status, error_code, error_message) = match turn.map(|turn| turn.status) {
-                Some(TurnStatus::Completed) => (BackgroundTaskStatus::Completed, None, None),
-                Some(TurnStatus::Error) => (
-                    BackgroundTaskStatus::Failed,
-                    Some("child_turn_failed".to_string()),
-                    Some("The persisted subagent turn failed".to_string()),
-                ),
-                Some(TurnStatus::Cancelled) => (
-                    BackgroundTaskStatus::Cancelled,
-                    Some("child_turn_cancelled".to_string()),
-                    Some("The persisted subagent turn was cancelled".to_string()),
-                ),
-                Some(TurnStatus::InProgress) | None => (
-                    BackgroundTaskStatus::Interrupted,
-                    Some("execution_interrupted".to_string()),
-                    Some("Background subagent execution was interrupted".to_string()),
-                ),
-            };
-            let _ = self
-                .coordination_store
-                .update_task_status(record.task_pk, status, error_code, error_message)
-                .await?;
+            self.settle_stale_local_task(&record).await?;
         }
         if !parent_session_id.is_empty() {
             self.changes.notify_waiters();
         }
         Ok(())
+    }
+
+    /// A note for the next turn of `parent_session_id` listing the assistant
+    /// calls it started that have finished but whose result it has not read.
+    /// Results are still read with AgentWait; this only says they are there.
+    pub(crate) async fn unread_finished_calls_note(
+        &self,
+        parent_session_id: &str,
+    ) -> OpenBitFunResult<Option<String>> {
+        let calls = self
+            .coordination_store
+            .unread_finished_assistant_calls(parent_session_id)
+            .await?;
+        if calls.is_empty() {
+            return Ok(None);
+        }
+        let lines = calls
+            .iter()
+            .map(|call| {
+                let mut line = format!(
+                    "- {} (agent {}): {}",
+                    call.bg_task_id,
+                    call.agent_id,
+                    call.status.as_str()
+                );
+                if let Some(error) = call.error_message.as_deref() {
+                    line.push_str(&format!(" ({error})"));
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(Some(format!(
+            "<finished_assistant_calls>\nThese assistant calls you started earlier have finished since you last looked, and you have not read their results yet:\n{lines}\nRead a result with AgentWait when it bears on what you are doing now.\n</finished_assistant_calls>"
+        )))
+    }
+
+    /// Settles the calls to this device's other assistants that an earlier
+    /// process left running, from what their sessions recorded, and returns
+    /// the ones it settled with their new status.
+    pub(crate) async fn settle_orphaned_assistant_calls(
+        &self,
+    ) -> OpenBitFunResult<Vec<(BackgroundTaskRecord, BackgroundTaskStatus)>> {
+        let mut settled = Vec::new();
+        for record in self.coordination_store.orphaned_assistant_calls().await? {
+            if let Some(status) = self.settle_stale_local_task(&record).await? {
+                settled.push((record, status));
+            }
+        }
+        if !settled.is_empty() {
+            self.changes.notify_waiters();
+        }
+        Ok(settled)
+    }
+
+    /// Settles one task an earlier process left running on this device:
+    /// finished turns keep their outcome, unfinished ones are interrupted.
+    /// Returns the status when this call settled it.
+    async fn settle_stale_local_task(
+        &self,
+        record: &BackgroundTaskRecord,
+    ) -> OpenBitFunResult<Option<BackgroundTaskStatus>> {
+        let turn = self
+            .session_manager
+            .load_related_dialog_turn(
+                &record.parent_session_id,
+                &record.child_session_id,
+                record.child_storage_path.as_deref(),
+                &record.child_dialog_turn_id,
+            )
+            .await?;
+        let (status, error_code, error_message) = match turn.map(|turn| turn.status) {
+            Some(TurnStatus::Completed) => (BackgroundTaskStatus::Completed, None, None),
+            Some(TurnStatus::Error) => (
+                BackgroundTaskStatus::Failed,
+                Some("child_turn_failed".to_string()),
+                Some("The persisted subagent turn failed".to_string()),
+            ),
+            Some(TurnStatus::Cancelled) => (
+                BackgroundTaskStatus::Cancelled,
+                Some("child_turn_cancelled".to_string()),
+                Some("The persisted subagent turn was cancelled".to_string()),
+            ),
+            Some(TurnStatus::InProgress) | None => (
+                BackgroundTaskStatus::Interrupted,
+                Some("execution_interrupted".to_string()),
+                Some(if record.child_storage_path.is_some() {
+                    "The app restarted before this call finished".to_string()
+                } else {
+                    "Background subagent execution was interrupted".to_string()
+                }),
+            ),
+        };
+        let changed = self
+            .coordination_store
+            .update_task_status(record.task_pk, status, error_code, error_message)
+            .await?;
+        Ok(changed.then_some(status))
     }
 
     pub(crate) async fn agent_id_for_session_with_requested_id(
@@ -1066,6 +1134,112 @@ mod tests {
             recovered.outcomes[0].content.as_deref(),
             Some("I am the called assistant")
         );
+    }
+
+    #[tokio::test]
+    async fn a_call_cut_off_by_a_restart_is_settled_at_startup_and_named_to_the_callers_next_turn()
+    {
+        let root = tempfile::tempdir().expect("background outcome temp directory");
+        let workspace = root.path().join("callee");
+        std::fs::create_dir_all(&workspace).expect("create workspace");
+        crate::service::workspace::legacy_compat::register_local_fixture_blocking(&workspace);
+        let path_manager = Arc::new(PathManager::with_user_root_for_tests(
+            root.path().join("config"),
+        ));
+        let session_manager = Arc::new(SessionManager::new(
+            Arc::new(SessionContextStore::new()),
+            Arc::new(PersistenceManager::new(path_manager.clone()).expect("persistence manager")),
+            SessionManagerConfig {
+                max_active_sessions: 10,
+                session_idle_timeout: Duration::from_secs(3600),
+                auto_save_interval: Duration::from_secs(300),
+                enable_persistence: true,
+                prompt_cache_policy: PromptCachePolicy::default(),
+            },
+        ));
+        session_manager
+            .create_session_with_id(
+                Some("callee-session".to_string()),
+                "Callee".to_string(),
+                "Claw".to_string(),
+                SessionConfig {
+                    tool_presentation_mode: Default::default(),
+                    workspace_path: Some(workspace.to_string_lossy().into_owned()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("create callee session");
+        let callee_storage = session_manager
+            .effective_session_storage_path("callee-session")
+            .await
+            .expect("callee storage path");
+
+        let db_path = path_manager.agent_coordination_database_file();
+        let previous_owner = CoordinationStore::new(db_path.clone());
+        let registration = |child_turn: &str| BackgroundTaskRegistration {
+            parent_session_id: "caller-session".to_string(),
+            requested_agent_id: None,
+            child_session_id: "callee-session".to_string(),
+            parent_dialog_turn_id: "caller-turn".to_string(),
+            parent_tool_call_id: format!("spawn-{child_turn}"),
+            child_dialog_turn_id: child_turn.to_string(),
+        };
+        let call = previous_owner
+            .register_background_task(registration("callee-turn"))
+            .await
+            .expect("register an assistant call");
+        previous_owner
+            .set_child_storage_path(
+                "caller-session",
+                "callee-turn",
+                callee_storage.to_string_lossy().into_owned(),
+            )
+            .await
+            .expect("record the callee's storage");
+        // A plain subagent of the same caller is not an assistant call.
+        previous_owner
+            .register_background_task(BackgroundTaskRegistration {
+                child_session_id: "helper-session".to_string(),
+                ..registration("helper-turn")
+            })
+            .await
+            .expect("register a plain subagent");
+
+        let restarted = BackgroundSubagentOutcomeStore::new(
+            session_manager,
+            Arc::new(CoordinationStore::new(db_path)),
+        );
+        assert_eq!(
+            restarted
+                .unread_finished_calls_note("caller-session")
+                .await
+                .expect("note before settling"),
+            None,
+            "a call still marked running is not finished"
+        );
+
+        let settled = restarted
+            .settle_orphaned_assistant_calls()
+            .await
+            .expect("settle at startup");
+        assert_eq!(settled.len(), 1, "only the assistant call is settled");
+        assert_eq!(settled[0].0.bg_task_id, call.bg_task_id);
+        assert_eq!(settled[0].1, BackgroundTaskStatus::Interrupted);
+        assert!(restarted
+            .settle_orphaned_assistant_calls()
+            .await
+            .expect("settle again")
+            .is_empty());
+
+        let note = restarted
+            .unread_finished_calls_note("caller-session")
+            .await
+            .expect("note after settling")
+            .expect("the interrupted call is named");
+        assert!(note.contains(&call.bg_task_id));
+        assert!(note.contains("interrupted (The app restarted before this call finished)"));
+        assert!(note.contains("AgentWait"));
     }
 
     #[tokio::test]

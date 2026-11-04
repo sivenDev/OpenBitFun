@@ -705,6 +705,7 @@ pub async fn run() {
             openbitfun_acp::client::AcpExternalAgentExecutor::new(acp_client_service),
         ));
     }
+    coordinator.settle_interrupted_assistant_calls();
     coordinator.resume_remote_background_tasks();
 
     // A Turn that is still executing exists nowhere durable but this log: the
