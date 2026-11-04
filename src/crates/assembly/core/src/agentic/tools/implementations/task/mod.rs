@@ -111,6 +111,13 @@ impl AgentExecutionTool {
                 agent.default_tools.join(", ")
             ));
         }
+        if agents.iter().any(|agent| agent.assistant.is_some()) {
+            out.push_str(
+                "<note>An assistant's type is only for calling it. When you talk about an \
+                 assistant, use its name and say whose it is and where it runs; never show \
+                 its type.</note>\n",
+            );
+        }
         out.push_str("</available_agents>");
         out
     }

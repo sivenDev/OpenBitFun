@@ -2819,6 +2819,14 @@ async fn the_catalog_lists_assistants_with_their_source_and_unavailable_reason()
     let rendered = AgentExecutionTool::format_agent_descriptions(&agents);
     assert!(rendered.contains("<agent type=\"shared:laptop/writer\">"));
     assert!(rendered.contains("Unavailable now:"));
+    assert!(rendered.contains("never show its type"));
+}
+
+#[test]
+fn a_catalog_without_assistants_carries_no_assistant_note() {
+    let rendered =
+        AgentExecutionTool::format_agent_descriptions(&[named_agent("Explore", "Explore")]);
+    assert!(!rendered.contains("<note>"));
 }
 
 #[tokio::test]

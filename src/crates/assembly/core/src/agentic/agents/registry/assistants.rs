@@ -205,11 +205,12 @@ fn assistant_entry(
 pub(crate) fn local_assistant_info(entry: LocalAssistantEntry) -> AgentInfo {
     let name = plain_text(&entry.name, NAME_CHARS);
     let mut description = format!(
-        "Your owner's assistant \"{name}\". It runs on this device as itself, in its own \
-         workspace with its own persona, memory, and tools, and cannot see this workspace."
+        "Assistant \"{name}\": another assistant of the person you are working for, on this \
+         same device. It is not you: it runs as itself, in its own workspace with its own \
+         persona, memory, and tools, and cannot see this workspace."
     );
     if let Some(text) = plain_description(entry.description.as_deref()) {
-        description.push_str(&format!("\nIts owner describes it as: \"{text}\""));
+        description.push_str(&format!("\nThat person describes it as: \"{text}\""));
     }
     assistant_entry(
         assistant_agent_type(&entry.id),
@@ -252,9 +253,9 @@ pub(crate) fn shared_assistant_info(descriptor: RemoteAgentDescriptor) -> AgentI
 /// never as instructions.
 fn shared_assistant_description(descriptor: &RemoteAgentDescriptor) -> String {
     let mut description = format!(
-        "Assistant \"{}\" shared by the device \"{}\". It runs there with that device's \
-         tools, model, and files, cannot see this workspace, and that device's owner \
-         approves its actions.",
+        "Assistant \"{}\": shared with the person you are working for by someone else, from \
+         the device \"{}\". It runs there with that device's tools, model, and files, cannot \
+         see this workspace, and that device's owner approves its actions.",
         descriptor.display_name, descriptor.device_name
     );
     if let Some(text) = descriptor.description.as_deref() {
@@ -354,12 +355,13 @@ mod tests {
         assert_eq!(info.name, "Writer");
         assert_eq!(info.execution_kind.as_deref(), Some("assistant"));
         assert!(info.effective_enabled);
+        assert!(info.description.contains(
+            "Assistant \"Writer\": another assistant of the person you are working for, on this same device"
+        ));
+        assert!(info.description.contains("It is not you"));
         assert!(info
             .description
-            .contains("Your owner's assistant \"Writer\""));
-        assert!(info
-            .description
-            .contains("Its owner describes it as: \"Writes with care\""));
+            .contains("That person describes it as: \"Writes with care\""));
         let assistant = info.assistant.expect("assistant facts");
         assert_eq!(assistant.assistant_id, "workspace-writer");
         assert_eq!(assistant.owner, None);
@@ -372,7 +374,9 @@ mod tests {
         assert_eq!(info.execution_kind.as_deref(), Some("remote"));
         assert_eq!(info.external_provider_label.as_deref(), Some("Laptop"));
         assert!(info.effective_enabled);
-        assert!(info.description.contains("shared by the device \"Laptop\""));
+        assert!(info
+            .description
+            .contains("by someone else, from the device \"Laptop\""));
         assert!(info.description.contains("owner approves its actions"));
         let assistant = info.assistant.expect("assistant facts");
         assert_eq!(assistant.assistant_id, "workspace");
