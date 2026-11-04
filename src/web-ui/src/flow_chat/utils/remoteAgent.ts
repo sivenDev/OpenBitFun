@@ -2,6 +2,7 @@ import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI'
 import { assistantShareId } from '@/infrastructure/lan-share/lanShareStore';
 import type { WorkspaceInfo } from '@/shared/types';
 import type { SessionDelegatedBy } from '@/shared/types/session-history';
+import type { Session } from '../types/flow-chat';
 import { resolveAssistantName } from '@/shared/utils/assistantName';
 
 const SHARED_ASSISTANT_TYPE_PREFIX = 'shared:';
@@ -113,4 +114,26 @@ export function calledAssistantSessionName(
     !candidate.connectionId && candidate.id === session.workspaceId
   ));
   return workspace ? resolveAssistantName(workspace) : null;
+}
+
+/**
+ * The agent type a tool call in `session` asked for, read from its input. A
+ * called assistant's own session runs as `Claw`; the call names the assistant.
+ */
+export function requestedAgentTypeForToolCall(
+  session: Pick<Session, 'dialogTurns'> | null | undefined,
+  toolCallId: string | null | undefined,
+): string | null {
+  if (!toolCallId) return null;
+  for (const turn of session?.dialogTurns ?? []) {
+    for (const round of turn.modelRounds) {
+      for (const item of round.items) {
+        if (item.type !== 'tool' || (item.toolCall?.id ?? item.id) !== toolCallId) continue;
+        const input = item.toolCall?.input as Record<string, unknown> | undefined;
+        const type = input?.agent_type ?? input?.agentType;
+        return typeof type === 'string' && type.trim() ? type.trim() : null;
+      }
+    }
+  }
+  return null;
 }

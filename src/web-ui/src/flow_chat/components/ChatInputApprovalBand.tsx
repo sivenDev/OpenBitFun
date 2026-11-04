@@ -36,7 +36,14 @@ import type {
 import { PERMISSION_ACTION_LABEL_KEYS, permissionActionLabel } from '@/shared/utils/permissionActionLabels';
 import { useCopyTextAction } from '../hooks/useCopyTextAction';
 import { CopyableTextPreview } from './CopyableTextPreview';
-import { remoteAgentFromAgentType, sharedAssistantNames } from '../utils/remoteAgent';
+import {
+  calledAssistantName,
+  remoteAgentFromAgentType,
+  requestedAgentTypeForToolCall,
+  sharedAssistantNames,
+} from '../utils/remoteAgent';
+import { flowChatStore } from '../store/FlowChatStore';
+import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import './ChatInputApprovalBand.scss';
 
@@ -165,10 +172,23 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
   const remoteNames = remoteOwner
     ? sharedAssistantNames(remoteOwner, useLanShareStore.getState().sharedWithMe)
     : null;
+  // A called assistant runs as `Claw`; the caller's call names which one.
+  const calledAssistant = request.delegation && !remoteOwner
+    ? calledAssistantName(
+      requestedAgentTypeForToolCall(
+        flowChatStore.getState().sessions.get(request.delegation.parentSessionId),
+        request.delegation.parentToolCallId,
+      ),
+      workspaceManager.getState().assistantWorkspaces,
+      useLanShareStore.getState().sharedWithMe,
+    )
+    : null;
   const ownerLabel = remoteOwner
     ? remoteNames
       ? t('toolCards.taskTool.remoteAgentFromLabel', { agent: remoteNames.name, owner: remoteNames.owner })
       : t('toolCards.taskTool.remoteAgentLabel', { agent: remoteOwner.assistantId })
+    : calledAssistant
+      ? calledAssistant
     : request.delegation
       ? t('permission.subagentOwner', { subagent: request.delegation.subagentType })
       : showSourceIdentity ? request.source.identity : undefined;

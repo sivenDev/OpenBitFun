@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import type { WorkspaceInfo } from '@/shared/types';
 import {
+  requestedAgentTypeForToolCall,
   calledAssistantName,
   calledAssistantOwner,
   calledAssistantSessionName,
@@ -87,5 +88,17 @@ describe('assistant names', () => {
     expect(calledAssistantSessionName({ workspaceId: 'ws-writer' }, [local])).toBeNull();
     expect(calledAssistantSessionName({ delegatedBy, workspaceId: 'ws-other' }, [local])).toBeNull();
     expect(calledAssistantSessionName(undefined, [local])).toBeNull();
+  });
+});
+
+describe('requestedAgentTypeForToolCall', () => {
+  it('reads the type a call asked for, which names a called assistant running as Claw', () => {
+    const session = { dialogTurns: [{ modelRounds: [{ items: [
+      { type: 'text', id: 'text' },
+      { type: 'tool', id: 'call-1', toolCall: { id: 'call-1', input: { agent_type: 'assistant:abc' } } },
+    ] }] }] } as never;
+    expect(requestedAgentTypeForToolCall(session, 'call-1')).toBe('assistant:abc');
+    expect(requestedAgentTypeForToolCall(session, 'other')).toBeNull();
+    expect(requestedAgentTypeForToolCall(undefined, 'call-1')).toBeNull();
   });
 });
