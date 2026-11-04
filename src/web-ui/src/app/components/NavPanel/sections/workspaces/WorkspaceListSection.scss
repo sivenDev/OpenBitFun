@@ -1454,26 +1454,123 @@
   cursor: pointer;
 
   // Hover and selection read like a session row's.
-  &:hover,
-  &.is-active {
+  &:hover {
     color: var(--openbitfun-color-content-primary);
+    @include shell-surfaces.navigation-hover-feedback;
+  }
+
+  &.is-active {
+    @include nav-font.nav-panel-text-row-active;
+    @include shell-surfaces.navigation-selection-feedback;
+  }
+}
+
+// The assistant's own sessions get a heading once other devices' groups follow them.
+.assistant-session-history__mine {
+  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) 0 30px;
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+}
+
+// One group per device that sent tasks, headed by the device. A group that
+// waits for the owner is tinted so it reads before the others.
+.assistant-session-history__delegated-group {
+  display: flex;
+  flex-direction: column;
+  margin-block-start: 2px;
+  border-radius: var(--openbitfun-radius-base);
+
+  &.is-waiting {
+    background: var(--openbitfun-color-status-warning-surface);
+  }
+}
+
+// Two lines: who sent the tasks, then the device and how many.
+.assistant-session-history__delegated-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  inline-size: 100%;
+  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) var(--openbitfun-space-1) 12px;
+  border: 0;
+  border-radius: var(--openbitfun-radius-base);
+  background: transparent;
+  color: var(--openbitfun-color-content-primary);
+  text-align: start;
+  cursor: pointer;
+
+  &:hover {
     background: var(--openbitfun-color-action-quiet-hover);
   }
 }
 
-// One group per device that sent tasks, headed by the device.
-.assistant-session-history__delegated-group {
-  display: flex;
-  flex-direction: column;
+.assistant-session-history__delegated-chevron {
+  flex: none;
+  color: var(--openbitfun-color-content-muted);
+  transition: transform 120ms ease;
+
+  [aria-expanded='true'] > & {
+    transform: rotate(90deg);
+  }
 }
 
-.assistant-session-history__delegated-heading {
-  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) 0 30px;
+// The sender's initial, in place of an avatar this device does not have.
+.assistant-session-history__delegated-device {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: var(--openbitfun-radius-sm);
+  background: var(--openbitfun-color-action-quiet-hover);
+  color: var(--openbitfun-color-content-secondary);
+  font-size: var(--openbitfun-type-micro-font-size);
+  font-weight: var(--openbitfun-type-label-selected-font-weight);
+}
+
+.assistant-session-history__delegated-heading-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.assistant-session-history__delegated-heading-title,
+.assistant-session-history__delegated-heading-detail {
   overflow: hidden;
-  color: var(--openbitfun-color-content-muted);
-  font-size: var(--openbitfun-type-meta-font-size);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.assistant-session-history__delegated-heading-detail {
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+}
+
+// How many actions wait for the owner in the group.
+.assistant-session-history__delegated-badge {
+  flex: none;
+  min-inline-size: 18px;
+  padding-inline: 5px;
+  border: 1px solid var(--openbitfun-color-status-warning-border);
+  border-radius: 999px;
+  color: var(--openbitfun-color-status-warning-content);
+  font-size: var(--openbitfun-type-micro-font-size);
+  text-align: center;
+}
+
+// A task row on one line: status dot, title, and a short trailing label.
+.assistant-session-history__delegated-line {
+  display: flex;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  inline-size: 100%;
+  min-inline-size: 0;
+
+  .assistant-session-history__delegated-title {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
 }
 
 .assistant-session-history__delegated-title,
@@ -1491,6 +1588,28 @@
 
 .assistant-session-history__delegated-item.is-waiting .assistant-session-history__delegated-detail {
   color: var(--openbitfun-color-status-warning-content);
+}
+
+// "Show the other N" under a group, indented like its rows.
+.assistant-session-history__delegated-more.openbitfun-nav-panel__inline-item {
+  inline-size: 100%;
+  padding-block: 2px;
+  padding-inline: 30px var(--openbitfun-space-1);
+  border: 0;
+  background: transparent;
+  color: var(--openbitfun-color-content-secondary);
+  font-size: var(--openbitfun-type-meta-font-size);
+  text-align: start;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--openbitfun-color-content-primary);
+  }
+}
+
+// Where a task stands: the session status icon after its title.
+.nav-task-status {
+  flex: none;
 }
 
 // Assistants other devices share with this one, each with its conversations
@@ -1514,12 +1633,12 @@
   padding-inline-end: var(--openbitfun-space-1);
 }
 
+// The assistant's name and a mark for whether its owner can be reached.
 .shared-assistant-nav__name.openbitfun-nav-panel__inline-item {
   display: flex;
   flex: 1 1 auto;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 6px;
   min-inline-size: 0;
   block-size: auto;
   padding: var(--openbitfun-space-1) var(--openbitfun-space-2);
@@ -1531,5 +1650,30 @@
   &:hover {
     color: var(--openbitfun-color-content-primary);
     background: var(--openbitfun-color-action-quiet-hover);
+  }
+}
+
+.shared-assistant-nav__standing {
+  display: inline-flex;
+  flex: none;
+}
+
+.shared-assistant-nav__online {
+  flex: none;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  background: var(--openbitfun-color-status-success-emphasis);
+}
+
+// Offline or no longer shared: the assistant and its conversations read dimmed,
+// except the one being viewed, which reads selected like any other.
+.shared-assistant-nav__assistant.is-unavailable {
+  .assistant-session-history__delegated-title {
+    color: var(--openbitfun-color-content-muted);
+  }
+
+  .assistant-session-history__delegated-item.is-active .assistant-session-history__delegated-title {
+    color: var(--openbitfun-color-content-primary);
   }
 }

@@ -4,9 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceInfo } from '@/shared/types';
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), save: vi.fn(), prepare: vi.fn(), error: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), save: vi.fn(), prepare: vi.fn(), error: vi.fn(), tasks: vi.fn() }));
+vi.mock('./useAssistantDelegatedTasks', () => ({ useAssistantDelegatedTasks: mocks.tasks }));
 vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ openDelegatedTask: vi.fn() }));
-vi.mock('@/infrastructure/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
+vi.mock('@/infrastructure/i18n', () => ({ useI18n: () => ({ t: (key: string) => key, formatDate: () => 'time' }) }));
 vi.mock('./assistantSessionPreferences', () => ({ readAssistantDefaultSession: mocks.read, saveAssistantDefaultSession: mocks.save }));
 vi.mock('@/flow_chat/services/sessionDraftService', () => ({ prepareSessionDraftForCommand: mocks.prepare }));
 vi.mock('@/shared/notification-system', () => ({ notificationService: { error: mocks.error } }));
@@ -30,6 +31,8 @@ vi.mock('@openbitfun/ui', () => {
     Button: ({ children, disabled, onClick }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
       <button disabled={disabled} onClick={onClick}>{children}</button>
     ),
+    Icon: () => <span />,
+    Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   };
 });
 
@@ -47,6 +50,7 @@ describe('assistant history default selection', () => {
     mocks.read.mockResolvedValue({ supported: true, sessionId: 'previous' });
     mocks.save.mockResolvedValue(undefined);
     mocks.prepare.mockResolvedValue(undefined);
+    mocks.tasks.mockReturnValue([]);
     container = document.createElement('div');
     root = createRoot(container);
   });
@@ -82,5 +86,20 @@ describe('assistant history default selection', () => {
     expect(container.querySelector('[data-open-session]')).not.toBeNull();
     expect(container.querySelector('[data-set-default]')).not.toBeNull();
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('heads its own sessions only once other devices\' tasks follow them, and hands those tasks to the list', async () => {
+    await render();
+    expect(container.querySelector('[data-testid="nav-assistant-own-sessions-label"]')).toBeNull();
+    mocks.tasks.mockReturnValue([{
+      jobId: 'a', sessionId: 's-a', state: 'running', title: 'Task a', assistantId: 'assistant',
+      agentType: 'assistant:assistant', pendingPermissionCount: 1,
+      source: { deviceId: '0123', fingerprint: 'AB23CD', displayName: 'Ann', deviceName: 'Laptop' },
+    }]);
+    await render();
+    expect(container.querySelector('[data-testid="nav-assistant-own-sessions-label"]')?.textContent).toBe('nav.sessions.delegated.mine');
+    // The list shows what the history read rather than reading again.
+    expect(container.querySelector('[data-testid="nav-delegated-task"]')?.textContent).toContain('Task a');
+    expect(mocks.tasks).toHaveBeenCalledWith(workspace);
   });
 });
