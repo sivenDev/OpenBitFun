@@ -223,6 +223,9 @@ parent: "F002"
 - 4156f220d（真机发现）：被调用助理只看到任务正文，回答「我没有主人」；现在会话开头有一条提醒，说明来自哪个助理、为同一个人工作、回复交回那个助理。
 - 验证：core `--lib -- agentic::coordination agentic::tools::implementations::task` 385 通过；`openbitfun-desktop` 检查通过；legacy-migration-adapters 55 通过。
 - 未完成：结束事件与发起方空闲时的界面通知（卡片状态已随被调用会话的事件更新；发起方没有进行中的回合时的单独通知尚未做）。
+- 真机（2026-11-04，dev 构建，隔离数据）：小栖调用小岚写《雨后的城市》，进行中结束应用。重启后任务记录为 `interrupted`「The app restarted before this call finished」，`child_storage_path` 已记下；下一回合小栖回答「小岚的撰写任务因应用重启而中断…需要我重新交给她写吗？」。
+- afecbc746（真机发现）：重启后被调用会话尚未载入，等待卡片把小岚叫成随机昵称「团团」；现在按调用时请求的类型取名。
+- 90281defb（真机发现）：重启后调用卡片读不到被调用会话，把「已开始」当成已结束；现在取发起方会话里最近一次等待记下的结果，真机显示「已取消」。被调用会话在磁盘上仍是进行中，载入时由 Web UI 按中断处理。
 
 ## Task 5: 发起方展示、被调用助理主页的折叠记录、审批与提问送到发起方
 
@@ -252,6 +255,8 @@ parent: "F002"
 - 现状确认：被调用会话的审批带 `delegation.parentSessionId`，Web UI 归到发起方的输入区；提问的控制会话取自调用时的父信息，即发起方。两者待真机确认，尚未补专门测试。
 - 验证：Web UI `src/app/scenes/profile src/flow_chat/tool-cards src/flow_chat/utils/remoteAgent.test.ts src/app/components/NavPanel src/flow_chat/session-drivers` 通过；`tsc`、`eslint`、`pnpm run i18n:audit`、`pnpm run theme:color-audit:all` 通过。
 - 真机（2026-11-04，dmg b2935109，含 a6d34b04b 与 9cb86e77a）：小栖调用小岚，卡片名为「小岚」（此前为发起方名字「鹅鹅」）；导航不再出现「Remote Session」；小栖能说清可调用的助理各是谁的、在哪里运行，不把小岚当成自己；卡片仍显示 `assistant:workspace` 类型，已由 13bd28e6a 修复，待新包复核。
+- eeff3f13d：折叠记录登记外观部件 `calledBy`（release 构建的外观契约检查要求）。faff10e69：可调用助理列表说明调用者不在其中、不能调用自己，谈到助理时说名字、归属与运行位置，不说类型或工作区路径。48a890afe：点导航里的助理打开它自己的最近会话，不打开别人调用它产生的会话。
+- 真机（2026-11-04，dev 构建）：小岚的会话列表只有她自己的会话，主页「为其他助理做的任务 · 显示 6 项」列出小栖的调用，调用会话只读；调用卡片显示「小岚 · 我的助理」；小栖只列出小岚与共享助理，不列自己，不显示路径；小岚回答「现在找我的是小栖」。审批与提问送到发起方仍待真机确认。
 
 ## Task 6: 外部任务的继续调用与计数（暂停至 Task 4、5 之后）
 
