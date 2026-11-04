@@ -3,7 +3,7 @@
  * the navigation: the owner's approval, the owner's task limit, or nothing.
  */
 
-import { sharedAssistantProblem } from './types';
+import { isDispatchJobTerminal, sharedAssistantProblem } from './types';
 import type { DispatchObserverJob } from './dispatchJobStore';
 
 export type SharedAssistantStatus =
@@ -11,6 +11,8 @@ export type SharedAssistantStatus =
   | { kind: 'queued'; limit?: number }
   | { kind: 'running' }
   | { kind: 'expired' }
+  /** The owner stopped sharing the assistant with this device. */
+  | { kind: 'stopped' }
   | { kind: 'failed' }
   | { kind: 'idle' };
 
@@ -24,6 +26,13 @@ export function sharedAssistantStatus(
 ): SharedAssistantStatus {
   // The owner answers approvals; until then the task waits on them.
   if ((job.pendingPermissions?.length ?? 0) > 0) return { kind: 'approval' };
+  // A refused follow-up leaves a settled job's state alone but keeps why the
+  // conversation cannot go on.
+  if (isDispatchJobTerminal(job.state)) {
+    const problem = sharedAssistantProblem(job.lastError);
+    if (problem === 'expired') return { kind: 'expired' };
+    if (problem === 'revoked' || problem === 'notShared') return { kind: 'stopped' };
+  }
   switch (job.state) {
     case 'queued':
       return { kind: 'queued', limit: job.hold?.limit };
@@ -35,7 +44,7 @@ export function sharedAssistantStatus(
     case 'expired':
       return { kind: 'expired' };
     case 'failed':
-      return sharedAssistantProblem(job.lastError) === 'expired' ? { kind: 'expired' } : { kind: 'failed' };
+      return { kind: 'failed' };
     default:
       return { kind: 'idle' };
   }

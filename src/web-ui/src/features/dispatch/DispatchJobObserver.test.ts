@@ -1353,6 +1353,84 @@ describe('DispatchJobObserver', () => {
     expect(mocks.releaseJobUpdated).toHaveBeenCalled();
   });
 
+  it('settles a conversation whose owner stopped sharing the assistant instead of polling it forever', async () => {
+    mocks.listJobs.mockResolvedValue([{
+      jobId: 'delegation-2',
+      sessionId: 'session-revoked',
+      target: {
+        kind: 'sharedAssistant',
+        ownerDeviceId: 'owner-device',
+        assistantId: 'writer',
+        displayName: 'Writer',
+      },
+      promptPreview: 'Hello',
+      title: 'Hello',
+      agentType: 'Writer',
+      approvalPolicy: 'remote',
+      lastCursor: 3,
+      lastState: 'running',
+      createdAt: '2026-11-03T00:00:00Z',
+      updatedAt: '2026-11-03T00:00:01Z',
+    }]);
+    const revoked = '[shared-assistant:revoked] the owner withdrew access to this assistant';
+    mocks.status.mockRejectedValue(new Error(revoked));
+    const sessions = new Map<string, any>();
+    const context = createContext();
+    context.flowChatStore.getState = vi.fn(() => ({ sessions }));
+    context.flowChatStore.applyDispatchSnapshot = vi.fn(() => ({ applied: true, cursor: 0 }));
+    context.flowChatStore.addExternalSession = vi.fn((sessionId: string) => {
+      sessions.set(sessionId, { sessionId, config: {}, dialogTurns: [] });
+    });
+
+    const cleanup = installDispatchJobObserver(context);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(context.flowChatStore.applyDispatchSnapshot).toHaveBeenCalledWith(
+      'session-revoked',
+      expect.objectContaining({ state: 'failed', lastError: revoked, terminalDrained: true }),
+    );
+    const job = dispatchJobStore.getState().jobs['delegation-2'];
+    expect(job).toEqual(expect.objectContaining({ state: 'failed', lastError: revoked, terminalDrained: true }));
+    // The owner answered: its device is reachable, the conversation is over.
+    expect(dispatchJobStore.getState().transportByJobId['delegation-2']?.reachability).toBe('reachable');
+    cleanup();
+  });
+
+  it('keeps polling a conversation with a shared assistant whose owner is only offline', async () => {
+    mocks.listJobs.mockResolvedValue([{
+      jobId: 'delegation-3',
+      sessionId: 'session-offline',
+      target: {
+        kind: 'sharedAssistant',
+        ownerDeviceId: 'owner-device',
+        assistantId: 'writer',
+        displayName: 'Writer',
+      },
+      promptPreview: 'Hello',
+      title: 'Hello',
+      agentType: 'Writer',
+      approvalPolicy: 'remote',
+      lastCursor: 0,
+      lastState: 'running',
+      createdAt: '2026-11-03T00:00:00Z',
+      updatedAt: '2026-11-03T00:00:01Z',
+    }]);
+    mocks.status.mockRejectedValue(new Error('[shared-assistant:offline] the owner\'s device is not reachable: timeout'));
+    const sessions = new Map<string, any>();
+    const context = createContext();
+    context.flowChatStore.getState = vi.fn(() => ({ sessions }));
+    context.flowChatStore.addExternalSession = vi.fn((sessionId: string) => {
+      sessions.set(sessionId, { sessionId, config: {}, dialogTurns: [] });
+    });
+
+    const cleanup = installDispatchJobObserver(context);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(dispatchJobStore.getState().jobs['delegation-3'].state).toBe('running');
+    expect(dispatchJobStore.getState().transportByJobId['delegation-3']?.reachability).toBe('unreachable');
+    cleanup();
+  });
+
   it('continues polling while hidden so background notifications can observe changes', async () => {
     registerRunningJob();
     mocks.status.mockResolvedValue(status({ state: 'running' }));

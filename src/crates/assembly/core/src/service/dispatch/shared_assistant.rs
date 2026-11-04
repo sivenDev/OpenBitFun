@@ -251,7 +251,8 @@ pub async fn submit_shared_assistant(
 }
 
 /// The conversation's events from `cursor`. A conversation the owner no
-/// longer keeps is recorded as `expired`.
+/// longer keeps is recorded as `expired`; one the owner no longer shares
+/// with this device, as `failed`, so it no longer reads as running.
 pub async fn status_shared_assistant(
     rpc: &dyn DeviceDispatchRpc,
     store: &OutboundDispatchStore,
@@ -263,14 +264,19 @@ pub async fn status_shared_assistant(
         Ok(response) => Ok(response),
         Err(error) => {
             let error = explain(error, true);
-            if matches!(
-                error.downcast_ref::<SharedAssistantProblem>(),
-                Some(SharedAssistantProblem::Expired)
-            ) {
-                if let Err(record_error) = store.update_progress(&job_id, cursor, "expired").await {
+            let settled = match error.downcast_ref::<SharedAssistantProblem>() {
+                Some(SharedAssistantProblem::Expired) => Some("expired"),
+                Some(SharedAssistantProblem::Revoked | SharedAssistantProblem::NotShared) => {
+                    Some("failed")
+                }
+                _ => None,
+            };
+            if let Some(state) = settled {
+                if let Err(record_error) = store.update_progress(&job_id, cursor, state).await {
                     log::warn!(
-                        "Failed to record an expired shared assistant conversation: job_id={} error={}",
+                        "Failed to record a settled shared assistant conversation: job_id={} state={} error={}",
                         job_id,
+                        state,
                         record_error
                     );
                 }
@@ -838,6 +844,54 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().starts_with("[shared-assistant:revoked]"));
+    }
+
+    #[tokio::test]
+    async fn a_conversation_whose_assistant_is_no_longer_shared_settles_as_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = submitted(dir.path()).await;
+        let owner = Owner::new(vec![(
+            "dispatch_target_status",
+            Err(anyhow!(
+                "this device has no access to assistant 'workspace-notes'; request it again"
+            )),
+        )]);
+
+        let error = status_shared_assistant(
+            &owner,
+            &store,
+            DispatchStatusRequest {
+                job_id: JOB.to_string(),
+                cursor: 0,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(problem(&error), Some(&SharedAssistantProblem::Revoked));
+        assert_eq!(store.get(JOB).await.unwrap().unwrap().last_state, "failed");
+    }
+
+    #[tokio::test]
+    async fn an_offline_owner_leaves_the_conversation_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = submitted(dir.path()).await;
+        let before = store.get(JOB).await.unwrap().unwrap().last_state;
+        let owner = Owner::new(vec![(
+            "dispatch_target_status",
+            Err(SharedAssistantProblem::Offline("timed out".to_string()).into()),
+        )]);
+
+        status_shared_assistant(
+            &owner,
+            &store,
+            DispatchStatusRequest {
+                job_id: JOB.to_string(),
+                cursor: 0,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(store.get(JOB).await.unwrap().unwrap().last_state, before);
     }
 
     #[tokio::test]

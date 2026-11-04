@@ -72,6 +72,7 @@ export default function SharedAssistantList() {
         : t('nav.sessions.sharedAssistant.status.queued');
       case 'running': return t('shared:statuses.running');
       case 'expired': return t('nav.sessions.sharedAssistant.status.expired');
+      case 'stopped': return t('nav.sessions.sharedAssistant.status.stopped');
       case 'failed': return t('shared:statuses.failed');
       default: return null;
     }

@@ -520,7 +520,8 @@
           "approval": "Waiting for {{owner}} to approve",
           "queued": "Queued",
           "queuedLimit": "Queued · {{owner}} takes {{limit}} at a time",
-          "expired": "Expired"
+          "expired": "Expired",
+          "stopped": "Sharing stopped"
         }
       }
     },

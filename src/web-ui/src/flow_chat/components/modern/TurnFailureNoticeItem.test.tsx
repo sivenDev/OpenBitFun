@@ -19,7 +19,18 @@ const TRANSLATIONS: Record<string, string> = {
   'turnFailure.providerError': 'Provider error',
   'turnFailure.copy': 'Copy error',
   'turnFailure.copied': 'Copied',
+  'turnFailure.sharedAssistantTitle': 'This conversation cannot go on',
 };
+
+const activeSession = vi.hoisted(() => ({ current: null as unknown }));
+
+vi.mock('../../store/modernFlowChatStore', () => ({
+  useActiveSession: () => activeSession.current,
+}));
+
+vi.mock('@/features/dispatch/sharedAssistantProblemText', () => ({
+  sharedAssistantProblemText: (problem: string, name: string) => `${problem}:${name}`,
+}));
 
 vi.mock('@/infrastructure/i18n', () => ({
   useI18n: () => ({
@@ -48,7 +59,26 @@ describe('TurnFailureNoticeItem', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    activeSession.current = null;
     vi.restoreAllMocks();
+  });
+
+  it('says why a conversation with a shared assistant cannot go on instead of a model failure', () => {
+    activeSession.current = {
+      config: {
+        dispatchTarget: { kind: 'sharedAssistant', ownerDeviceId: 'd', assistantId: 'w', displayName: 'Writer' },
+      },
+    };
+    act(() => {
+      root.render(
+        <TurnFailureNoticeItem error="[shared-assistant:revoked] the owner withdrew access to this assistant" />,
+      );
+    });
+
+    expect(container.querySelector('.turn-failure-notice__summary')?.textContent).toBe(
+      'This conversation cannot go onrevoked:Writer',
+    );
+    expect(container.querySelector('.turn-failure-notice--warning')).not.toBeNull();
   });
 
   it('keeps the failure summary on one row and exposes details through an icon button', () => {

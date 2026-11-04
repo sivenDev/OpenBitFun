@@ -787,6 +787,7 @@
   },
   "error": {
     "sendFailed": "发送失败",
+    "sendFailedWithReason": "发送失败：{{reason}}",
     "connectionError": "连接错误",
     "timeout": "请求超时",
     "modelError": "模型错误",
@@ -1707,7 +1708,8 @@
     "requestId": "请求 ID",
     "providerError": "服务商错误",
     "copy": "复制",
-    "copied": "已复制"
+    "copied": "已复制",
+    "sharedAssistantTitle": "无法继续这个对话"
   },
   "deepResearchProtocol": {
     "phaseProgress": "{{current}} / {{total}}",

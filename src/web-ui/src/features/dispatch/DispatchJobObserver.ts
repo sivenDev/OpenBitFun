@@ -33,6 +33,8 @@ import type {
 import {
   isDispatchJobTerminal,
   isNonLocalDispatchTarget,
+  SHARED_ASSISTANT_JOB_ID_PREFIX,
+  sharedAssistantProblem,
 } from './types';
 
 const log = createLogger('DispatchJobObserver');
@@ -185,6 +187,36 @@ function hashText(value: string): string {
 
 function transportErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The status a conversation with a shared assistant settles on when its owner
+ * answers that it can never go on: the share was withdrawn or the owner no
+ * longer keeps the conversation. Other failures stay retryable.
+ */
+function settledSharedAssistantStatus(
+  job: DispatchObserverJob,
+  cursor: number,
+  error: unknown,
+): DispatchStatusResponse | undefined {
+  if (!job.jobId.startsWith(SHARED_ASSISTANT_JOB_ID_PREFIX)) {
+    return undefined;
+  }
+  const problem = sharedAssistantProblem(error);
+  if (problem !== 'revoked' && problem !== 'notShared' && problem !== 'expired') {
+    return undefined;
+  }
+  return {
+    state: problem === 'expired' ? 'expired' : 'failed',
+    cursor,
+    events: [],
+    pendingPermissions: [],
+    cursorReset: false,
+    historyTruncated: job.historyTruncated,
+    eventLogComplete: job.eventLogComplete,
+    omittedEventCount: job.omittedEventCount,
+    lastError: transportErrorMessage(error),
+  };
 }
 
 function isJobStillObserved(job: DispatchObserverJob): boolean {
@@ -789,12 +821,16 @@ async function refreshJobPage(
     if (!isObserverCurrent() || !isJobStillObserved(job)) {
       return 'settled';
     }
-    dispatchJobStore.getState().setTransportState(
-      job.jobId,
-      'unreachable',
-      transportErrorMessage(error),
-    );
-    throw error;
+    const settled = settledSharedAssistantStatus(job, requestCursor, error);
+    if (!settled) {
+      dispatchJobStore.getState().setTransportState(
+        job.jobId,
+        'unreachable',
+        transportErrorMessage(error),
+      );
+      throw error;
+    }
+    response = settled;
   }
   // Deleting a dispatch session writes a projection tombstone while an
   // already-issued target poll may still be in flight. Never let that stale

@@ -4837,6 +4837,25 @@ export class FlowChatStore {
     });
   }
 
+  /**
+   * Record why the target refused this conversation's next turn, when no
+   * status poll will: a settled job is no longer polled.
+   */
+  public recordSessionDispatchError(sessionId: string, lastError: string): void {
+    this.setState(prev => {
+      const session = prev.sessions.get(sessionId);
+      if (!session || session.config.dispatchLastError === lastError) {
+        return prev;
+      }
+      const newSessions = new Map(prev.sessions);
+      newSessions.set(sessionId, {
+        ...session,
+        config: { ...session.config, dispatchLastError: lastError },
+      });
+      return { ...prev, sessions: newSessions };
+    });
+  }
+
   /** Update the approval policy; the next turn carries it to the target. */
   public updateSessionDispatchApprovalPolicy(
     sessionId: string,

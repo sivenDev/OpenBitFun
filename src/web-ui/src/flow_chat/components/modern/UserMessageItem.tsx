@@ -767,7 +767,12 @@ export const UserMessageItem = React.memo<UserMessageItemProps>(
         {submissionPhase === 'failed' && (
           <div className="user-message-item__submission-error" role="alert">
             <Icon glyph={CircleAlert} size="sm" className="user-message-item__submission-error-icon" />
-            <span title={submissionError}>{t('error.sendFailed')}</span>
+            <span title={submissionError}>
+              {/* A shared assistant's refusal says what to do next; show it. */}
+              {submissionError && activeSession?.config.dispatchTarget?.kind === 'sharedAssistant'
+                ? t('error.sendFailedWithReason', { reason: submissionError })
+                : t('error.sendFailed')}
+            </span>
             <Button type="button" variant="outline" size="sm" onClick={handleFillToInput}>
               {t('message.continueEditing')}
             </Button>

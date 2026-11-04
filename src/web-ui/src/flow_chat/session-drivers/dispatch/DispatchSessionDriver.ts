@@ -37,6 +37,7 @@ import {
   isDispatchJobTerminal,
   isNonLocalDispatchTarget,
   SHARED_ASSISTANT_JOB_ID_PREFIX,
+  sharedAssistantProblem,
   type DispatchTarget,
 } from '@/features/dispatch/types';
 import { dispatchApi } from '@/features/dispatch/dispatchApi';
@@ -259,6 +260,14 @@ async function continueDispatchJob(
     dispatchJobStore.getState().markFollowUpAccepted(jobId, response.state);
   } catch (error) {
     context.flowChatStore.deleteDialogTurn(sessionId, optimisticTurnId);
+    // A conversation the owner no longer keeps or shares can never go on:
+    // keep the reason so the navigation and the composer say so.
+    const problem = sharedAssistantProblem(error);
+    if (problem === 'expired' || problem === 'revoked' || problem === 'notShared') {
+      const lastError = error instanceof Error ? error.message : String(error);
+      dispatchJobStore.getState().updateProgress(jobId, { lastError });
+      context.flowChatStore.recordSessionDispatchError(sessionId, lastError);
+    }
     throw error;
   } finally {
     releaseSubmissionRetry(CONTINUE_RETRY_SCOPE, sessionId, retry.id);

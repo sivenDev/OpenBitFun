@@ -520,7 +520,8 @@
           "approval": "等待 {{owner}} 审批",
           "queued": "排队中",
           "queuedLimit": "排队中 · {{owner}} 同时只处理 {{limit}} 个任务",
-          "expired": "已过期"
+          "expired": "已过期",
+          "stopped": "共享已停止"
         }
       }
     },

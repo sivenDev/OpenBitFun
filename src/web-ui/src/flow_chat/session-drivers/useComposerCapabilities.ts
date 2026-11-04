@@ -18,6 +18,7 @@ import {
 } from '@/infrastructure/lan-share/lanShareStore';
 import type { Session } from '../types/flow-chat';
 import { isAcpFlowSession } from '../utils/acpSession';
+import { sharedAssistantProblem } from '@/features/dispatch/types';
 import { resolveSessionDriverId, type SessionDriverId } from './resolve';
 import { deriveSessionConversationCapability, type SessionConversationCapability } from './conversationCapability';
 
@@ -65,7 +66,7 @@ export interface ComposerCapabilities {
    */
   ownerDecidesOptions: boolean;
   /** Why a message cannot go to this shared assistant now, if it cannot. */
-  sharedAssistantBlocked?: SharedAssistantBlock;
+  sharedAssistantBlocked?: SharedAssistantBlock | 'expired';
 }
 
 export interface ComposerCapabilityInput {
@@ -95,9 +96,15 @@ export function useComposerCapabilities(input: ComposerCapabilityInput): Compose
     ? targetRequest
     : undefined;
   const ownerDecidesOptions = sharedTarget !== undefined;
-  const sharedAssistantBlocked = useLanShareStore(state => (sharedTarget
+  const assistantBlocked = useLanShareStore(state => (sharedTarget
     ? sharedAssistantBlock(state, sharedTarget.ownerDeviceId, sharedTarget.assistantId)
     : undefined));
+  // The owner no longer keeps this conversation; only a new one can go on.
+  const conversationExpired = sharedTarget !== undefined && (
+    session?.config.dispatchJobState === 'expired'
+    || sharedAssistantProblem(session?.config.dispatchLastError) === 'expired'
+  );
+  const sharedAssistantBlocked = assistantBlocked ?? (conversationExpired ? 'expired' : undefined);
   const threadGoalSupported = sessionSupportsThreadGoal(session);
 
   const transferInFlight = useRuntimeStatusStore(state => {

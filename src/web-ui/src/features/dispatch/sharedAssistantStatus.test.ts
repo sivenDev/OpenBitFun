@@ -26,6 +26,16 @@ describe('what a conversation with a shared assistant waits on', () => {
     expect(sharedAssistantStatus(job('succeeded'))).toEqual({ kind: 'idle' });
   });
 
+  it('reads a conversation the owner no longer shares or keeps, whatever its last turn did', () => {
+    expect(sharedAssistantStatus(job('failed', { lastError: '[shared-assistant:revoked] withdrawn' }))).toEqual({ kind: 'stopped' });
+    expect(sharedAssistantStatus(job('failed', { lastError: '[shared-assistant:notShared] removed' }))).toEqual({ kind: 'stopped' });
+    // A follow-up was refused after the last turn succeeded.
+    expect(sharedAssistantStatus(job('succeeded', { lastError: '[shared-assistant:expired] gone' }))).toEqual({ kind: 'expired' });
+    expect(sharedAssistantStatus(job('succeeded', { lastError: '[shared-assistant:revoked] withdrawn' }))).toEqual({ kind: 'stopped' });
+    // Only an offline owner: the conversation is not over.
+    expect(sharedAssistantStatus(job('succeeded', { lastError: '[shared-assistant:offline] away' }))).toEqual({ kind: 'idle' });
+  });
+
   it('reads nothing for a new conversation before its first message is sent', () => {
     expect(sharedAssistantStatus(job('submitting'), false)).toEqual({ kind: 'idle' });
     expect(sharedAssistantStatus(job('running'), false)).toEqual({ kind: 'running' });

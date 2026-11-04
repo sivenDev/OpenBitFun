@@ -7,6 +7,8 @@ import {
   normalizeAiErrorDetail,
   type AiErrorDetail,
 } from '@/shared/ai-errors/aiErrorPresenter';
+import { sharedAssistantFailureText } from '../../session-drivers/dispatch/sharedAssistantFailure';
+import { useActiveSession } from '../../store/modernFlowChatStore';
 import './TurnFailureNoticeItem.scss';
 
 interface TurnFailureNoticeItemProps {
@@ -23,6 +25,12 @@ export const TurnFailureNoticeItem: React.FC<TurnFailureNoticeItemProps> = ({ er
     [error, errorDetail],
   );
   const presentation = useMemo(() => getAiErrorPresentation(detail), [detail]);
+  // A conversation with a shared assistant that cannot go on says why in the
+  // owner's terms instead of as a model failure.
+  const sharedFailure = sharedAssistantFailureText(useActiveSession(), error);
+  const title = sharedFailure ? t('turnFailure.sharedAssistantTitle') : t(presentation.titleKey);
+  const message = sharedFailure ?? t(presentation.messageKey);
+  const severity = sharedFailure ? 'warning' : presentation.severity;
   const rawError = detail.rawMessage ?? error;
   const detailsId = useId();
   const facts = [
@@ -45,8 +53,8 @@ export const TurnFailureNoticeItem: React.FC<TurnFailureNoticeItemProps> = ({ er
 
   return (
     <section data-openbitfun-component="turn-failure-notice" data-openbitfun-part="root" data-openbitfun-state={[isOpen && 'open', copied && 'copied'].filter(Boolean).join(' ')}
-      className={`turn-failure-notice turn-failure-notice--${presentation.severity}`}
-      aria-label={t(presentation.titleKey)}
+      className={`turn-failure-notice turn-failure-notice--${severity}`}
+      aria-label={title}
     >
       <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="icon" className="turn-failure-notice__icon" aria-hidden="true">
         <Icon glyph={AlertCircle} size="md" />
@@ -54,8 +62,8 @@ export const TurnFailureNoticeItem: React.FC<TurnFailureNoticeItemProps> = ({ er
       <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="content" className="turn-failure-notice__content">
         <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="header" className="turn-failure-notice__header">
           <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="summary" className="turn-failure-notice__summary">
-            <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="title" className="turn-failure-notice__title">{t(presentation.titleKey)}</div>
-            <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="message" className="turn-failure-notice__message"><OverflowText>{t(presentation.messageKey)}</OverflowText></div>
+            <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="title" className="turn-failure-notice__title">{title}</div>
+            <div data-openbitfun-component="turn-failure-notice" data-openbitfun-part="message" className="turn-failure-notice__message"><OverflowText>{message}</OverflowText></div>
           </div>
 
           {(facts.length > 0 || rawError) && (

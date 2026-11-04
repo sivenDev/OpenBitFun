@@ -787,6 +787,7 @@
   },
   "error": {
     "sendFailed": "Send Failed",
+    "sendFailedWithReason": "Send failed: {{reason}}",
     "connectionError": "Connection Error",
     "timeout": "Request Timeout",
     "modelError": "Model Error",
@@ -1707,7 +1708,8 @@
     "requestId": "Request ID",
     "providerError": "Provider error",
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "sharedAssistantTitle": "This conversation cannot go on"
   },
   "deepResearchProtocol": {
     "phaseProgress": "{{current}} / {{total}}",

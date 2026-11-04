@@ -787,6 +787,7 @@
   },
   "error": {
     "sendFailed": "發送失敗",
+    "sendFailedWithReason": "發送失敗：{{reason}}",
     "connectionError": "連接錯誤",
     "timeout": "請求超時",
     "modelError": "模型錯誤",
@@ -1707,7 +1708,8 @@
     "requestId": "請求 ID",
     "providerError": "服務商錯誤",
     "copy": "複製",
-    "copied": "已複製"
+    "copied": "已複製",
+    "sharedAssistantTitle": "無法繼續這個對話"
   },
   "deepResearchProtocol": {
     "phaseProgress": "{{current}} / {{total}}",
