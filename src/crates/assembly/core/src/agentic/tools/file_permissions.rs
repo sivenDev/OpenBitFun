@@ -48,7 +48,7 @@ fn file_permission_intents_with_plan_edit_access<'a>(
             }
         }
 
-        if let Some(directory) = external_directory_resource(context, &resolved)? {
+        if let Some(directory) = external_directory_resource(context, &resolved, action)? {
             if seen_external_directories.insert(directory.clone()) {
                 external_directories.push(directory);
             }
@@ -89,12 +89,17 @@ fn normalized_permission_resource(resolved: &ToolPathResolution) -> OpenBitFunRe
 fn external_directory_resource(
     context: &ToolUseContext,
     resolved: &ToolPathResolution,
+    action: &str,
 ) -> OpenBitFunResult<Option<String>> {
     if resolved.uses_remote_workspace_backend() || resolved.is_runtime_artifact() {
         return Ok(None);
     }
 
     if is_openbitfun_managed_local_path(context, resolved)? {
+        return Ok(None);
+    }
+
+    if action == "read" && is_workspace_session_artifact(context, resolved)? {
         return Ok(None);
     }
 
@@ -134,6 +139,33 @@ fn is_openbitfun_managed_local_path(
         }
     }
     Ok(false)
+}
+
+/// Whether `resolved` lies in the artifacts of a session of the current
+/// workspace. `SessionHistory` exports another session's transcript there,
+/// so reading it back is no wider than that export.
+fn is_workspace_session_artifact(
+    context: &ToolUseContext,
+    resolved: &ToolPathResolution,
+) -> OpenBitFunResult<bool> {
+    if context.workspace_root().is_none() {
+        return Ok(false);
+    }
+    let sessions_root = context.current_workspace_runtime_root()?.join("sessions");
+    let path = Path::new(&resolved.resolved_path);
+    if !is_local_path_within_root(path, &sessions_root)? {
+        return Ok(false);
+    }
+    let canonical_root = canonicalize_local_path_best_effort(&sessions_root)?;
+    let canonical_path = canonicalize_local_path_best_effort(path)?;
+    let Ok(relative) = canonical_path.strip_prefix(&canonical_root) else {
+        return Ok(false);
+    };
+    let mut components = relative.components();
+    Ok(components.next().is_some()
+        && components
+            .next()
+            .is_some_and(|component| component.as_os_str() == "artifacts"))
 }
 
 fn is_current_workspace_plan_path(
@@ -371,6 +403,45 @@ mod tests {
             .expect("managed plan edit permission intents");
         assert_eq!(edit.len(), 1);
         assert_eq!(edit[0].action, "edit");
+    }
+
+    #[test]
+    fn another_sessions_artifacts_of_this_workspace_are_read_without_an_external_directory() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let workspace = temp.path().join("workspace");
+        let runtime_root = temp.path().join("runtime");
+        let transcript = runtime_root.join("sessions/session-2/artifacts/transcript.txt");
+        let state = runtime_root.join("sessions/session-2/state.json");
+        fs::create_dir_all(&workspace).expect("workspace dir");
+        for path in [&transcript, &state] {
+            fs::create_dir_all(path.parent().expect("parent dir")).expect("parent dir");
+            fs::write(path, "content").expect("session file");
+        }
+        let mut context =
+            ToolUseContext::for_tool_listing(Some(WorkspaceBinding::new(None, workspace)), None);
+        context.session_id = Some("session-1".to_string());
+        context.custom_data.insert(
+            "__openbitfun_test_runtime_root".to_string(),
+            json!(runtime_root.to_string_lossy().to_string()),
+        );
+        context.custom_data.insert(
+            "__openbitfun_test_terminal_transcript_root".to_string(),
+            json!(temp.path().join("terminals").to_string_lossy().to_string()),
+        );
+        let actions = |action: &str, path: &Path| {
+            file_permission_intents(action, [path.to_string_lossy().as_ref()], &context)
+                .expect("file permission intents")
+                .into_iter()
+                .map(|intent| intent.action)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(actions("read", &transcript), vec!["read"]);
+        assert_eq!(
+            actions("edit", &transcript),
+            vec!["edit", "external_directory"]
+        );
+        assert_eq!(actions("read", &state), vec!["read", "external_directory"]);
     }
 
     #[test]
