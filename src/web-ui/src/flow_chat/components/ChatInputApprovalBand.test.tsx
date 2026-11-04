@@ -33,6 +33,7 @@ vi.mock('react-i18next', async importOriginal => ({
   useTranslation: () => ({
     t: (key: string, values?: Record<string, string>) => {
       if (key === 'permission.subagentOwner') return `${values?.subagent} subagent`;
+      if (key === 'permission.answeredByOwner') return `${values?.owner} answers this on their device`;
       if (key === 'toolCards.taskTool.remoteAgentLabel') return `${values?.agent} (shared assistant)`;
       if (key === 'permission.allowAlwaysTooltip') {
         return `Remember approval in ${values?.projectPath}, limited to:\n${values?.resources}`;
@@ -461,6 +462,28 @@ describe('ChatInputApprovalBand', () => {
     expect(allow?.disabled).toBe(false);
     expect(allow?.hasAttribute('aria-busy')).toBe(false);
     expect(scopeOption('all')?.disabled).toBe(false);
+  });
+
+  it('shows a request its owner answers on another device without answers of its own', async () => {
+    const onRespond = vi.fn(async () => undefined);
+    await act(async () => {
+      root.render(
+        <ChatInputApprovalBand
+          requests={[request()]}
+          onRespond={onRespond}
+          onRespondBatch={vi.fn(async () => undefined)}
+          answeredBy="Agent"
+        />
+      );
+    });
+
+    const band = container.querySelector<HTMLElement>('[data-testid="chat-input-approval-band"]');
+    expect(band?.textContent).toContain('Edit files');
+    expect(container.querySelector('[data-testid="chat-input-approval-answered-by"]')?.textContent)
+      .toBe('Agent answers this on their device');
+    expect(container.querySelector('[data-testid="chat-input-approval-allow"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chat-input-approval-reject"]')).toBeNull();
+    expect(onRespond).not.toHaveBeenCalled();
   });
 
   it('renders nothing when there is nothing to approve', async () => {

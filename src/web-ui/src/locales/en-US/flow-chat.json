@@ -144,7 +144,9 @@
       "other": "Other action"
     },
     "allowCurrentAndFollowing": "Allow all",
-    "rejectCurrentAndFollowing": "Reject all"
+    "rejectCurrentAndFollowing": "Reject all",
+    "answeredByOwner": "{{owner}} answers this on their device; you can only view it here.",
+    "answeredByOwnerFallback": "The owner"
   },
   "emptyState": {
     "welcomeBack": "Welcome back!",

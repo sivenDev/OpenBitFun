@@ -34,6 +34,7 @@ import {
 import { SessionExecutionEvent, SessionExecutionState } from '../state-machine/types';
 import { ModelSelector, type ModelSelectorAvailability } from './ModelSelector';
 import { sharedAssistantProblemText } from '@/features/dispatch/sharedAssistantProblemText';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { FlowChatStore } from '../store/FlowChatStore';
 import { useAcpPlan } from '../hooks/useAcpPlan';
 import { usePromptSuggestionsEnabled } from '../hooks/usePromptSuggestionsEnabled';
@@ -1330,6 +1331,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const sharedAssistantTarget = effectiveTargetSession?.config.dispatchTarget;
   const sharedAssistantBlockText = caps.sharedAssistantBlocked && sharedAssistantTarget?.kind === 'sharedAssistant'
     ? sharedAssistantProblemText(caps.sharedAssistantBlocked, sharedAssistantTarget.displayName)
+    : undefined;
+  // A shared assistant's owner answers its approvals on their own device.
+  const sharedAssistantOwnerDeviceId = sharedAssistantTarget?.kind === 'sharedAssistant'
+    ? sharedAssistantTarget.ownerDeviceId
+    : undefined;
+  const sharedAssistantOwnerName = useLanShareStore(state => (sharedAssistantOwnerDeviceId
+    ? state.sharedWithMe.find(entry => entry.owner.deviceId === sharedAssistantOwnerDeviceId)?.owner.displayName
+    : undefined));
+  const sharedAssistantApprover = sharedAssistantOwnerDeviceId
+    ? sharedAssistantOwnerName ?? t('permission.answeredByOwnerFallback')
     : undefined;
   // Once text is typed the placeholder no longer says why nothing is sent.
   const sendButtonLabel = sharedAssistantBlockText ?? t('input.sendShortcut');
@@ -6514,6 +6525,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               onRejectReasonConsumed={() => dispatchInput({ type: 'CLEAR_VALUE' })}
               onRespond={respondPermission}
               onRespondBatch={respondPermissionBatch}
+              answeredBy={sharedAssistantApprover}
             />
           ) : null}
           <div ref={externalFileDropTargetRef} className="openbitfun-chat-input__box" data-openbitfun-component="chat-input" data-openbitfun-part="box">

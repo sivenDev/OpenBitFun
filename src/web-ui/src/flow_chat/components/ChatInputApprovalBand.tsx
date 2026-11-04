@@ -54,6 +54,11 @@ export interface ChatInputApprovalBandProps {
   onRejectReasonConsumed?: () => void;
   onRespond: (requestId: string, reply: PermissionReplyKind, feedback?: string) => Promise<void>;
   onRespondBatch: (requestId: string, reply: PermissionReplyKind, feedback?: string) => Promise<void>;
+  /**
+   * Who answers the request on their own device, when this device cannot:
+   * a shared assistant's owner. The request is shown without answers.
+   */
+  answeredBy?: string;
 }
 
 const PAGE_VISIBILITY_LABEL_KEYS: Record<string, string> = {
@@ -122,6 +127,7 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
   onRejectReasonConsumed,
   onRespond,
   onRespondBatch,
+  answeredBy,
 }) => {
   const { t } = useTranslation('flow-chat');
   const grantDescriptionId = useId();
@@ -308,7 +314,18 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
           </div>
         ) : null}
 
-        {isExactCommandGrant && !answersAll ? (
+        {answeredBy !== undefined ? (
+          <p
+            data-openbitfun-component="permission-request-panel"
+            data-openbitfun-part="answeredBy"
+            data-testid="chat-input-approval-answered-by"
+            className="openbitfun-chat-input-approval__grant-note"
+          >
+            {t('permission.answeredByOwner', { owner: answeredBy })}
+          </p>
+        ) : null}
+
+        {answeredBy === undefined && isExactCommandGrant && !answersAll ? (
           <p
             id={grantDescriptionId}
             data-openbitfun-component="permission-request-panel"
@@ -319,7 +336,7 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
           </p>
         ) : null}
 
-        <div
+        {answeredBy === undefined ? <div
           data-openbitfun-component="permission-request-panel"
           data-openbitfun-part="actions"
         >
@@ -402,7 +419,7 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
               </Button>
             </div>
           </CardFooter>
-        </div>
+        </div> : null}
       </Card>
     </div>
   );

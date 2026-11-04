@@ -144,7 +144,9 @@
       "other": "其他操作"
     },
     "allowCurrentAndFollowing": "允許全部",
-    "rejectCurrentAndFollowing": "拒絕全部"
+    "rejectCurrentAndFollowing": "拒絕全部",
+    "answeredByOwner": "由 {{owner}} 在對方裝置上審批，這裡只能查看。",
+    "answeredByOwnerFallback": "對方"
   },
   "emptyState": {
     "welcomeBack": "歡迎回來！",
