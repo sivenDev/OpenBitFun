@@ -319,7 +319,7 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
     let store = DispatchStore::open_default()?;
     // A delegated job is admitted against its share before anything is
     // created, so withdrawn access refuses even a retried submit.
-    delegation::admit(
+    let shared_assistant = delegation::admit(
         &mut request,
         &delegation::share_store()?,
         &delegation::DelegationRoots::for_device()?,
@@ -342,6 +342,9 @@ async fn submit(mut request: DispatchSubmitRequest) -> Result<DispatchSubmitResp
 
     let canonical_workspace = canonical_workspace(&request.workspace_path)?;
     request.workspace_path = canonical_workspace.to_string_lossy().to_string();
+    if let Some(assistant_id) = &shared_assistant {
+        request.model = delegation::owner_model(assistant_id, &target_config().await?);
+    }
     let selected_model = select_ready_model(request.model.as_deref()).await?;
     validate_reasoning_preset(&selected_model, request.reasoning_preset.as_deref()).await?;
     request.model = Some(selected_model);
@@ -877,17 +880,21 @@ fn reconcile_worker_liveness_with_spawn(
     Ok(reconciled)
 }
 
-async fn inspect_model_readiness() -> Result<ModelReadiness> {
+async fn target_config() -> Result<GlobalConfig> {
     openbitfun_core::service::config::initialize_global_config()
         .await
         .map_err(|error| anyhow!("Failed to initialize target model configuration: {error}"))?;
     let config_service = openbitfun_core::service::config::get_global_config_service()
         .await
         .map_err(|error| anyhow!("Failed to read target model configuration: {error}"))?;
-    let config: GlobalConfig = config_service
+    config_service
         .get_config(None)
         .await
-        .map_err(|error| anyhow!("Failed to load target model configuration: {error}"))?;
+        .map_err(|error| anyhow!("Failed to load target model configuration: {error}"))
+}
+
+async fn inspect_model_readiness() -> Result<ModelReadiness> {
+    let config = target_config().await?;
     let mut model_catalog =
         openbitfun_core::get_ai_model_catalog()
             .await

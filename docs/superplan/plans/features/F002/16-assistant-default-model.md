@@ -22,7 +22,7 @@ parent: "F002"
 **Goal:** 主人在助理 Y 的主页把默认模型设为 M 后，Y 的新对话、主人的其他助理调用 Y、别的设备使用主人共享的 Y 都用 M，调用卡片写 M；没有设置的助理一律用主力模型，不随对话里最后选过的模型变化；M 被删除或停用时 Y 照常可用，主页说明正在使用主力模型。
 
 **Scope:**
-- **设置与存储**：`AppConfig` 增加 `assistant_default_models: HashMap<String, String>`（`#[serde(default)]`），以助理工作区 id 为键、模型配置 id 为值，与现有的 `assistant_default_sessions` 同一模式。没有这一项、或该助理没有键时即「跟随主力模型」。只存单个模型，不存模型池。旧数据不迁移、不改写；模型被删除时不清除设置。
+- **设置与存储**：`AppConfig` 增加 `assistant_default_models: HashMap<String, String>`（`#[serde(default)]`），以助理 id（助理基目录下的目录名，即 `assistant:<id>` 中的 id，也是共享时的助理 id）为键、模型配置 id 为值。工作区 id 只在本机有意义，主人处理共享任务时手上只有助理 id，所以不用它作键。没有这一项、或该助理没有键时即「跟随主力模型」。只存单个模型，不存模型池。旧数据不迁移、不改写；模型被删除时不清除设置。
 - **统一的解析**：core 提供「助理的运行模型」解析：该助理设置的模型存在且启用 → 用它；否则 → 主力模型槽位 `primary`；主力模型未配置时沿用现有的「请先配置主力模型」错误。返回模型引用与来源（助理设置 / 主力模型 / 所选模型不可用而改用主力模型），供界面说明。
 - **生效位置**（都只在没有明确指定模型时使用解析结果；单个对话里用模型菜单改的模型只影响那个对话，照旧）：
   - 助理自己的新对话：Web `LocalSessionDriver.createSession` 对助理工作区不再读 `mode`，改用解析结果；后端创建会话时，若会话属于助理工作区且没有带模型（手机端、IM、CLI 主机等入口），同样使用解析结果。
@@ -58,7 +58,7 @@ parent: "F002"
 
 ## Task 1: 设置的存储与解析
 
-**Outcome:** 配置有 `assistant_default_models`，旧配置照常读入；core 能为任一助理工作区解析出运行模型与来源。
+**Outcome:** 配置有 `assistant_default_models`，旧配置照常读入；core 能为任一助理解析出运行模型与来源。
 
 **Files:**
 - Modify: `src/crates/contracts/config-contracts/src/types.rs`（`AppConfig` 字段与往返测试）
@@ -74,7 +74,7 @@ parent: "F002"
 
 - [x] 旧配置读入、新旧往返、解析的三种来源均有测试
 
-  证据（2026-11-04）：`AppConfig.assistant_default_models`（`#[serde(default)]`）；`assistant_default_models_preserve_legacy_config_and_round_trip`（旧配置读入、往返、旧版本读新配置忽略该项）通过。core `agents::registry::assistants` 的 `assistant_model_choice`/`assistant_model_for_workspace`：已启用的所选模型 → 它；未设置 → `primary`；所选模型停用或删除 → `primary` 并标 `ChosenUnavailable`，设置保留。`an_assistant_runs_on_its_own_model_else_the_primary_model` 通过。
+  证据（2026-11-04）：`AppConfig.assistant_default_models`（`#[serde(default)]`）；`assistant_default_models_preserve_legacy_config_and_round_trip`（旧配置读入、往返、旧版本读新配置忽略该项）通过。core `agents::registry::assistants` 的 `assistant_model_choice`/`assistant_model_for_workspace`/`assistant_model_for_assistant`（实现 Task 3 时把键由工作区 id 改为助理 id，`assistant_model_for_workspace` 先把工作区换成助理 id）：已启用的所选模型 → 它；未设置 → `primary`；所选模型停用或删除 → `primary` 并标 `ChosenUnavailable`，设置保留。`an_assistant_runs_on_its_own_model_else_the_primary_model` 通过。
   基线核对：`main` 上 `1a76b2ade` 改了 IM 创建助理会话的位置，不涉及助理模型；未合并 PR 中无相关改动。Task 2 在后端创建会话处统一取默认，IM 入口合并后同样覆盖。
 
 ## Task 2: 本机生效：新对话与被调用
@@ -105,15 +105,17 @@ parent: "F002"
 **Outcome:** 别的设备使用主人共享的助理时，主人那边按该助理的设置选模型；使用者带来的模型仍被拒绝。
 
 **Files:**
-- Modify: `src/apps/cli/src/dispatch/delegation.rs`（准入处 `request.model`）及测试；必要时 `share_call.rs`
+- Modify: `src/apps/cli/src/dispatch/delegation.rs`（准入与选模型）及测试；`src/apps/cli/src/dispatch/mod.rs`（`submit`）
 
 **Change Map:**
-- 准入：`request.model = Some(resolved)`（`share.id` 与目录已在作用域内）；`reasoning_preset` 仍为空。
+- 准入仍清空使用者带来的 `model` 与 `reasoning_preset`，并返回被准入的助理 id。
+- `submit` 在重试判定之后、`select_ready_model` 之前，以 `delegation::owner_model` 设置 `request.model`：助理设置 → 主力模型，并解析成具体模型 id（目标端只接受具体 id）。放在重试判定之后，是为了主人改设置后，同一任务的重试不被判为冲突。主力模型也无法解析时留空，交给目标端原有的就绪默认值。
 
 **Verification:**
 - 按 `src/apps/cli/AGENTS.md` 的最窄测试命令运行 `dispatch::delegation` 相关测试
 
-- [ ] 共享任务使用主人的助理设置、使用者的模型被拒绝，均有测试
+- [x] 共享任务使用主人的助理设置、使用者的模型被拒绝，均有测试
+  证据（2026-11-04）：`delegation::admit` 仍清空使用者的 `model`/`reasoning_preset` 并返回助理 id；`submit` 在重试判定之后以 `owner_model` 选模型（与 `select_ready_model` 读同一份已初始化的配置）。`a_shared_assistant_runs_on_the_owners_choice_for_it`（未设置 → 主力；设置 → 该模型；其他助理不受影响；所选模型停用 → 主力；聊天里最后选的 `mode` 不起作用；无主力 → 留空）与 `tasks_of_one_device_share_its_tenant_workspace_and_drop_the_requested_model` 通过，`dispatch::` 共 116 项通过；core 两项解析测试、config 往返测试通过。
 
 ## Task 4: 界面：主页设置与卡片的模型名
 
@@ -125,7 +127,7 @@ parent: "F002"
 - Modify: `src/web-ui/src/locales/{zh-CN,zh-TW,en-US}/{scenes/profile.json,flow-chat.json}`
 
 **Change Map:**
-- 主页「默认模型」：已启用模型列表 +「跟随主力模型（当前为 X）」；写 `app.assistant_default_models.<workspaceId>`，选回「跟随主力模型」时删除该键；外观部件登记。
+- 主页「默认模型」：已启用模型列表 +「跟随主力模型（当前为 X）」；写 `app.assistant_default_models.<assistantId>`，选回「跟随主力模型」时删除该键；外观部件登记。
 - 不可用说明：所选模型不在已启用列表中时显示。
 - 卡片运行前：本机调用写解析出的模型名（主力模型时加注），替换「应用默认模型」。
 

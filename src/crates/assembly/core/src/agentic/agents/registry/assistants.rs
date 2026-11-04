@@ -149,7 +149,7 @@ pub struct AssistantModelChoice {
 /// otherwise the primary model. Never the last model picked in some chat,
 /// which rewrites the app-wide mode default.
 pub fn assistant_model_choice(
-    workspace_id: &str,
+    assistant_id: &str,
     app: &crate::service::config::types::AppConfig,
     ai: &crate::service::config::types::AIConfig,
 ) -> AssistantModelChoice {
@@ -159,7 +159,7 @@ pub fn assistant_model_choice(
     };
     let Some(chosen) = app
         .assistant_default_models
-        .get(workspace_id)
+        .get(assistant_id)
         .map(|model| model.trim())
         .filter(|model| !model.is_empty())
     else {
@@ -178,24 +178,34 @@ pub fn assistant_model_choice(
 /// `None` when that workspace is not one of this device's assistants.
 pub async fn assistant_model_for_workspace(workspace_id: &str) -> Option<AssistantModelChoice> {
     let workspaces = crate::service::workspace::get_global_workspace_service()?;
-    let is_assistant = workspaces
+    let path_manager = crate::infrastructure::try_get_path_manager_arc().ok()?;
+    let base = path_manager.assistant_workspace_base_dir(None);
+    let assistant_id = workspaces
         .get_assistant_workspaces()
         .await
-        .iter()
-        .any(|workspace| workspace.id == workspace_id);
-    if !is_assistant {
-        return None;
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .and_then(|workspace| assistant_id_of(&workspace.root_path, &base))?;
+    Some(assistant_model_for_assistant(&assistant_id).await)
+}
+
+/// The run model of this device's assistant `assistant_id`. When the
+/// configuration cannot be read, the primary model, which the turn resolves.
+async fn assistant_model_for_assistant(assistant_id: &str) -> AssistantModelChoice {
+    let config = match crate::service::config::global::GlobalConfigManager::get_service().await {
+        Ok(service) => service
+            .get_config::<crate::service::config::GlobalConfig>(None)
+            .await
+            .ok(),
+        Err(_) => None,
+    };
+    match config {
+        Some(config) => assistant_model_choice(assistant_id, &config.app, &config.ai),
+        None => AssistantModelChoice {
+            model_ref: "primary".to_string(),
+            source: AssistantModelSource::Primary,
+        },
     }
-    let config_service = crate::service::config::global::GlobalConfigManager::get_service()
-        .await
-        .ok()?;
-    let config: crate::service::config::GlobalConfig =
-        config_service.get_config(None).await.ok()?;
-    Some(assistant_model_choice(
-        workspace_id,
-        &config.app,
-        &config.ai,
-    ))
 }
 
 /// Text as one plain, bounded line, so it cannot pose as part of this

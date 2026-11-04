@@ -9,6 +9,8 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
+use openbitfun_core::agentic::agents::{assistant_model_choice, AssistantModelSource};
+use openbitfun_core::service::config::GlobalConfig;
 use openbitfun_core::service::delegation::{assistant_directory, is_call_chain_entry};
 use openbitfun_core::service::lan_share::{ensure_tenant, SharedAssistantStore, TenantUser};
 
@@ -61,7 +63,7 @@ pub(super) async fn admit(
     request: &mut DispatchSubmitRequest,
     store: &SharedAssistantStore,
     roots: &DelegationRoots,
-) -> Result<()> {
+) -> Result<Option<String>> {
     if request.assistant_workspace.is_some() {
         bail!("__assistantWorkspace is chosen by this device");
     }
@@ -72,7 +74,7 @@ pub(super) async fn admit(
         if request.source_share_key.is_some() {
             bail!("__sourceShareKey is reserved for tasks for shared assistants");
         }
-        return Ok(());
+        return Ok(None);
     };
     let Some(share_key) = request
         .source_share_key
@@ -146,7 +148,8 @@ pub(super) async fn admit(
         },
     )
     .context("prepare the workspace of the requesting device")?;
-    // This device chooses the model of tasks other devices give it.
+    // This device chooses the model of tasks other devices give it; see
+    // `owner_model`.
     request.model = None;
     request.reasoning_preset = None;
     request.source_share_key = Some(share_key.trim().to_ascii_lowercase());
@@ -161,7 +164,20 @@ pub(super) async fn admit(
     if let Err(error) = store.record_use(&share.id, &share_key).await {
         tracing::warn!("Failed to record the use of a shared assistant: {error}");
     }
-    Ok(())
+    Ok(Some(directory.to_string()))
+}
+
+/// The model a task for a shared assistant runs on: the assistant's own
+/// default, else the primary model. `None` leaves the choice to the target's
+/// ready default, as for a device with no primary model.
+pub(super) fn owner_model(assistant_id: &str, config: &GlobalConfig) -> Option<String> {
+    let choice = assistant_model_choice(assistant_id, &config.app, &config.ai);
+    if choice.source == AssistantModelSource::ChosenUnavailable {
+        tracing::warn!(
+            "Default model of shared assistant is unavailable, using the primary model: assistant_id={assistant_id}"
+        );
+    }
+    config.ai.resolve_model_selection(&choice.model_ref)
 }
 
 /// Shares assistants for tests of the dispatch target.
@@ -283,6 +299,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_shared_assistant_runs_on_the_owners_choice_for_it() {
+        use openbitfun_core::service::config::types::AIModelConfig;
+
+        let mut config = GlobalConfig::default();
+        config.ai.models = ["sol", "terra", "luna"]
+            .into_iter()
+            .map(|id| AIModelConfig {
+                id: id.to_string(),
+                enabled: id != "luna",
+                ..AIModelConfig::default()
+            })
+            .collect();
+        config.ai.default_models.primary = Some("sol".to_string());
+        // The last model picked in a chat does not decide.
+        config.ai.agent_model_selections = Some(serde_json::json!({ "mode": "terra" }));
+
+        assert_eq!(owner_model("xiaolan", &config).as_deref(), Some("sol"));
+        config
+            .app
+            .assistant_default_models
+            .insert("xiaolan".to_string(), "terra".to_string());
+        assert_eq!(owner_model("xiaolan", &config).as_deref(), Some("terra"));
+        assert_eq!(owner_model("xiaoqi", &config).as_deref(), Some("sol"));
+        config
+            .app
+            .assistant_default_models
+            .insert("xiaolan".to_string(), "luna".to_string());
+        assert_eq!(owner_model("xiaolan", &config).as_deref(), Some("sol"));
+        config.ai.default_models.primary = None;
+        config.app.assistant_default_models.clear();
+        assert_eq!(owner_model("xiaolan", &config), None);
+    }
+
     async fn admit_error(fixture: &Fixture, mut request: DispatchSubmitRequest) -> String {
         format!(
             "{:#}",
@@ -293,7 +343,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tasks_of_one_device_share_its_tenant_workspace_and_no_model_choice() {
+    async fn tasks_of_one_device_share_its_tenant_workspace_and_drop_the_requested_model() {
         let fixture = fixture().await;
         let assistant_root = fixture.roots.assistants.join("workspace");
         let ask = |job_id: &str| {
@@ -303,9 +353,10 @@ mod tests {
         };
 
         let mut first = ask("job-1");
-        admit(&mut first, &fixture.store, &fixture.roots)
+        let admitted = admit(&mut first, &fixture.store, &fixture.roots)
             .await
             .unwrap();
+        assert_eq!(admitted.as_deref(), Some("workspace"));
         let mut second = ask("job-2");
         admit(&mut second, &fixture.store, &fixture.roots)
             .await

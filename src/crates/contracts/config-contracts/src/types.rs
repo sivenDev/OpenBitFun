@@ -193,8 +193,9 @@ pub struct AppConfig {
     /// An empty map also advertises support to older/newer controller surfaces.
     #[serde(default)]
     pub assistant_default_sessions: HashMap<String, String>,
-    /// Each assistant's own default model, keyed by owning workspace ID on this
-    /// host and holding a model configuration ID. An assistant without an entry
+    /// Each assistant's own default model, keyed by assistant ID (its directory
+    /// under the assistants base, as in `assistant:<id>`) and holding a model
+    /// configuration ID. An assistant without an entry
     /// follows the primary model; an entry whose model is gone is kept and the
     /// primary model is used until it is chosen again.
     #[serde(default)]
