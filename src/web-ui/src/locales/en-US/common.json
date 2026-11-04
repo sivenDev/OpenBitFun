@@ -501,12 +501,17 @@
       "discoveryWorkspaceUnresolved": "Some {{source}} sessions could not be matched to a workspace. Existing sessions remain available.",
       "discoveringExternal": "Discovering external sessions…",
       "delegated": {
-        "external": "Outside task",
         "from": "from {{name}} · {{device}}",
-        "waiting": "{{count}} awaiting approval",
         "untitled": "Untitled task",
         "unavailable": "This external task session is no longer available",
-        "count": "{{count}} conversations"
+        "count": "{{count}} conversations",
+        "mine": "Mine",
+        "fromDevice": "From {{name}}’s device",
+        "waitingShort": "{{count}} to approve",
+        "waitingBadge": "{{count}} waiting for your approval",
+        "running": "{{count}} running",
+        "queued": "Queued",
+        "showMore": "Show {{count}} more"
       },
       "sharedAssistant": {
         "title": "Shared with you",
@@ -518,6 +523,7 @@
         "openFailed": "Could not open the conversation: {{reason}}",
         "status": {
           "approval": "Waiting for {{owner}} to approve",
+          "approvalShort": "To approve",
           "queued": "Queued",
           "queuedLimit": "Queued · {{owner}} takes {{limit}} at a time",
           "expired": "Expired",

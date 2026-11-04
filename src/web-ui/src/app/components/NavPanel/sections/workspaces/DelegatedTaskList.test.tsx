@@ -3,6 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DelegatedTaskList from './DelegatedTaskList';
+import { resetNavListMemory } from './navListMemory';
 import { readDelegatedTasks, resetDelegatedTaskReads } from '@/infrastructure/api/service-api/delegatedTaskReads';
 import type { WorkspaceInfo } from '@/shared/types';
 
@@ -30,6 +31,7 @@ vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ open
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
 vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ warn: vi.fn() }) }));
+vi.mock('@openbitfun/ui', () => ({ Icon: () => <span /> }));
 vi.mock('@/infrastructure/i18n', () => ({
   useI18n: () => ({
     t: (key: string, values?: Record<string, unknown>) =>
@@ -57,6 +59,7 @@ describe('DelegatedTaskList', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     Object.values(mocks).forEach(mock => mock.mockReset());
     resetDelegatedTaskReads();
+    resetNavListMemory();
     mocks.tauri.mockReturnValue(true);
     mocks.peer.mockReturnValue({ peerMode: { active: false } });
     container = document.createElement('div');
@@ -67,27 +70,44 @@ describe('DelegatedTaskList', () => {
   const render = async () => { await act(async () => root.render(<DelegatedTaskList workspace={workspace} />)); };
   const rows = () => Array.from(container.querySelectorAll('[data-testid="nav-delegated-task"]'));
 
-  it('lists the tasks this assistant runs for others, grouped by the device that sent them', async () => {
+  const titles = () => rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent);
+  const groups = () => Array.from(container.querySelectorAll('[data-testid="nav-delegated-group"]'));
+  const toggle = (index: number) => groups()[index].querySelector<HTMLButtonElement>('[data-testid="nav-delegated-group-toggle"]')!;
+
+  it('groups the tasks this assistant runs for others by device, the one waiting for the owner first and open', async () => {
     mocks.listTasks.mockResolvedValue([
-      task('a', { pendingPermissionCount: 2, source: { deviceId: '4567', fingerprint: 'EF45GH', displayName: 'Bea', deviceName: 'Studio' } }),
       task('b', { startedAt: '2026-11-03T01:00:00Z' }),
       // The runner may spell the directory differently; the assistant type decides.
       task('c', { assistantWorkspace: `/private${ROOT}` }),
+      task('a', { pendingPermissionCount: 2, source: { deviceId: '4567', fingerprint: 'EF45GH', displayName: 'Bea', deviceName: 'Studio' } }),
       task('other', { agentType: 'assistant:workspace-work', assistantWorkspace: `${ROOT}-work` }),
     ]);
     await render();
-    expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
-      .toEqual(['Task a', 'Task b', 'Task c']);
-    // Each device heads its own tasks with how many and the latest start.
-    const headings = Array.from(container.querySelectorAll('[data-testid="nav-delegated-group"]'))
-      .map(group => group.querySelector('.assistant-session-history__delegated-heading')!.textContent);
-    expect(headings).toEqual([
-      'nav.sessions.delegated.from:Bea|Studio · nav.sessions.delegated.count:1',
-      'nav.sessions.delegated.from:Ann|Laptop · nav.sessions.delegated.count:2 · 2026-11-03T01:00:00.000Z',
+    // Each device heads its tasks: who sent them, then the device, how many and how many run.
+    const headings = groups().map(group => [
+      group.querySelector('.assistant-session-history__delegated-heading-title')!.textContent,
+      group.querySelector('.assistant-session-history__delegated-heading-detail')!.textContent,
     ]);
+    expect(headings).toEqual([
+      ['nav.sessions.delegated.fromDevice:Bea', 'Studio · nav.sessions.delegated.count:1'],
+      ['nav.sessions.delegated.fromDevice:Ann', 'Laptop · nav.sessions.delegated.count:2 · nav.sessions.delegated.running:2'],
+    ]);
+    // The waiting group is marked, counts what waits, and opens; the other stays closed.
+    expect(groups()[0].classList.contains('is-waiting')).toBe(true);
+    expect(groups()[0].querySelector('.assistant-session-history__delegated-badge')!.getAttribute('aria-label'))
+      .toBe('nav.sessions.delegated.waitingBadge:2');
+    expect(toggle(0).getAttribute('aria-expanded')).toBe('true');
+    expect(toggle(1).getAttribute('aria-expanded')).toBe('false');
+    expect(titles()).toEqual(['Task a']);
+    // A row says where the task stands, not that it is an outside task or where it came from.
+    expect(rows()[0].textContent).toContain('nav.sessions.delegated.waitingShort:2');
     expect(rows()[0].textContent).not.toContain('nav.sessions.delegated.from');
-    expect(rows()[0].textContent).toContain('nav.sessions.delegated.waiting:2');
+    expect(rows()[0].textContent).not.toContain('external');
     expect(rows()[0].classList.contains('is-waiting')).toBe(true);
+
+    await act(async () => toggle(1).click());
+    expect(titles()).toEqual(['Task a', 'Task b', 'Task c']);
+    expect(rows()[1].textContent).toContain('shared:statuses.running');
     expect(rows()[1].classList.contains('is-waiting')).toBe(false);
 
     // A task opens as its own read-only session.
@@ -100,6 +120,40 @@ describe('DelegatedTaskList', () => {
     mocks.openTask.mockResolvedValue(false);
     await act(async () => (rows()[1] as HTMLButtonElement).click());
     expect(mocks.warn).toHaveBeenCalledWith('nav.sessions.delegated.unavailable');
+  });
+
+  it('keeps a group as the owner left it, and shows a few rows until asked for the rest', async () => {
+    mocks.listTasks.mockResolvedValue([
+      task('w', { pendingPermissionCount: 1 }),
+      ...['p', 'q', 'r', 's'].map(id => task(id, { state: 'succeeded', startedAt: '2026-11-03T01:00:00Z' })),
+    ]);
+    await render();
+    expect(titles()).toEqual(['Task w', 'Task p', 'Task q']);
+    const more = container.querySelector<HTMLButtonElement>('[data-testid="nav-delegated-more"]')!;
+    expect(more.textContent).toBe('nav.sessions.delegated.showMore:2');
+    // Settled tasks say when they started.
+    expect(rows()[1].textContent).toContain('2026-11-03T01:00:00.000Z');
+    await act(async () => more.click());
+    expect(titles()).toEqual(['Task w', 'Task p', 'Task q', 'Task r', 'Task s']);
+    expect(container.querySelector('[data-testid="nav-delegated-more"]')).toBeNull();
+
+    // Closed by hand, the group stays closed after the list is shown again.
+    await act(async () => toggle(0).click());
+    expect(rows()).toHaveLength(0);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render();
+    expect(toggle(0).getAttribute('aria-expanded')).toBe('false');
+    expect(rows()).toHaveLength(0);
+  });
+
+  it('opens the group holding the viewed session and keeps that row in sight past the limit', async () => {
+    view.activeSessionId = 's-s';
+    mocks.listTasks.mockResolvedValue(['p', 'q', 'r', 's'].map(id => task(id, { state: 'succeeded' })));
+    await render();
+    expect(titles()).toEqual(['Task p', 'Task q', 'Task r', 'Task s']);
+    expect(container.querySelector('[data-testid="nav-delegated-more"]')).toBeNull();
+    view.activeSessionId = null;
   });
 
   it('marks the task whose session is shown as selected', async () => {

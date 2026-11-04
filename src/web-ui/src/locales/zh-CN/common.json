@@ -501,12 +501,17 @@
       "discoveryWorkspaceUnresolved": "部分 {{source}} 会话无法匹配到工作区，已有会话仍可使用。",
       "discoveringExternal": "正在发现外部会话…",
       "delegated": {
-        "external": "外部任务",
         "from": "来自 {{name}} · {{device}}",
-        "waiting": "等待审批 {{count}} 项",
         "untitled": "未命名任务",
         "unavailable": "这个外部任务的会话已不可用",
-        "count": "{{count}} 个会话"
+        "count": "{{count}} 个会话",
+        "mine": "我的",
+        "fromDevice": "来自 {{name}} 的设备",
+        "waitingShort": "待审批 {{count}}",
+        "waitingBadge": "{{count}} 项等待你审批",
+        "running": "{{count}} 进行中",
+        "queued": "排队中",
+        "showMore": "显示其余 {{count}} 个"
       },
       "sharedAssistant": {
         "title": "来自共享",
@@ -518,6 +523,7 @@
         "openFailed": "无法打开对话：{{reason}}",
         "status": {
           "approval": "等待 {{owner}} 审批",
+          "approvalShort": "待审批",
           "queued": "排队中",
           "queuedLimit": "排队中 · {{owner}} 同时只处理 {{limit}} 个任务",
           "expired": "已过期",

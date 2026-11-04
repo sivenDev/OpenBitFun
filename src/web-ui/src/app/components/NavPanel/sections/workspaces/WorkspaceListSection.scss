@@ -1461,19 +1461,112 @@
   }
 }
 
-// One group per device that sent tasks, headed by the device.
+// The assistant's own sessions get a heading once other devices' groups follow them.
+.assistant-session-history__mine {
+  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) 0 30px;
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+}
+
+// One group per device that sent tasks, headed by the device. A group that
+// waits for the owner is tinted so it reads before the others.
 .assistant-session-history__delegated-group {
   display: flex;
   flex-direction: column;
+  margin-block-start: 2px;
+  border-radius: var(--openbitfun-radius-base);
+
+  &.is-waiting {
+    background: var(--openbitfun-color-status-warning-surface);
+  }
 }
 
+// Two lines: who sent the tasks, then the device and how many.
 .assistant-session-history__delegated-heading {
-  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) 0 30px;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  inline-size: 100%;
+  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) var(--openbitfun-space-1) 12px;
+  border: 0;
+  border-radius: var(--openbitfun-radius-base);
+  background: transparent;
+  color: var(--openbitfun-color-content-primary);
+  text-align: start;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--openbitfun-color-action-quiet-hover);
+  }
+}
+
+.assistant-session-history__delegated-chevron {
+  flex: none;
   color: var(--openbitfun-color-content-muted);
-  font-size: var(--openbitfun-type-meta-font-size);
+  transition: transform 120ms ease;
+
+  [aria-expanded='true'] > & {
+    transform: rotate(90deg);
+  }
+}
+
+// The sender's initial, in place of an avatar this device does not have.
+.assistant-session-history__delegated-device {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: var(--openbitfun-radius-sm);
+  background: var(--openbitfun-color-action-quiet-hover);
+  color: var(--openbitfun-color-content-secondary);
+  font-size: var(--openbitfun-type-micro-font-size);
+  font-weight: var(--openbitfun-type-label-selected-font-weight);
+}
+
+.assistant-session-history__delegated-heading-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.assistant-session-history__delegated-heading-title,
+.assistant-session-history__delegated-heading-detail {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.assistant-session-history__delegated-heading-detail {
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+}
+
+// How many actions wait for the owner in the group.
+.assistant-session-history__delegated-badge {
+  flex: none;
+  min-inline-size: 18px;
+  padding-inline: 5px;
+  border: 1px solid var(--openbitfun-color-status-warning-border);
+  border-radius: 999px;
+  color: var(--openbitfun-color-status-warning-content);
+  font-size: var(--openbitfun-type-micro-font-size);
+  text-align: center;
+}
+
+// A task row on one line: status dot, title, and a short trailing label.
+.assistant-session-history__delegated-line {
+  display: flex;
+  align-items: center;
+  gap: var(--openbitfun-space-1);
+  inline-size: 100%;
+  min-inline-size: 0;
+
+  .assistant-session-history__delegated-title {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
 }
 
 .assistant-session-history__delegated-title,
@@ -1491,6 +1584,74 @@
 
 .assistant-session-history__delegated-item.is-waiting .assistant-session-history__delegated-detail {
   color: var(--openbitfun-color-status-warning-content);
+}
+
+// "Show the other N" under a group, indented like its rows.
+.assistant-session-history__delegated-more.openbitfun-nav-panel__inline-item {
+  inline-size: 100%;
+  padding-block: 2px;
+  padding-inline: 30px var(--openbitfun-space-1);
+  border: 0;
+  background: transparent;
+  color: var(--openbitfun-color-content-secondary);
+  font-size: var(--openbitfun-type-meta-font-size);
+  text-align: start;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--openbitfun-color-content-primary);
+  }
+}
+
+// Where a task stands: a dot before the title. Waiting and running are
+// filled; settled tasks are an outline, so the busy ones stand out.
+.nav-task-status__dot {
+  flex: none;
+  inline-size: 7px;
+  block-size: 7px;
+  border: 1.5px solid var(--openbitfun-color-content-disabled);
+  border-radius: 50%;
+
+  &.is-approval {
+    border-color: var(--openbitfun-color-status-warning-emphasis);
+    background: var(--openbitfun-color-status-warning-emphasis);
+  }
+
+  &.is-running {
+    border-color: var(--openbitfun-color-status-info-emphasis);
+    background: var(--openbitfun-color-status-info-emphasis);
+  }
+
+  &.is-queued {
+    border-color: var(--openbitfun-color-status-info-emphasis);
+  }
+
+  &.is-failed,
+  &.is-expired,
+  &.is-stopped {
+    border-color: var(--openbitfun-color-status-danger-border);
+  }
+
+  &.is-idle {
+    border-color: transparent;
+  }
+}
+
+.nav-task-status__label {
+  flex: none;
+  max-inline-size: 45%;
+  overflow: hidden;
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &.is-chip {
+    padding-inline: 6px;
+    border-radius: 999px;
+    background: var(--openbitfun-color-status-warning-surface);
+    color: var(--openbitfun-color-status-warning-content);
+  }
 }
 
 // Assistants other devices share with this one, each with its conversations
@@ -1531,5 +1692,29 @@
   &:hover {
     color: var(--openbitfun-color-content-primary);
     background: var(--openbitfun-color-action-quiet-hover);
+  }
+}
+
+// The assistant's name, with a dot while its owner can be reached.
+.shared-assistant-nav__name-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.shared-assistant-nav__online {
+  flex: none;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  background: var(--openbitfun-color-status-success-emphasis);
+}
+
+// Offline or no longer shared: the assistant and its conversations read dimmed.
+.shared-assistant-nav__assistant.is-unavailable {
+  .assistant-session-history__delegated-title {
+    color: var(--openbitfun-color-content-muted);
   }
 }

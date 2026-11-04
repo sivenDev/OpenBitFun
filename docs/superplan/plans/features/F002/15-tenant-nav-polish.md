@@ -2,7 +2,7 @@
 id: "F002-15"
 title: "导航中的共享助理：按设备分组精修与状态一眼可见"
 type: "feature"
-status: "draft"
+status: "in_progress"
 summary: "主人端助理名下先列「我的」会话，再按使用者设备分组，分组头清楚可辨、行内不再重复「外部任务」、有待审批的分组置顶并带数量、每组限条；使用者端「来自共享」的在线、排队、等待审批与共享已停止一眼可见；不新增页面或导航入口。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-04"
@@ -84,8 +84,18 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/app/components/NavPanel/sections/workspaces`
 - `pnpm run i18n:audit`
 
-- [ ] 主人端分组、排序、限条与默认展开的行为有测试并通过
-- [ ] 行内不再出现「外部任务」，「我的」只在有外部任务时显示
+- [x] 主人端分组、排序、限条与默认展开的行为有测试并通过
+- [x] 行内不再出现「外部任务」，「我的」只在有外部任务时显示
+  - 证据（2026-11-04）：
+    - `delegatedTaskGroups.test.ts`：状态判定（待审批优先）、分组顺序（有待审批的设备在前，其余按最新任务）、组内顺序（待审批、进行中、从新到旧）、默认展开（待审批或含当前会话）、限条（前 3 行加当前会话，其余计数）。
+    - `DelegatedTaskList.test.tsx`：两行分组头（「来自 某某的设备」/ 设备 · N 个会话 · M 进行中）；待审批分组标记、角标的无障碍说明、默认展开，其他分组收起，点开后显示；行内只有状态，不再出现来源与「外部任务」；「显示其余 2 个」点开显示全部；手动收起的分组在重新挂载后仍收起；含当前会话的分组展开且该行越过限条仍显示；收起历史时（`waitingOnly`）行为与来源说明不变；Peer Device Mode 与非桌面端不读取。
+    - `AssistantSessionHistory.test.tsx`：没有外部任务时不显示「我的」；有时显示，并把同一份任务交给列表，不再读第二次。
+    - `pnpm --dir src/web-ui run test:run src/app/components/NavPanel/sections/workspaces`：15 个文件 105 项通过；`src/app/components/NavPanel` 全部 50 个文件 379 项通过；`pnpm run i18n:audit` 通过，0 个警告；改动文件 eslint 0 问题。
+  - 与计划的差异：
+    - 读取抽成 `useAssistantDelegatedTasks.ts`；展开与「显示其余」的记忆放在 `navListMemory.ts`，两个列表共用。放在组件文件里会触发 react-refresh 告警，所以单独成文件。
+    - 分组第二行沿用现有的 `delegated.count`（zh-CN「N 个会话」），没有改成「对话」。
+    - 行尾标签用短词（「待审批 2」「运行中」，已结束的显示开始时间），完整说明放在行的 tooltip 中；「运行中/失败」用共享词条。
+    - 删除不再使用的 `delegated.external` 与 `delegated.waiting`。
 
 ## Task 2: 使用者端「来自共享」的状态与限条
 
@@ -100,8 +110,10 @@ parent: "F002"
 **Verification:**
 - `pnpm --dir src/web-ui run test:run src/app/components/NavPanel/sections/workspaces/SharedAssistantList.test.tsx`
 
-- [ ] 在线、不在线、已停止共享与各对话状态的显示有测试并通过
-- [ ] 超过 3 个对话时收起其余，当前打开的对话总会显示
+- [x] 在线、不在线、已停止共享与各对话状态的显示有测试并通过
+- [x] 超过 3 个对话时收起其余，当前打开的对话总会显示
+  - 证据（2026-11-04）：`SharedAssistantList.test.tsx` 覆盖主人在线时的绿点；不在线时整组变暗、去掉绿点并写「不在线」；已停止共享时没有新对话入口；对话行的状态点、短标签与完整说明（无障碍名称与 tooltip，例如「等待 Ann 审批」「排队中 · Ann 同时只处理 2 个任务」）；5 个对话时显示前 3 个加当前打开的那个，「显示其余 1 个」点开后显示全部。与 Task 1 同一次运行，15 个文件 105 项通过。
+  - 与计划的差异：对话行原来是两行（标题加完整状态），现在是一行（状态点、标题、短标签），和主人端一致；完整状态保留在无障碍名称与 tooltip 中。新增短词 `sharedAssistant.status.approvalShort`（三种语言）。
 
 ## Task 3: 整体检查与真机核对
 
@@ -115,7 +127,9 @@ parent: "F002"
 - `pnpm run theme:color-audit:all`
 - 真机：`pnpm run desktop:dev`，在有外部任务的主人设备上截图核对导航；有来自共享的助理时同时核对使用者端
 
-- [ ] Web UI、外观与主题检查通过
+- [x] Web UI、外观与主题检查通过
+  - 证据（2026-11-04）：`pnpm run check:web` 通过（canvas SDK 检查、外观契约与排版审计 0 违规、`tsc --noEmit`）；`pnpm run theme:color-audit:all` 通过，28 个范围全部通过，没有提高基线。新的样式部件（`sectionLabel`、`groupHeader`、`badge`、`statusMark`、`more`）已注册到 `sessions-section` 外观描述；颜色只用现有的语义 token。
+  - 环境说明：新 worktree 里没有 `src/web-ui/src/generated/api`（由 Rust 的 ts-rs 测试导出，已被 gitignore），类型检查报找不到模块。这次从原工作区复制了同一提交（`8b159c359`）导出的文件，没有改动它们。
 - [ ] 真机截图与 Exit Criteria 第 1 条一致，记录所用场景（本地）
 
 ## References

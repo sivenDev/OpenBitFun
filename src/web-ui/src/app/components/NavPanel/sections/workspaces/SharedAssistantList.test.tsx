@@ -50,6 +50,7 @@ vi.mock('@/shared/utils/logger', () => ({
 }));
 
 import SharedAssistantList from './SharedAssistantList';
+import { resetNavListMemory } from './navListMemory';
 
 const writer: SharedWithMe = {
   owner: { publicKey: 'a'.repeat(64), deviceId: 'ann-device', fingerprint: 'AB23CD', displayName: 'Ann', deviceName: "Ann's Mac" },
@@ -75,6 +76,7 @@ beforeEach(() => {
   mocks.start.mockResolvedValue('session-new');
   mocks.openSession.mockResolvedValue(undefined);
   mocks.peer = false;
+  resetNavListMemory();
   mocks.shared = [writer];
   mocks.jobs = {
     a: { jobId: 'a', sessionId: 'session-a', target, title: 'First', state: 'queued', pendingPermissions: [], hold: { reason: 'shareLimit', limit: 2, sinceMs: 1 }, updatedAt: 1 },
@@ -95,13 +97,49 @@ describe('the assistants shared with this device in the navigation', () => {
     expect(all('nav-shared-assistant')).toHaveLength(1);
     expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.textContent)
       .toContain('nav.sessions.sharedAssistant.from Ann');
+    // Reachable, the assistant shows the online dot.
+    expect(all('nav-shared-assistant-online')).toHaveLength(1);
+    expect(all('nav-shared-assistant')[0].className).not.toContain('is-unavailable');
     const rows = all('nav-shared-assistant-conversation');
+    // A row reads its title and a few words; the full sentence is its name and tooltip.
     expect(rows.map(row => row.textContent)).toEqual([
-      'Second draftnav.sessions.sharedAssistant.status.approval Ann',
-      'Firstnav.sessions.sharedAssistant.status.queuedLimit Ann 2',
+      'Second draftnav.sessions.sharedAssistant.status.approvalShort',
+      'Firstnav.sessions.sharedAssistant.status.queued',
     ]);
+    expect(rows.map(row => row.getAttribute('aria-label'))).toEqual([
+      'Second draft · nav.sessions.sharedAssistant.status.approval Ann',
+      'First · nav.sessions.sharedAssistant.status.queuedLimit Ann 2',
+    ]);
+    expect(rows[0].querySelector('.nav-task-status__dot')!.className).toContain('is-approval');
     expect(rows[0].getAttribute('aria-current')).toBe('true');
     expect(rows[0].className).toContain('is-waiting');
+  });
+
+  it('dim an assistant whose owner is out of reach', async () => {
+    mocks.shared = [{ ...writer, online: false }];
+    await render();
+    expect(all('nav-shared-assistant')[0].className).toContain('is-unavailable');
+    expect(all('nav-shared-assistant-online')).toHaveLength(0);
+    expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.textContent)
+      .toContain('nav.sessions.sharedAssistant.offline');
+  });
+
+  it('show a few conversations, the viewed one always, until asked for the rest', async () => {
+    const settled = (id: string, updatedAt: number) => ({
+      jobId: id, sessionId: `session-${id}`, target, title: id, state: 'succeeded', pendingPermissions: [], updatedAt,
+    });
+    mocks.jobs = Object.fromEntries([
+      settled('c', 50), settled('d', 40), settled('e', 30), settled('f', 20),
+      ['b', { ...(mocks.jobs.b as object), updatedAt: 10 }],
+    ].map(entry => (Array.isArray(entry) ? entry : [entry.jobId, entry])));
+    await render();
+    const titles = () => all('nav-shared-assistant-conversation').map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent);
+    // session-b is the one being viewed, so it stays in sight past the first three.
+    expect(titles()).toEqual(['c', 'd', 'e', 'Second draft']);
+    const more = document.querySelector('[data-testid="nav-shared-assistant-more"]')!;
+    expect(more.textContent).toBe('nav.sessions.delegated.showMore 1');
+    await click(more);
+    expect(titles()).toEqual(['c', 'd', 'e', 'f', 'Second draft']);
   });
 
   it('open a conversation, the latest one, or a new one', async () => {

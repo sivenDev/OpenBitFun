@@ -18,6 +18,9 @@ import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
 import { notificationService } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
+import { limitRows } from './delegatedTaskGroups';
+import { NavTaskStatusDot, NavTaskStatusLabel } from './NavTaskStatus';
+import { fullLists } from './navListMemory';
 
 const log = createLogger('SharedAssistantList');
 
@@ -41,6 +44,8 @@ export default function SharedAssistantList() {
   const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
   const jobs = dispatchJobStore(state => state.jobs);
   const [busy, setBusy] = useState(false);
+  // Re-renders after an assistant's other conversations are shown.
+  const [, setRevision] = useState(0);
   const activeTabId = useSceneStore(state => state.activeTabId);
   const sessions = useSyncExternalStore(
     listener => flowChatStore.subscribe(() => listener()),
@@ -78,6 +83,19 @@ export default function SharedAssistantList() {
     }
   };
 
+  // A few words after the title; the full sentence stays in the row's tooltip.
+  const shortText = (status: SharedAssistantStatus): string | null => {
+    switch (status.kind) {
+      case 'approval': return t('nav.sessions.sharedAssistant.status.approvalShort');
+      case 'queued': return t('nav.sessions.sharedAssistant.status.queued');
+      case 'running': return t('shared:statuses.running');
+      case 'expired': return t('nav.sessions.sharedAssistant.status.expired');
+      case 'stopped': return t('nav.sessions.sharedAssistant.status.stopped');
+      case 'failed': return t('shared:statuses.failed');
+      default: return null;
+    }
+  };
+
   return (
     <div className="shared-assistant-nav" data-testid="nav-shared-assistants">
       <div className="shared-assistant-nav__title">{t('nav.sessions.sharedAssistant.title')}</div>
@@ -90,9 +108,26 @@ export default function SharedAssistantList() {
           : assistant.online ? null : t('nav.sessions.sharedAssistant.offline');
         const source = [t('nav.sessions.sharedAssistant.from', { name: owner }), standing]
           .filter(Boolean).join(' · ');
-        const conversations = sharedAssistantConversations(jobs, ref);
+        const key = `shared:${assistant.owner.publicKey}/${assistant.assistantId}`;
+        const isActive = (sessionId: string) => isSessionNavRowActive({
+          rowSessionId: sessionId,
+          activeTabId,
+          activeSessionId: activeSessionId ?? null,
+          activeChildHasVisibleRow: false,
+        });
+        const { shown: conversations, hidden } = limitRows(
+          sharedAssistantConversations(jobs, ref),
+          fullLists.has(key),
+          job => isActive(job.sessionId),
+        );
+        // Out of reach or no longer shared: the assistant and its conversations read dimmed.
+        const reachable = !revoked && assistant.online;
         return (
-          <div key={`${assistant.owner.publicKey}/${assistant.assistantId}`} className="shared-assistant-nav__assistant" data-testid="nav-shared-assistant">
+          <div
+            key={key}
+            className={['shared-assistant-nav__assistant', !reachable && 'is-unavailable'].filter(Boolean).join(' ')}
+            data-testid="nav-shared-assistant"
+          >
             <div className="shared-assistant-nav__header">
               <button
                 type="button"
@@ -104,7 +139,12 @@ export default function SharedAssistantList() {
                 onClick={() => run(() => openSharedAssistantConversation(ref, !revoked))}
                 data-testid="nav-shared-assistant-open"
               >
-                <span className="assistant-session-history__delegated-title">{assistant.name}</span>
+                <span className="shared-assistant-nav__name-line">
+                  <span className="assistant-session-history__delegated-title">{assistant.name}</span>
+                  {reachable ? (
+                    <span className="shared-assistant-nav__online" data-testid="nav-shared-assistant-online" aria-hidden="true" />
+                  ) : null}
+                </span>
                 <span className="assistant-session-history__delegated-detail">{source}</span>
               </button>
               {revoked ? null : (
@@ -128,12 +168,7 @@ export default function SharedAssistantList() {
                   const turns = sessions.get(job.sessionId)?.dialogTurns?.length;
                   const status = sharedAssistantStatus(job, turns === undefined || turns > 0);
                   const detail = statusText(status, owner);
-                  const active = isSessionNavRowActive({
-                    rowSessionId: job.sessionId,
-                    activeTabId,
-                    activeSessionId: activeSessionId ?? null,
-                    activeChildHasVisibleRow: false,
-                  });
+                  const active = isActive(job.sessionId);
                   const title = sessions.get(job.sessionId)?.title || job.title || t('nav.sessions.sharedAssistant.untitled');
                   return (
                     <button
@@ -150,14 +185,33 @@ export default function SharedAssistantList() {
                       data-openbitfun-state={active ? 'active' : undefined}
                       aria-current={active ? 'true' : undefined}
                       title={detail ? `${title} · ${detail}` : title}
+                      aria-label={detail ? `${title} · ${detail}` : title}
                       onClick={() => run(() => openMainSession(job.sessionId))}
                       data-testid="nav-shared-assistant-conversation"
                     >
-                      <span className="assistant-session-history__delegated-title">{title}</span>
-                      {detail ? <span className="assistant-session-history__delegated-detail">{detail}</span> : null}
+                      <span className="assistant-session-history__delegated-line">
+                        <NavTaskStatusDot kind={status.kind} />
+                        <span className="assistant-session-history__delegated-title">{title}</span>
+                        <NavTaskStatusLabel kind={status.kind} text={shortText(status)} />
+                      </span>
                     </button>
                   );
                 })}
+                {hidden > 0 ? (
+                  <button
+                    type="button"
+                    className="openbitfun-nav-panel__inline-item assistant-session-history__delegated-more"
+                    data-openbitfun-component="sessions-section"
+                    data-openbitfun-part="more"
+                    onClick={() => {
+                      fullLists.add(key);
+                      setRevision(revision => revision + 1);
+                    }}
+                    data-testid="nav-shared-assistant-more"
+                  >
+                    {t('nav.sessions.delegated.showMore', { count: hidden })}
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>

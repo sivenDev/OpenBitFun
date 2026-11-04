@@ -10,6 +10,7 @@ import { notificationService } from '@/shared/notification-system';
 import type { WorkspaceInfo } from '@/shared/types';
 import SessionsSection from '../sessions/SessionsSection';
 import DelegatedTaskList from './DelegatedTaskList';
+import { useAssistantDelegatedTasks } from './useAssistantDelegatedTasks';
 import { readAssistantDefaultSession, saveAssistantDefaultSession } from './assistantSessionPreferences';
 import './AssistantSessionHistory.scss';
 
@@ -24,6 +25,8 @@ export default function AssistantSessionHistory({ workspace, isActive }: Props) 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  // Read once here: they decide whether this assistant's own sessions need a heading.
+  const delegatedTasks = useAssistantDelegatedTasks(workspace);
 
   const loadPreference = useCallback(async () => {
     const scope = getActiveSurfaceScope();
@@ -79,6 +82,16 @@ export default function AssistantSessionHistory({ workspace, isActive }: Props) 
           {t('nav.sessions.defaultReadFailed')}
         </Button>
       )}
+      {delegatedTasks.length > 0 && (
+        <div
+          className="assistant-session-history__mine"
+          data-openbitfun-component="sessions-section"
+          data-openbitfun-part="sectionLabel"
+          data-testid="nav-assistant-own-sessions-label"
+        >
+          {t('nav.sessions.delegated.mine')}
+        </div>
+      )}
       <SessionsSection
         workspaceId={workspace.id}
         workspacePath={workspace.rootPath}
@@ -90,7 +103,7 @@ export default function AssistantSessionHistory({ workspace, isActive }: Props) 
           onChange: sessionId => { void changeDefault(sessionId); },
         }}
       />
-      <DelegatedTaskList workspace={workspace} />
+      <DelegatedTaskList workspace={workspace} tasks={delegatedTasks} />
       {preference?.sessionId && (
         <Button variant="text" size="sm" disabled={saving || loading || loadFailed} onClick={() => { void changeDefault(null); }}>
           {t('nav.sessions.clearDefault')}
