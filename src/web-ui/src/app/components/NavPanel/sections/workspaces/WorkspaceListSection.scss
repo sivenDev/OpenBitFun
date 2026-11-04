@@ -1507,11 +1507,6 @@
 .assistant-session-history__delegated-chevron {
   flex: none;
   color: var(--openbitfun-color-content-muted);
-  transition: transform 120ms ease;
-
-  [aria-expanded='true'] > & {
-    transform: rotate(90deg);
-  }
 }
 
 .assistant-session-history__delegated-heading-title {

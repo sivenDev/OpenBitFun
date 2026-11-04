@@ -32,7 +32,7 @@ vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
 vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ warn: vi.fn() }) }));
 vi.mock('@openbitfun/ui', () => ({
-  Icon: () => <span />,
+  Icon: ({ name }: { name?: string }) => <span data-icon={name} />,
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock('@/infrastructure/i18n', () => ({
@@ -100,6 +100,9 @@ describe('DelegatedTaskList', () => {
       .toBe('nav.sessions.delegated.waitingBadge:2');
     expect(toggle(0).getAttribute('aria-expanded')).toBe('true');
     expect(toggle(1).getAttribute('aria-expanded')).toBe('false');
+    // The arrow points down on an open group, right on a closed one.
+    expect([0, 1].map(index => toggle(index).querySelector('[data-icon]')!.getAttribute('data-icon')))
+      .toEqual(['chevron-down', 'chevron-right']);
     expect(titles()).toEqual(['Task a']);
     // A row shows where the task stands as an icon and says it in its name and tooltip,
     // not that it is an outside task or where it came from.
