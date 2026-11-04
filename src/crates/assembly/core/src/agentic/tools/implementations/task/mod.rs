@@ -113,9 +113,10 @@ impl AgentExecutionTool {
         }
         if agents.iter().any(|agent| agent.assistant.is_some()) {
             out.push_str(
-                "<note>An assistant's type is only for calling it. When you talk about an \
-                 assistant, use its name and say whose it is and where it runs; never show \
-                 its type.</note>\n",
+                "<note>These are the assistants you can call; you are not one of them and \
+                 cannot call yourself. An assistant's type is only for calling it. When you \
+                 talk about an assistant, use its name and say whose it is and where it runs; \
+                 never show its type or a workspace path.</note>\n",
             );
         }
         out.push_str("</available_agents>");

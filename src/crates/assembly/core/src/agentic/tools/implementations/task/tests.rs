@@ -2819,7 +2819,8 @@ async fn the_catalog_lists_assistants_with_their_source_and_unavailable_reason()
     let rendered = AgentExecutionTool::format_agent_descriptions(&agents);
     assert!(rendered.contains("<agent type=\"shared:laptop/writer\">"));
     assert!(rendered.contains("Unavailable now:"));
-    assert!(rendered.contains("never show its type"));
+    assert!(rendered.contains("never show its type or a workspace path"));
+    assert!(rendered.contains("cannot call yourself"));
 }
 
 #[test]
