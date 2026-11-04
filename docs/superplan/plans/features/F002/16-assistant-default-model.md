@@ -31,7 +31,7 @@ parent: "F002"
 - **界面**：
   - 助理主页增加「默认模型」：下拉列出已启用的模型，以及「跟随主力模型（当前为 某模型）」；所选模型不可用时在旁边写「所选模型已不可用，正在使用主力模型」，设置保留，可以改选。
   - 调用卡片运行前写具体模型名：本机调用写解析出的模型名（来自主力模型时写「某模型（主力模型）」）；共享调用写「由共享该助理的设备选择」，对方回报后写实际模型名。运行后仍以被调用会话实际使用的模型为准（`b33de0ce5`）。
-- **共享调用回报实际模型**：主人那边的执行器已经在事件中记录 `modelSelected`（`apps/cli/src/dispatch/worker.rs:179-182`，Detached Dispatch 协议第 6 版已有）。发起方在共享调用的卡片上读取它；对方是不发这条记录的旧版本时保持「由共享该助理的设备选择」。只读取已有的可选事件，不新增协议能力；若执行时发现需要协议变化，先停下说明。
+- **共享调用回报实际模型**：主人那边的任务事件里，每一轮 `ModelRoundStarted` 已带实际模型名（`effective_model_name`），各版本都有，发起方读取共享任务状态时原样收到。发起方采用它作为调用卡片的模型；没有时保持「由共享该助理的设备选择」。不新增协议能力。（执行时核对：`modelSelected` 只在模型变化时写入，共享任务第一轮不会出现，所以不用它。）
 - **远程场景**：设置只在桌面端助理主页提供；Peer Device Mode 下经现有配置读写转发到对端，用对端的模型列表；手机端与 IM 不提供设置，从那里发起的助理对话照常使用设置；CLI 主机读同一配置；远程工作区不涉及（助理在本机运行）。
 
 **Non-Goals:**
@@ -43,7 +43,7 @@ parent: "F002"
 **Architecture:**
 - 存储在 `config-contracts` 的 `AppConfig`，与 `assistant_default_sessions` 并列；读写沿用 Web 的 `configManager`（路径 `app.assistant_default_models`），不新增 Tauri 命令。若执行时发现需要新命令，按 `remote_surface/table.rs` 登记一行（参照 `lan_share_update`）。
 - 解析放在 core（assembly 层），因为三个生效位置（Web 创建会话所走的后端、协调器助理分支、CLI 准入）都在 core 或以 core 为依赖；Web 只为了在创建前显示和传递模型而读取同一配置，判定规则以 core 为准（Web 侧规则用测试与 core 对齐）。
-- 不改协议：共享调用的模型回报使用已有的 `modelSelected` 审计事件。
+- 不改协议：共享调用的模型回报使用任务事件中每一轮已有的模型名。
 
 **Baseline:**
 - 分支 `feat/f001-external-agent-delegation`，基于 F002-13 当前提交（`d8a5aaaae` 之后）。用户本地 `Cargo.toml` 的改动不属于本计划，不提交。
@@ -143,15 +143,18 @@ parent: "F002"
 **Outcome:** 调用别人共享的助理时，卡片在对方回报后写实际模型；旧版本对方保持原文案。
 
 **Files:**
-- 执行时核对：发起方处理共享调用事件的位置（远程后台任务与 `DispatchJobObserver` 的 `auditStage`），把 `modelSelected` 写到调用卡片的模型显示上
+- Modify: `src/crates/assembly/core/src/agentic/coordination/remote_agent_turn.rs`、`external_agent_turn.rs` 及测试
+- Modify: `src/web-ui/src/flow_chat/utils/remoteAgent.ts`、`tool-cards/AgentControlToolCard.tsx`、`TaskToolDisplay.tsx` 及测试
 
 **Change Map:**
-- 读取已有的 `modelSelected` 审计事件；没有时不改动卡片文案。
+- 发起方读取共享任务事件时记下对方每轮报告的模型名，之后开始的轮次以它命名（此前轮次误用对方设备 id 命名，改为空，空名不更新卡片）。
+- 卡片对共享助理优先显示对方报告的模型；等于对方设备 id 的旧记录不当作模型，保持原文案。
 
 **Verification:**
 - 对应模块的最窄单元测试（新旧两种对方各一）
 
-- [ ] 有回报与无回报两种对方均有测试
+- [x] 有回报与无回报两种对方均有测试
+  证据（2026-11-04）：调查发现共享调用的卡片此前会把主人的设备 id 当作模型名（`ChildSessionStream` 以设备 id 作为 `effective_model_name`），一并修正。core `calls_name_the_model_the_owners_device_reports_not_the_device`（只采纳任务会话本身的模型名、空名不覆盖、报告前的轮次不命名、报告后的轮次用报告的模型）通过，`remote_agent_turn`/`external_agent_turn` 共 35 项通过。Web `reportedSharedModel`（采用报告的模型、旧记录中的设备 id 不当作模型、只用于共享助理）通过，tool-cards 与 remoteAgent 共 49 个文件 654 项通过；`tsc`、`eslint` 通过。
 
 ## Task 6: 真机验收
 

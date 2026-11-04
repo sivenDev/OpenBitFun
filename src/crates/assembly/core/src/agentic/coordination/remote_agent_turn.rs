@@ -151,12 +151,9 @@ pub(crate) async fn run_remote_agent_turn(
             &turn.session_id,
             job_device_name.clone(),
         ),
-        stream: ChildSessionStream::new(
-            &turn.session_id,
-            &turn.dialog_turn_id,
-            &agent_type,
-            &link.job.device_id,
-        ),
+        // Rounds name no model until the owner's device reports one; its
+        // device id is not a model.
+        stream: ChildSessionStream::new(&turn.session_id, &turn.dialog_turn_id, &agent_type, ""),
         event_queue: turn.event_queue.clone(),
         owner_wait: OwnerWait::new(job_device_name),
     };
@@ -231,6 +228,9 @@ pub(crate) trait JobPageSink: Send {
         snapshot: &RemoteAgentJobSnapshot,
         progress: Vec<ExternalAgentTurnEvent>,
     );
+
+    /// The model the owner's device reports running the job on.
+    fn report_model(&mut self, _model: &str) {}
 }
 
 /// Observes a task this process adopted after a restart. Its progress was
@@ -269,12 +269,7 @@ impl ResumedTaskSink {
             holds: HoldTracker::new(task.store.clone(), task.session_id, job_device_name.clone()),
             store: task.store,
             task_pk: task.task_pk,
-            stream: ChildSessionStream::new(
-                task.session_id,
-                task.turn_id,
-                task.agent_type,
-                &link.job.device_id,
-            ),
+            stream: ChildSessionStream::new(task.session_id, task.turn_id, task.agent_type, ""),
             event_queue: task.event_queue,
             cancel,
             owner_wait: OwnerWait::new(job_device_name),
@@ -362,6 +357,9 @@ pub(crate) async fn observe_job(
                 retry = OBSERVE_INTERVAL;
                 cursor = snapshot.cursor;
                 let progress = text.absorb(&snapshot.events, &link.job.session_id);
+                if let Some(model) = text.model() {
+                    sink.report_model(model);
+                }
                 sink.on_page(&snapshot, progress).await;
                 if snapshot.state.is_terminal() {
                     let end = match snapshot.state {
@@ -435,6 +433,10 @@ impl LiveSink {
 
 #[async_trait::async_trait]
 impl JobPageSink for LiveSink {
+    fn report_model(&mut self, model: &str) {
+        self.stream.report_model(model);
+    }
+
     async fn on_page(
         &mut self,
         snapshot: &RemoteAgentJobSnapshot,
@@ -462,6 +464,8 @@ impl JobPageSink for LiveSink {
 pub(crate) struct FinalText {
     current: String,
     last: String,
+    /// The model the job session's latest round ran on, as its device names it.
+    model: Option<String>,
 }
 
 impl FinalText {
@@ -496,8 +500,13 @@ impl FinalText {
                 AgenticEvent::ModelRoundStarted {
                     round_id,
                     round_index,
+                    effective_model_name,
                     ..
                 } => {
+                    let model = effective_model_name.trim();
+                    if !model.is_empty() {
+                        self.model = Some(model.to_string());
+                    }
                     if !self.current.trim().is_empty() {
                         self.last = std::mem::take(&mut self.current);
                     }
@@ -522,6 +531,10 @@ impl FinalText {
             }
         }
         projected
+    }
+
+    pub(crate) fn model(&self) -> Option<&str> {
+        self.model.as_deref()
     }
 
     pub(crate) fn finish(&self) -> String {

@@ -154,6 +154,52 @@ fn final_text_is_the_last_round_with_text_of_the_job_session() {
     assert_eq!(text_state.finish(), "The answer is 42.");
 }
 
+fn round_on(session: &str, round_id: &str, index: usize, model: &str) -> Value {
+    agent_event(json!({
+        "type": "ModelRoundStarted", "session_id": session, "turn_id": "t",
+        "round_id": round_id, "round_index": index,
+        "model_config_id": "owner-config", "effective_model_name": model,
+    }))
+}
+
+#[test]
+fn calls_name_the_model_the_owners_device_reports_not_the_device() {
+    let mut text_state = FinalText::default();
+    assert_eq!(text_state.model(), None);
+    text_state.absorb(
+        &[
+            round_on("nested-subagent", "x", 0, "fast-model"),
+            round_on("job-session", "r1", 0, "gpt-6.1-sol"),
+            round_on("job-session", "r2", 1, ""),
+        ],
+        "job-session",
+    );
+    assert_eq!(text_state.model(), Some("gpt-6.1-sol"));
+
+    let model_of = |event: &AgenticEvent| match event {
+        AgenticEvent::ModelRoundStarted {
+            effective_model_name,
+            ..
+        } => effective_model_name.clone(),
+        other => panic!("unexpected {other:?}"),
+    };
+    let started = |round_id: &str, round_index| ExternalAgentTurnEvent::RoundStarted {
+        round_id: round_id.to_string(),
+        round_index,
+        disable_explore_grouping: false,
+    };
+    let mut stream = ChildSessionStream::new("child", "turn", "shared:laptop/xiaolan", "");
+    assert_eq!(
+        model_of(stream.project(started("r1", 0)).last().unwrap()),
+        ""
+    );
+    stream.report_model("gpt-6.1-sol");
+    assert_eq!(
+        model_of(stream.project(started("r2", 1)).last().unwrap()),
+        "gpt-6.1-sol"
+    );
+}
+
 #[test]
 fn job_links_round_trip_and_reject_unreadable_values() {
     let encoded = link().encode();

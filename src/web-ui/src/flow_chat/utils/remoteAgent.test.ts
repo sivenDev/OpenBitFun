@@ -3,6 +3,7 @@ import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI'
 import type { WorkspaceInfo } from '@/shared/types';
 import {
   latestEffectiveModel,
+  reportedSharedModel,
   requestedAgentTypeForToolCall,
   calledAssistantName,
   calledAssistantOwner,
@@ -112,5 +113,21 @@ describe('latestEffectiveModel', () => {
     ] } as never;
     expect(latestEffectiveModel(session)).toBe('newer');
     expect(latestEffectiveModel({ dialogTurns: [] } as never)).toBeNull();
+  });
+});
+
+describe('reportedSharedModel', () => {
+  const type = 'shared:laptop-1/xiaolan';
+
+  it('names the model the owner reports, never the owner device', () => {
+    expect(reportedSharedModel(type, 'gpt-6.1-sol')).toBe('gpt-6.1-sol');
+    // Calls recorded by earlier builds named rounds after the device.
+    expect(reportedSharedModel(type, 'laptop-1', 'laptop-1')).toBeNull();
+    expect(reportedSharedModel(type, 'laptop-1', ' gpt-6.1-terra ')).toBe('gpt-6.1-terra');
+    expect(reportedSharedModel(type, undefined, null)).toBeNull();
+  });
+
+  it('applies only to shared assistants', () => {
+    expect(reportedSharedModel('assistant:xiaolan', 'gpt-6.1-sol')).toBeNull();
   });
 });

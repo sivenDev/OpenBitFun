@@ -74,7 +74,9 @@ pub(super) struct ChildSessionStream {
     session_id: String,
     turn_id: String,
     agent_type: String,
-    client_id: String,
+    /// What rounds name as their model: the ACP client, or the model a
+    /// shared assistant's device reports.
+    model_label: String,
     current_round: Option<OpenRound>,
     pub(super) rounds: usize,
 }
@@ -91,7 +93,7 @@ impl ChildSessionStream {
             session_id: session_id.to_string(),
             turn_id: turn_id.to_string(),
             agent_type: agent_type.to_string(),
-            client_id: client_id.to_string(),
+            model_label: client_id.to_string(),
             current_round: None,
             rounds: 0,
         }
@@ -175,9 +177,14 @@ impl ChildSessionStream {
             round_group_id: None,
             round_index,
             model_config_id: self.agent_type.clone(),
-            effective_model_name: self.client_id.clone(),
+            effective_model_name: self.model_label.clone(),
             routing: None,
         }
+    }
+
+    /// Names the model of rounds started from now on.
+    pub(super) fn report_model(&mut self, model: &str) {
+        self.model_label = model.to_string();
     }
 
     /// Opens a round when the executor streams content before announcing one.
@@ -200,7 +207,7 @@ impl ChildSessionStream {
             duration_ms: Some(round.started_at.elapsed().as_millis() as u64),
             provider_id: None,
             model_config_id: self.agent_type.clone(),
-            effective_model_name: self.client_id.clone(),
+            effective_model_name: self.model_label.clone(),
             first_chunk_ms: None,
             first_visible_output_ms: None,
             stream_duration_ms: None,

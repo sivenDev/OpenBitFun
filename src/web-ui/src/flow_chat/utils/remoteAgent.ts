@@ -139,6 +139,24 @@ export function requestedAgentTypeForToolCall(
 }
 
 /**
+ * The model a call to a shared assistant ran on, as its owner's device
+ * reports it. Earlier builds named those rounds after the device, which is
+ * not a model.
+ */
+export function reportedSharedModel(
+  agentType: string | null | undefined,
+  ...reported: Array<string | null | undefined>
+): string | null {
+  const remote = remoteAgentFromAgentType(agentType);
+  if (!remote) return null;
+  for (const value of reported) {
+    const name = value?.trim();
+    if (name && name !== remote.deviceId) return name;
+  }
+  return null;
+}
+
+/**
  * The model a called agent's session last ran on, from its newest model round
  * that recorded one, or null before it ran.
  */

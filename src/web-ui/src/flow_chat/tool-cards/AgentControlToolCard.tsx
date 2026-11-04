@@ -26,6 +26,7 @@ import {
   calledAssistantOwner,
   calledAssistantSessionName,
   latestEffectiveModel,
+  reportedSharedModel,
   localAssistantFromAgentType,
   remoteAgentFromAgentType,
 } from '../utils/remoteAgent';
@@ -213,7 +214,9 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
     useAssistantModel(localAssistantFromAgentType(calledType)),
     t,
   );
-  const assistantRanOn = toolItem.subagentModelDisplayName?.trim() || latestEffectiveModel(linkedSession);
+  const assistantRanOn = remoteAgentFromAgentType(calledType)
+    ? reportedSharedModel(calledType, toolItem.subagentModelDisplayName, latestEffectiveModel(linkedSession))
+    : toolItem.subagentModelDisplayName?.trim() || latestEffectiveModel(linkedSession);
   const modelName = callsAssistant ? assistantRanOn || (assistantOwner?.kind === 'shared'
     ? t('toolCards.taskTool.remoteAgentModel')
     : plannedModel || t('toolCards.taskTool.assistantModelDefault'))
