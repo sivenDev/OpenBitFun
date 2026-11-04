@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "digest": "fnv1a64:46565db1a3e147cb",
+  "digest": "fnv1a64:6448966ea173a0a0",
   "retiredCommandPrefixes": [
     {
       "prefix": "lsp_",
@@ -4580,6 +4580,17 @@
       "cliPeer": {
         "kind": "soft_empty",
         "reason": "background command activities are desktop-hosted; the CLI peer host reports none"
+      }
+    },
+    {
+      "id": "list_callable_assistants",
+      "surface": "tauri_command",
+      "remoteWorkspace": "WorkspaceAgnostic",
+      "peer": {
+        "kind": "proxied"
+      },
+      "cliPeer": {
+        "kind": "handled"
       }
     },
     {

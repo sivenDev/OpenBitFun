@@ -24,6 +24,12 @@ pub struct ListSubagentsRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ListCallableAssistantsRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListVisibleSubagentsRequest {
     #[serde(default)]
     pub workspace_id: Option<String>,
@@ -182,6 +188,19 @@ pub async fn list_visible_subagents(
             external_sources_supported,
         })
         .await)
+}
+
+/// The assistants the person may name with「@」in a conversation, or why
+/// it can name none.
+#[tauri::command]
+pub async fn list_callable_assistants(
+    request: ListCallableAssistantsRequest,
+) -> Result<openbitfun_core::agentic::tools::implementations::task::CallableAssistants, String> {
+    openbitfun_core::agentic::tools::implementations::task::callable_assistants_for_session(
+        &request.session_id,
+    )
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

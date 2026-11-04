@@ -37,6 +37,7 @@ use std::time::Instant;
 
 mod agent_control;
 mod background;
+mod callable;
 mod deep_review;
 mod execution;
 mod input;
@@ -44,6 +45,10 @@ mod launch_review_agent;
 mod schema;
 mod validation;
 
+pub use callable::{
+    callable_assistants_for_session, CallableAssistant, CallableAssistantOwner,
+    CallableAssistantOwnerKind, CallableAssistants, CallableAssistantsRefusal,
+};
 pub use launch_review_agent::LaunchReviewAgentTool;
 
 pub struct TaskTool;

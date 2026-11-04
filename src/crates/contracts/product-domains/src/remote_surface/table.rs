@@ -467,6 +467,7 @@ pub(super) const OPERATIONS: &[OperationDefinition] = &[
     op("list_ai_models_by_config",                                   Unaudited,   Proxied,          HANDLED),
     op("list_archived_sessions",                                     Unaudited,   Proxied,          CLI_NOT_IMPLEMENTED),
     op("list_background_command_activities",                         Unaudited,   Proxied,          SOFT_EMPTY_BACKGROUND_COMMANDS),
+    op("list_callable_assistants",                                   Agnostic,    Proxied,          HANDLED),
     op("list_cron_jobs",                                             Unaudited,   Proxied,          CLI_NOT_IMPLEMENTED),
     op("list_directory_files",                                       Routed,      Proxied,          HANDLED),
     host_invoke_only("list_files",                                   Routed,      Proxied,          HANDLED),

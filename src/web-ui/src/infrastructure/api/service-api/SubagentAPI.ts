@@ -174,6 +174,31 @@ export interface UpdateSubagentPayload {
   workspaceId?: string;
 }
 
+/** Why a conversation can name no assistant with「@」. */
+export type CallableAssistantsRefusal =
+  | 'review'
+  | 'mode'
+  | 'permissionRestrictions'
+  | 'swarm'
+  | 'trust'
+  | 'unavailable';
+
+/** An assistant a conversation may name with「@」. */
+export interface CallableAssistant {
+  /** The `subagent_type` a call uses: `assistant:<id>` or `shared:<deviceId>/<id>`. */
+  agentType: string;
+  name: string;
+  owner: { kind: 'mine' | 'shared'; deviceName?: string };
+  available: boolean;
+  unavailableReason?: RemoteAgentUnavailableReason | string;
+}
+
+export interface CallableAssistants {
+  supported: boolean;
+  reason?: CallableAssistantsRefusal | string;
+  assistants: CallableAssistant[];
+}
+
 // ==================== API ====================
 
 export const SubagentAPI = {
@@ -188,6 +213,13 @@ export const SubagentAPI = {
     return invokePrepared<SubagentInfo[]>('list_visible_subagents', async () => ({
       request: await workspaceScopedRequest(options),
     }));
+  },
+
+  /** The assistants the person may name with「@」in a conversation. */
+  async listCallableAssistants(sessionId: string): Promise<CallableAssistants> {
+    return api.invoke<CallableAssistants>('list_callable_assistants', {
+      request: { sessionId },
+    });
   },
 
   async listManageableSubagents(options: ListManageableSubagentsOptions): Promise<SubagentInfo[]> {

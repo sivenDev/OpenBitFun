@@ -195,6 +195,62 @@ async fn child_delegation_policy(
     }
 }
 
+/// What decides whether a session may hand work to an agent that runs its
+/// own tools: an external agent or an assistant.
+pub(super) struct ParentFacts<'a> {
+    pub(super) agent_type: Option<&'a str>,
+    pub(super) workspace_id: Option<&'a str>,
+    pub(super) is_review: bool,
+    pub(super) ceiling: &'a PermissionRuntimeCeiling,
+    pub(super) is_swarm: bool,
+}
+
+/// Why a session may hand work to no external agent or assistant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentRefusal {
+    Review,
+    Mode,
+    PermissionRestrictions,
+    Swarm,
+}
+
+impl ParentRefusal {
+    /// The reason as the model reads it, after the agent's name.
+    pub(super) fn reason(self) -> &'static str {
+        match self {
+            Self::Review => "is not available to review agents",
+            Self::Mode => "is not available in this mode",
+            Self::PermissionRestrictions => "cannot be delegated from a session with permission restrictions: the external agent's own tools cannot be held to them",
+            Self::Swarm => "is not available inside an Ultra Swarm",
+        }
+    }
+}
+
+/// The parent checks the Task catalog, admission, and the assistants a
+/// conversation may name all share.
+pub(super) fn parent_refusal(facts: ParentFacts<'_>) -> Option<ParentRefusal> {
+    if facts.is_review {
+        return Some(ParentRefusal::Review);
+    }
+    // Same mode set that previously received the legacy
+    // `acp__<client>__prompt` tools.
+    let accepts_external_agents = facts.agent_type.is_some_and(|agent_type| {
+        get_agent_registry()
+            .get_agent(agent_type, facts.workspace_id)
+            .is_some_and(|agent| agent.include_dynamic_mcp_tools())
+    });
+    if !accepts_external_agents {
+        return Some(ParentRefusal::Mode);
+    }
+    if !facts.ceiling.is_empty() {
+        return Some(ParentRefusal::PermissionRestrictions);
+    }
+    if facts.is_swarm {
+        return Some(ParentRefusal::Swarm);
+    }
+    None
+}
+
 pub(super) struct ExternalAgentAdmissionFacts<'a> {
     pub(super) parent_is_swarm: bool,
     pub(super) model_override_requested: bool,
@@ -209,27 +265,14 @@ impl AgentExecutionTool {
         parent_ceiling: &PermissionRuntimeCeiling,
         parent_is_swarm: bool,
     ) -> Option<&'static str> {
-        if Self::is_deep_review_context(Some(context)) {
-            return Some("is not available to review agents");
-        }
-        // Same mode set that previously received the legacy
-        // `acp__<client>__prompt` tools.
-        let parent_accepts_external_agents =
-            context.agent_type.as_deref().is_some_and(|agent_type| {
-                get_agent_registry()
-                    .get_agent(agent_type, context.workspace_id())
-                    .is_some_and(|agent| agent.include_dynamic_mcp_tools())
-            });
-        if !parent_accepts_external_agents {
-            return Some("is not available in this mode");
-        }
-        if !parent_ceiling.is_empty() {
-            return Some("cannot be delegated from a session with permission restrictions: the external agent's own tools cannot be held to them");
-        }
-        if parent_is_swarm {
-            return Some("is not available inside an Ultra Swarm");
-        }
-        None
+        parent_refusal(ParentFacts {
+            agent_type: context.agent_type.as_deref(),
+            workspace_id: context.workspace_id(),
+            is_review: Self::is_deep_review_context(Some(context)),
+            ceiling: parent_ceiling,
+            is_swarm: parent_is_swarm,
+        })
+        .map(ParentRefusal::reason)
     }
 
     /// Admits an `acp:<client_id>` subagent only when no parent restriction

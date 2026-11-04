@@ -33,6 +33,7 @@ pub(crate) fn dispatch<'a>(
     match command {
         "list_ai_models_by_config" => Box::pin(models::list_ai_models_by_config(args)),
         "list_visible_subagents" | "list_subagents" | "list_manageable_subagents" => Box::pin(tools::list_subagents(command, args)),
+        "list_callable_assistants" => Box::pin(tools::list_callable_assistants(args)),
         "get_session_permission_mode" => Box::pin(permission::session_permission_mode(state, args, false, false)),
         "update_session_permission_mode" => Box::pin(permission::session_permission_mode(state, args, true, false)),
         "update_active_turn_permission_mode" => Box::pin(permission::session_permission_mode(state, args, true, true)),
@@ -273,6 +274,7 @@ pub(crate) const HANDLED_COMMANDS: &[&str] = &[
     "update_session_permission_mode",
     "get_session_permission_mode",
     "list_visible_subagents",
+    "list_callable_assistants",
     "list_ai_models_by_config",
     "apply_external_source_control_action_command",
     "archive_session",

@@ -25,6 +25,21 @@ pub(crate) async fn get_all_tools_info() -> Result<Value, String> {
     serde_json::to_value(tools).map_err(|error| format!("Failed to serialize tool info: {error}"))
 }
 
+/// The assistants a conversation on this host may name with「@」, as
+/// Desktop lists them.
+pub(crate) async fn list_callable_assistants(args: &Value) -> Result<Value, String> {
+    let request = crate::peer_host::args::request_value(args);
+    let session_id = crate::peer_host::args::get_string(request, "sessionId")?;
+    let callable =
+        openbitfun_core::agentic::tools::implementations::task::callable_assistants_for_session(
+            &session_id,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    serde_json::to_value(callable)
+        .map_err(|error| format!("Failed to serialize callable assistants: {error}"))
+}
+
 /// Query the host registry using the same visibility and remote-source rules as Desktop.
 pub(crate) async fn list_subagents(command: &str, args: &Value) -> Result<Value, String> {
     use crate::peer_host::args::{get_string, optional_string, request_value};

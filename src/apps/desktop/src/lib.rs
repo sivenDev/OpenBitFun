@@ -1640,6 +1640,7 @@ pub async fn run() {
             reset_agent_profile_config,
             list_subagents,
             list_visible_subagents,
+            api::subagent_api::list_callable_assistants,
             list_manageable_subagents,
             get_custom_agent_detail,
             create_custom_agent,

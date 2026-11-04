@@ -70,7 +70,9 @@ parent: "F002"
 - core 最窄测试：精简模式 / 深度审查 / 权限上限 / 普通信任外部任务返回不支持；助理自己的对话不含自己；共享助理不在线、已撤销时列出且不可用；与回合内列表一致。
 - `cargo +1.95.0 check -p openbitfun-desktop`、CLI 对端主机的闭包测试（`peer_host::`）、`pnpm run check:core-boundaries`。
 
-- [ ] 判定共用、命令与登记行、CLI 对端处理均有测试
+- [x] 判定共用、命令与登记行、CLI 对端处理均有测试
+
+**进展（2026-11-04）：** 完成。`task/execution.rs` 抽出 `parent_refusal`（`ParentRefusal`：审查 / 模式 / 权限上限 / Ultra Swarm），回合内的 `external_agent_parent_refusal` 与准入改为调用它，给智能体的原因文字不变。新文件 `task/callable.rs`：`callable_assistants_for_session` 从会话读取模式与工作区，要求模式带 `AgentSpawn`/`Task`，用同一 `parent_refusal`、`AssistantCaller` 与 `assistant_category` 给出列表；原因代码 `review | mode | permissionRestrictions | swarm | trust | unavailable`，不可用的共享助理带 `unavailableReason`（`RemoteAgentUnavailableReason`）。用户在界面里输入的回合既不是审查运行也不是外部委派任务，所以会话级判定不看回合元数据；普通信任外部任务的拒绝仍在回合内由 `ensure_assistant_admissible` 执行。命令 `list_callable_assistants`（`subagent_api.rs`）；登记行 `Agnostic, Proxied, HANDLED`；CLI 对端主机 `tools::list_callable_assistants`；能力目录把它记入 `browse-agents` 的证据并重新生成；Web `SubagentAPI.listCallableAssistants`。验证：`task::callable` 4 项（自己与共享的顺序和不可用原因、助理自己的对话不含自己、不能调用子智能体 / 精简 / Ultimate / 深度审查 / 权限上限返回不支持、响应结构）、`tools::implementations::task` 103 项、`remote_surface` 20 项、CLI `peer_host` 106 项、`cargo check -p openbitfun-desktop`、`check:core-boundaries`、web `tsc` 与 eslint 通过。
 
 ## Task 2: 回合开始时核对并告知智能体
 

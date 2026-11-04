@@ -242,6 +242,7 @@
       },
       "evidence": [
         "command:list_visible_subagents",
+        "command:list_callable_assistants",
         "command:list_subagents",
         "command:list_manageable_subagents"
       ]
