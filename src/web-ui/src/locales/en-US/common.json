@@ -493,6 +493,8 @@
       "sourceAgentFilter": "Session source",
       "allSourceAgents": "All agents",
       "sourceAgentLabel": "Imported from {{name}}",
+      "delegatedByBadge": "From {{name}}",
+      "delegatedByTooltip": "{{name}} started this conversation by calling this assistant",
       "discoveryPartial": "Some external sessions could not be discovered. Existing sessions remain available.",
       "discoveryWarningTitle": "External session discovery",
       "discoveryReadFailed": "Some {{source}} session records could not be read. Existing sessions remain available.",

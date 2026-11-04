@@ -56,8 +56,8 @@ pub use registry::visibility::{
     BuiltinSubagentExposure, SubagentVisibilityPolicy, SubagentVisibilitySummary,
 };
 pub(crate) use registry::{
-    assistant_category, bounded_descriptor, local_assistant_entries, AssistantCaller,
-    LocalAssistantEntry,
+    assistant_category, bounded_descriptor, local_assistant_entries, local_assistant_workspace_id,
+    AssistantCaller, LocalAssistantEntry,
 };
 pub use registry::{
     get_agent_registry, AgentRegistry, CustomAgentDetail, CustomSubagentDetail, ExternalAgentHost,

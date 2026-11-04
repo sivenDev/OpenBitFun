@@ -145,6 +145,14 @@ function DefaultSessionTitlePreview({ sessionId, createdAt }: Pick<Session, 'ses
   );
 }
 
+/** The assistant that started this session by calling it, by name. */
+const delegatedByAssistantName = (session: Session): string | undefined => {
+  const delegatedBy = session.delegatedBy;
+  const name = delegatedBy?.assistantName?.trim()
+    || delegatedBy?.assistant?.replace(/^assistant:/, '').trim();
+  return name || undefined;
+};
+
 const getChildSessionBadge = (kind: Session['sessionKind']): string => {
   const normalizedKind =
     kind === 'review' || kind === 'deep_review' || kind === 'subagent'
@@ -1469,6 +1477,7 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
           const relationship = resolveSessionRelationship(session);
           const isChildSession = level === 1 && relationship.displayAsChild;
           const childSessionBadge = getChildSessionBadge(relationship.kind);
+          const delegatedByName = delegatedByAssistantName(session);
           const parentReviewActivity = deriveSessionReviewActivity(
             flowChatState,
             session.sessionId,
@@ -1721,6 +1730,13 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
                       <StatusPill className="openbitfun-nav-panel__inline-item-source-badge" tone="neutral"
                         title={t('nav.sessions.sourceAgentLabel', { name: sessionSourceAgentLabel(session.importedSource) })}>
                         {sessionSourceAgentLabel(session.importedSource)}
+                      </StatusPill>
+                    ) : null}
+                    {delegatedByName ? (
+                      <StatusPill className="openbitfun-nav-panel__inline-item-source-badge" tone="neutral"
+                        data-testid="session-delegated-by-badge"
+                        title={t('nav.sessions.delegatedByTooltip', { name: delegatedByName })}>
+                        {t('nav.sessions.delegatedByBadge', { name: delegatedByName })}
                       </StatusPill>
                     ) : null}
                     {isChildSession ? (

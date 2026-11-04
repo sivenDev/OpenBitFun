@@ -26,8 +26,8 @@ use std::sync::{Arc, OnceLock};
 
 pub use acp_agents::ExternalAgentHost;
 pub(crate) use assistants::{
-    assistant_category, bounded_descriptor, local_assistant_entries, AssistantCaller,
-    LocalAssistantEntry,
+    assistant_category, bounded_descriptor, local_assistant_entries, local_assistant_workspace_id,
+    AssistantCaller, LocalAssistantEntry,
 };
 #[cfg(feature = "external-sources")]
 pub(crate) use external::external_subagent_runtime_key;

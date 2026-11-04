@@ -701,6 +701,9 @@ export interface SubagentSessionLinkedEvent extends AgenticEvent {
   modelId?: string;
   continuationPolicy?: import('@/shared/types/session-history').SessionContinuationPolicy;
   focusedReviewDisplayLabel?: string;
+  /** The session is another assistant's own, started by this call: it is
+   * listed with that assistant's sessions, not as a hidden subagent. */
+  assistantSession?: boolean;
 }
 
 export type DeepReviewQueueStatus =

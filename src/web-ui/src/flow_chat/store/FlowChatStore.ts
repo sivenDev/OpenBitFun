@@ -7432,21 +7432,23 @@ export class FlowChatStore {
           if (existing) {
             const continuationPolicy = existing.continuationPolicy ?? relationship.continuationPolicy;
             const importedSource = metadata.customMetadata?.importedFrom ?? existing.importedSource;
+            const delegatedBy = metadata.delegatedBy ?? existing.delegatedBy;
             const externalHistory = externalHistoryFromMetadata(metadata.customMetadata);
             const externalBranchOf = metadata.customMetadata?.externalBranchOf;
             const followedFields = externalHistory ? { ...titleState, lastActiveAt: metadata.lastActiveAt } : {};
             if (existing.workspaceId || existing.config.workspaceId || !workspaceId) {
               if (continuationPolicy === existing.continuationPolicy && importedSource === existing.importedSource
+                && JSON.stringify(delegatedBy) === JSON.stringify(existing.delegatedBy)
                 && (!externalHistory || (existing.title === titleState.title && existing.lastActiveAt === metadata.lastActiveAt))
                 && JSON.stringify(externalHistory) === JSON.stringify(existing.externalHistory)
                 && JSON.stringify(externalBranchOf) === JSON.stringify(existing.externalBranchOf)) return prev;
               const sessions = new Map(prev.sessions);
-              sessions.set(metadata.sessionId, { ...existing, ...followedFields, continuationPolicy, importedSource, externalHistory, externalBranchOf });
+              sessions.set(metadata.sessionId, { ...existing, ...followedFields, continuationPolicy, importedSource, delegatedBy, externalHistory, externalBranchOf });
               return { ...prev, sessions };
             }
             const sessions = new Map(prev.sessions);
             sessions.set(metadata.sessionId, {
-              ...existing, ...followedFields, workspaceId, projectWorkspaceId, continuationPolicy, importedSource, externalHistory, externalBranchOf,
+              ...existing, ...followedFields, workspaceId, projectWorkspaceId, continuationPolicy, importedSource, delegatedBy, externalHistory, externalBranchOf,
               workspacePath: metadata.workspacePath || workspacePath,
               projectWorkspacePath: metadata.projectWorkspacePath || workspacePath,
               ...remoteScope,
@@ -7478,6 +7480,7 @@ export class FlowChatStore {
             persistedStatus: metadata.status,
             persistedTurnCount: metadata.turnCount,
             importedSource: metadata.customMetadata?.importedFrom,
+            delegatedBy: metadata.delegatedBy,
             externalHistory: externalHistoryFromMetadata(metadata.customMetadata),
             externalBranchOf: metadata.customMetadata?.externalBranchOf,
             config: {
@@ -7933,6 +7936,7 @@ export class FlowChatStore {
               persistedStatus: metadata.status,
               persistedTurnCount: metadata.turnCount,
               importedSource: metadata.customMetadata?.importedFrom,
+              delegatedBy: metadata.delegatedBy,
               externalHistory: externalHistoryFromMetadata(metadata.customMetadata),
               externalBranchOf: metadata.customMetadata?.externalBranchOf,
               config: {

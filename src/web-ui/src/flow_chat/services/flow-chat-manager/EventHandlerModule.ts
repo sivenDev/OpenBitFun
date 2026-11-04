@@ -619,6 +619,11 @@ function handleSubagentSessionLinked(
   };
 
   attachSubagentSessionToParentTool(parentInfo, childSessionId, subagentDialogTurnId);
+  // A call to another assistant starts that assistant's own session; the
+  // card links to it, but it does not become a child of the caller.
+  if (event.assistantSession ?? (event as any).assistant_session) {
+    return;
+  }
   ensureSubagentSession(
     context,
     parentInfo,

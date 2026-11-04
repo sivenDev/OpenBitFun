@@ -2,11 +2,15 @@
 //!
 //! Top-level component that integrates all subsystems
 
+mod assistant_turn;
 mod background_outcomes;
 mod control_conversation;
 mod coordination_store;
 mod delegation_context;
 mod external_agent_turn;
+pub(crate) use assistant_turn::{
+    ASSISTANT_CALL_CALLER_CONTEXT_KEY, ASSISTANT_CALL_CALLER_NAME_CONTEXT_KEY,
+};
 mod remote_agent_turn;
 pub(crate) use remote_agent_turn::REMOTE_AGENT_CALL_CHAIN_CONTEXT_KEY;
 mod remote_holds;

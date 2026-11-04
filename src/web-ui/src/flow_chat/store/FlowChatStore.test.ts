@@ -2068,6 +2068,19 @@ describe('FlowChatStore historical session hydration state', () => {
     expect(apiMocks.restoreSessionView).not.toHaveBeenCalled();
   });
 
+  it('keeps the assistant that started a session when loading its metadata', async () => {
+    const delegatedBy = {
+      assistant: 'assistant:workspace-reader', assistantName: 'Reader', sessionId: 'reader-session',
+      callChain: ['local/workspace-reader'],
+    };
+    apiMocks.listSessions.mockResolvedValueOnce([{
+      sessionId: 'called-session', sessionName: 'Summarize the notes', agentType: 'Claw', modelName: 'primary',
+      createdAt: 10, lastActiveAt: 20, delegatedBy,
+    }]);
+    await flowChatStore.initializeFromDisk(fixtureWorkspaceId('D:/workspace/OpenBitFun'), undefined);
+    expect(flowChatStore.getState().sessions.get('called-session')?.delegatedBy).toEqual(delegatedBy);
+  });
+
   it('refreshes followed-source names, activity and versions without replacing viewed history', async () => {
     const workspaceId = fixtureWorkspaceId('D:/workspace/OpenBitFun');
     const sourceMetadata = {

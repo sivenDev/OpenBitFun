@@ -1057,6 +1057,51 @@ describe('subagent parent helpers', () => {
     expect(FlowChatStore.getInstance().getState().sessions.get('review-child')?.continuationPolicy).toBe('fresh_only');
   });
 
+  it('links the card to another assistant\'s session without making it a child', () => {
+    const task = makeTaskTool('task-assistant');
+    FlowChatStore.getInstance().setState(() => ({
+      sessions: new Map([[
+        'parent-session',
+        {
+          sessionId: 'parent-session',
+          title: 'Parent Session',
+          dialogTurns: [{
+            id: 'parent-turn',
+            sessionId: 'parent-session',
+            userMessage: { id: 'user-1', content: 'Ask the writer', timestamp: 900 },
+            modelRounds: [makeRound('round-1', [task])],
+            status: 'processing',
+            startTime: 900,
+          }],
+          status: 'idle',
+          config: { agentType: 'Claw' },
+          createdAt: 800,
+          lastActiveAt: 1000,
+          error: null,
+          sessionKind: 'normal',
+        } as Session,
+      ]]),
+      activeSessionId: 'parent-session',
+    }));
+
+    __test_only__.handleSubagentSessionLinked(
+      { currentWorkspacePath: '/assistants/reader' } as FlowChatContext,
+      {
+        sessionId: 'writer-session',
+        parentSessionId: 'parent-session',
+        parentDialogTurnId: 'parent-turn',
+        parentToolCallId: 'task-assistant',
+        agentType: 'Claw',
+        assistantSession: true,
+      },
+    );
+
+    const store = FlowChatStore.getInstance();
+    const card = store.findToolItem('parent-session', 'parent-turn', 'task-assistant');
+    expect((card as FlowToolItem | undefined)?.subagentSessionId).toBe('writer-session');
+    expect(store.getState().sessions.has('writer-session')).toBe(false);
+  });
+
   it('stores an absolute parent Turn index when linking from a partial restored tail', () => {
     const task = makeTaskTool('task-tail');
     FlowChatStore.getInstance().setState(() => ({

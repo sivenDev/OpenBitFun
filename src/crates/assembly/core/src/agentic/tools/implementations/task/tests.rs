@@ -2915,6 +2915,60 @@ async fn local_assistant_admission_refuses_the_caller_itself_and_normal_trust() 
 }
 
 #[test]
+fn a_local_assistant_call_carries_its_chain_and_refuses_a_loop_or_a_delegated_caller() {
+    let chain_key = crate::service::delegation::DELEGATION_CALL_CHAIN_CONTEXT_KEY;
+
+    let owner = test_tool_context("Standard");
+    let call = AgentExecutionTool::local_assistant_call_context(
+        &owner,
+        "dev1",
+        "assistant:workspace-writer",
+        Some("Writer"),
+    )
+    .expect("the owner's session may call its assistant");
+    assert_eq!(call.get(chain_key).map(String::as_str), Some("[]"));
+    assert!(!call.contains_key(crate::agentic::coordination::ASSISTANT_CALL_CALLER_CONTEXT_KEY));
+
+    let mut looped = test_tool_context("Standard");
+    looped.custom_data.insert(
+        chain_key.to_string(),
+        serde_json::Value::String(
+            r#"["dev1/workspace-writer","dev1/workspace-reader"]"#.to_string(),
+        ),
+    );
+    let refusal = AgentExecutionTool::local_assistant_call_context(
+        &looped,
+        "dev1",
+        "assistant:workspace-writer",
+        None,
+    )
+    .unwrap_err();
+    assert!(refusal.contains("circular call"), "{refusal}");
+    let call = AgentExecutionTool::local_assistant_call_context(
+        &looped,
+        "dev1",
+        "assistant:workspace-editor",
+        None,
+    )
+    .expect("an assistant off the chain may be called");
+    assert_eq!(
+        call.get(chain_key).map(String::as_str),
+        Some(r#"["dev1/workspace-writer","dev1/workspace-reader"]"#)
+    );
+
+    let mut delegated = test_tool_context("Standard");
+    mark_delegated(&mut delegated, Some("full"));
+    let refusal = AgentExecutionTool::local_assistant_call_context(
+        &delegated,
+        "dev1",
+        "assistant:workspace-writer",
+        None,
+    )
+    .unwrap_err();
+    assert!(refusal.contains("another device delegated"), "{refusal}");
+}
+
+#[test]
 fn task_description_documents_assistant_types() {
     let description = AgentExecutionTool::new().render_description();
     assert!(description.contains("`assistant:<id>`"));

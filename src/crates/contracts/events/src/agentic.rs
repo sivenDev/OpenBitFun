@@ -230,6 +230,10 @@ pub enum AgenticEvent {
         /// Runtime-owned admission policy for subsequent child turns.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         continuation_policy: Option<SessionContinuationPolicy>,
+        /// The child is a session of another of this device's assistants,
+        /// listed with that assistant's sessions, not a hidden subagent.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        assistant_session: bool,
     },
 
     DialogTurnCompleted {
@@ -1178,6 +1182,7 @@ mod tests {
             model_id: Some("fast".to_string()),
             focused_review_display_label: Some("Authentication boundary".to_string()),
             continuation_policy: Some(SessionContinuationPolicy::FreshOnly),
+            assistant_session: false,
         };
 
         assert_eq!(event.session_id(), Some("child-session"));
@@ -1214,6 +1219,7 @@ mod tests {
             event,
             AgenticEvent::SubagentSessionLinked {
                 continuation_policy: None,
+                assistant_session: false,
                 ..
             }
         ));

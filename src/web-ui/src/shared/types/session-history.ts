@@ -74,6 +74,17 @@ export interface SessionContextUsage {
   source: SessionContextUsageSource;
 }
 
+/** Who started a session another of this device's assistants called. */
+export interface SessionDelegatedBy {
+  /** The calling assistant's agent type, `assistant:<directory>`. */
+  assistant?: string;
+  /** The calling assistant's name when the call was made. */
+  assistantName?: string;
+  /** The caller's session. */
+  sessionId?: string;
+  callChain?: string[];
+}
+
 export interface SessionMetadata {
   workspaceId?: string;
   projectWorkspaceId?: string;
@@ -111,6 +122,8 @@ export interface SessionMetadata {
   customMetadata?: SessionCustomMetadata;
   currentContextUsage?: SessionContextUsage;
   relationship?: SessionRelationship;
+  /** Set when another of this device's assistants started the session. */
+  delegatedBy?: SessionDelegatedBy;
   todos?: any[];
   workspacePath?: string;
   projectWorkspacePath?: string;

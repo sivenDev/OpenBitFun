@@ -3,6 +3,10 @@ use crate::agentic::agents::is_swarm_delegate_agent_type;
 use crate::agentic::coordination::external_agent_client_id;
 use crate::agentic::core::{SessionContinuationPolicy, SessionModelBindingPolicy};
 
+/// The device a call chain names when this host has no device id: calls
+/// between its own assistants still name one device.
+pub(super) const LOCAL_DEVICE_CALL_CHAIN_ID: &str = "local";
+
 fn resolve_focused_review_model_selection(
     requested_model: Option<String>,
     inherit_parent_model: bool,
@@ -370,6 +374,57 @@ impl AgentExecutionTool {
             })
     }
 
+    /// The context a call from this turn to this device's assistant
+    /// `agent_type` adds: the call chain with the calling assistant on it,
+    /// and who is calling. A call back to an assistant already on the chain
+    /// is circular, and a task another device delegated cannot start a
+    /// session of this device's owner.
+    pub(super) fn local_assistant_call_context(
+        context: &ToolUseContext,
+        device_id: &str,
+        agent_type: &str,
+        caller_name: Option<&str>,
+    ) -> Result<HashMap<String, String>, String> {
+        let caller = Self::assistant_caller(context);
+        if caller.external_trust.is_some() {
+            return Err(
+                "a task another device delegated cannot call this device's assistants yet"
+                    .to_string(),
+            );
+        }
+        let mut chain = crate::service::delegation::DelegatedTurnFacts::call_chain_from_tool_data(
+            &context.custom_data,
+        );
+        if let Some(caller_id) = caller.own_assistant_id.as_deref() {
+            chain.push(crate::service::delegation::call_chain_entry(
+                device_id, caller_id,
+            ));
+        }
+        let target_id =
+            crate::service::delegation::assistant_directory(agent_type).unwrap_or_default();
+        let target = crate::service::delegation::call_chain_entry(device_id, target_id);
+        if let Some(refusal) = crate::service::delegation::call_chain_loop(&chain, &target) {
+            return Err(refusal);
+        }
+        let mut call = HashMap::from([(
+            crate::service::delegation::DELEGATION_CALL_CHAIN_CONTEXT_KEY.to_string(),
+            serde_json::to_string(&chain).expect("call chain serializes"),
+        )]);
+        if let Some(caller_id) = caller.own_assistant_id.as_deref() {
+            call.insert(
+                crate::agentic::coordination::ASSISTANT_CALL_CALLER_CONTEXT_KEY.to_string(),
+                crate::service::delegation::assistant_agent_type(caller_id),
+            );
+        }
+        if let Some(name) = caller_name.filter(|name| !name.trim().is_empty()) {
+            call.insert(
+                crate::agentic::coordination::ASSISTANT_CALL_CALLER_NAME_CONTEXT_KEY.to_string(),
+                name.to_string(),
+            );
+        }
+        Ok(call)
+    }
+
     /// Admits a `shared:<ownerDeviceId>/<assistantId>` subagent: an
     /// assistant the host lists as shared with this device and able to take
     /// work. An unavailable one fails with the reason the list shows.
@@ -653,6 +708,7 @@ impl AgentExecutionTool {
         let mut external_generation_lease = None;
         let mut supports_follow_up = true;
         let mut logical_subagent_type = None;
+        let mut assistant_call_context = None;
         let mut continuation_policy = SessionContinuationPolicy::Reusable;
         let mut model_binding_policy = SessionModelBindingPolicy::Mutable;
         let requested_external_agent = invocation
@@ -710,9 +766,34 @@ impl AgentExecutionTool {
                         },
                     )
                     .await?;
-                    return Err(OpenBitFunError::tool(format!(
-                        "assistant {agent_type} cannot be called from this version yet"
-                    )));
+                    let device_id = coordinator
+                        .remote_agent_port()
+                        .and_then(|port| port.local_device_id())
+                        .unwrap_or_else(|| LOCAL_DEVICE_CALL_CHAIN_ID.to_string());
+                    let caller = Self::assistant_caller(context);
+                    let caller_name = match caller.own_assistant_id.as_deref() {
+                        Some(caller_id) => crate::agentic::agents::local_assistant_entries()
+                            .await
+                            .into_iter()
+                            .find(|entry| entry.id == caller_id)
+                            .map(|entry| entry.name),
+                        None => None,
+                    };
+                    assistant_call_context = Some(
+                        Self::local_assistant_call_context(
+                            context,
+                            &device_id,
+                            agent_type,
+                            caller_name.as_deref(),
+                        )
+                        .map_err(|refusal| {
+                            OpenBitFunError::tool(format!(
+                                "assistant {agent_type} cannot be called: {refusal}"
+                            ))
+                        })?,
+                    );
+                    logical_subagent_type = Some(agent_type.to_string());
+                    Some(agent_type.to_string())
                 } else if let Some(client_id) = requested_external_agent.as_deref() {
                     let subagent_type = invocation.subagent_type.clone().unwrap_or_default();
                     let parent_ceiling =
@@ -1189,6 +1270,9 @@ impl AgentExecutionTool {
                         .expect("call chain serializes"),
                 );
             }
+        }
+        if let Some(call_context) = assistant_call_context {
+            subagent_context.extend(call_context);
         }
         let subagent_context = (!subagent_context.is_empty()).then_some(subagent_context);
         let permission_runtime_ceiling =

@@ -3338,6 +3338,7 @@ fn remote_connect_tracker_keeps_subagent_items_out_of_parent_accumulators() {
         model_id: None,
         focused_review_display_label: None,
         continuation_policy: None,
+        assistant_session: false,
     });
     tracker.handle_agentic_event(&AgenticEvent::TextChunk {
         session_id: "child-session".to_string(),

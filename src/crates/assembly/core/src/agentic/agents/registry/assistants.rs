@@ -113,6 +113,19 @@ pub(crate) async fn local_assistant_entries() -> Vec<LocalAssistantEntry> {
     entries
 }
 
+/// The workspace of this device's assistant `id`, where a call to it runs.
+pub(crate) async fn local_assistant_workspace_id(id: &str) -> Option<String> {
+    let workspaces = crate::service::workspace::get_global_workspace_service()?;
+    let path_manager = crate::infrastructure::try_get_path_manager_arc().ok()?;
+    let base = path_manager.assistant_workspace_base_dir(None);
+    workspaces
+        .get_assistant_workspaces()
+        .await
+        .into_iter()
+        .find(|workspace| assistant_id_of(&workspace.root_path, &base).as_deref() == Some(id))
+        .map(|workspace| workspace.id)
+}
+
 /// Text as one plain, bounded line, so it cannot pose as part of this
 /// host's instructions.
 fn plain_text(value: &str, max_chars: usize) -> String {

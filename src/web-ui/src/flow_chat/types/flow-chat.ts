@@ -398,6 +398,8 @@ export type SessionContextRestoreState =
 export interface Session {
   /** Original history source; continuation mode is an independent fact. */
   importedSource?: string;
+  /** Set when another of this device's assistants started the session. */
+  delegatedBy?: import('@/shared/types/session-history').SessionDelegatedBy;
   /** Local composer selection, applied only after a source view is forked. */
   externalContinuationPermissionMode?: import('@/infrastructure/api/service-api/AgentAPI').SessionPermissionMode | null;
   externalHistory?: {

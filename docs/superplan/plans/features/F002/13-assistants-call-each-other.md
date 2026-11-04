@@ -134,6 +134,13 @@ parent: "F002"
 
 - [ ] 后台调用与收回、会话标记、主人与租户调用各自进入正确的工作空间、调用链传递、X→Y→X 拒绝、没有该字段的会话读入均有测试
 
+**进展（2026-11-03，未勾选）：**
+- 调用：`Task`/`AgentSpawn` 的 `assistant:<id>` 不再返回「cannot be called from this version yet」。准入后按调用链做本机环检测（设备 id 取 `RemoteAgentDelegationPort::local_device_id`，没有端口时用 `local`），把「原链 + `<设备>/<调用方助理>`」写入 `dispatchDelegationCallChain`，并写入调用方 `assistantCallCaller`/`assistantCallCallerName`。
+- 会话：协调器在新建分支中识别助理类型，在目标助理的默认工作区以 `Claw` 新建普通会话（不是隐藏子会话，`continuation_policy = FreshOnly`，名称取任务首行）。会话元数据写入 `delegatedBy {assistant, assistantName?, sessionId, callChain}`，不写子会话关系。子回合上下文去掉调用方的委派事实，只保留调用链。`SubagentSessionLinked` 新增 `assistantSession`（默认 false，旧版本忽略），Web UI 只把任务卡片链接到该会话，不把它改成调用方的子会话。
+- 界面：会话列表对有 `delegatedBy` 的会话显示「来自 X」，悬停说明「X 调用这个助理时开始的会话」（zh-CN/zh-TW/en-US）。
+- 验证：`cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git,lan-share,dispatch-store,ssh-remote --lib -- agentic::tools::implementations::task agentic::coordination` 380 通过（含 `assistant_turn` 3 项、`a_local_assistant_call_carries_its_chain_and_refuses_a_loop_or_a_delegated_caller`、`a_call_to_an_assistant_not_on_this_device_is_refused_before_a_session_starts`）；`--lib -- agentic::session` 204 通过（含 `a_session_another_assistant_started_keeps_its_caller_and_stays_listed`）；`--test lan_share_flow` 12 通过；`openbitfun-events` 32 通过；Web UI `EventHandlerModule.test.ts` 与 `FlowChatStore.test.ts` 325 通过，`tsc`、`eslint`、`pnpm run i18n:audit` 通过。
+- 未完成（因此未勾选）：外部任务（租户）调用本机助理目前明确拒绝「a task another device delegated cannot call this device's assistants yet」，进入租户工作空间、计数与审计放在 Task 4；后台结果经 `AgentWait` 收回沿用现有后台子任务路径，没有专门的端到端测试，留到 Task 5 真机验收；协调器测试只覆盖了目标助理不存在时被拒绝（测试环境不创建真实助理工作区，避免写入用户目录）。
+
 ## Task 3: 调用共享给我的助理与跨设备环检测
 
 **Outcome:** 助理在后台调用共享给主人的助理，经局域网在对方那里作为外部任务运行（在主人这台设备的租户工作空间中）；审批与排队提示显示在任务卡片；目标端执行器拒绝循环调用。

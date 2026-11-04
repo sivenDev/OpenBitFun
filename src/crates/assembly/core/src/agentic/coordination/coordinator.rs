@@ -864,6 +864,9 @@ pub(crate) struct HiddenSubagentExecutionRequest {
     /// prepared until the final execution/cleanup owner releases every clone.
     execution_lease: Option<Arc<SessionExecutionLease>>,
     external_generation_lease: Option<crate::agentic::agents::ExternalSubagentGenerationLease>,
+    /// Set for a call to another of this device's assistants: the session is
+    /// that assistant's own, recorded with its caller, not a hidden child.
+    delegated_by: Option<openbitfun_services_core::session::SessionDelegatedBy>,
 }
 
 fn ensure_hidden_subagent_dialog_turn_id(dialog_turn_id: &mut Option<String>) -> String {
@@ -10931,6 +10934,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             prepared_session_created,
             execution_lease,
             external_generation_lease: _external_generation_lease,
+            delegated_by,
         } = request;
         context.insert(
             "cancel_lifecycle_owner".to_string(),
@@ -11186,18 +11190,28 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         drop(session_config);
         drop(created_by);
         drop(prompt_cache_source_session_id);
-        if let Err(error) = self
-            .session_manager
-            .persist_session_lineage(
-                &session_id,
-                build_subagent_session_relationship(
-                    subagent_parent_info.as_ref(),
-                    &logical_agent_type,
-                    continuation_policy,
-                ),
-            )
-            .await
-        {
+        // An assistant call's session is the called assistant's own: it
+        // records its caller instead of joining the caller as a hidden child.
+        let lineage = match delegated_by.clone() {
+            Some(delegated_by) => {
+                self.session_manager
+                    .set_session_delegated_by(&session_id, delegated_by)
+                    .await
+            }
+            None => {
+                self.session_manager
+                    .persist_session_lineage(
+                        &session_id,
+                        build_subagent_session_relationship(
+                            subagent_parent_info.as_ref(),
+                            &logical_agent_type,
+                            continuation_policy,
+                        ),
+                    )
+                    .await
+            }
+        };
+        if let Err(error) = lineage {
             self.cleanup_prepared_hidden_subagent_session_id_if_unsubmitted(
                 Some(session_id.clone()),
                 prepared_session_created,
@@ -11291,6 +11305,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         .and_then(|session| session.config.model_id.clone()),
                     focused_review_display_label: focused_review_display_label.clone(),
                     continuation_policy: Some(continuation_policy),
+                    assistant_session: delegated_by.is_some(),
                 })
                 .await;
             }
@@ -13023,6 +13038,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         prepared_session_created: false,
                         execution_lease: None,
                         external_generation_lease: request.external_generation_lease,
+                        delegated_by: None,
                     });
                 }
 
@@ -13031,6 +13047,64 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                         "subagent_type is required when context_mode is 'fresh'".to_string(),
                     )
                 })?;
+                // A call to another of this device's assistants runs as that
+                // assistant, in its own workspace and a session of its own
+                // listed with its other sessions. It may call further
+                // assistants and subagents; its call chain is the only limit.
+                if let Some(assistant_id) =
+                    crate::service::delegation::assistant_directory(&agent_type)
+                {
+                    let workspace_id =
+                        crate::agentic::agents::local_assistant_workspace_id(assistant_id)
+                            .await
+                            .ok_or_else(|| {
+                                OpenBitFunError::tool(format!(
+                                    "assistant {agent_type} is not on this device"
+                                ))
+                            })?;
+                    let mut session_config =
+                        Self::build_session_config_for_workspace(workspace_id, None).await?;
+                    session_config.continuation_policy = SessionContinuationPolicy::FreshOnly;
+                    let parent_session_id = request.subagent_parent_info.session_id.clone();
+                    let delegation_policy = DelegationPolicy::top_level();
+                    let context = super::assistant_turn::child_context(&request.context);
+                    let runtime_tool_restrictions = runtime_tool_restrictions_for_delegated_context(
+                        runtime_tool_restrictions_for_delegation_policy(delegation_policy),
+                        &context,
+                    );
+                    let run_agent_type =
+                        crate::service::delegation::ASSISTANT_RUN_AGENT_TYPE.to_string();
+                    return Ok(HiddenSubagentExecutionRequest {
+                        requested_agent_id: request.requested_agent_id,
+                        target_session_id: None,
+                        dialog_turn_id: None,
+                        session_name: super::assistant_turn::session_name(
+                            &original_task_description,
+                        ),
+                        agent_type: run_agent_type.clone(),
+                        logical_agent_type: run_agent_type,
+                        session_config,
+                        initial_messages: vec![task_message.clone()],
+                        user_input_text: task_description,
+                        created_by: Some(super::assistant_turn::created_by(&parent_session_id)),
+                        delegated_by: Some(super::assistant_turn::delegated_by(
+                            &request.context,
+                            &parent_session_id,
+                        )),
+                        subagent_parent_info: Some(request.subagent_parent_info),
+                        context,
+                        permission_runtime_ceiling: Some(request.permission_runtime_ceiling),
+                        delegation_policy,
+                        runtime_tool_restrictions,
+                        prompt_cache_source_session_id: None,
+                        session_kind: SessionKind::Standard,
+                        transient: false,
+                        emit_lifecycle_events: true,
+                        prepared_session_created: false,
+                        execution_lease: None,
+                        external_generation_lease: request.external_generation_lease,
+                    });
+                }
                 // A fresh subagent inherits its workspace from the parent session's
                 // workspace ID; the request path is a legacy projection only.
                 let (resolved_target, immutable_model_fingerprint) = if matches!(
@@ -13127,6 +13201,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     prepared_session_created: false,
                     execution_lease: None,
                     external_generation_lease: request.external_generation_lease,
+                    delegated_by: None,
                 })
             }
             SubagentContextMode::Fork => {
@@ -13208,6 +13283,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     prepared_session_created: false,
                     execution_lease: None,
                     external_generation_lease: request.external_generation_lease,
+                    delegated_by: None,
                 })
             }
         }
@@ -13901,6 +13977,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             prepared_session_created: false,
             execution_lease: None,
             external_generation_lease: None,
+            delegated_by: None,
         };
 
         self.execute_hidden_subagent_internal(hidden_request, cancel_token, timeout_seconds)
@@ -23890,6 +23967,70 @@ pub(crate) mod tests {
             Some(workspace_record.id.as_str())
         );
         assert!(resolved.session_config.prompt_cache_lineage_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_call_to_an_assistant_not_on_this_device_is_refused_before_a_session_starts() {
+        let (coordinator, session_manager) = test_coordinator();
+        let workspace_path = std::env::temp_dir().join(format!(
+            "openbitfun-assistant-call-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace_path).expect("workspace dir should exist");
+        struct TempWorkspaceGuard(std::path::PathBuf);
+        impl Drop for TempWorkspaceGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _workspace_guard = TempWorkspaceGuard(workspace_path.clone());
+        let workspace_record =
+            crate::service::workspace::legacy_compat::register_local_fixture(&workspace_path, None)
+                .await;
+        let caller = session_manager
+            .create_transient_session_with_id_and_details(
+                None,
+                "Caller".to_string(),
+                "Claw".to_string(),
+                SessionConfig {
+                    workspace_path: Some(workspace_path.to_string_lossy().into_owned()),
+                    workspace_id: Some(workspace_record.id.clone()),
+                    ..Default::default()
+                },
+                None,
+                SessionKind::Standard,
+            )
+            .await
+            .expect("caller session should be created");
+        let error = match coordinator
+            .resolve_hidden_subagent_execution_request(SubagentExecutionRequest {
+                task_description: "Summarize the notes".to_string(),
+                requested_agent_id: None,
+                context_mode: SubagentContextMode::Fresh,
+                target_session_id: None,
+                subagent_type: Some("assistant:workspace-absent-writer".to_string()),
+                logical_subagent_type: Some("assistant:workspace-absent-writer".to_string()),
+                continuation_policy: SessionContinuationPolicy::Reusable,
+                model_binding_policy: SessionModelBindingPolicy::Mutable,
+                workspace_path: None,
+                model_id: None,
+                inherit_parent_model: false,
+                subagent_parent_info: SubagentParentInfo {
+                    session_id: caller.session_id.clone(),
+                    dialog_turn_id: "caller-turn".to_string(),
+                    tool_call_id: "task-tool".to_string(),
+                },
+                context: HashMap::new(),
+                permission_runtime_ceiling: PermissionRuntimeCeiling::default(),
+                delegation_policy: DelegationPolicy::top_level().spawn_child(),
+                external_generation_lease: None,
+            })
+            .await
+        {
+            Ok(_) => panic!("an absent assistant must not resolve to a session"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("is not on this device"), "{error}");
     }
 
     #[tokio::test]
