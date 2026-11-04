@@ -13054,6 +13054,14 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 if let Some(assistant_id) =
                     crate::service::delegation::assistant_directory(&agent_type)
                 {
+                    // The called assistant's session is persisted and listed
+                    // with its others; a connection-scoped caller must leave
+                    // nothing behind.
+                    if parent_transient {
+                        return Err(OpenBitFunError::tool(format!(
+                            "assistant {agent_type} cannot be called from a session that is not kept"
+                        )));
+                    }
                     let workspace_id =
                         crate::agentic::agents::local_assistant_workspace_id(assistant_id)
                             .await
@@ -23969,8 +23977,9 @@ pub(crate) mod tests {
         assert!(resolved.session_config.prompt_cache_lineage_id.is_none());
     }
 
-    #[tokio::test]
-    async fn a_call_to_an_assistant_not_on_this_device_is_refused_before_a_session_starts() {
+    /// Why calling the absent assistant `assistant:workspace-absent-writer`
+    /// from a kept or a transient caller is refused.
+    async fn assistant_call_refusal(transient_caller: bool) -> String {
         let (coordinator, session_manager) = test_coordinator();
         let workspace_path = std::env::temp_dir().join(format!(
             "openbitfun-assistant-call-test-{}",
@@ -23987,22 +23996,36 @@ pub(crate) mod tests {
         let workspace_record =
             crate::service::workspace::legacy_compat::register_local_fixture(&workspace_path, None)
                 .await;
-        let caller = session_manager
-            .create_transient_session_with_id_and_details(
-                None,
-                "Caller".to_string(),
-                "Claw".to_string(),
-                SessionConfig {
-                    workspace_path: Some(workspace_path.to_string_lossy().into_owned()),
-                    workspace_id: Some(workspace_record.id.clone()),
-                    ..Default::default()
-                },
-                None,
-                SessionKind::Standard,
-            )
-            .await
-            .expect("caller session should be created");
-        let error = match coordinator
+        let config = SessionConfig {
+            workspace_path: Some(workspace_path.to_string_lossy().into_owned()),
+            workspace_id: Some(workspace_record.id.clone()),
+            ..Default::default()
+        };
+        let caller = if transient_caller {
+            session_manager
+                .create_transient_session_with_id_and_details(
+                    None,
+                    "Caller".to_string(),
+                    "Claw".to_string(),
+                    config,
+                    None,
+                    SessionKind::Standard,
+                )
+                .await
+        } else {
+            session_manager
+                .create_session_with_id_and_details(
+                    None,
+                    "Caller".to_string(),
+                    "Claw".to_string(),
+                    config,
+                    None,
+                    SessionKind::Standard,
+                )
+                .await
+        }
+        .expect("caller session should be created");
+        match coordinator
             .resolve_hidden_subagent_execution_request(SubagentExecutionRequest {
                 task_description: "Summarize the notes".to_string(),
                 requested_agent_id: None,
@@ -24027,10 +24050,21 @@ pub(crate) mod tests {
             })
             .await
         {
-            Ok(_) => panic!("an absent assistant must not resolve to a session"),
+            Ok(_) => panic!("the assistant call must not resolve to a session"),
             Err(error) => error.to_string(),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn a_call_to_an_assistant_not_on_this_device_is_refused_before_a_session_starts() {
+        let error = assistant_call_refusal(false).await;
         assert!(error.contains("is not on this device"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_session_that_is_not_kept_cannot_call_an_assistant() {
+        let error = assistant_call_refusal(true).await;
+        assert!(error.contains("from a session that is not kept"), "{error}");
     }
 
     #[tokio::test]
