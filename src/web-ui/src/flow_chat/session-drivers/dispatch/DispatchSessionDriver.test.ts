@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   registerJob: vi.fn(),
   updateProgress: vi.fn(),
   refresh: vi.fn(),
+  finishPreview: vi.fn(),
 }));
 vi.mock('@/features/dispatch/dispatchApi', () => ({ dispatchApi: { submit: mocks.submit } }));
 vi.mock('@/features/dispatch/dispatchJobStore', () => ({
@@ -20,6 +21,7 @@ vi.mock('@/shared/utils/logger', () => ({
   createLogger: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
 }));
 vi.mock('../shared', () => ({ addSubmittedDialogTurn: vi.fn(), applyGeneratingTitlePlaceholder: vi.fn() }));
+vi.mock('../../services/submittedMessagePresentation', () => ({ finishSubmittedMessagePreview: mocks.finishPreview }));
 vi.mock('../../store/runtimeStatusStore', () => ({ showRuntimeStatus: vi.fn(), clearRuntimeStatusState: vi.fn() }));
 
 import { dispatchSessionDriver } from './DispatchSessionDriver';
@@ -113,5 +115,27 @@ describe('a conversation with a shared assistant', () => {
     await expect(dispatchSessionDriver.startTurn(context, input, tracker)).rejects.toThrow(
       'flow-chat:chatInput.dispatch.sharedAssistant.problems.offline Writer',
     );
+  });
+
+  it('hands the composer preview of the message over to the conversation turn', async () => {
+    const session = {
+      sessionId: 'session-1',
+      config: { ...sharedConfig, dispatchJobId: 'delegation-1', dispatchJobState: 'submitting' },
+      dialogTurns: [],
+    } as unknown as Session;
+    mocks.submit.mockResolvedValue({ accepted: true, jobId: 'delegation-1', sessionId: 'session-1', state: 'queued' });
+
+    await dispatchSessionDriver.startTurn(context, {
+      surfaceScope,
+      sessionId: 'session-1',
+      message: 'Hello',
+      currentAgentType: 'assistant:writer',
+      acpClientId: null,
+      isFirstMessage: false,
+      readySession: session,
+      options: { turnId: 'dialog_1' },
+    } as never, {} as never);
+
+    expect(mocks.finishPreview).toHaveBeenCalledWith(surfaceScope, 'session-1', 'dialog_1');
   });
 });

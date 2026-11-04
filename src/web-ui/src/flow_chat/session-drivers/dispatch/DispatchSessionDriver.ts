@@ -55,6 +55,7 @@ import {
 } from '../../store/runtimeStatusStore';
 import { claimSubmissionRetry, releaseSubmissionRetry } from '../idempotency';
 import { addSubmittedDialogTurn, applyGeneratingTitlePlaceholder } from '../shared';
+import { finishSubmittedMessagePreview } from '../../services/submittedMessagePresentation';
 
 const log = createLogger('DispatchSessionDriver');
 
@@ -775,6 +776,11 @@ export const dispatchSessionDriver: SessionDriver = {
       startTime: Date.now(),
     };
     addSubmittedDialogTurn(context, input.surfaceScope, sessionId, optimisticTurn);
+    // The composer showed this message under its own turn id until a turn
+    // took it over; the projection's turn has the job's id instead.
+    if (input.options?.turnId && input.options.turnId !== optimisticTurnId) {
+      finishSubmittedMessagePreview(input.surfaceScope, sessionId, input.options.turnId);
+    }
     tracker.createdLocalTurnId = optimisticTurnId;
 
     // A shared assistant works in its owner's workspace: no Git baseline.
