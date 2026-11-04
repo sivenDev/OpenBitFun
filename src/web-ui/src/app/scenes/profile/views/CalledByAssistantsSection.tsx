@@ -39,7 +39,7 @@ const CalledByAssistantsSection: React.FC<CalledByAssistantsSectionProps> = ({ w
       className="acp-section"
       aria-label={t('nursery.assistant.calledBy.title')}
       data-openbitfun-component="assistant-config-page"
-      data-openbitfun-part="called-by"
+      data-openbitfun-part="calledBy"
     >
       <PageHeader size="sm" level={3} title={t('nursery.assistant.calledBy.title')} />
       <Button
