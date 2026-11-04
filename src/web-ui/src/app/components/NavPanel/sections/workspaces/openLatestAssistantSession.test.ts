@@ -77,6 +77,13 @@ describe('assistant latest session navigation', () => {
     expect(mocks.open).toHaveBeenCalledWith('latest', expect.anything());
   });
 
+  it('opens the assistant\'s own latest session, not a newer one another assistant started by calling it', async () => {
+    mocks.sessions.set('own', session('own', 10));
+    mocks.sessions.set('called', session('called', 100, { delegatedBy: { sessionId: 'caller' } }));
+    await openLatestAssistantSession(workspace, activateWorkspace);
+    expect(mocks.open).toHaveBeenCalledWith('own', expect.anything());
+  });
+
   it('keeps latest-session navigation available on older hosts without the preference contract', async () => {
     mocks.readDefault.mockResolvedValue({ supported: false, sessionId: null });
     mocks.sessions.set('latest', session('latest', 10));

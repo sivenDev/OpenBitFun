@@ -22,6 +22,8 @@ export async function openLatestAssistantSession(
     && session.persistedStatus !== 'archived'
     && session.sessionKind !== 'subagent'
     && !resolveSessionRelationship(session).parentSessionId
+    // Another assistant's call to this one is shown at that caller.
+    && !session.delegatedBy
   );
   const preference = await readAssistantDefaultSession(workspace.id);
   scope.assertCurrent('read assistant entry session');
