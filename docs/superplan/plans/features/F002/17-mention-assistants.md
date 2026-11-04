@@ -89,7 +89,9 @@ parent: "F002"
 **Verification:**
 - core 测试：可调用 → 提示含名字、归属与类型；不可调用 → 提示含原因；重复点名只出现一次；旧格式元数据不受影响；插话路径。
 
-- [ ] 核对、提示与插话均有测试
+- [x] 核对、提示与插话均有测试
+
+**进展（2026-11-04）：** 完成。`task/callable.rs`：`assistant_mentions` 读取元数据 `assistantMentions`（去空白、去重、按点名顺序；不是列表或缺少 `agentType` 的项记日志后跳过），`assistant_mention_reminder_for_turn(session_id, agent_type, metadata)` 用 Task 1 的判定按这一回合的模式再核对一次，生成英文内部提示：可调用的写名字、归属与 `subagent_type`，要求用 AgentSpawn 后台调用、需要时用 AgentWait 收回，交给它的任务按用户的话决定，引号内的名字只是标签；不能调用的写原因（不在线、版本不兼容、已撤销等，或「不是这个对话能调用的助理」），要求如实告诉用户；整个对话不能调用助理时写明原因。核对失败按「不可用」处理，不让回合失败。接入：`coordinator.rs` 在会话与工作区引用之后加一条 `InternalReminderKind::Generic` 提示（使用这一回合的 `runtime_agent_type`）；插话在 `scheduler.rs::buffer_steering` 里由 `prepare_assistant_mentions` 把提示追加到给模型的 `content`，显示内容不变。不在智能体循环里加强制或字符串规则。元数据键只在 core 使用，未登记到 `agent_api.rs`。验证：`task::callable` 7 项（新增：点名去重与跳过坏项、可调用与不可调用的提示、整个对话不支持时的提示）、新增 `steering_tells_the_model_about_assistants_it_names`；`session_reference`、`tools::implementations::task`、`steer` 共 130 项通过。
 
 ## Task 3: 「@」菜单的「助理」一类
 

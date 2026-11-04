@@ -624,6 +624,8 @@ impl DialogScheduler {
                 self.prepare_goal_steering(&session_id, &turn_id, &mut injection)
                     .await
                     .map_err(|error| PortError::new(PortErrorKind::SessionInUse, error))?;
+                self.prepare_assistant_mentions(&session_id, &mut injection)
+                    .await;
                 self.round_injection_buffer.push(&session_id, injection);
                 let DialogSteerOutcome::Buffered { steering_id, .. } = &outcome;
                 info!(
@@ -636,6 +638,29 @@ impl DialogScheduler {
 
                 Ok(outcome)
             }
+        }
+    }
+
+    /// Assistants a steering message names with「@」become an instruction
+    /// to call them, appended to what the model reads, as at a turn start.
+    async fn prepare_assistant_mentions(&self, session_id: &str, injection: &mut RoundInjection) {
+        let Some(agent_type) = self
+            .session_manager
+            .get_session(session_id)
+            .map(|session| session.agent_type)
+        else {
+            return;
+        };
+        let metadata = serde_json::Value::Object(injection.metadata.clone());
+        if let Some(reminder) =
+            crate::agentic::tools::implementations::task::assistant_mention_reminder_for_turn(
+                session_id,
+                &agent_type,
+                Some(&metadata),
+            )
+            .await
+        {
+            injection.content = format!("{}\n\n{}", injection.content, reminder);
         }
     }
 
@@ -5411,6 +5436,45 @@ mod tests {
             .unwrap();
         assert_eq!(edited.status, ThreadGoalStatus::Active);
         assert_eq!(edited.objective, "finish the rest");
+    }
+
+    #[tokio::test]
+    async fn steering_tells_the_model_about_assistants_it_names() {
+        let (scheduler, session_manager, _, root) = test_scheduler_with_persistence(true);
+        let session_id = "mention-steering-session";
+        let turn_id = "active-mention-turn";
+        mark_session_processing(&session_manager, &root, session_id, turn_id).await;
+        scheduler
+            .active_turns
+            .insert(session_id, desktop_active_turn(turn_id));
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "assistantMentions".into(),
+            serde_json::json!([{ "agentType": "assistant:workspace" }]),
+        );
+        scheduler
+            .buffer_steering(
+                session_id.into(),
+                turn_id.into(),
+                "@Xiaolan reply with one word".into(),
+                None,
+                Vec::new(),
+                metadata,
+            )
+            .await
+            .expect("steering");
+
+        let pending = scheduler
+            .round_injection_monitor()
+            .take_pending(session_id, turn_id);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].display_content, "@Xiaolan reply with one word");
+        let (message, reminder) = pending[0]
+            .content
+            .split_once("\n\n")
+            .expect("the message, then the reminder");
+        assert_eq!(message, "@Xiaolan reply with one word");
+        assert!(reminder.contains("`assistant:workspace`"));
     }
 
     #[tokio::test]

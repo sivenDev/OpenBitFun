@@ -45,6 +45,7 @@ mod launch_review_agent;
 mod schema;
 mod validation;
 
+pub(crate) use callable::assistant_mention_reminder_for_turn;
 pub use callable::{
     callable_assistants_for_session, CallableAssistant, CallableAssistantOwner,
     CallableAssistantOwnerKind, CallableAssistants, CallableAssistantsRefusal,

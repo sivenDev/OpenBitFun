@@ -7275,6 +7275,21 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             )
             .await?,
         );
+        // Assistants the person named with「@」are checked again now, under
+        // the mode this turn runs in, and become an instruction to call them.
+        if let Some(reminder) =
+            crate::agentic::tools::implementations::task::assistant_mention_reminder_for_turn(
+                &session_id,
+                &runtime_agent_type,
+                user_message_metadata.as_ref(),
+            )
+            .await
+        {
+            additional_prepended_messages.push(Message::internal_reminder(
+                InternalReminderKind::Generic,
+                reminder,
+            ));
+        }
 
         let wrapped_user_input_payload = self
             .wrap_user_input(
