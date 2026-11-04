@@ -3382,6 +3382,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 custom_metadata: None,
                 current_context_usage: None,
                 relationship: None,
+                delegated_by: None,
                 todos: None,
                 review_action_state: None,
                 deep_review_run_manifest: None,

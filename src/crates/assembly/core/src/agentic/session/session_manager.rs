@@ -7370,6 +7370,19 @@ impl SessionManager {
         .await
     }
 
+    /// Records which assistant started this session by calling its
+    /// assistant; the session stays listed with that assistant's sessions.
+    pub async fn set_session_delegated_by(
+        &self,
+        session_id: &str,
+        delegated_by: openbitfun_services_core::session::SessionDelegatedBy,
+    ) -> OpenBitFunResult<()> {
+        self.update_persisted_session_metadata(session_id, |metadata| {
+            metadata.delegated_by = Some(delegated_by);
+        })
+        .await
+    }
+
     pub async fn set_session_review_target_evidence(
         &self,
         session_id: &str,
@@ -16580,6 +16593,58 @@ mod tests {
                     .join(&session.session_id)
                     .join("request-traces")
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_another_assistant_started_keeps_its_caller_and_stays_listed() {
+        let workspace = TestWorkspace::new();
+        let persistence_manager = Arc::new(
+            PersistenceManager::new(workspace.path_manager()).expect("persistence manager"),
+        );
+        let manager = test_manager(persistence_manager.clone());
+        let session = manager
+            .create_session_with_id_and_details(
+                Some(Uuid::new_v4().to_string()),
+                "Draft the notes".to_string(),
+                "Claw".to_string(),
+                SessionConfig {
+                    tool_presentation_mode: Default::default(),
+                    workspace_path: Some(workspace.path().to_string_lossy().to_string()),
+                    ..Default::default()
+                },
+                Some("assistant-call-caller-session".to_string()),
+                SessionKind::Standard,
+            )
+            .await
+            .expect("session should create");
+        let caller = openbitfun_services_core::session::SessionDelegatedBy {
+            assistant: "assistant:workspace-x".to_string(),
+            assistant_name: Some("X".to_string()),
+            session_id: "caller-session".to_string(),
+            call_chain: vec!["device/workspace-x".to_string()],
+        };
+
+        manager
+            .set_session_delegated_by(&session.session_id, caller.clone())
+            .await
+            .expect("caller should persist");
+
+        let metadata = persistence_manager
+            .load_session_metadata(workspace.path(), &session.session_id)
+            .await
+            .expect("metadata lookup should succeed")
+            .expect("metadata should exist");
+        assert_eq!(metadata.delegated_by, Some(caller));
+        let listed = persistence_manager
+            .list_session_metadata(workspace.path())
+            .await
+            .expect("sessions should list");
+        assert!(
+            listed
+                .iter()
+                .any(|listed| listed.session_id == session.session_id
+                    && listed.delegated_by.is_some())
         );
     }
 

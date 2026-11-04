@@ -80,6 +80,27 @@ impl SessionMemoryMode {
     }
 }
 
+/// The assistant whose call started a session under another assistant of
+/// the same device. The session is the called assistant's own, listed with
+/// its other sessions, not a hidden child of the caller.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDelegatedBy {
+    /// The calling assistant's agent type, `assistant:<directory>`.
+    #[serde(default)]
+    pub assistant: String,
+    /// The calling assistant's name when the call was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_name: Option<String>,
+    /// The caller's session.
+    #[serde(default)]
+    pub session_id: String,
+    /// The assistants the call passed through, oldest first, each as
+    /// `<deviceId>/<assistantId>`; the caller is the last entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub call_chain: Vec<String>,
+}
+
 /// Session metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,6 +235,15 @@ pub struct SessionMetadata {
         alias = "sessionRelationship"
     )]
     pub relationship: Option<SessionRelationship>,
+
+    /// The assistant that started this session by calling its assistant.
+    /// Absent for every other session, including those written before it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "delegated_by"
+    )]
+    pub delegated_by: Option<SessionDelegatedBy>,
 
     /// Todo list (for persisting the session's todo state)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1247,6 +1277,7 @@ impl SessionMetadata {
             custom_metadata: None,
             current_context_usage: None,
             relationship: None,
+            delegated_by: None,
             todos: None,
             review_action_state: None,
             deep_review_run_manifest: None,
@@ -1398,9 +1429,9 @@ impl DialogTurnData {
 mod tests {
     use super::{
         DialogTurnData, DialogTurnKind, DialogTurnRecoveryData, DialogTurnRecoveryStatus,
-        ModelRoundData, SessionMemoryMode, SessionMetadata, SessionRelationship,
-        SessionRelationshipKind, SessionTurnWindowResponse, TextItemData, ThinkingItemData,
-        ToolItemData, UserMessageData,
+        ModelRoundData, SessionDelegatedBy, SessionMemoryMode, SessionMetadata,
+        SessionRelationship, SessionRelationshipKind, SessionTurnWindowResponse, TextItemData,
+        ThinkingItemData, ToolItemData, UserMessageData,
     };
     use openbitfun_core_types::{SessionContinuationPolicy, SessionKind};
 
@@ -1951,5 +1982,45 @@ mod tests {
 
         let serialized = serde_json::to_value(metadata).expect("metadata should serialize");
         assert_eq!(serialized["reviewActionState"]["phase"], "fix_completed");
+    }
+
+    #[test]
+    fn a_session_written_before_delegated_by_reads_without_it() {
+        let mut legacy = serde_json::to_value(SessionMetadata::new(
+            "session-1".to_string(),
+            "Notes".to_string(),
+            "Claw".to_string(),
+            "default".to_string(),
+        ))
+        .unwrap();
+        legacy.as_object_mut().unwrap().remove("delegatedBy");
+        let metadata: SessionMetadata = serde_json::from_value(legacy).unwrap();
+        assert_eq!(metadata.delegated_by, None);
+        assert!(serde_json::to_value(&metadata)
+            .unwrap()
+            .get("delegatedBy")
+            .is_none());
+    }
+
+    #[test]
+    fn delegated_by_round_trips_and_keeps_the_session_visible() {
+        let mut metadata = SessionMetadata::new(
+            "session-1".to_string(),
+            "Notes".to_string(),
+            "Claw".to_string(),
+            "default".to_string(),
+        );
+        metadata.delegated_by = Some(SessionDelegatedBy {
+            assistant: "assistant:workspace-x".to_string(),
+            assistant_name: Some("X".to_string()),
+            session_id: "caller-session".to_string(),
+            call_chain: vec!["device/workspace-x".to_string()],
+        });
+        let value = serde_json::to_value(&metadata).unwrap();
+        assert_eq!(value["delegatedBy"]["assistant"], "assistant:workspace-x");
+        assert_eq!(value["delegatedBy"]["callChain"][0], "device/workspace-x");
+        let read: SessionMetadata = serde_json::from_value(value).unwrap();
+        assert_eq!(read.delegated_by, metadata.delegated_by);
+        assert!(!read.should_hide_from_user_lists());
     }
 }
