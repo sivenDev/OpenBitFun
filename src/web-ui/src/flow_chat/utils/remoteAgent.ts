@@ -64,3 +64,18 @@ export function localAssistantName(
   ));
   return workspace ? resolveAssistantName(workspace) : null;
 }
+
+/**
+ * The name of the assistant `agentType` calls, one of this device's or one
+ * shared with it, or `null` for any other agent or before its list is read.
+ */
+export function calledAssistantName(
+  agentType: string | null | undefined,
+  workspaces: readonly WorkspaceInfo[] | null | undefined,
+  sharedWithMe: readonly SharedWithMe[],
+): string | null {
+  const local = localAssistantFromAgentType(agentType);
+  if (local) return localAssistantName(local, workspaces);
+  const remote = remoteAgentFromAgentType(agentType);
+  return remote ? sharedAssistantNames(remote, sharedWithMe)?.name ?? null : null;
+}

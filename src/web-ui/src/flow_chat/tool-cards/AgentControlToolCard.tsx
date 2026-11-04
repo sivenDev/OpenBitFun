@@ -20,6 +20,13 @@ import { openBtwSessionInAuxPane } from '../services/btwSessionPane';
 import { AgentControlToolCard as AgentControlToolCardView } from '@openbitfun/ui/flow-chat';
 import { AgentInteractionToolCard } from './AgentInteractionToolCard';
 import { resolveInteractionAgentSessionId } from './toolInteractionModel';
+import {
+  calledAssistantName,
+  localAssistantFromAgentType,
+  remoteAgentFromAgentType,
+} from '../utils/remoteAgent';
+import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 
 const PARAMETER_STREAMING_STATUSES = new Set<FlowToolItem['status']>([
   'preparing',
@@ -144,13 +151,23 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const lifecycle = linkedSession
     ? sessionLineageLifecycleForSession(linkedSession)
     : fallbackLifecycle(status);
-  const agentDisplayName = linkedSubagentSessionId
-    ? t(resolveSubagentNameKey(linkedSubagentSessionId)) : t('toolCards.interaction.unknownAgent');
   const stableAgentType = linkedSession?.mode?.trim()
     || linkedSession?.config?.agentType?.trim()
     || inputAgentType;
   const stableSubagentType = linkedSession?.subagentType?.trim() || inputAgentType;
-  const modelName = toolItem.subagentModelDisplayName?.trim()
+  // An assistant answers under its own name and model, not a subagent's.
+  const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
+  const calledType = stableSubagentType || stableAgentType;
+  const assistantName = calledAssistantName(
+    calledType,
+    workspaceManager.getState().assistantWorkspaces,
+    sharedWithMe,
+  );
+  const callsAssistant = Boolean(localAssistantFromAgentType(calledType) || remoteAgentFromAgentType(calledType));
+  const agentDisplayName = assistantName
+    ?? (linkedSubagentSessionId
+      ? t(resolveSubagentNameKey(linkedSubagentSessionId)) : t('toolCards.interaction.unknownAgent'));
+  const modelName = callsAssistant ? t('toolCards.taskTool.assistantModel') : toolItem.subagentModelDisplayName?.trim()
     || linkedSession?.config?.modelName?.trim()
     || toolItem.subagentModelId?.trim()
     || readString(params, 'model_id', 'modelId')

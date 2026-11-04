@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import type { WorkspaceInfo } from '@/shared/types';
 import {
+  calledAssistantName,
   localAssistantFromAgentType,
   localAssistantName,
   remoteAgentFromAgentType,
@@ -57,5 +58,14 @@ describe('assistant names', () => {
     expect(localAssistantName('workspace-x', [remote, local])).toBe('Planner');
     expect(localAssistantName('workspace-y', [remote, local])).toBeNull();
     expect(localAssistantName('workspace-x', null)).toBeNull();
+  });
+
+  it('names the assistant an agent type calls, and nothing for other agents', () => {
+    const local = { rootPath: '/home/me/.openbitfun/personal_assistant/workspace-x', identity: { name: 'Planner' } } as WorkspaceInfo;
+    const list = [shared('laptop', 'helper', 'Writer')];
+    expect(calledAssistantName('assistant:workspace-x', [local], list)).toBe('Planner');
+    expect(calledAssistantName('shared:laptop/helper', [local], list)).toBe('Writer');
+    expect(calledAssistantName('Explore', [local], list)).toBeNull();
+    expect(calledAssistantName('assistant:workspace-gone', [local], list)).toBeNull();
   });
 });
