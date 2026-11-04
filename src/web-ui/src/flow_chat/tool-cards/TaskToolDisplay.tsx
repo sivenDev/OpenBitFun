@@ -36,6 +36,8 @@ import {
   sharedAssistantNames,
 } from '../utils/remoteAgent';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import { useAssistantModel } from '@/infrastructure/config/hooks/useAssistantModel';
+import { plannedAssistantModelLabel } from './plannedAssistantModel';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { sessionLineageLifecycleForSession } from '../utils/sessionLineage';
 import {
@@ -276,6 +278,14 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
   const subagentAvatarStatus = linkedSubagentSession
     ? sessionLineageLifecycleForSession(linkedSubagentSession)
     : 'idle';
+  const plannedAssistantModel = plannedAssistantModelLabel(
+    useAssistantModel(localAssistantFromAgentType(
+      readStringValue(linkedSubagentSession?.mode)
+        || readStringValue(linkedSubagentSession?.config?.agentType)
+        || readTaskSubagentType(toolCall?.input),
+    )),
+    t,
+  );
   const getTaskInput = () => {
     if (!toolCall?.input) return null;
 
@@ -304,7 +314,7 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
       ? t('toolCards.taskTool.remoteAgentModel')
       : localAssistantFromAgentType(agentType)
       ? readStringValue(toolItem.subagentModelDisplayName) || latestEffectiveModel(linkedSubagentSession)
-        || t('toolCards.taskTool.assistantModelDefault')
+        || plannedAssistantModel || t('toolCards.taskTool.assistantModelDefault')
       : readStringValue(toolItem.subagentModelDisplayName) ||
       readStringValue(linkedSubagentSession?.config?.modelName) ||
       readStringValue(toolItem.subagentModelId) ||

@@ -188,6 +188,15 @@
       "newSessionTitle": "发起会话",
       "sessionsSectionTitle": "会话",
       "scheduledSessionsTitle": "定时会话",
+      "model": {
+        "title": "默认模型",
+        "followPrimary": "跟随主力模型（当前为 {{name}}）",
+        "followPrimaryUnset": "跟随主力模型（未设置）",
+        "unavailableOption": "{{name}}（不可用）",
+        "unavailableNotice": "所选模型不可用，暂按主力模型 {{name}} 运行。",
+        "unavailableNoticeUnset": "所选模型不可用，且未设置主力模型。",
+        "saveFailed": "保存默认模型失败"
+      },
       "calledBy": {
         "title": "为其他助理做的任务",
         "show": "显示 {{count}} 项",

@@ -31,6 +31,8 @@ import {
 } from '../utils/remoteAgent';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import { useAssistantModel } from '@/infrastructure/config/hooks/useAssistantModel';
+import { plannedAssistantModelLabel } from './plannedAssistantModel';
 
 const PARAMETER_STREAMING_STATUSES = new Set<FlowToolItem['status']>([
   'preparing',
@@ -205,11 +207,16 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
     ?? (linkedSubagentSessionId
       ? t(resolveSubagentNameKey(linkedSubagentSessionId)) : t('toolCards.interaction.unknownAgent'));
   // A called assistant runs on the model its session actually used; before it
-  // runs, a local one starts on the app default and a shared one on its
-  // owner's device's choice.
+  // runs, a local one names the model its settings choose and a shared one
+  // its owner's device's choice.
+  const plannedModel = plannedAssistantModelLabel(
+    useAssistantModel(localAssistantFromAgentType(calledType)),
+    t,
+  );
   const assistantRanOn = toolItem.subagentModelDisplayName?.trim() || latestEffectiveModel(linkedSession);
   const modelName = callsAssistant ? assistantRanOn || (assistantOwner?.kind === 'shared'
-    ? t('toolCards.taskTool.remoteAgentModel') : t('toolCards.taskTool.assistantModelDefault'))
+    ? t('toolCards.taskTool.remoteAgentModel')
+    : plannedModel || t('toolCards.taskTool.assistantModelDefault'))
     : toolItem.subagentModelDisplayName?.trim()
     || linkedSession?.config?.modelName?.trim()
     || toolItem.subagentModelId?.trim()

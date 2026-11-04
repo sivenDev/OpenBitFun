@@ -2434,6 +2434,7 @@
       "reviewStopped": "已停止",
       "assistantLabel": "{{agent}}（我的助理）",
       "assistantModelDefault": "應用程式預設模型",
+      "assistantModelPrimary": "{{name}}（主力模型）",
       "assistantOwnerMine": "我的助理",
       "assistantOwnerShared": "來自 {{owner}} 的裝置"
     },

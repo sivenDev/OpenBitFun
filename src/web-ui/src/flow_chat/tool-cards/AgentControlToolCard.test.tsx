@@ -21,6 +21,15 @@ const mocks = vi.hoisted(() => ({
   needsUserAttention: false,
   childSubagentType: 'SwarmWorker',
   parentTurns: [] as unknown[],
+  plannedModel: null as null | { model: { model_name: string } | null; source: string; chosenId: string | null },
+  plannedFor: [] as Array<string | null | undefined>,
+}));
+
+vi.mock('@/infrastructure/config/hooks/useAssistantModel', () => ({
+  useAssistantModel: (assistantId: string | null | undefined) => {
+    mocks.plannedFor.push(assistantId);
+    return assistantId ? mocks.plannedModel : null;
+  },
 }));
 
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
@@ -406,6 +415,29 @@ describeWithJsdom('AgentControlToolCard', () => {
     expect(container.querySelector('[data-openbitfun-part="agentType"]')?.textContent)
       .toBe('toolCards.taskTool.assistantOwnerMine');
     expect(container.textContent).not.toContain('assistant:workspace-writer');
+  });
+
+  it('names the model a local assistant\'s settings choose before it runs', async () => {
+    mocks.childSubagentType = 'Claw';
+    const item = agentToolItem('AgentSpawn');
+    item.toolCall!.input = { ...item.toolCall!.input, agent_type: 'assistant:workspace-writer' };
+    const model = () => container.querySelector('[data-openbitfun-part="agentModel"]')?.textContent;
+    try {
+      mocks.plannedModel = { model: { model_name: 'gpt-6.1-sol' }, source: 'primary', chosenId: null };
+      await act(async () => root.render(
+        <AgentControlToolCard toolItem={item} config={config} sessionId="parent-session" />,
+      ));
+      expect(mocks.plannedFor).toContain('workspace-writer');
+      expect(model()).toBe('toolCards.taskTool.assistantModelPrimary');
+
+      mocks.plannedModel = { model: { model_name: 'gpt-6.1-terra' }, source: 'assistant', chosenId: 'terra' };
+      await act(async () => root.render(
+        <AgentControlToolCard toolItem={{ ...item }} config={config} sessionId="parent-session" />,
+      ));
+      expect(model()).toBe('gpt-6.1-terra');
+    } finally {
+      mocks.plannedModel = null;
+    }
   });
 
   it('shows the model a called assistant actually ran on', async () => {

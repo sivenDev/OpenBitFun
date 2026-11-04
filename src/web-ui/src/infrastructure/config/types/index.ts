@@ -81,6 +81,8 @@ export interface AppConfig {
   user_tool_groups?: UserToolGroupsConfig;
   /** Absent on hosts that predate assistant entry-session preferences. */
   assistant_default_sessions?: Record<string, string>;
+  /** Absent on hosts that predate assistant default models; keyed by assistant ID. */
+  assistant_default_models?: Record<string, string>;
   user_skill_groups?: UserSkillGroupsConfig;
 }
 

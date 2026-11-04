@@ -188,6 +188,15 @@
       "newSessionTitle": "Start a conversation",
       "sessionsSectionTitle": "Sessions",
       "scheduledSessionsTitle": "Scheduled sessions",
+      "model": {
+        "title": "Default model",
+        "followPrimary": "Follow the primary model (now {{name}})",
+        "followPrimaryUnset": "Follow the primary model (not set)",
+        "unavailableOption": "{{name}} (unavailable)",
+        "unavailableNotice": "The chosen model is unavailable, so this assistant runs on the primary model {{name}} for now.",
+        "unavailableNoticeUnset": "The chosen model is unavailable and no primary model is set.",
+        "saveFailed": "Failed to save the default model"
+      },
       "calledBy": {
         "title": "Work for other assistants",
         "show": "Show {{count}}",

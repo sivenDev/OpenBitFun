@@ -22,7 +22,9 @@ import {
 import SessionsSection from '@/app/components/NavPanel/sections/sessions/SessionsSection';
 import AssistantAvatarPicker from './AssistantAvatarPicker';
 import AssistantQuickInput from './AssistantQuickInput';
+import AssistantModelSection from './AssistantModelSection';
 import CalledByAssistantsSection from './CalledByAssistantsSection';
+import { assistantShareId } from '@/infrastructure/lan-share/lanShareStore';
 import { useNurseryStore } from '../nurseryStore';
 import './NurseryView.scss';
 import {
@@ -508,6 +510,8 @@ const AssistantConfigPage: React.FC = () => {
               {renderPersonaDocLinks()}
             </div>
           </div>
+
+          {workspacePath ? <AssistantModelSection assistantId={assistantShareId(workspacePath)} /> : null}
 
           <section className="acp-section" aria-label={t('nursery.assistant.newSessionTitle')}>
             <PageHeader size="sm" level={3} title={t('nursery.assistant.newSessionTitle')} />

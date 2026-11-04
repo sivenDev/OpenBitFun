@@ -135,7 +135,8 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/app/scenes/profile src/flow_chat/tool-cards`
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`、`pnpm run appearance:contract-audit`
 
-- [ ] 设置、清除、不可用说明、卡片运行前模型名均有测试
+- [x] 设置、清除、不可用说明、卡片运行前模型名均有测试
+  证据（2026-11-04）：Web 端 `infrastructure/config/utils/assistantModel.ts` 按后端同一规则解析（助理设置 → 已启用则用它，否则主力模型），`useAssistantModel` 跟随 `ai.models`、`ai.default_models` 与 `app.assistant_default_models` 的变化；键为 `assistantShareId(rootPath)`，与后端 `assistant_id_of` 一致。主页新增「默认模型」部分（`AssistantModelSection`，外观部件 `model`/`modelNotice`）；旧主机没有该设置时不显示。两种调用卡片在运行前对本机助理写具体模型名，跟随主力模型时写「X（主力模型）」。测试：`AssistantModelSection.test.tsx`（默认跟随、保存、清除、不可用说明、保存失败、旧主机隐藏）、`assistantModel.test.ts`、`AgentControlToolCard.test.tsx`（运行前模型名）；profile 13 个文件 75 项，tool-cards 59 项通过；`type-check:web`、`lint:web`（改动文件无告警）、`i18n:audit`、`appearance:contract-audit` 通过。
 
 ## Task 5: 共享调用显示对方回报的模型
 

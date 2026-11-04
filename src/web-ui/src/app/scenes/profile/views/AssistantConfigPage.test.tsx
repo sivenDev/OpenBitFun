@@ -45,6 +45,7 @@ vi.mock('@/app/scenes/my-agent/useAgentIdentityDocument', () => ({
 vi.mock('./AssistantAvatarPicker', () => ({ default: () => null }));
 vi.mock('./AssistantQuickInput', () => ({ default: () => null }));
 vi.mock('./CalledByAssistantsSection', () => ({ default: () => null }));
+vi.mock('./AssistantModelSection', () => ({ default: () => null }));
 vi.mock('@/app/components/NavPanel/sections/sessions/SessionsSection', () => ({ default: () => null }));
 vi.mock('@/app/components/scheduled-jobs/ScheduledJobsView', () => ({
   default: () => {
