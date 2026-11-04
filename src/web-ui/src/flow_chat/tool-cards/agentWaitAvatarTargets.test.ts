@@ -31,6 +31,17 @@ describe('resolveAgentWaitAvatarSessionIds', () => {
     ]);
   });
 
+  it('keeps the type a spawn asked for so a called assistant is named before its session loads', () => {
+    const spawn: FlowToolItem = {
+      id: 'call', type: 'tool', toolName: 'AgentSpawn', status: 'completed', timestamp: 1,
+      toolCall: { id: 'call', input: { agent_id: 'xiaolan-essay', agent_type: 'assistant:abc' } },
+      toolResult: { success: true, result: { agent_id: 'xiaolan-essay', bg_task_id: 'xiaolan-essay_bg1' } },
+      subagentSessionId: 'callee',
+    };
+    expect(resolveAgentWaitAvatarTargets({ bg_task_ids: ['xiaolan-essay_bg1'] }, undefined, parentWithTasks(spawn)))
+      .toEqual([{ id: 'xiaolan-essay_bg1', sessionId: 'callee', parentToolCallId: 'call', agentType: 'assistant:abc' }]);
+  });
+
   it('preserves unresolved result targets without inventing child sessions', () => {
     const parent = parentWithTasks(backgroundTask('a1_bg1', 'child-a'));
     expect(resolveAgentWaitAvatarTargets({}, {

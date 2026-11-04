@@ -7,6 +7,8 @@ export interface AgentWaitAvatarTarget {
   id: string;
   sessionId?: string;
   parentToolCallId?: string;
+  /** The type the spawn asked for; it names a called assistant even before its session loads. */
+  agentType?: string;
 }
 
 function taskIds(value: unknown): string[] {
@@ -59,6 +61,7 @@ export function resolveAgentWaitAvatarTargets(
           agentId: toolString(data.agent_id) || toolString(readInteractionInput(item).agent_id),
           sessionId: subagentSessionId || undefined,
           parentToolCallId: context?.sessions.get(subagentSessionId)?.parentToolCallId || item.toolCall?.id || item.id,
+          agentType: toolString(readInteractionInput(item).agent_type) || undefined,
         });
       }
     }
@@ -71,6 +74,11 @@ export function resolveAgentWaitAvatarTargets(
     const identityKey = target?.sessionId ? `session:${target.sessionId}` : agentId ? `agent:${agentId}` : `task:${id}`;
     if (seenIdentities.has(identityKey)) return [];
     seenIdentities.add(identityKey);
-    return [{ id, sessionId: target?.sessionId, parentToolCallId: target?.parentToolCallId }];
+    return [{
+      id,
+      sessionId: target?.sessionId,
+      parentToolCallId: target?.parentToolCallId,
+      ...(target?.agentType ? { agentType: target.agentType } : {}),
+    }];
   });
 }

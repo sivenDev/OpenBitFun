@@ -66,11 +66,13 @@ export const AgentWaitToolCard: React.FC<ToolCardProps> = ({
     if (!target.sessionId) return t('toolCards.interaction.unknownAgent');
     const targetSession = flowChatStore.getState().sessions.get(target.sessionId);
     const assistantWorkspaces = workspaceManager.getState().assistantWorkspaces;
-    return calledAssistantName(
-      targetSession?.mode ?? targetSession?.config?.agentType,
-      assistantWorkspaces,
-      sharedWithMe,
-    ) ?? calledAssistantSessionName(targetSession, assistantWorkspaces)
+    // The spawn's requested type names the assistant even when its session is not loaded yet.
+    return calledAssistantName(target.agentType, assistantWorkspaces, sharedWithMe)
+      ?? calledAssistantName(
+        targetSession?.mode ?? targetSession?.config?.agentType,
+        assistantWorkspaces,
+        sharedWithMe,
+      ) ?? calledAssistantSessionName(targetSession, assistantWorkspaces)
       ?? t(resolveSubagentNameKey(target.sessionId));
   });
   const hatching = !session?.isHistorical
