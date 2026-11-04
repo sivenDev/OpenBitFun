@@ -138,6 +138,8 @@ parent: "F002"
 - [ ] 真机截图与 Exit Criteria 第 1 条一致，记录所用场景（本地）
   - 部分证据（2026-11-04，本地 `desktop:dev -- --isolated-data`，数据复制自 obf-local）：使用者端已核对，「来自共享」中已停止共享的助理只显示名字和 `Ban` 标识，对话行行尾是图标，hover 显示完整说明；选中行修正后清晰可见。主人端尚未在真机上看到按设备分组：本机 `openbitfun dispatch list` 有一个来自 agent002-Mac-Mini 的任务（`assistant:workspace`，已完成），应出现在「小岚」的历史里，但这次没能在后台打开小岚的历史会话。
   - 主人端真机（2026-11-04，用户打开的 obf-local 打包版，F001 分支合并后）：小岚名下「我的」之后是「来自 agent 的设备」一组，3 个会话，选中行清晰。用户指出分组头前面的首字母方块（「A」）没有必要，第二行「agent002-Mac-Mini · 3 个会话 · 时间」让排版难看。改为：分组头一行，只有展开箭头、「来自 X 的设备」和待审批角标；设备名、数量、运行数或时间、待审批数放进 tooltip 与无障碍名称；删除首字母方块及其样式。workspaces 目录 15 个文件 105 项测试、`type-check:web`、eslint、`check:web`、`theme:color-audit:all` 通过。改后的样子待合并到 F001 分支并重新打包后再看。
+  - 改后真机（2026-11-04 12:33，F001 分支 dev 实例，合并 `26b6603a6`，obf-local 数据）：小岚名下「我的」标签之后是一行「› 来自 agent 的设备」，没有首字母方块和第二行；无障碍名称是「来自 agent 的设备 · agent002-Mac-Mini · 3 个会话 · 11月4日 11:52」。点开后 3 个会话各占一行。旁注：这个实例最初没有 `openbitfun` CLI，列表静默为空，在同一 `target/debug` 构建 CLI 后 30 秒内出现。未核对：窗口不在当前桌面，展开后箭头没有转向，可能是后台窗口暂停了 CSS 过渡；hover tooltip 也需要用户在前台看一眼。
+  - 用户确认箭头需要修复：分组头改为像工作区行一样切换图标（展开 `chevron-down`，收起 `chevron-right`），不再依赖 CSS 旋转和过渡，删除旋转样式；测试断言两种箭头。workspaces 目录 105 项测试、`type-check:web`、eslint、`check:web`、`theme:color-audit:all` 通过。
 
 ## References
 - `docs/superplan/rfcs/F002.md`

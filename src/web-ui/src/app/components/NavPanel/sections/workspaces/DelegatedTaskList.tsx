@@ -169,7 +169,7 @@ export default function DelegatedTaskList({
             onClick={toggle}
             data-testid="nav-delegated-group-toggle"
           >
-            <Icon name="chevron-right" size="xs" className="assistant-session-history__delegated-chevron" aria-hidden="true" />
+            <Icon name={isOpen ? 'chevron-down' : 'chevron-right'} size="xs" className="assistant-session-history__delegated-chevron" aria-hidden="true" />
             <span className="assistant-session-history__delegated-heading-title">{heading}</span>
             {group.waiting > 0 ? (
               <span
