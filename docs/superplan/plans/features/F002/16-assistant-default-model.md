@@ -168,6 +168,13 @@ parent: "F002"
 - release：`zsh tmp/build-arm64.sh` 后两台安装；agent002 上的前台操作只在屏幕共享窗口中进行
 
 - [ ] Exit Criteria 1–5 全部通过并记录证据
+  dev 证据（2026-11-04，隔离数据，`openbitfun-desktop` dev 构建；全局 `mode` 为 gpt-6.1-terra，主力模型为 gpt-6.1-sol）：
+  - EC1：小岚主页设为 gpt-6.1-terra，写入 `app.assistant_default_models = {"workspace": "gpt-6.1-terra"}`；小栖调用小岚，卡片运行中与完成后都写「gpt-6.1-terra」，被调用会话 `dc877a63` 的用量记录为 gpt-6.1-terra。
+  - EC2：小岚改回「跟随主力模型（当前为 gpt-6.1-sol）」后该键被删除；从主页发起的新对话用 gpt-6.1-sol 回复「好」；小栖（自身为 terra）调用小岚，被调用会话 `cf96f275` 用 gpt-6.1-sol，卡片写「gpt-6.1-sol」。
+  - EC3：小岚设为 terra 后在设置中停用 terra：主页写「gpt-6.1-terra（不可用）」与「所选模型不可用，暂按主力模型 gpt-6.1-sol 运行。」，设置保留；新对话用 gpt-6.1-sol 回复「嗯」；重新启用后主页恢复「gpt-6.1-terra」。验收后已改回跟随主力模型。
+  - EC5：隔离数据的配置早于该设置项，升级后照常读取，所有助理按主力模型运行；旧版本读新配置由 `assistant_default_models_preserve_legacy_config_and_round_trip` 覆盖。
+  - 验收中发现并修正：主页「发起会话」的模型菜单对新助理对话已不起作用，只改全局最后选择，已移除（`d775dc424`）。
+  - 待办：EC4 需 release 包与 agent002，恢复 A 在 agent002 上的访问需用户在屏幕共享中批准。
 
 ## 风险
 
