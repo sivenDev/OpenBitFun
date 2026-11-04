@@ -2,7 +2,7 @@
 id: "F002-17"
 title: "用「@」点名助理：在能调用子智能体的对话里点名自己的或共享的助理，由当前智能体调用"
 type: "feature"
-status: "draft"
+status: "in_progress"
 summary: "「@」菜单增加「助理」一类，列出当前对话能调用的助理（自己的其他助理与别人共享的助理，写名字与归属，不能调用的置灰写原因）。选中后成为输入框里的「@名字」标签；发送时把被点名的助理随消息带给后端，后端在回合开始时再核对一次并明确告诉智能体去调用它，调用沿用 F002-13 的调用记录与展示。可调用的判定由后端按对话给出，与智能体实际拿到的列表同一套规则；Peer Device Mode 转发到对端。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-04"
@@ -13,7 +13,7 @@ parent: "F002"
 
 # 用「@」点名助理 Plan
 
-**需求基准：** RFC `docs/superplan/rfcs/F002.md` 第 10 版：摘要第 10 版一段；目标 11；非目标中「@」相关两条；D15；交互设计要点「「@」点名助理」；分阶段交付 6（F002-17）；批准条件 13。主人 2026-11-04 确认：「@」助理的含义是让当前智能体去调用它；在所有能调用子智能体的对话里可用；包括共享的助理；作为 F002 的新阶段，在 F002-16 之后做。
+**需求基准：** RFC `docs/superplan/rfcs/F002.md` 第 10 版：摘要第 10 版一段；目标 11；非目标中「@」相关两条；D15；交互设计要点「「@」点名助理」；分阶段交付 6（F002-17）；批准条件 13。主人 2026-11-04 确认：「@」助理的含义是让当前智能体去调用它；在所有能调用子智能体的对话里可用；包括共享的助理；作为 F002 的新阶段，在 F002-16 之后做。主人 2026-11-04 批准本计划（RFC 第 10 版与 F002-17）；是否先合入 `origin/main` 在 Task 3 前另行确认。
 
 **现状（2026-11-04 核对代码）：**
 - 「@」菜单 `src/web-ui/src/flow_chat/components/ChatContextPicker.tsx`（由 `RichTextInput.tsx` 的 `@` 触发、`ChatInput.tsx` 渲染）现有文件、会话、技能、MCP 与添加图片。文件以 `[File: path]` 文本进入消息；会话引用不进正文，作为 `userMessageMetadata.sessionReferences` 发送，由 `ConversationCoordinator::materialize_session_references_for_turn`（`coordinator.rs`）在回合开始时转成给智能体的内部提示。被点名的助理按会话引用的方式实现。
