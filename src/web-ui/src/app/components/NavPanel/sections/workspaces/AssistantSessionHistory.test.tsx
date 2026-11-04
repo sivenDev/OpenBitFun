@@ -32,6 +32,7 @@ vi.mock('@openbitfun/ui', () => {
       <button disabled={disabled} onClick={onClick}>{children}</button>
     ),
     Icon: () => <span />,
+    Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   };
 });
 

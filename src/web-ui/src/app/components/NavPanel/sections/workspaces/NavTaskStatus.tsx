@@ -1,4 +1,8 @@
-/** Where a task in the navigation stands, as the dot before its title shows it. */
+import { Icon } from '@openbitfun/ui';
+import { Ban, CircleAlert, Hand, Loader2, TimerOff } from 'lucide-react';
+import '../sessions/SessionStatusIndicator.scss';
+
+/** Where a task in the navigation stands, as the icon after its title shows it. */
 export type NavTaskStatusKind =
   | 'approval'
   | 'queued'
@@ -9,24 +13,38 @@ export type NavTaskStatusKind =
   | 'done'
   | 'idle';
 
-/** The dot before a task's title. Its words go in the row's trailing label. */
-export function NavTaskStatusDot({ kind }: { kind: NavTaskStatusKind }) {
+// The same marks session rows use, so a task reads like a session.
+const presentation = {
+  approval: { glyph: Hand, tone: 'warning' },
+  queued: { name: 'clock', tone: 'secondary' },
+  running: { glyph: Loader2, tone: 'info' },
+  failed: { glyph: CircleAlert, tone: 'danger' },
+  expired: { glyph: TimerOff, tone: 'secondary' },
+  stopped: { glyph: Ban, tone: 'secondary' },
+} as const;
+
+/**
+ * The icon after a task's title; settled tasks have none. `label` names it for
+ * assistive technology; the row's tooltip says it in full.
+ */
+export function NavTaskStatusIcon({ kind, label }: { kind: NavTaskStatusKind; label: string | null }) {
+  if (kind === 'done' || kind === 'idle') return null;
+  const appearance = presentation[kind];
   return (
     <span
-      className={`nav-task-status__dot is-${kind}`}
+      className="session-status-indicator nav-task-status"
       data-openbitfun-component="sessions-section"
       data-openbitfun-part="statusMark"
-      aria-hidden="true"
-    />
-  );
-}
-
-/** A short trailing label; waiting reads as a warning chip. */
-export function NavTaskStatusLabel({ kind, text }: { kind: NavTaskStatusKind; text: string | null }) {
-  if (!text) return null;
-  return (
-    <span className={['nav-task-status__label', kind === 'approval' && 'is-chip'].filter(Boolean).join(' ')}>
-      {text}
+      data-status={kind}
+      role="img"
+      aria-label={label ?? undefined}
+    >
+      <Icon
+        {...('glyph' in appearance ? { glyph: appearance.glyph } : { name: appearance.name })}
+        size="xs"
+        tone={appearance.tone}
+        aria-hidden="true"
+      />
     </span>
   );
 }

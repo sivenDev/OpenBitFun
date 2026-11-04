@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
 import { Icon, IconButton, Tooltip } from '@openbitfun/ui';
+import { Ban, WifiOff } from 'lucide-react';
 import { useSceneStore } from '@/app/stores/sceneStore';
 import { isSessionNavRowActive } from '@/app/components/NavPanel/sections/sessions/sessionNavSelection';
 import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
@@ -19,7 +20,7 @@ import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDevi
 import { notificationService } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
 import { limitRows } from './delegatedTaskGroups';
-import { NavTaskStatusDot, NavTaskStatusLabel } from './NavTaskStatus';
+import { NavTaskStatusIcon } from './NavTaskStatus';
 import { fullLists } from './navListMemory';
 
 const log = createLogger('SharedAssistantList');
@@ -83,19 +84,6 @@ export default function SharedAssistantList() {
     }
   };
 
-  // A few words after the title; the full sentence stays in the row's tooltip.
-  const shortText = (status: SharedAssistantStatus): string | null => {
-    switch (status.kind) {
-      case 'approval': return t('nav.sessions.sharedAssistant.status.approvalShort');
-      case 'queued': return t('nav.sessions.sharedAssistant.status.queued');
-      case 'running': return t('shared:statuses.running');
-      case 'expired': return t('nav.sessions.sharedAssistant.status.expired');
-      case 'stopped': return t('nav.sessions.sharedAssistant.status.stopped');
-      case 'failed': return t('shared:statuses.failed');
-      default: return null;
-    }
-  };
-
   return (
     <div className="shared-assistant-nav" data-testid="nav-shared-assistants">
       <div className="shared-assistant-nav__title">{t('nav.sessions.sharedAssistant.title')}</div>
@@ -129,24 +117,28 @@ export default function SharedAssistantList() {
             data-testid="nav-shared-assistant"
           >
             <div className="shared-assistant-nav__header">
-              <button
-                type="button"
-                className="openbitfun-nav-panel__inline-item shared-assistant-nav__name"
-                data-openbitfun-component="sessions-section"
-                data-openbitfun-part="row"
-                title={source}
-                aria-busy={busy}
-                onClick={() => run(() => openSharedAssistantConversation(ref, !revoked))}
-                data-testid="nav-shared-assistant-open"
-              >
-                <span className="shared-assistant-nav__name-line">
+              {/* Who shares it and whether it can be reached show as a mark; the words are in the tooltip. */}
+              <Tooltip content={source} placement="right" followCursor>
+                <button
+                  type="button"
+                  className="openbitfun-nav-panel__inline-item shared-assistant-nav__name"
+                  data-openbitfun-component="sessions-section"
+                  data-openbitfun-part="row"
+                  aria-label={`${assistant.name} · ${source}`}
+                  aria-busy={busy}
+                  onClick={() => run(() => openSharedAssistantConversation(ref, !revoked))}
+                  data-testid="nav-shared-assistant-open"
+                >
                   <span className="assistant-session-history__delegated-title">{assistant.name}</span>
                   {reachable ? (
                     <span className="shared-assistant-nav__online" data-testid="nav-shared-assistant-online" aria-hidden="true" />
-                  ) : null}
-                </span>
-                <span className="assistant-session-history__delegated-detail">{source}</span>
-              </button>
+                  ) : (
+                    <span className="shared-assistant-nav__standing" data-testid="nav-shared-assistant-unavailable" aria-hidden="true">
+                      <Icon glyph={revoked ? Ban : WifiOff} size="xs" tone="secondary" />
+                    </span>
+                  )}
+                </button>
+              </Tooltip>
               {revoked ? null : (
                 <Tooltip content={t('nav.sessions.sharedAssistant.newConversation')}>
                   <IconButton
@@ -170,31 +162,31 @@ export default function SharedAssistantList() {
                   const detail = statusText(status, owner);
                   const active = isActive(job.sessionId);
                   const title = sessions.get(job.sessionId)?.title || job.title || t('nav.sessions.sharedAssistant.untitled');
+                  const said = detail ? `${title} · ${detail}` : title;
                   return (
-                    <button
-                      key={job.jobId}
-                      type="button"
-                      className={[
-                        'openbitfun-nav-panel__inline-item',
-                        'assistant-session-history__delegated-item',
-                        status.kind === 'approval' && 'is-waiting',
-                        active && 'is-active',
-                      ].filter(Boolean).join(' ')}
-                      data-openbitfun-component="sessions-section"
-                      data-openbitfun-part="row"
-                      data-openbitfun-state={active ? 'active' : undefined}
-                      aria-current={active ? 'true' : undefined}
-                      title={detail ? `${title} · ${detail}` : title}
-                      aria-label={detail ? `${title} · ${detail}` : title}
-                      onClick={() => run(() => openMainSession(job.sessionId))}
-                      data-testid="nav-shared-assistant-conversation"
-                    >
-                      <span className="assistant-session-history__delegated-line">
-                        <NavTaskStatusDot kind={status.kind} />
-                        <span className="assistant-session-history__delegated-title">{title}</span>
-                        <NavTaskStatusLabel kind={status.kind} text={shortText(status)} />
-                      </span>
-                    </button>
+                    <Tooltip key={job.jobId} content={said} placement="right" followCursor>
+                      <button
+                        type="button"
+                        className={[
+                          'openbitfun-nav-panel__inline-item',
+                          'assistant-session-history__delegated-item',
+                          status.kind === 'approval' && 'is-waiting',
+                          active && 'is-active',
+                        ].filter(Boolean).join(' ')}
+                        data-openbitfun-component="sessions-section"
+                        data-openbitfun-part="row"
+                        data-openbitfun-state={active ? 'active' : undefined}
+                        aria-current={active ? 'true' : undefined}
+                        aria-label={said}
+                        onClick={() => run(() => openMainSession(job.sessionId))}
+                        data-testid="nav-shared-assistant-conversation"
+                      >
+                        <span className="assistant-session-history__delegated-line">
+                          <span className="assistant-session-history__delegated-title">{title}</span>
+                          <NavTaskStatusIcon kind={status.kind} label={detail} />
+                        </span>
+                      </button>
+                    </Tooltip>
                   );
                 })}
                 {hidden > 0 ? (

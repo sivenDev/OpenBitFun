@@ -95,22 +95,23 @@ describe('the assistants shared with this device in the navigation', () => {
   it('list each assistant with its conversations, newest first, and what they wait on', async () => {
     await render();
     expect(all('nav-shared-assistant')).toHaveLength(1);
-    expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.textContent)
-      .toContain('nav.sessions.sharedAssistant.from Ann');
+    // Only the name is written; who shares it is its accessible name and tooltip.
+    const header = document.querySelector('[data-testid="nav-shared-assistant-open"]')!;
+    expect(header.textContent).toBe('Writer');
+    expect(header.getAttribute('aria-label')).toBe('Writer · nav.sessions.sharedAssistant.from Ann');
     // Reachable, the assistant shows the online dot.
     expect(all('nav-shared-assistant-online')).toHaveLength(1);
+    expect(all('nav-shared-assistant-unavailable')).toHaveLength(0);
     expect(all('nav-shared-assistant')[0].className).not.toContain('is-unavailable');
     const rows = all('nav-shared-assistant-conversation');
-    // A row reads its title and a few words; the full sentence is its name and tooltip.
-    expect(rows.map(row => row.textContent)).toEqual([
-      'Second draftnav.sessions.sharedAssistant.status.approvalShort',
-      'Firstnav.sessions.sharedAssistant.status.queued',
-    ]);
+    // A row reads its title and an icon; the full sentence is its name and tooltip.
+    expect(rows.map(row => row.textContent)).toEqual(['Second draft', 'First']);
     expect(rows.map(row => row.getAttribute('aria-label'))).toEqual([
       'Second draft · nav.sessions.sharedAssistant.status.approval Ann',
       'First · nav.sessions.sharedAssistant.status.queuedLimit Ann 2',
     ]);
-    expect(rows[0].querySelector('.nav-task-status__dot')!.className).toContain('is-approval');
+    expect(rows.map(row => row.querySelector('[data-openbitfun-part="statusMark"]')!.getAttribute('data-status')))
+      .toEqual(['approval', 'queued']);
     expect(rows[0].getAttribute('aria-current')).toBe('true');
     expect(rows[0].className).toContain('is-waiting');
   });
@@ -120,7 +121,8 @@ describe('the assistants shared with this device in the navigation', () => {
     await render();
     expect(all('nav-shared-assistant')[0].className).toContain('is-unavailable');
     expect(all('nav-shared-assistant-online')).toHaveLength(0);
-    expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.textContent)
+    expect(all('nav-shared-assistant-unavailable')).toHaveLength(1);
+    expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.getAttribute('aria-label'))
       .toContain('nav.sessions.sharedAssistant.offline');
   });
 
@@ -163,8 +165,9 @@ describe('the assistants shared with this device in the navigation', () => {
     mocks.shared = [{ ...writer, state: 'revoked' }];
     await render();
     expect(document.querySelector('[data-testid="nav-shared-assistant-new"]')).toBeNull();
-    expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.textContent)
+    expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.getAttribute('aria-label'))
       .toContain('nav.sessions.sharedAssistant.revoked');
+    expect(all('nav-shared-assistant-unavailable')).toHaveLength(1);
     await click(document.querySelector('[data-testid="nav-shared-assistant-open"]')!);
     expect(mocks.open).toHaveBeenCalledWith(ref, false);
   });

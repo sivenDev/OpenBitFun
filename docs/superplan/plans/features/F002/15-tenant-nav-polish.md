@@ -114,6 +114,11 @@ parent: "F002"
 - [x] 超过 3 个对话时收起其余，当前打开的对话总会显示
   - 证据（2026-11-04）：`SharedAssistantList.test.tsx` 覆盖主人在线时的绿点；不在线时整组变暗、去掉绿点并写「不在线」；已停止共享时没有新对话入口；对话行的状态点、短标签与完整说明（无障碍名称与 tooltip，例如「等待 Ann 审批」「排队中 · Ann 同时只处理 2 个任务」）；5 个对话时显示前 3 个加当前打开的那个，「显示其余 1 个」点开后显示全部。与 Task 1 同一次运行，15 个文件 105 项通过。
   - 与计划的差异：对话行原来是两行（标题加完整状态），现在是一行（状态点、标题、短标签），和主人端一致；完整状态保留在无障碍名称与 tooltip 中。新增短词 `sharedAssistant.status.approvalShort`（三种语言）。
+  - 真机反馈后的调整（2026-11-04，用户要求「能用图标的就用图标，hover 给文字提示」）：
+    - 助理行只写名字，后面一个标识：在线是绿点，不在线是 `WifiOff`，已停止共享是 `Ban`；「来自 X 的设备 · 状态」放进 tooltip 与无障碍名称，去掉第二行。
+    - 对话行与主人端任务行去掉状态点和行尾短词，改为行尾图标，沿用会话行 `SessionStatusIndicator` 的图标与色调（待审批 `Hand`、排队 `clock`、运行 `Loader2` 旋转、失败 `CircleAlert`，另加过期 `TimerOff`、共享已停止 `Ban`）；已结束的任务没有图标，开始时间放进 tooltip。完整说明改用 `Tooltip` 组件显示，同时是行的无障碍名称。
+    - 删除不再使用的 `sharedAssistant.status.approvalShort`。NavPanel 50 个文件 379 项测试、`type-check:web`、改动目录 eslint、`i18n:audit`（0 警告）、`theme:color-audit:all` 通过。
+    - 用户指出共享助理下对话的选中状态太浅：任务行的悬停与选中改用会话行的 `navigation-hover-feedback`、`nav-panel-text-row-active` 与 `navigation-selection-feedback`；不可用（变暗）的助理里，选中行的标题仍用主文字色。workspaces 目录 15 个文件 105 项测试与 `theme:color-audit:all` 通过。
 
 ## Task 3: 整体检查与真机核对
 
@@ -131,6 +136,7 @@ parent: "F002"
   - 证据（2026-11-04）：`pnpm run check:web` 通过（canvas SDK 检查、外观契约与排版审计 0 违规、`tsc --noEmit`）；`pnpm run theme:color-audit:all` 通过，28 个范围全部通过，没有提高基线。新的样式部件（`sectionLabel`、`groupHeader`、`badge`、`statusMark`、`more`）已注册到 `sessions-section` 外观描述；颜色只用现有的语义 token。
   - 环境说明：新 worktree 里没有 `src/web-ui/src/generated/api`（由 Rust 的 ts-rs 测试导出，已被 gitignore），类型检查报找不到模块。这次从原工作区复制了同一提交（`8b159c359`）导出的文件，没有改动它们。
 - [ ] 真机截图与 Exit Criteria 第 1 条一致，记录所用场景（本地）
+  - 部分证据（2026-11-04，本地 `desktop:dev -- --isolated-data`，数据复制自 obf-local）：使用者端已核对，「来自共享」中已停止共享的助理只显示名字和 `Ban` 标识，对话行行尾是图标，hover 显示完整说明；选中行修正后清晰可见。主人端尚未在真机上看到按设备分组：本机 `openbitfun dispatch list` 有一个来自 agent002-Mac-Mini 的任务（`assistant:workspace`，已完成），应出现在「小岚」的历史里，但这次没能在后台打开小岚的历史会话。
 
 ## References
 - `docs/superplan/rfcs/F002.md`

@@ -31,7 +31,10 @@ vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ open
 vi.mock('@/infrastructure/runtime', () => ({ isTauriRuntime: mocks.tauri }));
 vi.mock('@/infrastructure/peer-device/peerDeviceContextState', () => ({ usePeerDeviceModeOptional: mocks.peer }));
 vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ warn: vi.fn() }) }));
-vi.mock('@openbitfun/ui', () => ({ Icon: () => <span /> }));
+vi.mock('@openbitfun/ui', () => ({
+  Icon: () => <span />,
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock('@/infrastructure/i18n', () => ({
   useI18n: () => ({
     t: (key: string, values?: Record<string, unknown>) =>
@@ -99,15 +102,18 @@ describe('DelegatedTaskList', () => {
     expect(toggle(0).getAttribute('aria-expanded')).toBe('true');
     expect(toggle(1).getAttribute('aria-expanded')).toBe('false');
     expect(titles()).toEqual(['Task a']);
-    // A row says where the task stands, not that it is an outside task or where it came from.
-    expect(rows()[0].textContent).toContain('nav.sessions.delegated.waitingShort:2');
+    // A row shows where the task stands as an icon and says it in its name and tooltip,
+    // not that it is an outside task or where it came from.
+    expect(rows()[0].getAttribute('aria-label')).toContain('nav.sessions.delegated.waitingShort:2');
+    expect(rows()[0].querySelector('[data-openbitfun-part="statusMark"]')!.getAttribute('data-status')).toBe('approval');
+    expect(rows()[0].textContent).toBe('Task a');
     expect(rows()[0].textContent).not.toContain('nav.sessions.delegated.from');
     expect(rows()[0].textContent).not.toContain('external');
     expect(rows()[0].classList.contains('is-waiting')).toBe(true);
 
     await act(async () => toggle(1).click());
     expect(titles()).toEqual(['Task a', 'Task b', 'Task c']);
-    expect(rows()[1].textContent).toContain('shared:statuses.running');
+    expect(rows()[1].getAttribute('aria-label')).toContain('shared:statuses.running');
     expect(rows()[1].classList.contains('is-waiting')).toBe(false);
 
     // A task opens as its own read-only session.
@@ -131,8 +137,9 @@ describe('DelegatedTaskList', () => {
     expect(titles()).toEqual(['Task w', 'Task p', 'Task q']);
     const more = container.querySelector<HTMLButtonElement>('[data-testid="nav-delegated-more"]')!;
     expect(more.textContent).toBe('nav.sessions.delegated.showMore:2');
-    // Settled tasks say when they started.
-    expect(rows()[1].textContent).toContain('2026-11-03T01:00:00.000Z');
+    // Settled tasks have no icon; their tooltip says when they started.
+    expect(rows()[1].getAttribute('aria-label')).toContain('2026-11-03T01:00:00.000Z');
+    expect(rows()[1].querySelector('[data-openbitfun-part="statusMark"]')).toBeNull();
     await act(async () => more.click());
     expect(titles()).toEqual(['Task w', 'Task p', 'Task q', 'Task r', 'Task s']);
     expect(container.querySelector('[data-testid="nav-delegated-more"]')).toBeNull();

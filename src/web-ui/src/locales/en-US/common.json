@@ -523,7 +523,6 @@
         "openFailed": "Could not open the conversation: {{reason}}",
         "status": {
           "approval": "Waiting for {{owner}} to approve",
-          "approvalShort": "To approve",
           "queued": "Queued",
           "queuedLimit": "Queued · {{owner}} takes {{limit}} at a time",
           "expired": "Expired",

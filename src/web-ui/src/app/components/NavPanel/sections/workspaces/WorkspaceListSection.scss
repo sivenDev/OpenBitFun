@@ -1454,10 +1454,14 @@
   cursor: pointer;
 
   // Hover and selection read like a session row's.
-  &:hover,
-  &.is-active {
+  &:hover {
     color: var(--openbitfun-color-content-primary);
-    background: var(--openbitfun-color-action-quiet-hover);
+    @include shell-surfaces.navigation-hover-feedback;
+  }
+
+  &.is-active {
+    @include nav-font.nav-panel-text-row-active;
+    @include shell-surfaces.navigation-selection-feedback;
   }
 }
 
@@ -1603,55 +1607,9 @@
   }
 }
 
-// Where a task stands: a dot before the title. Waiting and running are
-// filled; settled tasks are an outline, so the busy ones stand out.
-.nav-task-status__dot {
+// Where a task stands: the session status icon after its title.
+.nav-task-status {
   flex: none;
-  inline-size: 7px;
-  block-size: 7px;
-  border: 1.5px solid var(--openbitfun-color-content-disabled);
-  border-radius: 50%;
-
-  &.is-approval {
-    border-color: var(--openbitfun-color-status-warning-emphasis);
-    background: var(--openbitfun-color-status-warning-emphasis);
-  }
-
-  &.is-running {
-    border-color: var(--openbitfun-color-status-info-emphasis);
-    background: var(--openbitfun-color-status-info-emphasis);
-  }
-
-  &.is-queued {
-    border-color: var(--openbitfun-color-status-info-emphasis);
-  }
-
-  &.is-failed,
-  &.is-expired,
-  &.is-stopped {
-    border-color: var(--openbitfun-color-status-danger-border);
-  }
-
-  &.is-idle {
-    border-color: transparent;
-  }
-}
-
-.nav-task-status__label {
-  flex: none;
-  max-inline-size: 45%;
-  overflow: hidden;
-  color: var(--openbitfun-color-content-muted);
-  font-size: var(--openbitfun-type-meta-font-size);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-
-  &.is-chip {
-    padding-inline: 6px;
-    border-radius: 999px;
-    background: var(--openbitfun-color-status-warning-surface);
-    color: var(--openbitfun-color-status-warning-content);
-  }
 }
 
 // Assistants other devices share with this one, each with its conversations
@@ -1675,12 +1633,12 @@
   padding-inline-end: var(--openbitfun-space-1);
 }
 
+// The assistant's name and a mark for whether its owner can be reached.
 .shared-assistant-nav__name.openbitfun-nav-panel__inline-item {
   display: flex;
   flex: 1 1 auto;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 6px;
   min-inline-size: 0;
   block-size: auto;
   padding: var(--openbitfun-space-1) var(--openbitfun-space-2);
@@ -1695,13 +1653,9 @@
   }
 }
 
-// The assistant's name, with a dot while its owner can be reached.
-.shared-assistant-nav__name-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-inline-size: 100%;
-  min-inline-size: 0;
+.shared-assistant-nav__standing {
+  display: inline-flex;
+  flex: none;
 }
 
 .shared-assistant-nav__online {
@@ -1712,9 +1666,14 @@
   background: var(--openbitfun-color-status-success-emphasis);
 }
 
-// Offline or no longer shared: the assistant and its conversations read dimmed.
+// Offline or no longer shared: the assistant and its conversations read dimmed,
+// except the one being viewed, which reads selected like any other.
 .shared-assistant-nav__assistant.is-unavailable {
   .assistant-session-history__delegated-title {
     color: var(--openbitfun-color-content-muted);
+  }
+
+  .assistant-session-history__delegated-item.is-active .assistant-session-history__delegated-title {
+    color: var(--openbitfun-color-content-primary);
   }
 }

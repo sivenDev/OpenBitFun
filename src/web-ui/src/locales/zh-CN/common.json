@@ -523,7 +523,6 @@
         "openFailed": "无法打开对话：{{reason}}",
         "status": {
           "approval": "等待 {{owner}} 审批",
-          "approvalShort": "待审批",
           "queued": "排队中",
           "queuedLimit": "排队中 · {{owner}} 同时只处理 {{limit}} 个任务",
           "expired": "已过期",
