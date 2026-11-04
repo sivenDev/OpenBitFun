@@ -1011,6 +1011,41 @@ describe('subagent parent helpers', () => {
       });
   });
 
+  it('finds the AgentSpawn card of a called assistant, whose session is not a subagent session', () => {
+    const call = makeTaskTool('call-1', {
+      toolName: 'AgentSpawn',
+      subagentSessionId: 'assistant-session',
+      subagentDialogTurnId: 'assistant-turn',
+    });
+    FlowChatStore.getInstance().setState(() => ({
+      sessions: new Map([[
+        'caller',
+        {
+          sessionId: 'caller',
+          title: 'Caller',
+          dialogTurns: [{
+            id: 'caller-turn',
+            sessionId: 'caller',
+            userMessage: { id: 'user-1', content: 'Call', timestamp: 900 },
+            modelRounds: [makeRound('round-1', [call])],
+            status: 'processing',
+            startTime: 900,
+          }],
+          status: 'idle',
+          config: { agentType: 'Claw' },
+          createdAt: 800,
+          lastActiveAt: 1000,
+          error: null,
+          sessionKind: 'normal',
+        } as Session,
+      ]]),
+      activeSessionId: 'caller',
+    }));
+
+    expect(__test_only__.findSubagentParentInfoByRound('assistant-session', 'assistant-turn'))
+      .toEqual({ sessionId: 'caller', dialogTurnId: 'caller-turn', toolCallId: 'call-1' });
+  });
+
   it('projects a linked Review manifest into the live child session', () => {
     const task = makeTaskTool('task-review');
     FlowChatStore.getInstance().setState(() => ({

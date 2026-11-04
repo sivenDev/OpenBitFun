@@ -686,8 +686,11 @@ function findSubagentParentInfoByRound(
           }
 
           const toolItem = item as FlowToolItem;
+          // AgentSpawn launches subagents too, and is how one assistant calls
+          // another, whose session is not a subagent session.
+          const toolName = getEffectiveToolName(toolItem).toLowerCase();
           if (
-            getEffectiveToolName(toolItem).toLowerCase() === 'task' &&
+            (toolName === 'task' || toolName === 'agentspawn') &&
             toolItem.subagentSessionId === subagentSessionId &&
             toolItem.subagentDialogTurnId === subagentDialogTurnId
           ) {

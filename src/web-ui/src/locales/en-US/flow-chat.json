@@ -2433,7 +2433,7 @@
       "reviewTimedOut": "Timed out",
       "reviewStopped": "Stopped",
       "assistantLabel": "{{agent}} (my assistant)",
-      "assistantModel": "Set by the assistant itself",
+      "assistantModelDefault": "App default model",
       "assistantOwnerMine": "My assistant",
       "assistantOwnerShared": "From {{owner}}'s device"
     },

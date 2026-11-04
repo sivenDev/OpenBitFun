@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import type { WorkspaceInfo } from '@/shared/types';
 import {
+  latestEffectiveModel,
   requestedAgentTypeForToolCall,
   calledAssistantName,
   calledAssistantOwner,
@@ -100,5 +101,16 @@ describe('requestedAgentTypeForToolCall', () => {
     expect(requestedAgentTypeForToolCall(session, 'call-1')).toBe('assistant:abc');
     expect(requestedAgentTypeForToolCall(session, 'other')).toBeNull();
     expect(requestedAgentTypeForToolCall(undefined, 'call-1')).toBeNull();
+  });
+});
+
+describe('latestEffectiveModel', () => {
+  it('reads the newest round that recorded the model it ran on', () => {
+    const session = { dialogTurns: [
+      { modelRounds: [{ effectiveModelName: 'older' }] },
+      { modelRounds: [{ effectiveModelName: 'newer' }, { effectiveModelName: ' ' }] },
+    ] } as never;
+    expect(latestEffectiveModel(session)).toBe('newer');
+    expect(latestEffectiveModel({ dialogTurns: [] } as never)).toBeNull();
   });
 });

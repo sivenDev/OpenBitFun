@@ -401,10 +401,21 @@ describeWithJsdom('AgentControlToolCard', () => {
       <AgentControlToolCard toolItem={item} config={config} sessionId="parent-session" />,
     ));
     expect(container.querySelector('[data-openbitfun-part="agentModel"]')?.textContent)
-      .toBe('toolCards.taskTool.assistantModel');
+      .toBe('toolCards.taskTool.assistantModelDefault');
+    expect(container.textContent).not.toContain('Test model');
     expect(container.querySelector('[data-openbitfun-part="agentType"]')?.textContent)
       .toBe('toolCards.taskTool.assistantOwnerMine');
     expect(container.textContent).not.toContain('assistant:workspace-writer');
+  });
+
+  it('shows the model a called assistant actually ran on', async () => {
+    mocks.childSubagentType = 'Claw';
+    const item = agentToolItem('AgentSpawn', { subagentModelDisplayName: 'gpt-6.1-terra' });
+    item.toolCall!.input = { ...item.toolCall!.input, agent_type: 'assistant:workspace-writer' };
+    await act(async () => root.render(
+      <AgentControlToolCard toolItem={item} config={config} sessionId="parent-session" />,
+    ));
+    expect(container.querySelector('[data-openbitfun-part="agentModel"]')?.textContent).toBe('gpt-6.1-terra');
   });
 
   it('shows live type and model on the card while retaining the full preview and pane action', async () => {

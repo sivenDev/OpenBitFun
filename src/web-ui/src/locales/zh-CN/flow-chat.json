@@ -2433,7 +2433,7 @@
       "reviewTimedOut": "已超时",
       "reviewStopped": "已停止",
       "assistantLabel": "{{agent}}（我的助理）",
-      "assistantModel": "由该助理自己的设置决定",
+      "assistantModelDefault": "应用默认模型",
       "assistantOwnerMine": "我的助理",
       "assistantOwnerShared": "来自 {{owner}} 的设备"
     },

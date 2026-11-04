@@ -25,6 +25,7 @@ import {
   calledAssistantName,
   calledAssistantOwner,
   calledAssistantSessionName,
+  latestEffectiveModel,
   localAssistantFromAgentType,
   remoteAgentFromAgentType,
 } from '../utils/remoteAgent';
@@ -203,7 +204,13 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const agentDisplayName = assistantName
     ?? (linkedSubagentSessionId
       ? t(resolveSubagentNameKey(linkedSubagentSessionId)) : t('toolCards.interaction.unknownAgent'));
-  const modelName = callsAssistant ? t('toolCards.taskTool.assistantModel') : toolItem.subagentModelDisplayName?.trim()
+  // A called assistant runs on the model its session actually used; before it
+  // runs, a local one starts on the app default and a shared one on its
+  // owner's device's choice.
+  const assistantRanOn = toolItem.subagentModelDisplayName?.trim() || latestEffectiveModel(linkedSession);
+  const modelName = callsAssistant ? assistantRanOn || (assistantOwner?.kind === 'shared'
+    ? t('toolCards.taskTool.remoteAgentModel') : t('toolCards.taskTool.assistantModelDefault'))
+    : toolItem.subagentModelDisplayName?.trim()
     || linkedSession?.config?.modelName?.trim()
     || toolItem.subagentModelId?.trim()
     || readString(params, 'model_id', 'modelId')

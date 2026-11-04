@@ -29,6 +29,7 @@ import {
 } from '../utils/subagentProjection';
 import { acpClientIdFromAgentType } from '../utils/acpSession';
 import {
+  latestEffectiveModel,
   localAssistantFromAgentType,
   localAssistantName,
   remoteAgentFromAgentType,
@@ -302,7 +303,8 @@ const TaskLaunchDisplay: React.FC<ToolCardProps> = ({
       : remoteAgentFromAgentType(agentType)
       ? t('toolCards.taskTool.remoteAgentModel')
       : localAssistantFromAgentType(agentType)
-      ? t('toolCards.taskTool.assistantModel')
+      ? readStringValue(toolItem.subagentModelDisplayName) || latestEffectiveModel(linkedSubagentSession)
+        || t('toolCards.taskTool.assistantModelDefault')
       : readStringValue(toolItem.subagentModelDisplayName) ||
       readStringValue(linkedSubagentSession?.config?.modelName) ||
       readStringValue(toolItem.subagentModelId) ||

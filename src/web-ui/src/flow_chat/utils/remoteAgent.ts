@@ -137,3 +137,19 @@ export function requestedAgentTypeForToolCall(
   }
   return null;
 }
+
+/**
+ * The model a called agent's session last ran on, from its newest model round
+ * that recorded one, or null before it ran.
+ */
+export function latestEffectiveModel(session: Pick<Session, 'dialogTurns'> | null | undefined): string | null {
+  const turns = session?.dialogTurns ?? [];
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex--) {
+    const rounds = turns[turnIndex].modelRounds ?? [];
+    for (let roundIndex = rounds.length - 1; roundIndex >= 0; roundIndex--) {
+      const name = rounds[roundIndex].effectiveModelName?.trim();
+      if (name) return name;
+    }
+  }
+  return null;
+}
