@@ -89,6 +89,9 @@ pub(crate) struct BackgroundTaskRecord {
     pub delivered_at_ms: Option<u64>,
     /// JSON `RemoteAgentJob` when the task runs on another device.
     pub remote_job: Option<String>,
+    /// Where the child session is stored when that is not the parent's
+    /// storage, as for a call to another assistant.
+    pub child_storage_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -811,6 +814,29 @@ WHERE task_pk = ?3
         .await
     }
 
+    /// Records where the child session of `child_dialog_turn_id` is stored
+    /// when it is not in the parent's storage, so its result stays readable
+    /// after a restart.
+    pub(crate) async fn set_child_storage_path(
+        &self,
+        parent_session_id: &str,
+        child_dialog_turn_id: &str,
+        child_storage_path: String,
+    ) -> OpenBitFunResult<bool> {
+        let parent_session_id = parent_session_id.to_string();
+        let child_dialog_turn_id = child_dialog_turn_id.to_string();
+        self.with_connection(move |connection| {
+            let changed = connection
+                .execute(
+                    "UPDATE background_tasks SET child_storage_path = ?1 WHERE parent_session_id = ?2 AND child_dialog_turn_id = ?3",
+                    params![child_storage_path, parent_session_id, child_dialog_turn_id],
+                )
+                .map_err(db_error)?;
+            Ok(changed > 0)
+        })
+        .await
+    }
+
     /// The job most recently delegated for `child_session_id`, which a
     /// follow-up turn continues.
     pub(crate) async fn latest_remote_job_for_child(
@@ -1055,7 +1081,8 @@ SELECT
     tasks.error_message,
     tasks.execution_owner_token,
     tasks.delivered_at_ms,
-    tasks.remote_job
+    tasks.remote_job,
+    tasks.child_storage_path
 FROM background_tasks AS tasks
 JOIN agents ON agents.agent_pk = tasks.agent_pk
 "#;
@@ -1090,6 +1117,7 @@ fn background_task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Backgro
         execution_owner_token: row.get(11)?,
         delivered_at_ms,
         remote_job: row.get(13)?,
+        child_storage_path: row.get(14)?,
     })
 }
 

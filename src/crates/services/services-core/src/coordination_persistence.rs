@@ -111,11 +111,17 @@ PRAGMA user_version = 2;
 /// `remote_job` links a background task to a job delegated to another device.
 /// It is nullable and added in place without a version bump, so an older build
 /// keeps opening the database and simply ignores the link.
+///
+/// `child_storage_path` records where the child session is stored when it is
+/// not in the parent's storage, as for a call to another assistant, whose
+/// session lives in that assistant's workspace. It is nullable and additive
+/// for the same reason.
 fn ensure_v2_additive_columns(connection: &Connection) -> OpenBitFunResult<()> {
     for (column, declaration) in [
         ("delivered_at_ms", "INTEGER"),
         ("delivered_parent_dialog_turn_id", "TEXT"),
         ("remote_job", "TEXT"),
+        ("child_storage_path", "TEXT"),
     ] {
         if !coordination_table_has_column(connection, "background_tasks", column)? {
             connection

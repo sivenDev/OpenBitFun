@@ -490,16 +490,15 @@ impl BackgroundSubagentOutcomeStore {
             .into_iter()
             .filter(|outcome| claimed_task_pks.contains(&outcome.task_pk))
             .collect::<Vec<_>>();
-        Ok((!outcomes.is_empty())
-            .then(|| {
-                wait_result(
-                    status,
-                    outcomes,
-                    available.pending_bg_task_ids,
-                    available.blocked,
-                    diagnostics,
-                )
-            }))
+        Ok((!outcomes.is_empty()).then(|| {
+            wait_result(
+                status,
+                outcomes,
+                available.pending_bg_task_ids,
+                available.blocked,
+                diagnostics,
+            )
+        }))
     }
 
     async fn outcome_from_record(
@@ -544,6 +543,7 @@ impl BackgroundSubagentOutcomeStore {
             .load_related_dialog_turn(
                 &record.parent_session_id,
                 &record.child_session_id,
+                record.child_storage_path.as_deref(),
                 &record.child_dialog_turn_id,
             )
             .await?
@@ -581,6 +581,7 @@ impl BackgroundSubagentOutcomeStore {
                 .load_related_dialog_turn(
                     &record.parent_session_id,
                     &record.child_session_id,
+                    record.child_storage_path.as_deref(),
                     &record.child_dialog_turn_id,
                 )
                 .await?;
@@ -941,6 +942,133 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_called_assistants_result_is_read_from_its_own_workspace_after_a_restart() {
+        let root = tempfile::tempdir().expect("background outcome temp directory");
+        let caller_workspace = root.path().join("caller");
+        let callee_workspace = root.path().join("callee");
+        for workspace in [&caller_workspace, &callee_workspace] {
+            std::fs::create_dir_all(workspace).expect("create workspace");
+            crate::service::workspace::legacy_compat::register_local_fixture_blocking(workspace);
+        }
+        let path_manager = Arc::new(PathManager::with_user_root_for_tests(
+            root.path().join("config"),
+        ));
+        let session_manager = Arc::new(SessionManager::new(
+            Arc::new(SessionContextStore::new()),
+            Arc::new(PersistenceManager::new(path_manager.clone()).expect("persistence manager")),
+            SessionManagerConfig {
+                max_active_sessions: 10,
+                session_idle_timeout: Duration::from_secs(3600),
+                auto_save_interval: Duration::from_secs(300),
+                enable_persistence: true,
+                prompt_cache_policy: PromptCachePolicy::default(),
+            },
+        ));
+        let config_in = |workspace: &std::path::Path| SessionConfig {
+            tool_presentation_mode: Default::default(),
+            workspace_path: Some(workspace.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        session_manager
+            .create_session_with_id(
+                Some("caller-session".to_string()),
+                "Caller".to_string(),
+                "Claw".to_string(),
+                config_in(&caller_workspace),
+            )
+            .await
+            .expect("create caller session");
+        session_manager
+            .create_session_with_id(
+                Some("callee-session".to_string()),
+                "Callee".to_string(),
+                "Claw".to_string(),
+                config_in(&callee_workspace),
+            )
+            .await
+            .expect("create callee session");
+        session_manager
+            .start_dialog_turn(
+                "callee-session",
+                "Claw".to_string(),
+                "Who are you?".to_string(),
+                Some("callee-turn".to_string()),
+                None,
+                None,
+            )
+            .await
+            .expect("start callee turn");
+        session_manager
+            .complete_dialog_turn(
+                "callee-session",
+                "callee-turn",
+                "I am the called assistant".to_string(),
+                &[],
+                TurnStats::default(),
+                Some("complete".to_string()),
+                Some(true),
+            )
+            .await
+            .expect("complete callee turn");
+        let callee_storage = session_manager
+            .effective_session_storage_path("callee-session")
+            .await
+            .expect("callee storage path");
+        assert_ne!(
+            Some(callee_storage.clone()),
+            session_manager
+                .effective_session_storage_path("caller-session")
+                .await,
+            "the two assistants must be stored apart for this test to mean anything"
+        );
+
+        let db_path = path_manager.agent_coordination_database_file();
+        let previous_owner = CoordinationStore::new(db_path.clone());
+        previous_owner
+            .register_background_task(BackgroundTaskRegistration {
+                parent_session_id: "caller-session".to_string(),
+                requested_agent_id: None,
+                child_session_id: "callee-session".to_string(),
+                parent_dialog_turn_id: "caller-turn".to_string(),
+                parent_tool_call_id: "spawn-tool".to_string(),
+                child_dialog_turn_id: "callee-turn".to_string(),
+            })
+            .await
+            .expect("register the call for the previous owner");
+        assert!(previous_owner
+            .set_child_storage_path(
+                "caller-session",
+                "callee-turn",
+                callee_storage.to_string_lossy().into_owned(),
+            )
+            .await
+            .expect("record the callee's storage"));
+
+        let recovered = BackgroundSubagentOutcomeStore::new(
+            session_manager,
+            Arc::new(CoordinationStore::new(db_path)),
+        )
+        .wait_for(
+            "caller-session",
+            &[],
+            true,
+            BackgroundSubagentWaitMode::All,
+            Duration::from_millis(50),
+            "wait-turn",
+            None,
+            None,
+        )
+        .await
+        .expect("recover the call's result");
+
+        assert_eq!(recovered.status, BackgroundSubagentWaitStatus::Completed);
+        assert_eq!(
+            recovered.outcomes[0].content.as_deref(),
+            Some("I am the called assistant")
+        );
+    }
+
+    #[tokio::test]
     async fn a_held_remote_agent_ends_one_wait_early_and_is_listed_after() {
         let root = tempfile::tempdir().expect("background outcome temp directory");
         let workspace = root.path().join("workspace");
@@ -965,9 +1093,17 @@ mod tests {
             workspace_path: Some(workspace.to_string_lossy().into_owned()),
             ..Default::default()
         };
-        for (id, agent) in [("parent-session", "Standard"), ("child-session", "GeneralPurpose")] {
+        for (id, agent) in [
+            ("parent-session", "Standard"),
+            ("child-session", "GeneralPurpose"),
+        ] {
             session_manager
-                .create_session_with_id(Some(id.to_string()), id.to_string(), agent.to_string(), config.clone())
+                .create_session_with_id(
+                    Some(id.to_string()),
+                    id.to_string(),
+                    agent.to_string(),
+                    config.clone(),
+                )
                 .await
                 .expect("create session");
         }
@@ -1017,7 +1153,10 @@ mod tests {
         let first = wait().await.expect("first wait");
         assert_eq!(first.status, BackgroundSubagentWaitStatus::Blocked);
         assert!(first.outcomes.is_empty());
-        assert_eq!(first.pending_bg_task_ids, vec![registered.bg_task_id.clone()]);
+        assert_eq!(
+            first.pending_bg_task_ids,
+            vec![registered.bg_task_id.clone()]
+        );
         assert_eq!(first.blocked.len(), 1);
         assert_eq!(first.blocked[0].bg_task_id, registered.bg_task_id);
         assert!(first.blocked[0].reason.contains("Unblock:"));

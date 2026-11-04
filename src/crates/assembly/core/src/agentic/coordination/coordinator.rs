@@ -11219,6 +11219,34 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             .await;
             return Err(error);
         }
+        // The called assistant's session is stored in its own workspace, not
+        // the caller's: record where, so the call's result stays readable
+        // after a restart.
+        if delegated_by.is_some() {
+            if let (Some(parent), Some(turn_id), Some(storage_path)) = (
+                subagent_parent_info.as_ref(),
+                dialog_turn_id.as_deref(),
+                self.session_manager
+                    .effective_session_storage_path(&session_id)
+                    .await,
+            ) {
+                if let Err(error) = self
+                    .background_subagent_outcomes
+                    .coordination_store()
+                    .set_child_storage_path(
+                        &parent.session_id,
+                        turn_id,
+                        storage_path.to_string_lossy().into_owned(),
+                    )
+                    .await
+                {
+                    warn!(
+                        "Failed to record where a called assistant's session is stored: session_id={}, error={}",
+                        session_id, error
+                    );
+                }
+            }
+        }
 
         // Register timeout handle so it can be adjusted at runtime.
         let timeout_handle = Arc::new(SubagentTimeoutHandle {

@@ -1255,20 +1255,28 @@ impl SessionManager {
         self.persistence_manager.path_manager().clone()
     }
 
+    /// Loads a dialog turn of `related_session_id`, read from
+    /// `related_storage_path` when the related session is stored elsewhere
+    /// than the parent (a called assistant's session lives in its own
+    /// workspace), otherwise from the parent's storage.
     pub(crate) async fn load_related_dialog_turn(
         &self,
         parent_session_id: &str,
         related_session_id: &str,
+        related_storage_path: Option<&str>,
         dialog_turn_id: &str,
     ) -> OpenBitFunResult<Option<DialogTurnData>> {
-        let storage_path = self
-            .effective_session_storage_path(parent_session_id)
-            .await
-            .ok_or_else(|| {
-                OpenBitFunError::NotFound(format!(
-                    "Session storage path not found: {parent_session_id}"
-                ))
-            })?;
+        let storage_path = match related_storage_path {
+            Some(path) => PathBuf::from(path),
+            None => self
+                .effective_session_storage_path(parent_session_id)
+                .await
+                .ok_or_else(|| {
+                    OpenBitFunError::NotFound(format!(
+                        "Session storage path not found: {parent_session_id}"
+                    ))
+                })?,
+        };
         let _related_history_read = self.acquire_session_mutation(related_session_id).await?;
         Ok(self
             .persistence_manager
