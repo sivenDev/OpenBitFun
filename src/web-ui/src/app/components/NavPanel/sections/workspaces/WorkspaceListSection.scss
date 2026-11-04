@@ -1485,7 +1485,7 @@
   }
 }
 
-// Two lines: who sent the tasks, then the device and how many.
+// One line naming who sent the tasks; the device, count and time are in its tooltip.
 .assistant-session-history__delegated-heading {
   display: flex;
   align-items: center;
@@ -1514,37 +1514,12 @@
   }
 }
 
-// The sender's initial, in place of an avatar this device does not have.
-.assistant-session-history__delegated-device {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  inline-size: 18px;
-  block-size: 18px;
-  border-radius: var(--openbitfun-radius-sm);
-  background: var(--openbitfun-color-action-quiet-hover);
-  color: var(--openbitfun-color-content-secondary);
-  font-size: var(--openbitfun-type-micro-font-size);
-  font-weight: var(--openbitfun-type-label-selected-font-weight);
-}
-
-.assistant-session-history__delegated-heading-text {
-  display: flex;
+.assistant-session-history__delegated-heading-title {
   flex: 1 1 auto;
-  flex-direction: column;
   min-inline-size: 0;
-}
-
-.assistant-session-history__delegated-heading-title,
-.assistant-session-history__delegated-heading-detail {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.assistant-session-history__delegated-heading-detail {
-  color: var(--openbitfun-color-content-muted);
-  font-size: var(--openbitfun-type-meta-font-size);
 }
 
 // How many actions wait for the owner in the group.

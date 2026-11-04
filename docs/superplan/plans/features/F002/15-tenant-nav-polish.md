@@ -137,6 +137,7 @@ parent: "F002"
   - 环境说明：新 worktree 里没有 `src/web-ui/src/generated/api`（由 Rust 的 ts-rs 测试导出，已被 gitignore），类型检查报找不到模块。这次从原工作区复制了同一提交（`8b159c359`）导出的文件，没有改动它们。
 - [ ] 真机截图与 Exit Criteria 第 1 条一致，记录所用场景（本地）
   - 部分证据（2026-11-04，本地 `desktop:dev -- --isolated-data`，数据复制自 obf-local）：使用者端已核对，「来自共享」中已停止共享的助理只显示名字和 `Ban` 标识，对话行行尾是图标，hover 显示完整说明；选中行修正后清晰可见。主人端尚未在真机上看到按设备分组：本机 `openbitfun dispatch list` 有一个来自 agent002-Mac-Mini 的任务（`assistant:workspace`，已完成），应出现在「小岚」的历史里，但这次没能在后台打开小岚的历史会话。
+  - 主人端真机（2026-11-04，用户打开的 obf-local 打包版，F001 分支合并后）：小岚名下「我的」之后是「来自 agent 的设备」一组，3 个会话，选中行清晰。用户指出分组头前面的首字母方块（「A」）没有必要，第二行「agent002-Mac-Mini · 3 个会话 · 时间」让排版难看。改为：分组头一行，只有展开箭头、「来自 X 的设备」和待审批角标；设备名、数量、运行数或时间、待审批数放进 tooltip 与无障碍名称；删除首字母方块及其样式。workspaces 目录 15 个文件 105 项测试、`type-check:web`、eslint、`check:web`、`theme:color-audit:all` 通过。改后的样子待合并到 F001 分支并重新打包后再看。
 
 ## References
 - `docs/superplan/rfcs/F002.md`

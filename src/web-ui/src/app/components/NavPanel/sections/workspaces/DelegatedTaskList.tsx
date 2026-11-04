@@ -145,6 +145,12 @@ export default function DelegatedTaskList({
       t('nav.sessions.delegated.count', { count: group.tasks.length }),
       group.running > 0 ? t('nav.sessions.delegated.running', { count: group.running }) : time(group.latestStartedAt),
     ].filter(Boolean).join(' · ');
+    const heading = t('nav.sessions.delegated.fromDevice', { name });
+    const said = [
+      heading,
+      detail,
+      group.waiting > 0 ? t('nav.sessions.delegated.waitingBadge', { count: group.waiting }) : null,
+    ].filter(Boolean).join(' · ');
     const { shown: rows, hidden } = limitRows(group.tasks, fullLists.has(key), isActive);
     return (
       <div
@@ -152,37 +158,31 @@ export default function DelegatedTaskList({
         className={['assistant-session-history__delegated-group', group.waiting > 0 && 'is-waiting'].filter(Boolean).join(' ')}
         data-testid="nav-delegated-group"
       >
-        <button
-          type="button"
-          className="assistant-session-history__delegated-heading"
-          data-openbitfun-component="sessions-section"
-          data-openbitfun-part="groupHeader"
-          aria-expanded={isOpen}
-          title={`${t('nav.sessions.delegated.fromDevice', { name })} · ${detail}`}
-          onClick={toggle}
-          data-testid="nav-delegated-group-toggle"
-        >
-          <Icon name="chevron-right" size="xs" className="assistant-session-history__delegated-chevron" aria-hidden="true" />
-          <span className="assistant-session-history__delegated-device" aria-hidden="true">
-            {Array.from(name)[0]?.toUpperCase() ?? '?'}
-          </span>
-          <span className="assistant-session-history__delegated-heading-text">
-            <span className="assistant-session-history__delegated-heading-title">
-              {t('nav.sessions.delegated.fromDevice', { name })}
-            </span>
-            <span className="assistant-session-history__delegated-heading-detail">{detail}</span>
-          </span>
-          {group.waiting > 0 ? (
-            <span
-              className="assistant-session-history__delegated-badge"
-              data-openbitfun-component="sessions-section"
-              data-openbitfun-part="badge"
-              aria-label={t('nav.sessions.delegated.waitingBadge', { count: group.waiting })}
-            >
-              {group.waiting}
-            </span>
-          ) : null}
-        </button>
+        <Tooltip content={said} placement="right" followCursor>
+          <button
+            type="button"
+            className="assistant-session-history__delegated-heading"
+            data-openbitfun-component="sessions-section"
+            data-openbitfun-part="groupHeader"
+            aria-expanded={isOpen}
+            aria-label={said}
+            onClick={toggle}
+            data-testid="nav-delegated-group-toggle"
+          >
+            <Icon name="chevron-right" size="xs" className="assistant-session-history__delegated-chevron" aria-hidden="true" />
+            <span className="assistant-session-history__delegated-heading-title">{heading}</span>
+            {group.waiting > 0 ? (
+              <span
+                className="assistant-session-history__delegated-badge"
+                data-openbitfun-component="sessions-section"
+                data-openbitfun-part="badge"
+                aria-label={t('nav.sessions.delegated.waitingBadge', { count: group.waiting })}
+              >
+                {group.waiting}
+              </span>
+            ) : null}
+          </button>
+        </Tooltip>
         {isOpen ? (
           <>
             {rows.map(renderTask)}

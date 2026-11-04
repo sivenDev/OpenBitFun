@@ -86,14 +86,13 @@ describe('DelegatedTaskList', () => {
       task('other', { agentType: 'assistant:workspace-work', assistantWorkspace: `${ROOT}-work` }),
     ]);
     await render();
-    // Each device heads its tasks: who sent them, then the device, how many and how many run.
-    const headings = groups().map(group => [
-      group.querySelector('.assistant-session-history__delegated-heading-title')!.textContent,
-      group.querySelector('.assistant-session-history__delegated-heading-detail')!.textContent,
-    ]);
-    expect(headings).toEqual([
-      ['nav.sessions.delegated.fromDevice:Bea', 'Studio · nav.sessions.delegated.count:1'],
-      ['nav.sessions.delegated.fromDevice:Ann', 'Laptop · nav.sessions.delegated.count:2 · nav.sessions.delegated.running:2'],
+    // Each device heads its tasks with who sent them; the device, how many and how many run
+    // are its accessible name and tooltip.
+    expect(groups().map(group => group.querySelector('.assistant-session-history__delegated-heading-title')!.textContent))
+      .toEqual(['nav.sessions.delegated.fromDevice:Bea', 'nav.sessions.delegated.fromDevice:Ann']);
+    expect([0, 1].map(index => toggle(index).getAttribute('aria-label'))).toEqual([
+      'nav.sessions.delegated.fromDevice:Bea · Studio · nav.sessions.delegated.count:1 · nav.sessions.delegated.waitingBadge:2',
+      'nav.sessions.delegated.fromDevice:Ann · Laptop · nav.sessions.delegated.count:2 · nav.sessions.delegated.running:2',
     ]);
     // The waiting group is marked, counts what waits, and opens; the other stays closed.
     expect(groups()[0].classList.contains('is-waiting')).toBe(true);
