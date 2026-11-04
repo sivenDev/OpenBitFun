@@ -872,6 +872,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_follow_up_reopens_a_finished_conversation_so_withdrawn_access_settles_it_as_failed()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let store = submitted(dir.path()).await;
+        store.update_progress(JOB, 4, "succeeded").await.unwrap();
+        let owner = Owner::new(vec![
+            (
+                "dispatch_target_continue",
+                Ok(json!({ "accepted": true, "state": "queued" })),
+            ),
+            (
+                "dispatch_target_status",
+                Err(anyhow!(
+                    "this device has no access to assistant 'workspace-notes'; request it again"
+                )),
+            ),
+        ]);
+
+        let follow_up: DispatchContinueRequest = serde_json::from_value(json!({
+            "jobId": JOB, "turnId": "turn-2", "prompt": "Go on",
+        }))
+        .unwrap();
+        continue_shared_assistant(&owner, &store, follow_up)
+            .await
+            .unwrap();
+        assert_eq!(store.get(JOB).await.unwrap().unwrap().last_state, "queued");
+
+        status_shared_assistant(
+            &owner,
+            &store,
+            DispatchStatusRequest {
+                job_id: JOB.to_string(),
+                cursor: 4,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(store.get(JOB).await.unwrap().unwrap().last_state, "failed");
+    }
+
+    #[tokio::test]
     async fn an_offline_owner_leaves_the_conversation_as_it_was() {
         let dir = tempfile::tempdir().unwrap();
         let store = submitted(dir.path()).await;

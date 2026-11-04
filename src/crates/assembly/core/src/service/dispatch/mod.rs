@@ -361,6 +361,31 @@ impl OutboundDispatchStore {
         cursor: u64,
         state: impl Into<String>,
     ) -> Result<OutboundDispatchRecord, DispatchStoreError> {
+        self.write_progress(job_id, cursor, state.into(), false)
+            .await
+    }
+
+    /// Record the state a target reported when it accepted a follow-up turn.
+    /// Progress is otherwise sticky once terminal so a stale status cannot
+    /// reopen a settled job; an accepted follow-up is the one way a job
+    /// legitimately leaves its terminal state.
+    pub async fn record_follow_up_accepted(
+        &self,
+        job_id: &str,
+        cursor: u64,
+        state: impl Into<String>,
+    ) -> Result<OutboundDispatchRecord, DispatchStoreError> {
+        self.write_progress(job_id, cursor, state.into(), true)
+            .await
+    }
+
+    async fn write_progress(
+        &self,
+        job_id: &str,
+        cursor: u64,
+        next_state: String,
+        reopen: bool,
+    ) -> Result<OutboundDispatchRecord, DispatchStoreError> {
         let path = self.record_path(job_id)?;
         let _lock = self.json_store.acquire_cross_process_lock(&path).await?;
         let mut record = self
@@ -374,8 +399,7 @@ impl OutboundDispatchStore {
                 ))
             })?;
         record.last_cursor = record.last_cursor.max(cursor);
-        let next_state = state.into();
-        if !is_terminal_state(&record.last_state) || record.last_state == next_state {
+        if reopen || !is_terminal_state(&record.last_state) || record.last_state == next_state {
             record.last_state = next_state;
         }
         record.updated_at = Utc::now();
@@ -1037,6 +1061,39 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[tokio::test]
+    async fn only_an_accepted_follow_up_reopens_a_terminal_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = OutboundDispatchStore::from_root(temp.path().join("dispatch/outbound"));
+        let record = OutboundDispatchRecord::new(
+            "job-follow-up".to_string(),
+            target(),
+            "session-1".to_string(),
+            "/srv/app".to_string(),
+            "First turn",
+            "succeeded",
+        )
+        .expect("record");
+        store.bind_if_absent(&record).await.expect("persist");
+
+        let stale = store
+            .update_progress("job-follow-up", 0, "running")
+            .await
+            .expect("stale status");
+        assert_eq!(stale.last_state, "succeeded");
+
+        let reopened = store
+            .record_follow_up_accepted("job-follow-up", 0, "queued")
+            .await
+            .expect("follow-up");
+        assert_eq!(reopened.last_state, "queued");
+        let running = store
+            .update_progress("job-follow-up", 3, "running")
+            .await
+            .expect("status");
+        assert_eq!(running.last_state, "running");
     }
 
     #[tokio::test]

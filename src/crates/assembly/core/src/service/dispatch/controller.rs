@@ -1596,9 +1596,9 @@ pub(super) fn continue_payload(request: &DispatchContinueRequest) -> Value {
 
 /// Move the observer record back out of its terminal state.
 ///
-/// Best effort: the next status poll reconciles it from the target anyway, but
-/// updating here keeps the composer from briefly re-offering "send" as if the
-/// follow-up had not been accepted.
+/// Status polls cannot do this: progress is sticky once terminal, so without
+/// it the record keeps the previous turn's outcome for the whole follow-up and
+/// the conversation never reads as running again.
 pub(super) async fn record_follow_up_state(
     store: &OutboundDispatchStore,
     record: &OutboundDispatchRecord,
@@ -1622,10 +1622,16 @@ pub(super) async fn record_follow_up_state(
     let Some(state) = response.get("state").and_then(Value::as_str) else {
         return;
     };
-    if let Err(error) = store
-        .update_progress(&record.job_id, record.last_cursor, state)
-        .await
-    {
+    let recorded = if response.get("accepted").and_then(Value::as_bool) == Some(true) {
+        store
+            .record_follow_up_accepted(&record.job_id, record.last_cursor, state)
+            .await
+    } else {
+        store
+            .update_progress(&record.job_id, record.last_cursor, state)
+            .await
+    };
+    if let Err(error) = recorded {
         log::warn!(
             "Failed to record dispatch follow-up state: job_id={} error={error}",
             record.job_id
