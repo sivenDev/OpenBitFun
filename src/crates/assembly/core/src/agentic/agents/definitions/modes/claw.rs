@@ -45,6 +45,11 @@ impl ClawMode {
                 "update_goal".to_string(),
                 "GenerativeUI".to_string(),
                 "Skill".to_string(),
+                // Questions reach whoever drives the turn: the user in the
+                // assistant's own chat, or the calling assistant's chat when
+                // another assistant called it. Runs nobody can answer, such
+                // as dispatch jobs, turn the tool off.
+                "AskUserQuestion".to_string(),
                 "ListWorkspaces".to_string(),
                 "SessionControl".to_string(),
                 "SessionMessage".to_string(),
@@ -118,6 +123,7 @@ mod tests {
         assert!(tools.contains(&"ListModels".to_string()));
         assert!(tools.contains(&"ListWorkspaces".to_string()));
         assert!(tools.contains(&"DesktopCard".to_string()));
+        assert!(tools.contains(&"AskUserQuestion".to_string()));
     }
 
     #[test]
@@ -137,5 +143,6 @@ mod tests {
         assert!(prompt.contains("Use only tools in the current tool list"));
         assert!(prompt.contains("only when ControlHub reports an authorized connection"));
         assert!(prompt.contains("only when both tools appear in your current tool list"));
+        assert!(prompt.contains("When `AskUserQuestion` is in your current tool list"));
     }
 }
