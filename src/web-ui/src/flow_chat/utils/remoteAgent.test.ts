@@ -3,6 +3,7 @@ import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI'
 import type { WorkspaceInfo } from '@/shared/types';
 import {
   calledAssistantName,
+  calledAssistantSessionName,
   localAssistantFromAgentType,
   localAssistantName,
   remoteAgentFromAgentType,
@@ -67,5 +68,14 @@ describe('assistant names', () => {
     expect(calledAssistantName('shared:laptop/helper', [local], list)).toBe('Writer');
     expect(calledAssistantName('Explore', [local], list)).toBeNull();
     expect(calledAssistantName('assistant:workspace-gone', [local], list)).toBeNull();
+  });
+
+  it('names a called assistant\'s session by the assistant whose workspace it is in', () => {
+    const local = { id: 'ws-writer', rootPath: '/home/me/.openbitfun/personal_assistant/workspace-w', identity: { name: 'Writer' } } as WorkspaceInfo;
+    const delegatedBy = { assistant: 'assistant:workspace-r', sessionId: 'caller' };
+    expect(calledAssistantSessionName({ delegatedBy, workspaceId: 'ws-writer' }, [local])).toBe('Writer');
+    expect(calledAssistantSessionName({ workspaceId: 'ws-writer' }, [local])).toBeNull();
+    expect(calledAssistantSessionName({ delegatedBy, workspaceId: 'ws-other' }, [local])).toBeNull();
+    expect(calledAssistantSessionName(undefined, [local])).toBeNull();
   });
 });

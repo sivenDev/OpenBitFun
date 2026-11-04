@@ -11292,6 +11292,23 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         .await?;
         if let Some(parent_info) = subagent_parent_info.as_ref() {
             if emit_lifecycle_events {
+                // An assistant call's session is a session of its own, not a
+                // hidden child: announce it before its first turn starts, so
+                // clients list it under its name instead of a placeholder.
+                if delegated_by.is_some() {
+                    self.emit_event(AgenticEvent::SessionCreated {
+                        session_id: session.session_id.clone(),
+                        session_name: session.session_name.clone(),
+                        agent_type: session.agent_type.clone(),
+                        workspace_path: session.config.workspace_path.clone(),
+                        project_workspace_path: session.config.project_workspace_path.clone(),
+                        execution_target: session.config.execution_target.clone(),
+                        workspace_id: session.config.workspace_id.clone(),
+                        remote_connection_id: session.config.remote_connection_id.clone(),
+                        remote_ssh_host: session.config.remote_ssh_host.clone(),
+                    })
+                    .await;
+                }
                 self.emit_event(AgenticEvent::SubagentSessionLinked {
                     session_id: session_id.clone(),
                     subagent_dialog_turn_id: dialog_turn_id.clone(),
@@ -11306,6 +11323,9 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     focused_review_display_label: focused_review_display_label.clone(),
                     continuation_policy: Some(continuation_policy),
                     assistant_session: delegated_by.is_some(),
+                    delegated_by: delegated_by
+                        .as_ref()
+                        .and_then(|delegated_by| serde_json::to_value(delegated_by).ok()),
                 })
                 .await;
             }

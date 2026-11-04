@@ -5,7 +5,7 @@ import { getActiveSurfaceScope } from '@/infrastructure/peer-device/deviceSurfac
 import { flowChatStore } from '../store/FlowChatStore';
 import { resolveSubagentNameKey, SubagentDelegationAvatar } from '../subagent-identity';
 import { openBtwSessionInAuxPane } from '../services/btwSessionPane';
-import { calledAssistantName } from '../utils/remoteAgent';
+import { calledAssistantName, calledAssistantSessionName } from '../utils/remoteAgent';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { getToolCardStatus, getToolCardStatusDescription } from './toolCardStatus';
@@ -65,11 +65,13 @@ export const AgentWaitToolCard: React.FC<ToolCardProps> = ({
   const avatarNames = avatarTargets.map(target => {
     if (!target.sessionId) return t('toolCards.interaction.unknownAgent');
     const targetSession = flowChatStore.getState().sessions.get(target.sessionId);
+    const assistantWorkspaces = workspaceManager.getState().assistantWorkspaces;
     return calledAssistantName(
       targetSession?.mode ?? targetSession?.config?.agentType,
-      workspaceManager.getState().assistantWorkspaces,
+      assistantWorkspaces,
       sharedWithMe,
-    ) ?? t(resolveSubagentNameKey(target.sessionId));
+    ) ?? calledAssistantSessionName(targetSession, assistantWorkspaces)
+      ?? t(resolveSubagentNameKey(target.sessionId));
   });
   const hatching = !session?.isHistorical
     && ['pending', 'queued', 'preparing', 'streaming', 'receiving', 'running', 'waiting'].includes(status);

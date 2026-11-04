@@ -4856,6 +4856,26 @@ export class FlowChatStore {
     });
   }
 
+  /**
+   * Record the assistant whose call started this session, as the runtime
+   * announces it, so the session is known as an assistant call before its
+   * metadata is reread.
+   */
+  public recordSessionDelegatedBy(
+    sessionId: string,
+    delegatedBy: NonNullable<Session['delegatedBy']>,
+  ): void {
+    this.setState(prev => {
+      const session = prev.sessions.get(sessionId);
+      if (!session || JSON.stringify(session.delegatedBy) === JSON.stringify(delegatedBy)) {
+        return prev;
+      }
+      const newSessions = new Map(prev.sessions);
+      newSessions.set(sessionId, { ...session, delegatedBy });
+      return { ...prev, sessions: newSessions };
+    });
+  }
+
   /** Update the approval policy; the next turn carries it to the target. */
   public updateSessionDispatchApprovalPolicy(
     sessionId: string,

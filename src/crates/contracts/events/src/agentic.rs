@@ -234,6 +234,10 @@ pub enum AgenticEvent {
         /// listed with that assistant's sessions, not a hidden subagent.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         assistant_session: bool,
+        /// For an assistant session, the caller it records (the session
+        /// store's `delegatedBy`), so a client knows it without a reload.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delegated_by: Option<serde_json::Value>,
     },
 
     DialogTurnCompleted {
@@ -1183,6 +1187,7 @@ mod tests {
             focused_review_display_label: Some("Authentication boundary".to_string()),
             continuation_policy: Some(SessionContinuationPolicy::FreshOnly),
             assistant_session: false,
+            delegated_by: None,
         };
 
         assert_eq!(event.session_id(), Some("child-session"));

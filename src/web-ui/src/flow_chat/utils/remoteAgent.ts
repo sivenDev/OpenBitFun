@@ -1,6 +1,7 @@
 import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import { assistantShareId } from '@/infrastructure/lan-share/lanShareStore';
 import type { WorkspaceInfo } from '@/shared/types';
+import type { SessionDelegatedBy } from '@/shared/types/session-history';
 import { resolveAssistantName } from '@/shared/utils/assistantName';
 
 const SHARED_ASSISTANT_TYPE_PREFIX = 'shared:';
@@ -78,4 +79,20 @@ export function calledAssistantName(
   if (local) return localAssistantName(local, workspaces);
   const remote = remoteAgentFromAgentType(agentType);
   return remote ? sharedAssistantNames(remote, sharedWithMe)?.name ?? null : null;
+}
+
+/**
+ * The name of this device's assistant whose session `session` is, when an
+ * assistant call started it. Such a session runs as `Claw` in the called
+ * assistant's workspace, so its own agent type never names the assistant.
+ */
+export function calledAssistantSessionName(
+  session: { delegatedBy?: SessionDelegatedBy; workspaceId?: string } | null | undefined,
+  workspaces: readonly WorkspaceInfo[] | null | undefined,
+): string | null {
+  if (!session?.delegatedBy || !session.workspaceId) return null;
+  const workspace = workspaces?.find((candidate) => (
+    !candidate.connectionId && candidate.id === session.workspaceId
+  ));
+  return workspace ? resolveAssistantName(workspace) : null;
 }

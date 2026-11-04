@@ -1102,6 +1102,8 @@ mod tests {
             model_id: None,
             focused_review_display_label: None,
             continuation_policy: None,
+            assistant_session: false,
+            delegated_by: None,
         };
         assert!(scope.admit(&linked));
         assert!(scope.admit(&child_chunk));
@@ -1117,6 +1119,8 @@ mod tests {
             model_id: None,
             focused_review_display_label: None,
             continuation_policy: None,
+            assistant_session: false,
+            delegated_by: None,
         };
         assert!(scope.admit(&grandchild_link));
 
@@ -1131,6 +1135,8 @@ mod tests {
             model_id: None,
             focused_review_display_label: None,
             continuation_policy: None,
+            assistant_session: false,
+            delegated_by: None,
         };
         assert!(!scope.admit(&foreign_link));
 

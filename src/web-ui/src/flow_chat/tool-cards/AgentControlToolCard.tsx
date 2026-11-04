@@ -22,6 +22,7 @@ import { AgentInteractionToolCard } from './AgentInteractionToolCard';
 import { resolveInteractionAgentSessionId } from './toolInteractionModel';
 import {
   calledAssistantName,
+  calledAssistantSessionName,
   localAssistantFromAgentType,
   remoteAgentFromAgentType,
 } from '../utils/remoteAgent';
@@ -157,13 +158,17 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const stableSubagentType = linkedSession?.subagentType?.trim() || inputAgentType;
   // An assistant answers under its own name and model, not a subagent's.
   const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
-  const calledType = stableSubagentType || stableAgentType;
-  const assistantName = calledAssistantName(
-    calledType,
-    workspaceManager.getState().assistantWorkspaces,
-    sharedWithMe,
-  );
-  const callsAssistant = Boolean(localAssistantFromAgentType(calledType) || remoteAgentFromAgentType(calledType));
+  // The requested type names the assistant; the linked session runs as
+  // `Claw` and its own type does not.
+  const requestsAssistant = (type: string | undefined) =>
+    Boolean(localAssistantFromAgentType(type) || remoteAgentFromAgentType(type));
+  const calledType = requestsAssistant(inputAgentType)
+    ? inputAgentType
+    : stableSubagentType || stableAgentType;
+  const assistantWorkspaces = workspaceManager.getState().assistantWorkspaces;
+  const assistantName = calledAssistantName(calledType, assistantWorkspaces, sharedWithMe)
+    ?? calledAssistantSessionName(linkedSession, assistantWorkspaces);
+  const callsAssistant = requestsAssistant(calledType) || Boolean(linkedSession?.delegatedBy);
   const agentDisplayName = assistantName
     ?? (linkedSubagentSessionId
       ? t(resolveSubagentNameKey(linkedSubagentSessionId)) : t('toolCards.interaction.unknownAgent'));

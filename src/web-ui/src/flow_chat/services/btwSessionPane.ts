@@ -226,8 +226,10 @@ function ensureBtwSessionAvailableInternal(
   const resolvedRemoteSshHost =
     params.remoteSshHost || existingSession?.remoteSshHost || parentSession?.remoteSshHost;
 
+  // A called assistant's session is its own, not a child of the caller.
   if (
     existingSession &&
+    !existingSession.delegatedBy &&
     (params.sessionKind === 'subagent' || existingSession.sessionKind === 'subagent')
   ) {
     flowChatStore.updateSessionRelationship(params.childSessionId, {

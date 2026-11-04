@@ -704,6 +704,8 @@ export interface SubagentSessionLinkedEvent extends AgenticEvent {
   /** The session is another assistant's own, started by this call: it is
    * listed with that assistant's sessions, not as a hidden subagent. */
   assistantSession?: boolean;
+  /** For an assistant session, the caller it records. */
+  delegatedBy?: import('@/shared/types/session-history').SessionDelegatedBy;
 }
 
 export type DeepReviewQueueStatus =

@@ -143,6 +143,7 @@ pub fn project_agentic_frontend_event(event: AgenticEvent) -> Option<AgenticFron
             focused_review_display_label,
             continuation_policy,
             assistant_session,
+            delegated_by,
         } => Some(AgenticFrontendEvent::new(
             "agentic://subagent-session-linked",
             json!({
@@ -156,6 +157,7 @@ pub fn project_agentic_frontend_event(event: AgenticEvent) -> Option<AgenticFron
                 "focusedReviewDisplayLabel": focused_review_display_label,
                 "continuationPolicy": continuation_policy,
                 "assistantSession": assistant_session,
+                "delegatedBy": delegated_by,
             }),
         )),
         AgenticEvent::ModelRoundStarted {
@@ -845,6 +847,11 @@ mod tests {
             focused_review_display_label: Some("Authentication boundary".to_string()),
             continuation_policy: Some(openbitfun_core_types::SessionContinuationPolicy::FreshOnly),
             assistant_session: true,
+            delegated_by: Some(json!({
+                "assistant": "assistant:workspace-caller",
+                "assistantName": "Caller",
+                "sessionId": "parent-session",
+            })),
         })
         .expect("projected");
 
@@ -852,6 +859,7 @@ mod tests {
         assert_eq!(projected.payload["sessionId"], "child-session");
         assert_eq!(projected.payload["modelId"], "fast");
         assert_eq!(projected.payload["assistantSession"], true);
+        assert_eq!(projected.payload["delegatedBy"]["assistantName"], "Caller");
         assert_eq!(projected.payload["continuationPolicy"], "fresh_only");
         assert_eq!(
             projected.payload["focusedReviewDisplayLabel"],

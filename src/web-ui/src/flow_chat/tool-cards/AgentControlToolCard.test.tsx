@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   modelName: 'Test model',
   childTurnStatus: 'processing' as DialogTurn['status'],
   needsUserAttention: false,
+  childSubagentType: 'SwarmWorker',
 }));
 
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
@@ -69,8 +70,8 @@ vi.mock('../store/FlowChatStore', () => ({
           sessionKind: 'subagent',
           parentSessionId: 'parent-session',
           parentToolCallId: 'agent-call',
-          subagentType: 'SwarmWorker',
-          mode: 'SwarmWorker',
+          subagentType: mocks.childSubagentType,
+          mode: mocks.childSubagentType,
           title: 'SwarmWorker: inspect parser',
           createdAt: 1000,
           status: 'active',
@@ -178,6 +179,7 @@ describeWithJsdom('AgentControlToolCard', () => {
     mocks.locale = 'en-US';
     mocks.modelName = 'Test model';
     mocks.childTurnStatus = 'processing';
+    mocks.childSubagentType = 'SwarmWorker';
     mocks.needsUserAttention = false;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -367,6 +369,17 @@ describeWithJsdom('AgentControlToolCard', () => {
     expect(name()).toBe(flowChatZh.subagentIdentity.names.cloudHopper);
     expect(container.textContent).not.toContain(flowChatEn.subagentIdentity.names.cloudHopper);
     expect(container.querySelector('[lang]')?.getAttribute('lang')).toBe('zh-CN');
+  });
+
+  it('keeps a called assistant\'s model its own once its session, which runs as Claw, is linked', async () => {
+    mocks.childSubagentType = 'Claw';
+    const item = agentToolItem('AgentSpawn');
+    item.toolCall!.input = { ...item.toolCall!.input, agent_type: 'assistant:workspace-writer' };
+    await act(async () => root.render(
+      <AgentControlToolCard toolItem={item} config={config} sessionId="parent-session" />,
+    ));
+    expect(container.querySelector('[data-openbitfun-part="agentModel"]')?.textContent)
+      .toBe('toolCards.taskTool.assistantModel');
   });
 
   it('shows live type and model on the card while retaining the full preview and pane action', async () => {

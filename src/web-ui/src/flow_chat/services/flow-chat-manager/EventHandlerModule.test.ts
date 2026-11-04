@@ -1102,6 +1102,40 @@ describe('subagent parent helpers', () => {
     expect(store.getState().sessions.has('writer-session')).toBe(false);
   });
 
+  it('records which assistant called a session the runtime announced', () => {
+    FlowChatStore.getInstance().setState(() => ({
+      sessions: new Map([
+        ['parent-session', {
+          sessionId: 'parent-session', title: 'Parent Session', dialogTurns: [], status: 'idle',
+          config: { agentType: 'Claw' }, createdAt: 800, lastActiveAt: 1000, error: null, sessionKind: 'normal',
+        } as Session],
+        ['writer-session', {
+          sessionId: 'writer-session', title: 'Draft the summary', dialogTurns: [], status: 'idle',
+          config: { agentType: 'Claw' }, createdAt: 900, lastActiveAt: 900, error: null, sessionKind: 'normal',
+        } as Session],
+      ]),
+      activeSessionId: 'parent-session',
+    }));
+
+    __test_only__.handleSubagentSessionLinked(
+      { currentWorkspacePath: '/assistants/reader' } as FlowChatContext,
+      {
+        sessionId: 'writer-session',
+        parentSessionId: 'parent-session',
+        parentDialogTurnId: 'parent-turn',
+        parentToolCallId: 'task-assistant',
+        agentType: 'Claw',
+        assistantSession: true,
+        delegatedBy: { assistant: 'assistant:workspace-reader', assistantName: 'Reader', sessionId: 'parent-session' },
+      },
+    );
+
+    const writer = FlowChatStore.getInstance().getState().sessions.get('writer-session');
+    expect(writer?.delegatedBy?.assistantName).toBe('Reader');
+    expect(writer?.sessionKind).toBe('normal');
+    expect(writer?.parentSessionId).toBeUndefined();
+  });
+
   it('stores an absolute parent Turn index when linking from a partial restored tail', () => {
     const task = makeTaskTool('task-tail');
     FlowChatStore.getInstance().setState(() => ({
