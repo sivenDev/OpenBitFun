@@ -102,6 +102,26 @@ describe('permission request routing', () => {
     });
   });
 
+  it('hands a called assistant\'s request to the conversation that called it', () => {
+    // The called assistant's session is its own, in its own workspace; only
+    // the delegation names the caller.
+    const calledRequest = {
+      ...request('called-request', 'called-assistant-session', 'called-tool', 'caller-session', 'caller-spawn'),
+      projectId: 'assistant-workspace',
+      agentId: 'Claw',
+    };
+    calledRequest.delegation = { ...calledRequest.delegation!, subagentType: 'Claw' };
+
+    expect(permissionRequestOwnerSessionId(calledRequest)).toBe('caller-session');
+    expect(selectPermissionRequestsOwnedBySession([calledRequest], 'caller-session')).toEqual([
+      calledRequest,
+    ]);
+    expect(selectPermissionRequestsOwnedBySession([calledRequest], 'called-assistant-session'))
+      .toEqual([]);
+    expect([...pendingPermissionToolCallIdsForSession([calledRequest], 'caller-session')])
+      .toEqual(['caller-spawn']);
+  });
+
   it('maps delegated requests to the parent Task card and direct requests to their tool card', () => {
     const requests = [parentRequest, childRequest, unrelatedRequest];
 

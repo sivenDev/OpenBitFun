@@ -1834,6 +1834,38 @@ mod task_context_tests {
     }
 
     #[test]
+    fn a_called_assistants_questions_and_approvals_go_to_its_caller() {
+        // A call to another assistant runs in that assistant's own session,
+        // which has no parent relationship; its turn carries the caller as
+        // its parent, so the caller answers both.
+        let mut task = task_with_context_vars();
+        task.context.session_id = "called-assistant-session".into();
+        task.context.agent_type = "Claw".into();
+        let caller = SubagentParentInfo {
+            tool_call_id: "caller-spawn".to_string(),
+            session_id: "caller-session".to_string(),
+            dialog_turn_id: "caller-turn".to_string(),
+        };
+        task.context.permission_delegation = Some(caller.permission_delegation_context("Claw"));
+        task.context.subagent_parent_info = Some(caller);
+
+        let context = build_tool_use_context_for_task(&task, None, CancellationToken::new());
+
+        assert_eq!(
+            context.custom_data
+                [openbitfun_agent_runtime::user_questions::USER_INPUT_PARENT_CONTEXT_KEY],
+            json!({ "session_id": "caller-session", "dialog_turn_id": "caller-turn" })
+        );
+        let delegation = task
+            .context
+            .permission_delegation
+            .as_ref()
+            .expect("approval delegation");
+        assert_eq!(delegation.parent_session_id, "caller-session");
+        assert_eq!(delegation.parent_tool_call_id, "caller-spawn");
+    }
+
+    #[test]
     fn restored_question_delegation_without_parent_turn_still_identifies_controller() {
         let mut task = task_with_context_vars();
         task.context.subagent_parent_info = None;
