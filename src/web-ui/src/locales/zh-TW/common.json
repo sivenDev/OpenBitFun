@@ -542,6 +542,19 @@
           "queuedLimit": "排隊中 · {{owner}} 同時只處理 {{limit}} 個任務",
           "expired": "已過期",
           "stopped": "共享已停止"
+        },
+        "more": "更多",
+        "delete": "刪除",
+        "deleteTitle": "刪除這個對話？",
+        "deleteMessage": "刪除後，你和 {{owner}} 的裝置上都不再保留這段對話。",
+        "deleteConfirm": "刪除",
+        "deleteFailed": "無法刪除對話：{{reason}}",
+        "deleteBlocked": {
+          "offline": "不在線",
+          "revoked": "已停止共享",
+          "active": "先停止這個對話",
+          "needsUpdate": "需要更新",
+          "checking": "正在確認…"
         }
       }
     },

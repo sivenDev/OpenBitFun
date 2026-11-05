@@ -957,7 +957,8 @@
           "offline": "The device that shares “{{name}}” is offline. Send again once its owner opens OpenBitFun.",
           "needsUpdate": "This device and the one that shares “{{name}}” run versions of OpenBitFun that do not match. Update both to the latest version.",
           "expired": "This conversation passed its retention time and was deleted on the owner’s device. Start a new conversation.",
-          "unavailable": "“{{name}}” cannot take tasks right now. Try again later."
+          "unavailable": "“{{name}}” cannot take tasks right now. Try again later.",
+          "active": "This conversation is still running. Stop it before deleting it."
         }
       }
     },

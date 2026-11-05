@@ -957,7 +957,8 @@
           "offline": "「{{name}}」所在的设备不在线。等对方打开 OpenBitFun 后再发送。",
           "needsUpdate": "你和「{{name}}」所在设备的 OpenBitFun 版本不兼容。请把两台设备都更新到最新版本。",
           "expired": "这个对话已超过保留时间，对方设备上已删除。请开始新对话。",
-          "unavailable": "「{{name}}」现在不能接收任务，请稍后再试。"
+          "unavailable": "「{{name}}」现在不能接收任务，请稍后再试。",
+          "active": "这个对话还在进行，先停止它再删除。"
         }
       }
     },

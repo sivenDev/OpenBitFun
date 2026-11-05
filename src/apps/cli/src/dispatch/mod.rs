@@ -23,15 +23,16 @@ use serde::de::DeserializeOwned;
 use protocol::{
     DispatchAnswerRequest, DispatchAnswerResponse, DispatchAppendRequest, DispatchAppendResponse,
     DispatchCancelRequest, DispatchCancelResponse, DispatchContinueRequest,
-    DispatchContinueResponse, DispatchJobListEntry, DispatchJobState, DispatchListRequest,
-    DispatchProbeRequest, DispatchProbeResponse, DispatchQueryKind, DispatchQueryRequest,
-    DispatchStatusRequest, DispatchStatusResponse, DispatchSubmitRequest, DispatchSubmitResponse,
-    DispatchTurnKind, DispatchWorkspaceBundleBeginRequest, DispatchWorkspaceBundleChunkRequest,
+    DispatchContinueResponse, DispatchDeleteRequest, DispatchDeleteResponse, DispatchJobListEntry,
+    DispatchJobState, DispatchListRequest, DispatchProbeRequest, DispatchProbeResponse,
+    DispatchQueryKind, DispatchQueryRequest, DispatchStatusRequest, DispatchStatusResponse,
+    DispatchSubmitRequest, DispatchSubmitResponse, DispatchTurnKind,
+    DispatchWorkspaceBundleBeginRequest, DispatchWorkspaceBundleChunkRequest,
     DispatchWorkspaceBundleCommitRequest, DispatchWorkspaceProbe,
     DispatchWorkspaceProvisionRequest, DispatchWorkspaceSyncChunkRequest,
     DispatchWorkspaceSyncRequest, DISPATCH_PROTOCOL_VERSION, MAX_DISPATCH_TEXT_BYTES,
 };
-use store::{CreateJobOutcome, DispatchStateRecord, DispatchStore};
+use store::{CreateJobOutcome, DelegatedRetention, DispatchStateRecord, DispatchStore, JobRemoval};
 
 #[derive(Clone, Debug)]
 struct ModelReadiness {
@@ -101,6 +102,7 @@ async fn run_admitted_verb(verb: &str, input: serde_json::Value) -> Result<serde
         }
         "status" => serde_json::to_value(status(parse(input)?)?).context("encode status response"),
         "cancel" => serde_json::to_value(cancel(parse(input)?)?).context("encode cancel response"),
+        "delete" => serde_json::to_value(delete(parse(input)?)?).context("encode delete response"),
         "list" => {
             let request: DispatchListRequest = parse(input)?;
             serde_json::to_value(list(request.source_share_key.as_deref())?)
@@ -255,6 +257,10 @@ async fn probe(request: DispatchProbeRequest) -> Result<DispatchProbeResponse> {
     // Shared assistants, `catalog`, and delegated submission ship together.
     capabilities.push(
         openbitfun_services_core::dispatch_contract::DISPATCH_AGENT_DELEGATION_CAPABILITY
+            .to_string(),
+    );
+    capabilities.push(
+        openbitfun_services_core::dispatch_contract::DISPATCH_SHARED_CONVERSATION_DELETE_CAPABILITY
             .to_string(),
     );
     // Assistant tasks may call external agents through this CLI's ACP client.
@@ -669,6 +675,41 @@ fn append(request: DispatchAppendRequest) -> Result<DispatchAppendResponse> {
         accepted,
         message_id,
     })
+}
+
+/// Deletes a finished conversation the calling device had with a shared
+/// assistant, as the retention cleanup would once it expires. The share
+/// call admitted the job as that device's own; nobody else deletes here.
+fn delete(request: DispatchDeleteRequest) -> Result<DispatchDeleteResponse> {
+    if request.source_share_key.is_none() {
+        bail!("only a device using a shared assistant deletes its conversations here");
+    }
+    let path_manager = openbitfun_core::infrastructure::PathManager::new()
+        .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
+    let store = DispatchStore::open(path_manager.product_home_dir().join("dispatch"))?;
+    let delegated = DelegatedRetention::for_product_home(path_manager);
+    delete_in_store(&store, &delegated, request.job_id)
+}
+
+fn delete_in_store(
+    store: &DispatchStore,
+    delegated: &DelegatedRetention,
+    job_id: String,
+) -> Result<DispatchDeleteResponse> {
+    match store.remove_terminal_job(&job_id, delegated, |_, _| true)? {
+        // Removed now or before: either way it is gone.
+        JobRemoval::Removed | JobRemoval::Missing => Ok(DispatchDeleteResponse {
+            job_id,
+            deleted: true,
+        }),
+        JobRemoval::NotTerminal => {
+            bail!(openbitfun_services_core::dispatch_contract::DISPATCH_DELETE_ACTIVE_REFUSAL)
+        }
+        JobRemoval::Busy => bail!("this conversation is in use on the owner's device; try again"),
+        JobRemoval::Unreadable | JobRemoval::Kept => {
+            bail!("this conversation cannot be deleted on the owner's device")
+        }
+    }
 }
 
 fn cancel(request: DispatchCancelRequest) -> Result<DispatchCancelResponse> {
@@ -1592,6 +1633,46 @@ mod tests {
         assert_eq!(parse_ahead_behind("3\t5\n"), Some((3, 5)));
         assert_eq!(parse_ahead_behind("3"), None);
         assert_eq!(parse_ahead_behind("unknown 5"), None);
+    }
+
+    #[test]
+    fn a_device_deletes_only_finished_conversations_and_only_over_a_share() {
+        let error = delete(DispatchDeleteRequest {
+            job_id: "job".to_string(),
+            source_share_key: None,
+        })
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("only a device using a shared assistant"));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DispatchStore::open(dir.path().join("dispatch")).expect("store");
+        let retention = DelegatedRetention::default();
+        for job_id in ["job-done", "job-running"] {
+            store
+                .create_job(test_request(job_id), "Task".to_string())
+                .expect("create job");
+        }
+        store
+            .mark_state("job-done", DispatchJobState::Succeeded, None, None)
+            .expect("mark terminal");
+        store
+            .mark_state("job-running", DispatchJobState::Running, None, None)
+            .expect("mark running");
+
+        let error = delete_in_store(&store, &retention, "job-running".to_string()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            openbitfun_services_core::dispatch_contract::DISPATCH_DELETE_ACTIVE_REFUSAL
+        );
+        assert!(store.load_job("job-running").is_ok());
+        for _ in 0..2 {
+            // Deleted now, or before: either way it is gone.
+            let response = delete_in_store(&store, &retention, "job-done".to_string()).unwrap();
+            assert!(response.deleted);
+            assert!(store.load_job("job-done").is_err());
+        }
     }
 
     #[test]

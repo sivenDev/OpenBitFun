@@ -2093,6 +2093,8 @@ pub async fn run() {
             api::lan_share_api::lan_share_request,
             api::lan_share_api::lan_share_shared_with_me,
             api::lan_share_api::lan_share_remove,
+            api::lan_share_api::lan_share_conversation_support,
+            api::lan_share_api::lan_share_delete_conversation,
             api::lan_share_api::lan_share_open_network_settings,
             api::lan_share_api::lan_share_set_display_name,
             api::lan_share_api::lan_share_probe_address,

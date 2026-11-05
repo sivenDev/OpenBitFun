@@ -780,6 +780,8 @@ pub(crate) enum DispatchAction {
     Status,
     /// Cancel a detached dispatch job
     Cancel,
+    /// Delete a finished job a device using a shared assistant started
+    Delete,
     /// List jobs owned by this machine
     List,
     /// Answer a permission request for a remotely supervised job

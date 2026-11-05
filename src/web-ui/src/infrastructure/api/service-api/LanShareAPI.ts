@@ -184,6 +184,11 @@ export interface ShareRequestOpened {
   granted?: boolean;
 }
 
+/** What an owner device does for this device's conversations with its assistants. */
+export interface SharedConversationSupport {
+  deleteConversation: boolean;
+}
+
 /** An assistant another device shared with this one. */
 export interface SharedWithMe {
   owner: SharePeer;
@@ -313,6 +318,16 @@ class LanShareAPI {
 
   remove(ownerKey: string, assistantId: string): Promise<void> {
     return invoke('lan_share_remove', { ownerKey, assistantId });
+  }
+
+  /** What the owner device does for this device's conversations; asks the owner. */
+  conversationSupport(ownerDeviceId: string): Promise<SharedConversationSupport> {
+    return invoke('lan_share_conversation_support', { ownerDeviceId });
+  }
+
+  /** Deletes a finished conversation with a shared assistant on its owner's device and here. */
+  deleteConversation(jobId: string): Promise<void> {
+    return invoke('lan_share_delete_conversation', { jobId });
   }
 
   /** Says who answers at an address someone typed. Nothing is kept. */

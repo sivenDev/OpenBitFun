@@ -2,10 +2,10 @@
   "schemaVersion": 2,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
   "catalogDigest": "063065dc4d6f508c17ee0039692ae71554c41689790ba4f3eb2f8882351cf696",
-  "commandCount": 736,
+  "commandCount": 738,
   "coverage": {
-    "commandCount": 736,
-    "documentedCommandCount": 676,
+    "commandCount": 738,
+    "documentedCommandCount": 678,
     "implementationCommandCount": 60,
     "implementationDigest": "5047b674e890f899e65baf9235e9df4bd912fa28f44eb10a656e079a1b89974d"
   },
@@ -5417,6 +5417,22 @@
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {
+      "id": "lan_share_conversation_support",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_conversation_support",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_conversation_support( request: LanShareConversationSupportRequest, ) -> Result<LanShareConversationSupport, String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
       "id": "lan_share_decide",
       "moduleId": "lan_share",
       "capabilityId": "feature.personal-assistants",
@@ -5430,6 +5446,22 @@
       "rustPath": "api::lan_share_api::lan_share_decide",
       "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
       "signature": "fn lan_share_decide(request: LanShareDecideRequest) -> Result<(), String>",
+      "remoteWorkspacePolicy": "WorkspaceAgnostic"
+    },
+    {
+      "id": "lan_share_delete_conversation",
+      "moduleId": "lan_share",
+      "capabilityId": "feature.personal-assistants",
+      "capabilityIds": [
+        "feature.personal-assistants"
+      ],
+      "documentedItemIds": [
+        "feature.personal-assistants:lan-discover"
+      ],
+      "visibility": "documented",
+      "rustPath": "api::lan_share_api::lan_share_delete_conversation",
+      "sourceFile": "src/apps/desktop/src/api/lan_share_api.rs",
+      "signature": "fn lan_share_delete_conversation( request: LanShareDeleteConversationRequest, ) -> Result<(), String>",
       "remoteWorkspacePolicy": "WorkspaceAgnostic"
     },
     {

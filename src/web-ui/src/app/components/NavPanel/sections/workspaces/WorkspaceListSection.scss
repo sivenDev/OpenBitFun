@@ -1579,6 +1579,49 @@
   flex: none;
 }
 
+// The name keeps its width; who shares it gives way first when the row is narrow.
+.shared-assistant-nav__name .assistant-session-history__delegated-title {
+  flex: 0 1 auto;
+}
+
+.shared-assistant-nav__source {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--openbitfun-color-content-muted);
+  font-size: var(--openbitfun-type-meta-font-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// One conversation and its "..." menu. The menu button takes the place of the
+// status mark on hover or focus, and stays while its menu is open.
+.shared-assistant-nav__conversation {
+  position: relative;
+
+  &:not(:hover):not(:focus-within) .shared-assistant-nav__conversation-actions:not([data-menu-open]) {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  &:hover,
+  &:focus-within,
+  &:has([data-menu-open]) {
+    .nav-task-status {
+      visibility: hidden;
+    }
+  }
+}
+
+.shared-assistant-nav__conversation-actions {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: var(--openbitfun-space-1);
+  display: flex;
+  align-items: center;
+}
+
 .shared-assistant-nav__online {
   flex: none;
   inline-size: 6px;

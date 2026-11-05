@@ -130,6 +130,16 @@ pub const DISPATCH_AGENT_DELEGATION_CAPABILITY: &str = "agent_delegation_v1";
 /// agents with its own login or credentials.
 pub const DISPATCH_EXTERNAL_AGENT_EXECUTOR_CAPABILITY: &str = "external_agent_executor_v1";
 
+/// Optional: a device using a shared assistant may delete its own finished
+/// conversations here (`dispatch_target_delete`). A requester checks for it
+/// before offering deletion.
+pub const DISPATCH_SHARED_CONVERSATION_DELETE_CAPABILITY: &str = "shared_conversation_delete_v1";
+
+/// Why the owner keeps a conversation the requester asked to delete: it is
+/// queued or running, or waits for an approval. The requester recognizes it.
+pub const DISPATCH_DELETE_ACTIVE_REFUSAL: &str =
+    "this conversation is still running; stop it before deleting it";
+
 /// Reserved argument carrying the sharing public key (hex) of the device a
 /// call came from over the LAN share channel. Only the LAN share host sets
 /// it, from the key the channel verified; every other host removes it.
@@ -149,6 +159,7 @@ pub const DISPATCH_SHARE_COMMANDS: &[&str] = &[
     "dispatch_target_list",
     "dispatch_target_continue",
     "dispatch_target_append",
+    "dispatch_target_delete",
 ];
 
 /// Why an `answer` from a device using a shared assistant is refused.
@@ -436,6 +447,19 @@ mod tests {
     fn delegation_is_optional_for_controllers() {
         assert!(!dispatch_required_target_capabilities()
             .any(|capability| capability == DISPATCH_AGENT_DELEGATION_CAPABILITY));
+        assert!(!dispatch_required_target_capabilities()
+            .any(|capability| capability == DISPATCH_SHARED_CONVERSATION_DELETE_CAPABILITY));
+    }
+
+    #[test]
+    fn a_device_using_a_shared_assistant_may_ask_to_delete_its_conversation() {
+        let bound = bind_dispatch_source_share_key(
+            "dispatch_target_delete",
+            serde_json::json!({ "jobId": "j", DISPATCH_SOURCE_SHARE_KEY_ARG: "cd".repeat(32) }),
+            &"AB".repeat(32),
+        )
+        .unwrap();
+        assert_eq!(bound[DISPATCH_SOURCE_SHARE_KEY_ARG], "ab".repeat(32));
     }
 
     #[test]

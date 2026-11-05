@@ -519,6 +519,8 @@
         "command:lan_share_set_device_address",
         "command:lan_share_shared_with_me",
         "command:lan_share_remove",
+        "command:lan_share_conversation_support",
+        "command:lan_share_delete_conversation",
         "command:lan_share_open_network_settings"
       ]
     },

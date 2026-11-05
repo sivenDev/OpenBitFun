@@ -376,6 +376,7 @@ export const SHARED_ASSISTANT_PROBLEMS = [
   'needsUpdate',
   'expired',
   'unavailable',
+  'active',
 ] as const;
 
 /** Why a conversation with a shared assistant cannot go on. */

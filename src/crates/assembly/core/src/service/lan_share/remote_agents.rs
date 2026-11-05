@@ -156,8 +156,13 @@ fn unavailable_reason(error: &anyhow::Error) -> Option<(RemoteAgentUnavailableRe
         Some(SharedAssistantProblem::Unavailable(_)) => {
             RemoteAgentUnavailableReason::AgentUnavailable
         }
-        // Presence already lists an unreachable owner.
-        Some(SharedAssistantProblem::Offline(_) | SharedAssistantProblem::Expired) => return None,
+        // Presence already lists an unreachable owner; a running conversation
+        // says nothing about the assistant.
+        Some(
+            SharedAssistantProblem::Offline(_)
+            | SharedAssistantProblem::Expired
+            | SharedAssistantProblem::Active,
+        ) => return None,
         None if format!("{error:#}").contains(EXECUTOR_MISSING_TEXT) => {
             RemoteAgentUnavailableReason::ExecutorMissing
         }

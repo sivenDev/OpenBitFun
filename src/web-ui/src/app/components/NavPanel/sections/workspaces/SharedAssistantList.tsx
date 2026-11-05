@@ -1,18 +1,23 @@
-import { useState, useSyncExternalStore } from 'react';
-import { Icon, IconButton, Tooltip } from '@openbitfun/ui';
+import { useId, useRef, useState, useSyncExternalStore } from 'react';
+import { Icon, IconButton, MenuPopover, Tooltip, type MenuEntry } from '@openbitfun/ui';
 import { Ban, ChevronUp, History, WifiOff } from 'lucide-react';
 import { useSceneStore } from '@/app/stores/sceneStore';
 import { isSessionNavRowActive } from '@/app/components/NavPanel/sections/sessions/sessionNavSelection';
-import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
+import { dispatchJobStore, type DispatchObserverJob } from '@/features/dispatch/dispatchJobStore';
 import {
+  deleteSharedAssistantConversation,
+  isLocalOnlyConversation,
   openSharedAssistantConversation,
   openSharedAssistantConversationJob,
   sharedAssistantConversations,
+  sharedConversationDeleteSupported,
   startSharedAssistantConversation,
   type SharedAssistantRef,
 } from '@/features/dispatch/sharedAssistantConversation';
+import { explainSharedAssistantError } from '@/features/dispatch/sharedAssistantProblemText';
 import { sharedAssistantStatus, type SharedAssistantStatus } from '@/features/dispatch/sharedAssistantStatus';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
+import { confirmDanger } from '@/infrastructure/confirm-dialog';
 import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import { useI18n } from '@/infrastructure/i18n';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
@@ -31,6 +36,123 @@ function message(error: unknown): string {
 
 function refOf(assistant: SharedWithMe): SharedAssistantRef {
   return { ownerDeviceId: assistant.owner.deviceId, assistantId: assistant.assistantId, name: assistant.name };
+}
+
+/** Why a conversation cannot be deleted now, or `null` when it can. */
+type DeleteBlock = 'offline' | 'revoked' | 'active' | 'needsUpdate' | 'checking';
+
+/** Whether the owner deletes conversations, as far as this menu knows. */
+type OwnerSupport = 'checking' | 'yes' | 'no' | 'unreachable';
+
+interface ConversationActionsProps {
+  job: DispatchObserverJob;
+  assistant: SharedAssistantRef;
+  owner: string;
+  title: string;
+  revoked: boolean;
+  online: boolean;
+  /** The conversation waits on the owner or runs there. */
+  active: boolean;
+}
+
+/**
+ * The "..." menu of one conversation with a shared assistant. Deleting
+ * removes it on both devices, so the owner must be reachable, still share
+ * the assistant, support it, and not be running the conversation; a new
+ * conversation that never reached the owner is removed here at once.
+ */
+function SharedConversationActions({ job, assistant, owner, title, revoked, online, active }: ConversationActionsProps) {
+  const { t } = useI18n('common');
+  const [open, setOpen] = useState(false);
+  const [support, setSupport] = useState<OwnerSupport>('checking');
+  const [deleting, setDeleting] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  const localOnly = isLocalOnlyConversation(job);
+  const moreLabel = t('nav.sessions.sharedAssistant.more');
+
+  const block: DeleteBlock | null = localOnly ? null
+    : revoked ? 'revoked'
+    : !online || support === 'unreachable' ? 'offline'
+    : active ? 'active'
+    : support === 'checking' ? 'checking'
+    : support === 'no' ? 'needsUpdate'
+    : null;
+
+  const toggle = () => {
+    const opening = !open;
+    setOpen(opening);
+    if (!opening || localOnly || revoked || !online) return;
+    setSupport('checking');
+    sharedConversationDeleteSupported(assistant.ownerDeviceId).then(
+      supported => setSupport(supported ? 'yes' : 'no'),
+      (error) => {
+        log.warn('Owner of shared assistant not asked about deleting conversations', { error: message(error) });
+        setSupport('unreachable');
+      },
+    );
+  };
+
+  const remove = async () => {
+    if (!localOnly) {
+      const confirmed = await confirmDanger(
+        t('nav.sessions.sharedAssistant.deleteTitle'),
+        t('nav.sessions.sharedAssistant.deleteMessage', { owner }),
+        { confirmText: t('nav.sessions.sharedAssistant.deleteConfirm') },
+      );
+      if (!confirmed) return;
+    }
+    setDeleting(true);
+    try {
+      await deleteSharedAssistantConversation(job);
+    } catch (error) {
+      const reason = message(explainSharedAssistantError(error, assistant.name));
+      log.warn('Conversation with shared assistant not deleted', { error: message(error) });
+      notificationService.error(t('nav.sessions.sharedAssistant.deleteFailed', { reason }));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const items: MenuEntry[] = [{
+    id: 'delete',
+    label: t('nav.sessions.sharedAssistant.delete'),
+    icon: <Icon name="delete" size="sm" />,
+    tone: 'danger',
+    disabled: block !== null,
+    shortcut: block ? t(`nav.sessions.sharedAssistant.deleteBlocked.${block}`) : undefined,
+    onSelect: () => void remove(),
+  }];
+
+  return (
+    <div className="shared-assistant-nav__conversation-actions" data-menu-open={open || undefined}>
+      <Tooltip content={moreLabel} disabled={open}>
+        <IconButton
+          ref={anchorRef}
+          size="xs"
+          variant="quiet"
+          aria-label={`${moreLabel} · ${title}`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
+          loading={deleting}
+          disabled={deleting}
+          onClick={toggle}
+          icon={<Icon name="more" size="xs" aria-hidden="true" />}
+          data-testid="nav-shared-assistant-conversation-more"
+        />
+      </Tooltip>
+      <MenuPopover
+        id={menuId}
+        aria-label={moreLabel}
+        anchorRef={anchorRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        placement="bottom"
+      />
+    </div>
+  );
 }
 
 /**
@@ -94,8 +216,8 @@ export default function SharedAssistantList() {
         const standing = revoked
           ? t('nav.sessions.sharedAssistant.revoked')
           : assistant.online ? null : t('nav.sessions.sharedAssistant.offline');
-        const source = [t('nav.sessions.sharedAssistant.from', { name: owner }), standing]
-          .filter(Boolean).join(' · ');
+        const from = t('nav.sessions.sharedAssistant.from', { name: owner });
+        const source = [from, standing].filter(Boolean).join(' · ');
         const key = `shared:${assistant.owner.publicKey}/${assistant.assistantId}`;
         const isActive = (sessionId: string) => isSessionNavRowActive({
           rowSessionId: sessionId,
@@ -126,7 +248,7 @@ export default function SharedAssistantList() {
             data-testid="nav-shared-assistant"
           >
             <div className="shared-assistant-nav__header">
-              {/* Who shares it and whether it can be reached show as a mark; the words are in the tooltip. */}
+              {/* Who shares it reads beside the name; whether it can be reached shows as a mark, its words in the tooltip. */}
               <Tooltip content={source} placement="right" followCursor>
                 <button
                   type="button"
@@ -146,6 +268,7 @@ export default function SharedAssistantList() {
                       <Icon glyph={revoked ? Ban : WifiOff} size="xs" tone="secondary" />
                     </span>
                   )}
+                  <span className="shared-assistant-nav__source" data-testid="nav-shared-assistant-source" aria-hidden="true">{from}</span>
                 </button>
               </Tooltip>
               <Tooltip content={historyLabel} placement="right" followCursor>
@@ -186,30 +309,42 @@ export default function SharedAssistantList() {
                   const active = isActive(job.sessionId);
                   const title = sessions.get(job.sessionId)?.title || job.title || t('nav.sessions.sharedAssistant.untitled');
                   const said = detail ? `${title} · ${detail}` : title;
+                  const waiting = status.kind === 'approval' || status.kind === 'queued' || status.kind === 'running';
                   return (
-                    <Tooltip key={job.jobId} content={said} placement="right" followCursor>
-                      <button
-                        type="button"
-                        className={[
-                          'openbitfun-nav-panel__inline-item',
-                          'assistant-session-history__delegated-item',
-                          status.kind === 'approval' && 'is-waiting',
-                          active && 'is-active',
-                        ].filter(Boolean).join(' ')}
-                        data-openbitfun-component="sessions-section"
-                        data-openbitfun-part="row"
-                        data-openbitfun-state={active ? 'active' : undefined}
-                        aria-current={active ? 'true' : undefined}
-                        aria-label={said}
-                        onClick={() => run(() => openSharedAssistantConversationJob(job, ref))}
-                        data-testid="nav-shared-assistant-conversation"
-                      >
-                        <span className="assistant-session-history__delegated-line">
-                          <span className="assistant-session-history__delegated-title">{title}</span>
-                          <NavTaskStatusIcon kind={status.kind} label={detail} />
-                        </span>
-                      </button>
-                    </Tooltip>
+                    <div key={job.jobId} className="shared-assistant-nav__conversation">
+                      <Tooltip content={said} placement="right" followCursor>
+                        <button
+                          type="button"
+                          className={[
+                            'openbitfun-nav-panel__inline-item',
+                            'assistant-session-history__delegated-item',
+                            status.kind === 'approval' && 'is-waiting',
+                            active && 'is-active',
+                          ].filter(Boolean).join(' ')}
+                          data-openbitfun-component="sessions-section"
+                          data-openbitfun-part="row"
+                          data-openbitfun-state={active ? 'active' : undefined}
+                          aria-current={active ? 'true' : undefined}
+                          aria-label={said}
+                          onClick={() => run(() => openSharedAssistantConversationJob(job, ref))}
+                          data-testid="nav-shared-assistant-conversation"
+                        >
+                          <span className="assistant-session-history__delegated-line">
+                            <span className="assistant-session-history__delegated-title">{title}</span>
+                            <NavTaskStatusIcon kind={status.kind} label={detail} />
+                          </span>
+                        </button>
+                      </Tooltip>
+                      <SharedConversationActions
+                        job={job}
+                        assistant={ref}
+                        owner={owner}
+                        title={title}
+                        revoked={revoked}
+                        online={assistant.online}
+                        active={waiting}
+                      />
+                    </div>
                   );
                 })}
                 {hidden > 0 ? (

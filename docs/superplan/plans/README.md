@@ -4,7 +4,7 @@
 
 ## Status
 
-| Type | Plans | Approved | Complete | Superseded |
+| Type | Plans | In Progress | Complete | Superseded |
 | --- | --- | --- | --- | --- |
 | `feature` | 23 | 1 | 13 | 9 |
 
@@ -36,4 +36,4 @@
 | `F002-15` | [导航中的共享助理：按设备分组精修与状态一眼可见](features/F002/15-tenant-nav-polish.md) | `complete` | 2026-11-04 |
 | `F002-16` | [助理的默认模型：每个助理自己的默认模型，用于它自己的新对话、被调用时与共享给别人时](features/F002/16-assistant-default-model.md) | `complete` | 2026-11-04 |
 | `F002-17` | [用「@」点名助理：在能调用子智能体的对话里点名自己的或共享的助理，由当前智能体调用](features/F002/17-mention-assistants.md) | `complete` | 2026-11-04 |
-| `F002-18` | [共享助理的对话：导航写明来源，使用者可以删除对话](features/F002/18-shared-conversation-source-and-delete.md) | `approved` | 2026-11-05 |
+| `F002-18` | [共享助理的对话：导航写明来源，使用者可以删除对话](features/F002/18-shared-conversation-source-and-delete.md) | `in_progress` | 2026-11-05 |

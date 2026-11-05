@@ -12,6 +12,7 @@
 use anyhow::anyhow;
 use openbitfun_services_core::dispatch_contract::{
     DispatchCatalogAgent, DispatchCatalogResponse, DISPATCH_AGENT_DELEGATION_CAPABILITY,
+    DISPATCH_DELETE_ACTIVE_REFUSAL, DISPATCH_SHARED_CONVERSATION_DELETE_CAPABILITY,
 };
 use openbitfun_services_integrations::remote_ssh::dispatch_ssh;
 use serde_json::{json, Value};
@@ -58,6 +59,9 @@ pub enum SharedAssistantProblem {
     /// The assistant is shared but cannot take tasks, for the reason given.
     #[error("[shared-assistant:unavailable] {0}")]
     Unavailable(String),
+    /// The conversation is still running, so the owner keeps it for now.
+    #[error("[shared-assistant:active] the conversation is still running; stop it first")]
+    Active,
 }
 
 impl SharedAssistantProblem {
@@ -69,6 +73,7 @@ impl SharedAssistantProblem {
             Self::NeedsUpdate(_) => "needsUpdate",
             Self::Expired => "expired",
             Self::Unavailable(_) => "unavailable",
+            Self::Active => "active",
         }
     }
 }
@@ -84,6 +89,9 @@ pub(crate) fn explain(error: anyhow::Error, job: bool) -> anyhow::Error {
     // that never belonged to this device; a recorded one was removed.
     if job && text.contains("dispatch job '") && text.contains("' does not exist") {
         return SharedAssistantProblem::Expired.into();
+    }
+    if job && text.contains(DISPATCH_DELETE_ACTIVE_REFUSAL) {
+        return SharedAssistantProblem::Active.into();
     }
     // Refusals of the owner's share store (`ShareRefusal`).
     if [
@@ -320,6 +328,73 @@ pub async fn cancel_shared_assistant(
     cancel_device(rpc, store, request)
         .await
         .map_err(|error| explain(error, true))
+}
+
+/// Whether the owner's device deletes this device's conversations on
+/// request. Asked before deletion is offered; an older owner does not.
+pub async fn shared_conversation_delete_supported(
+    rpc: &dyn DeviceDispatchRpc,
+    owner_device_id: &str,
+) -> anyhow::Result<bool> {
+    let protocol = rpc
+        .invoke(owner_device_id, "dispatch_target_probe", json!({}))
+        .await
+        .map_err(|error| explain(error, false))?;
+    Ok(protocol
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .is_some_and(|capabilities| {
+            capabilities.iter().any(|capability| {
+                capability.as_str() == Some(DISPATCH_SHARED_CONVERSATION_DELETE_CAPABILITY)
+            })
+        }))
+}
+
+/// Deletes a finished conversation on the owner's device and then this
+/// device's record and transcript of it. Nothing is deleted here unless the
+/// owner deleted it too, or no longer keeps it.
+pub async fn delete_shared_assistant_conversation(
+    rpc: &dyn DeviceDispatchRpc,
+    store: &OutboundDispatchStore,
+    job_id: &str,
+) -> anyhow::Result<()> {
+    let record = store
+        .get(job_id)
+        .await?
+        .ok_or_else(|| anyhow!("this device has no conversation '{job_id}'"))?;
+    let DispatchTarget::SharedAssistant {
+        owner_device_id, ..
+    } = &record.target
+    else {
+        anyhow::bail!("only conversations with shared assistants are deleted this way");
+    };
+    if !shared_conversation_delete_supported(rpc, owner_device_id).await? {
+        return Err(SharedAssistantProblem::NeedsUpdate(
+            "the owner's device needs an update to delete conversations".to_string(),
+        )
+        .into());
+    }
+    match rpc
+        .invoke(
+            owner_device_id,
+            "dispatch_target_delete",
+            json!({ "jobId": job_id }),
+        )
+        .await
+        .map_err(|error| explain(error, true))
+    {
+        Ok(_) => {}
+        // The owner no longer keeps it: there is nothing left to delete there.
+        Err(error)
+            if matches!(
+                error.downcast_ref::<SharedAssistantProblem>(),
+                Some(SharedAssistantProblem::Expired)
+            ) => {}
+        Err(error) => return Err(error),
+    }
+    store.remove_transcript(job_id).await?;
+    store.remove(job_id).await?;
+    Ok(())
 }
 
 /// Reports about a conversation; the owner answers only `usageReport`.
@@ -1034,5 +1109,83 @@ mod tests {
             .await
             .is_err());
         assert!(owner.received.lock().unwrap().is_empty());
+    }
+
+    fn deletes(deletes: bool) -> Value {
+        let mut protocol = protocol(true);
+        if deletes {
+            protocol["capabilities"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(DISPATCH_SHARED_CONVERSATION_DELETE_CAPABILITY));
+        }
+        protocol
+    }
+
+    #[tokio::test]
+    async fn a_conversation_is_deleted_here_only_once_the_owner_no_longer_keeps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = submitted(dir.path()).await;
+
+        // An owner without the capability is not asked; nothing goes here.
+        let older = Owner::new(vec![("dispatch_target_probe", Ok(deletes(false)))]);
+        let error = delete_shared_assistant_conversation(&older, &store, JOB)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            problem(&error).map(|problem| problem.code()),
+            Some("needsUpdate")
+        );
+        assert!(store.get(JOB).await.unwrap().is_some());
+
+        // A running conversation stays on both devices.
+        let busy = Owner::new(vec![
+            ("dispatch_target_probe", Ok(deletes(true))),
+            (
+                "dispatch_target_delete",
+                Err(anyhow!(DISPATCH_DELETE_ACTIVE_REFUSAL)),
+            ),
+        ]);
+        let error = delete_shared_assistant_conversation(&busy, &store, JOB)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            problem(&error).map(|problem| problem.code()),
+            Some("active")
+        );
+        assert!(store.get(JOB).await.unwrap().is_some());
+
+        let owner = Owner::new(vec![
+            ("dispatch_target_probe", Ok(deletes(true))),
+            (
+                "dispatch_target_delete",
+                Ok(json!({ "jobId": JOB, "deleted": true })),
+            ),
+        ]);
+        delete_shared_assistant_conversation(&owner, &store, JOB)
+            .await
+            .unwrap();
+        assert_eq!(
+            owner.received("dispatch_target_delete"),
+            json!({ "jobId": JOB })
+        );
+        assert!(store.get(JOB).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_conversation_the_owner_no_longer_keeps_is_deleted_here_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = submitted(dir.path()).await;
+        let owner = Owner::new(vec![
+            ("dispatch_target_probe", Ok(deletes(true))),
+            (
+                "dispatch_target_delete",
+                Err(anyhow!("dispatch job '{JOB}' does not exist")),
+            ),
+        ]);
+        delete_shared_assistant_conversation(&owner, &store, JOB)
+            .await
+            .unwrap();
+        assert!(store.get(JOB).await.unwrap().is_none());
     }
 }

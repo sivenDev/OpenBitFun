@@ -2,7 +2,7 @@
 id: "F002-18"
 title: "共享助理的对话：导航写明来源，使用者可以删除对话"
 type: "feature"
-status: "approved"
+status: "in_progress"
 summary: "使用者导航栏「来自共享」中共享的助理右侧直接写「来自 某某的设备」；使用者可以删除自己和共享助理的对话，主人那边的会话与任务记录一起删除，进行中的先停止，主人不在线或不支持时置灰并写原因。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-05"
@@ -84,7 +84,9 @@ parent: "F002"
 **Verification:**
 - `pnpm --dir src/web-ui run test:run src/app/components/NavPanel/sections/workspaces/SharedAssistantList.test.tsx`
 
-- [ ] 来源文字在行内显示，在线、不在线、已撤销的标识与提示不变，有测试并通过
+- [x] 来源文字在行内显示，在线、不在线、已撤销的标识与提示不变，有测试并通过
+  - 证据（2026-11-05）：`SharedAssistantList.test.tsx` 断言来源文字在助理名之后、无障碍名称只说一次、不在线与已撤销时来源仍在；本地 dev A 截图显示「助理 [不在线图标] 来自 agent 的设备」。
+  - 与计划的差异：没有改 `appearance.ts`。新增的两个样式类挂在已有的 `sessions-section` 行上，`appearance:contract-audit` 通过。
 
 ## Task 2: 主人端删除共享对话
 
@@ -112,9 +114,22 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-desktop --lib dispatch_host`
 - `pnpm run check:core-boundaries`
 
-- [ ] 自己的已结束对话被删除，任务、会话与调用会话都不在，其他对话与租户文件还在
-- [ ] 别的设备的、不存在的、运行中的对话删不掉，没有共享密钥的 `delete` 被拒绝，前两种回答相同
-- [ ] `probe` 声明删除能力，保留期清理的现有测试仍通过
+- [x] 自己的已结束对话被删除，任务、会话与调用会话都不在，其他对话与租户文件还在
+  - 证据（2026-11-05）：
+    - `store.rs` 新增 `remove_terminal_job`，保留期清理改为调用它；测试 `a_conversation_deleted_on_request_goes_as_an_expired_one_would` 覆盖按请求删除与过期清理删除相同的内容。
+    - `mod.rs` 测试 `a_device_deletes_only_finished_conversations_and_only_over_a_share`：已结束的对话删除后读不到，重复删除仍回答已删除。
+- [x] 别的设备的、不存在的、运行中的对话删不掉，没有共享密钥的 `delete` 被拒绝，前两种回答相同
+  - 证据（2026-11-05）：
+    - `share_call.rs` 的 `a_device_acts_only_on_its_own_jobs` 把 `delete` 加入动词表：别的设备的、本机自己的与不存在的任务都回答 `dispatch job '<id>' does not exist`。
+    - 运行中的任务回答 `DISPATCH_DELETE_ACTIVE_REFUSAL`，任务还在；没有共享密钥时拒绝。
+- [x] `probe` 声明删除能力，保留期清理的现有测试仍通过
+  - 证据（2026-11-05）：
+    - `probe` 声明 `shared_conversation_delete_v1`；services-core `dispatch_contract` 8 项通过，其中删除能力属于可选能力，且共享密钥可以绑定 `dispatch_target_delete`。
+    - CLI `dispatch::` 125+1 项与桌面端 `dispatch_host` 5 项通过，`check:core-boundaries` 通过。
+  - 与计划的差异：`table.rs` 没有加 `dispatch_target_delete` 这一行。
+    - 它不是 Tauri 命令，只在桌面端的 `dispatch_for_share_key` 里映射为 `delete`，不进入账号设备之间的目标命令表。
+    - 登记表把所有 `dispatch_target_*` 都当作目标命令，测试 `target_command_family_matches_registry` 要求两者一致，加这一行反而会把它暴露给同账号的其他设备。
+    - `outbound_controller_commands_are_not_target_commands` 断言它不是目标命令。
 
 ## Task 3: 使用者删除对话
 
@@ -146,9 +161,24 @@ parent: "F002"
 - `pnpm run type-check:web`
 - `pnpm run i18n:audit`
 
-- [ ] 主人声明能力时删除成功，两边记录清理；主人回答找不到时本机照样清理
-- [ ] 主人不在线、已撤销、不支持、对话进行中时置灰并写对应原因，不只删本机副本
-- [ ] 空的新对话直接删除，不确认、不联系主人
+- [x] 主人声明能力时删除成功，两边记录清理；主人回答找不到时本机照样清理
+  - 证据（2026-11-05）：
+    - core `shared_assistant` 18 项通过：主人声明能力时调用 `dispatch_target_delete` 后清理本机传输记录与对话记录；主人回答找不到当作已删除；主人没有声明能力时回答 `needsUpdate`，不清理本机；进行中的拒绝映射为新错误码 `active`。
+    - Web `sharedAssistantConversation.test.ts`：先删除主人端，再删除本机展示副本；没有加载的对话按任务移除；主人拒绝时本机什么都不动。
+    - 桌面端 `remote_workspace_policy` 9 项、product-domains `remote_surface` 20 项通过。
+    - `capabilities:generate` 只新增这两个命令的条目。
+- [x] 主人不在线、已撤销、不支持、对话进行中时置灰并写对应原因，不只删本机副本
+  - 证据（2026-11-05）：`SharedAssistantList.test.tsx` 覆盖以下情况：
+    - 等待审批与排队的对话写「先停止这个对话」；
+    - 主人不支持写「需要更新」；
+    - 问不到主人、或主人不在线时写「不在线」，后者不去询问；
+    - 已撤销写「已停止共享」；
+    - 确认框写明主人名；取消时不删除；失败时提示原因。
+
+    主人是否支持只在打开菜单时询问，每次运行每个主人问一次，问不到的下次再问。
+- [x] 空的新对话直接删除，不确认、不联系主人
+  - 证据（2026-11-05）：主人不在线时，空的新对话的「删除」仍可用；点击后不弹确认、不询问主人，直接删除。还没发出第一条消息（状态 `submitting`，没有对话轮次）时才算空的新对话，第一条消息在途时按进行中处理。
+  - Web 检查：`test:run src/app/components/NavPanel/sections/workspaces/SharedAssistantList.test.tsx src/features/dispatch` 14 个文件 167 项通过，`src/infrastructure` 227 个文件 2156 项通过；`tsc --noEmit` 与改动文件 eslint 通过；`i18n:audit` 0 个警告。
 
 ## Task 4: 整体检查与两台 Mac 真机验收
 

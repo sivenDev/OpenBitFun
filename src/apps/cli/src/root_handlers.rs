@@ -67,6 +67,7 @@ pub(crate) async fn handle_dispatch_action(action: DispatchAction) -> Result<()>
         DispatchAction::Submit => "submit",
         DispatchAction::Status => "status",
         DispatchAction::Cancel => "cancel",
+        DispatchAction::Delete => "delete",
         DispatchAction::List => "list",
         DispatchAction::Answer => "answer",
         DispatchAction::Append => "append",

@@ -542,6 +542,19 @@
           "queuedLimit": "排队中 · {{owner}} 同时只处理 {{limit}} 个任务",
           "expired": "已过期",
           "stopped": "共享已停止"
+        },
+        "more": "更多",
+        "delete": "删除",
+        "deleteTitle": "删除这个对话？",
+        "deleteMessage": "删除后，你和 {{owner}} 的设备上都不再保留这段对话。",
+        "deleteConfirm": "删除",
+        "deleteFailed": "无法删除对话：{{reason}}",
+        "deleteBlocked": {
+          "offline": "不在线",
+          "revoked": "已停止共享",
+          "active": "先停止这个对话",
+          "needsUpdate": "需要更新",
+          "checking": "正在确认…"
         }
       }
     },

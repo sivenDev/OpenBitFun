@@ -9,6 +9,7 @@
 import { flowChatManager } from '@/flow_chat/services/FlowChatManager';
 import { openMainSession } from '@/flow_chat/services/sessionActivation';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
+import { lanShareAPI } from '@/infrastructure/api/service-api/LanShareAPI';
 import { dispatchJobStore, type DispatchObserverJob } from './dispatchJobStore';
 
 /** One shared assistant, as `SharedWithMe` names it. */
@@ -95,5 +96,52 @@ export async function forgetSharedAssistantConversations(assistant: SharedAssist
   const conversations = sharedAssistantConversations(dispatchJobStore.getState().jobs, assistant);
   for (const job of conversations) {
     await flowChatManager.deleteChatSession(job.sessionId);
+  }
+}
+
+/**
+ * Whether `job` never reached the owner: a new conversation whose first
+ * message was not sent. Only this device knows of it.
+ */
+export function isLocalOnlyConversation(job: DispatchObserverJob): boolean {
+  return job.state === 'submitting'
+    && !flowChatStore.getState().sessions.get(job.sessionId)?.dialogTurns?.length;
+}
+
+/** Owners that answered whether they delete conversations, for this run. */
+const deleteSupport = new Map<string, Promise<boolean>>();
+
+/**
+ * Whether the owner device deletes this device's conversations with its
+ * assistants. Asks the owner once per run; an owner that cannot be asked is
+ * asked again next time.
+ */
+export function sharedConversationDeleteSupported(ownerDeviceId: string): Promise<boolean> {
+  let support = deleteSupport.get(ownerDeviceId);
+  if (!support) {
+    support = lanShareAPI.conversationSupport(ownerDeviceId).then(answer => answer.deleteConversation === true);
+    support.catch(() => deleteSupport.delete(ownerDeviceId));
+    deleteSupport.set(ownerDeviceId, support);
+  }
+  return support;
+}
+
+/** Forgets what owners answered; for tests. */
+export function resetSharedConversationSupportForTest(): void {
+  deleteSupport.clear();
+}
+
+/**
+ * Deletes the conversation `job`: on the owner's device first, unless it
+ * never reached it, then here.
+ */
+export async function deleteSharedAssistantConversation(job: DispatchObserverJob): Promise<void> {
+  if (!isLocalOnlyConversation(job)) {
+    await lanShareAPI.deleteConversation(job.jobId);
+  }
+  if (flowChatStore.getState().sessions.has(job.sessionId)) {
+    await flowChatManager.deleteChatSession(job.sessionId);
+  } else {
+    dispatchJobStore.getState().dismissJob(job.jobId);
   }
 }

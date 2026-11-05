@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn(),
   openSession: vi.fn(),
   error: vi.fn(),
+  confirm: vi.fn(),
+  remove: vi.fn(),
+  supported: vi.fn(),
   peer: false,
   shared: [] as unknown[],
   jobs: {} as Record<string, unknown>,
@@ -20,8 +23,15 @@ vi.mock('@/features/dispatch/sharedAssistantConversation', async () => {
     openSharedAssistantConversation: mocks.open,
     openSharedAssistantConversationJob: actual.openSharedAssistantConversationJob,
     startSharedAssistantConversation: mocks.start,
+    isLocalOnlyConversation: actual.isLocalOnlyConversation,
+    deleteSharedAssistantConversation: mocks.remove,
+    sharedConversationDeleteSupported: mocks.supported,
   };
 });
+vi.mock('@/features/dispatch/sharedAssistantProblemText', () => ({
+  explainSharedAssistantError: (error: unknown) => error,
+}));
+vi.mock('@/infrastructure/confirm-dialog', () => ({ confirmDanger: mocks.confirm }));
 vi.mock('@/flow_chat/services/FlowChatManager', () => ({ flowChatManager: {} }));
 vi.mock('@/flow_chat/services/sessionActivation', () => ({ openMainSession: mocks.openSession }));
 vi.mock('@/flow_chat/store/FlowChatStore', () => {
@@ -72,7 +82,12 @@ const all = (testId: string) => [...document.querySelectorAll(`[data-testid="${t
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  for (const mock of [mocks.open, mocks.start, mocks.openSession, mocks.error]) mock.mockReset();
+  for (const mock of [mocks.open, mocks.start, mocks.openSession, mocks.error, mocks.confirm, mocks.remove, mocks.supported]) {
+    mock.mockReset();
+  }
+  mocks.confirm.mockResolvedValue(true);
+  mocks.remove.mockResolvedValue(undefined);
+  mocks.supported.mockResolvedValue(true);
   mocks.open.mockResolvedValue('session-b');
   mocks.start.mockResolvedValue('session-new');
   mocks.openSession.mockResolvedValue(undefined);
@@ -96,9 +111,11 @@ describe('the assistants shared with this device in the navigation', () => {
   it('list each assistant with its conversations, newest first, and what they wait on', async () => {
     await render();
     expect(all('nav-shared-assistant')).toHaveLength(1);
-    // Only the name is written; who shares it is its accessible name and tooltip.
+    // Who shares it reads beside the name; the accessible name says the same once.
     const header = document.querySelector('[data-testid="nav-shared-assistant-open"]')!;
-    expect(header.textContent).toBe('Writer');
+    expect(header.querySelector('.assistant-session-history__delegated-title')!.textContent).toBe('Writer');
+    expect(header.querySelector('[data-testid="nav-shared-assistant-source"]')!.textContent)
+      .toBe('nav.sessions.sharedAssistant.from Ann');
     expect(header.getAttribute('aria-label')).toBe('Writer · nav.sessions.sharedAssistant.from Ann');
     // Reachable, the assistant shows the online dot.
     expect(all('nav-shared-assistant-online')).toHaveLength(1);
@@ -145,6 +162,9 @@ describe('the assistants shared with this device in the navigation', () => {
     expect(all('nav-shared-assistant-unavailable')).toHaveLength(1);
     expect(document.querySelector('[data-testid="nav-shared-assistant-open"]')!.getAttribute('aria-label'))
       .toContain('nav.sessions.sharedAssistant.offline');
+    // Whether it can be reached stays a mark; the row still names who shares it.
+    expect(document.querySelector('[data-testid="nav-shared-assistant-source"]')!.textContent)
+      .toBe('nav.sessions.sharedAssistant.from Ann');
   });
 
   it('show a few conversations, the viewed one always, until asked for the rest', async () => {
@@ -203,5 +223,85 @@ describe('the assistants shared with this device in the navigation', () => {
     mocks.shared = [];
     await render();
     expect(document.querySelector('[data-testid="nav-shared-assistants"]')).toBeNull();
+  });
+
+  describe('deleting a conversation', () => {
+    const settled = { jobId: 'c', sessionId: 'session-c', target, title: 'Done', state: 'succeeded', pendingPermissions: [], updatedAt: 3 };
+    const openMenu = async (title: string) => {
+      const history = document.querySelector('[data-testid="nav-shared-assistant-history"]')!;
+      if (history.getAttribute('aria-expanded') !== 'true') await click(history);
+      const row = all('nav-shared-assistant-conversation').find(item => item.textContent === title)!;
+      const more = row.parentElement!.querySelector('[data-testid="nav-shared-assistant-conversation-more"]')!;
+      if (more.getAttribute('aria-expanded') === 'true') await click(more);
+      await click(more);
+      return document.getElementById(more.getAttribute('aria-controls')!)!.querySelector('[data-menu-id="delete"]')!;
+    };
+    const blockedBy = (item: Element) => (item.getAttribute('aria-disabled') === 'true'
+      ? item.textContent!.replace('nav.sessions.sharedAssistant.delete', '').trim()
+      : null);
+
+    it('deletes a finished one on both devices after a confirmation that names the owner', async () => {
+      mocks.jobs = { ...mocks.jobs, c: settled };
+      await render();
+      const item = await openMenu('Done');
+      expect(mocks.supported).toHaveBeenCalledWith('ann-device');
+      expect(blockedBy(item)).toBeNull();
+      await click(item);
+      expect(mocks.confirm).toHaveBeenCalledWith(
+        'nav.sessions.sharedAssistant.deleteTitle',
+        'nav.sessions.sharedAssistant.deleteMessage Ann',
+        { confirmText: 'nav.sessions.sharedAssistant.deleteConfirm' },
+      );
+      expect(mocks.remove).toHaveBeenCalledWith(settled);
+    });
+
+    it('keeps it when the confirmation is declined, and says why the owner refused', async () => {
+      mocks.jobs = { ...mocks.jobs, c: settled };
+      await render();
+      mocks.confirm.mockResolvedValueOnce(false);
+      await click(await openMenu('Done'));
+      expect(mocks.remove).not.toHaveBeenCalled();
+
+      mocks.remove.mockRejectedValueOnce(new Error('in use'));
+      await click(await openMenu('Done'));
+      expect(mocks.error).toHaveBeenCalledWith('nav.sessions.sharedAssistant.deleteFailed in use');
+    });
+
+    it('removes a new conversation that never reached the owner here at once, whatever the owner', async () => {
+      const draft = { jobId: 'n', sessionId: 'session-n', target, title: 'New', state: 'submitting', pendingPermissions: [], updatedAt: 4 };
+      mocks.shared = [{ ...writer, online: false }];
+      mocks.jobs = { n: draft };
+      await render();
+      const item = await openMenu('New');
+      expect(blockedBy(item)).toBeNull();
+      expect(mocks.supported).not.toHaveBeenCalled();
+      await click(item);
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      expect(mocks.remove).toHaveBeenCalledWith(draft);
+    });
+
+    it('greys it out with the reason while it cannot be deleted', async () => {
+      mocks.jobs = { ...mocks.jobs, c: settled };
+      await render();
+      // Waiting for approval or a slot, it must be stopped first.
+      expect(blockedBy(await openMenu('Second draft'))).toBe('nav.sessions.sharedAssistant.deleteBlocked.active');
+      expect(blockedBy(await openMenu('First'))).toBe('nav.sessions.sharedAssistant.deleteBlocked.active');
+
+      mocks.supported.mockResolvedValue(false);
+      expect(blockedBy(await openMenu('Done'))).toBe('nav.sessions.sharedAssistant.deleteBlocked.needsUpdate');
+      mocks.supported.mockRejectedValue(new Error('unreachable'));
+      expect(blockedBy(await openMenu('Done'))).toBe('nav.sessions.sharedAssistant.deleteBlocked.offline');
+    });
+
+    it('greys it out when the owner is offline or stopped sharing, without asking it', async () => {
+      mocks.jobs = { c: settled };
+      mocks.shared = [{ ...writer, online: false }];
+      await render();
+      expect(blockedBy(await openMenu('Done'))).toBe('nav.sessions.sharedAssistant.deleteBlocked.offline');
+      mocks.shared = [{ ...writer, state: 'revoked' }];
+      await render();
+      expect(blockedBy(await openMenu('Done'))).toBe('nav.sessions.sharedAssistant.deleteBlocked.revoked');
+      expect(mocks.supported).not.toHaveBeenCalled();
+    });
   });
 });

@@ -255,7 +255,9 @@ fn run_detached<T: Send + 'static>(
 }
 
 impl DelegatedRetention {
-    fn for_product_home(path_manager: openbitfun_core::infrastructure::PathManager) -> Self {
+    pub(crate) fn for_product_home(
+        path_manager: openbitfun_core::infrastructure::PathManager,
+    ) -> Self {
         use openbitfun_core::service::lan_share::{tenants_root, SharedAssistantStore};
         let store = SharedAssistantStore::for_product_home(&path_manager);
         let shares = match store.shares_now() {
@@ -329,6 +331,22 @@ impl DelegatedRetention {
         }
         remove_session(tenant, session_id)
     }
+}
+
+/// What became of a request to remove one dispatch job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JobRemoval {
+    Removed,
+    /// No such job.
+    Missing,
+    /// Still queued or running.
+    NotTerminal,
+    /// Another process holds the job or its workspace; try again later.
+    Busy,
+    /// Its state or record cannot be read, so nothing was removed.
+    Unreadable,
+    /// The caller chose to keep it.
+    Kept,
 }
 
 #[derive(Clone, Debug)]
@@ -1498,133 +1516,24 @@ impl DispatchStore {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 continue;
             }
-            let Some(lock) = JobLock::try_exclusive(&job_dir.join(".lock"))? else {
-                continue;
+            let expired = |state: &DispatchStateRecord, job_record: &DispatchJobRecord| {
+                let Some(finished_at) = state
+                    .finished_at
+                    .as_deref()
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .map(|value| value.with_timezone(&chrono::Utc))
+                else {
+                    return false;
+                };
+                delegated
+                    .retention_days(job_record)
+                    .is_some_and(|retention_days| {
+                        now.signed_duration_since(finished_at).num_days() >= retention_days
+                    })
             };
-            let state = match self.load_state_unlocked(&job_dir) {
-                Ok(state) => state,
-                Err(error) => {
-                    tracing::warn!(
-                        "Skipping unreadable dispatch job during retention cleanup: job_id={} error={error:#}",
-                        job_id
-                    );
-                    continue;
-                }
-            };
-            if !state.state.is_terminal() {
-                continue;
+            if self.remove_terminal_job(&job_id, delegated, expired)? == JobRemoval::Removed {
+                removed += 1;
             }
-            let Some(finished_at) = state
-                .finished_at
-                .as_deref()
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                .map(|value| value.with_timezone(&chrono::Utc))
-            else {
-                continue;
-            };
-            let job_record: DispatchJobRecord = match read_json(&job_dir.join(JOB_RECORD_FILE)) {
-                Ok(record) => record,
-                Err(error) => {
-                    tracing::warn!(
-                        "Skipping dispatch job with unreadable workspace binding during retention cleanup: job_id={} error={error:#}",
-                        job_id
-                    );
-                    continue;
-                }
-            };
-            let Some(retention_days) = delegated.retention_days(&job_record) else {
-                continue;
-            };
-            if now.signed_duration_since(finished_at).num_days() < retention_days {
-                continue;
-            }
-            let Some(operation_lock) =
-                JobLock::try_exclusive(&self.workspace_operation_lock_path(&job_id)?)?
-            else {
-                continue;
-            };
-            let Some(git_operation_lock) =
-                JobLock::try_exclusive(&self.workspace_git_operation_lock_path(&job_id)?)?
-            else {
-                continue;
-            };
-            let Some(workspace_runtime_lock) = WorkspaceLock::try_acquire(
-                &self.workspace_lock_path(&job_record.request.workspace_path),
-            )?
-            else {
-                continue;
-            };
-            let call_sessions = Self::read_call_sessions(&job_dir.join(CALL_SESSIONS_FILE));
-            let tombstone = jobs_root.join(format!(
-                ".gc-{}-{}",
-                job_id,
-                uuid::Uuid::new_v4().as_simple()
-            ));
-
-            // Windows cannot rename a directory while a child lock file is
-            // open. Terminal states are irreversible, so release that handle
-            // immediately before the atomic quarantine rename. A concurrent
-            // opener makes the rename fail and the job is retried later.
-            #[cfg(windows)]
-            drop(lock);
-            let rename_result = fs::rename(&job_dir, &tombstone);
-            #[cfg(not(windows))]
-            drop(lock);
-            match rename_result {
-                Ok(()) => {}
-                Err(error) if retryable_retention_rename_error(&error) => {
-                    tracing::debug!(
-                        job_id = %job_id,
-                        error_kind = ?error.kind(),
-                        raw_os_error = ?error.raw_os_error(),
-                        "Deferring dispatch retention cleanup for busy job"
-                    );
-                    continue;
-                }
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("quarantine expired dispatch job {}", job_dir.display())
-                    });
-                }
-            }
-            fs::remove_dir_all(&tombstone)
-                .with_context(|| format!("remove expired dispatch job {}", tombstone.display()))?;
-
-            let workspace_dir = self.root.join("workspaces").join(&job_id);
-            match fs::symlink_metadata(&workspace_dir) {
-                Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {
-                    fs::remove_dir_all(&workspace_dir).with_context(|| {
-                        format!(
-                            "remove expired dispatch workspace {}",
-                            workspace_dir.display()
-                        )
-                    })?;
-                }
-                Ok(_) => {
-                    tracing::warn!(
-                        "Skipping unsafe expired dispatch workspace path: {}",
-                        workspace_dir.display()
-                    );
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            if job_record.request.delegation.is_some() {
-                delegated.remove_task_session(
-                    &job_record.request.workspace_path,
-                    &job_record.request.session_id,
-                )?;
-                // The sessions of the task's calls to this device's other
-                // assistants follow the task's own.
-                for call in &call_sessions {
-                    delegated.remove_task_session(&call.workspace_path, &call.session_id)?;
-                }
-            }
-            drop(workspace_runtime_lock);
-            drop(git_operation_lock);
-            drop(operation_lock);
-            self.remove_workspace_operation_locks(&job_id)?;
-            removed += 1;
         }
         let workspaces_root = self.root.join("workspaces");
         for entry in fs::read_dir(&workspaces_root)
@@ -1692,6 +1601,142 @@ impl DispatchStore {
             prune_tenants();
         }
         Ok(removed)
+    }
+
+    /// Removes the terminal job `job_id` when `remove` agrees: its record,
+    /// events, and workspace, and for a task from another device its session
+    /// and the sessions of its calls to this device's other assistants. The
+    /// retention cleanup and a device deleting its own conversation both use
+    /// it, so the two remove the same things.
+    pub(crate) fn remove_terminal_job(
+        &self,
+        job_id: &str,
+        delegated: &DelegatedRetention,
+        remove: impl FnOnce(&DispatchStateRecord, &DispatchJobRecord) -> bool,
+    ) -> Result<JobRemoval> {
+        validate_id("jobId", job_id)?;
+        let jobs_root = self.root.join("jobs");
+        let job_dir = jobs_root.join(job_id);
+        match fs::symlink_metadata(&job_dir) {
+            Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {}
+            Ok(_) => return Ok(JobRemoval::Missing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(JobRemoval::Missing)
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let Some(lock) = JobLock::try_exclusive(&job_dir.join(".lock"))? else {
+            return Ok(JobRemoval::Busy);
+        };
+        let state = match self.load_state_unlocked(&job_dir) {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::warn!(
+                    "Keeping unreadable dispatch job: job_id={} error={error:#}",
+                    job_id
+                );
+                return Ok(JobRemoval::Unreadable);
+            }
+        };
+        if !state.state.is_terminal() {
+            return Ok(JobRemoval::NotTerminal);
+        }
+        let job_record: DispatchJobRecord = match read_json(&job_dir.join(JOB_RECORD_FILE)) {
+            Ok(record) => record,
+            Err(error) => {
+                tracing::warn!(
+                    "Keeping dispatch job with unreadable workspace binding: job_id={} error={error:#}",
+                    job_id
+                );
+                return Ok(JobRemoval::Unreadable);
+            }
+        };
+        if !remove(&state, &job_record) {
+            return Ok(JobRemoval::Kept);
+        }
+        let Some(operation_lock) =
+            JobLock::try_exclusive(&self.workspace_operation_lock_path(job_id)?)?
+        else {
+            return Ok(JobRemoval::Busy);
+        };
+        let Some(git_operation_lock) =
+            JobLock::try_exclusive(&self.workspace_git_operation_lock_path(job_id)?)?
+        else {
+            return Ok(JobRemoval::Busy);
+        };
+        let Some(workspace_runtime_lock) = WorkspaceLock::try_acquire(
+            &self.workspace_lock_path(&job_record.request.workspace_path),
+        )?
+        else {
+            return Ok(JobRemoval::Busy);
+        };
+        let call_sessions = Self::read_call_sessions(&job_dir.join(CALL_SESSIONS_FILE));
+        let tombstone = jobs_root.join(format!(
+            ".gc-{}-{}",
+            job_id,
+            uuid::Uuid::new_v4().as_simple()
+        ));
+
+        // Windows cannot rename a directory while a child lock file is
+        // open. Terminal states are irreversible, so release that handle
+        // immediately before the atomic quarantine rename. A concurrent
+        // opener makes the rename fail and the job is retried later.
+        #[cfg(windows)]
+        drop(lock);
+        let rename_result = fs::rename(&job_dir, &tombstone);
+        #[cfg(not(windows))]
+        drop(lock);
+        match rename_result {
+            Ok(()) => {}
+            Err(error) if retryable_retention_rename_error(&error) => {
+                tracing::debug!(
+                    job_id = %job_id,
+                    error_kind = ?error.kind(),
+                    raw_os_error = ?error.raw_os_error(),
+                    "Deferring removal of busy dispatch job"
+                );
+                return Ok(JobRemoval::Busy);
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("quarantine dispatch job {}", job_dir.display()));
+            }
+        }
+        fs::remove_dir_all(&tombstone)
+            .with_context(|| format!("remove dispatch job {}", tombstone.display()))?;
+
+        let workspace_dir = self.root.join("workspaces").join(job_id);
+        match fs::symlink_metadata(&workspace_dir) {
+            Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {
+                fs::remove_dir_all(&workspace_dir).with_context(|| {
+                    format!("remove dispatch workspace {}", workspace_dir.display())
+                })?;
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    "Skipping unsafe dispatch workspace path: {}",
+                    workspace_dir.display()
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if job_record.request.delegation.is_some() {
+            delegated.remove_task_session(
+                &job_record.request.workspace_path,
+                &job_record.request.session_id,
+            )?;
+            // The sessions of the task's calls to this device's other
+            // assistants follow the task's own.
+            for call in &call_sessions {
+                delegated.remove_task_session(&call.workspace_path, &call.session_id)?;
+            }
+        }
+        drop(workspace_runtime_lock);
+        drop(git_operation_lock);
+        drop(operation_lock);
+        self.remove_workspace_operation_locks(job_id)?;
+        Ok(JobRemoval::Removed)
     }
 
     /// Remove the checkout a departing job's provision record points at.
@@ -3885,6 +3930,119 @@ mod tests {
         );
         // Tenant workspaces nobody needs are looked for after each cleanup.
         assert_eq!(*pruned.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn a_conversation_deleted_on_request_goes_as_an_expired_one_would() {
+        use std::sync::{Arc, Mutex};
+
+        let (dir, store) = store();
+        let tenant_root = dir.path().join("delegation").join("tenants");
+        let tenant = tenant_root.join("workspace").join("0123");
+        let called_tenant = tenant_root.join("workspace-called").join("0123");
+        let delegated = |job_id: &str| {
+            let mut request = request(job_id);
+            request.session_id = format!("session-{job_id}");
+            request.workspace_path = tenant.to_string_lossy().into_owned();
+            request.delegation = Some(DispatchDelegation {
+                assistant_id: "workspace".to_string(),
+                source: DispatchDelegationSource::default(),
+                call_chain: Vec::new(),
+            });
+            request.source_share_key = Some("ab".repeat(32));
+            store
+                .create_job(request, "Task".to_string())
+                .expect("create job");
+        };
+        delegated("delegation-done");
+        store
+            .record_call_session(
+                "delegation-done",
+                &DispatchCallSession {
+                    assistant_id: "workspace-called".to_string(),
+                    workspace_path: called_tenant.to_string_lossy().into_owned(),
+                    session_id: "session-called".to_string(),
+                    title: "Called".to_string(),
+                },
+            )
+            .expect("record call session");
+        delegated("delegation-other");
+        for job_id in ["delegation-done", "delegation-other"] {
+            store
+                .mark_state(job_id, DispatchJobState::Succeeded, None, None)
+                .expect("mark terminal");
+        }
+        delegated("delegation-running");
+        store
+            .mark_state("delegation-running", DispatchJobState::Running, None, None)
+            .expect("mark running");
+        let workspace = store
+            .workspace_upload_dir("delegation-done")
+            .expect("workspace path");
+        create_private_dir(&workspace).expect("job workspace");
+
+        let removed_sessions = Arc::new(Mutex::new(Vec::new()));
+        let pruned = Arc::new(Mutex::new(0));
+        let retention = {
+            let removed_sessions = Arc::clone(&removed_sessions);
+            let pruned = Arc::clone(&pruned);
+            DelegatedRetention {
+                shares: None,
+                tenant_root: Some(tenant_root.clone()),
+                remove_session: Some(Box::new(move |tenant: &Path, session_id: &str| {
+                    removed_sessions
+                        .lock()
+                        .unwrap()
+                        .push((tenant.to_path_buf(), session_id.to_string()));
+                    Ok(())
+                })),
+                prune_tenants: Some(Box::new(move || *pruned.lock().unwrap() += 1)),
+            }
+        };
+
+        // A running task stays, whatever the caller wants.
+        assert_eq!(
+            store
+                .remove_terminal_job("delegation-running", &retention, |_, _| true)
+                .unwrap(),
+            JobRemoval::NotTerminal
+        );
+        assert!(store.load_job("delegation-running").is_ok());
+        // The caller may keep a finished one.
+        assert_eq!(
+            store
+                .remove_terminal_job("delegation-done", &retention, |_, _| false)
+                .unwrap(),
+            JobRemoval::Kept
+        );
+        assert!(store.load_job("delegation-done").is_ok());
+
+        assert_eq!(
+            store
+                .remove_terminal_job("delegation-done", &retention, |_, _| true)
+                .unwrap(),
+            JobRemoval::Removed
+        );
+        assert!(store.load_job("delegation-done").is_err());
+        assert!(!workspace.exists());
+        let mut removed = removed_sessions.lock().unwrap().clone();
+        removed.sort();
+        assert_eq!(
+            removed,
+            vec![
+                (tenant.clone(), "session-delegation-done".to_string()),
+                (called_tenant.clone(), "session-called".to_string()),
+            ]
+        );
+        // The device's other conversations and its tenant workspace stay.
+        assert!(store.load_job("delegation-other").is_ok());
+        assert_eq!(*pruned.lock().unwrap(), 0);
+        assert_eq!(
+            store
+                .remove_terminal_job("delegation-done", &retention, |_, _| true)
+                .unwrap(),
+            JobRemoval::Missing
+        );
     }
 
     #[test]

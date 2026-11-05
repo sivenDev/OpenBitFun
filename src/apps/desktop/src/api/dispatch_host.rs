@@ -38,8 +38,13 @@ pub(crate) async fn dispatch_for_share_key(
     args: Value,
     share_key: &str,
 ) -> anyhow::Result<Value> {
-    let verb = target_cli_verb(command)
-        .ok_or_else(|| anyhow!("Unknown detached dispatch target command '{command}'"))?;
+    // Deleting a conversation is only for a device using a shared assistant;
+    // no other host offers it, so it is not a target command.
+    let verb = match command {
+        "dispatch_target_delete" => Some("delete"),
+        other => target_cli_verb(other),
+    }
+    .ok_or_else(|| anyhow!("Unknown detached dispatch target command '{command}'"))?;
     let args = openbitfun_services_core::dispatch_contract::bind_dispatch_source_share_key(
         command, args, share_key,
     )
@@ -235,6 +240,8 @@ mod tests {
         assert!(is_target_command("dispatch_target_status"));
         assert!(!is_target_command("dispatch_status"));
         assert!(!is_target_command("account_device_rpc"));
+        // Only a device using a shared assistant deletes its conversations.
+        assert!(!is_target_command("dispatch_target_delete"));
     }
 
     /// The registry marks every `dispatch_target_*` name as host control plane

@@ -90,8 +90,9 @@ pub(crate) use shared_assistant::{
 #[cfg(all(feature = "agent-runtime", feature = "ssh-remote"))]
 pub use shared_assistant::{
     append_shared_assistant, cancel_shared_assistant, continue_shared_assistant,
-    forget_shared_assistant, list_shared_assistant_jobs, query_shared_assistant,
-    status_shared_assistant, submit_shared_assistant, SharedAssistantProblem,
+    delete_shared_assistant_conversation, forget_shared_assistant, list_shared_assistant_jobs,
+    query_shared_assistant, shared_conversation_delete_supported, status_shared_assistant,
+    submit_shared_assistant, SharedAssistantProblem,
 };
 pub use target::{DispatchTarget, DispatchTargetRequest, DispatchWorkspaceDelivery};
 

@@ -12,7 +12,8 @@ use std::sync::{Arc, OnceLock};
 
 use openbitfun_core::infrastructure::{events::EventEmitter, PathManager};
 use openbitfun_core::service::dispatch::{
-    forget_shared_assistant, OutboundDispatchStore, SharedAssistantProblem,
+    delete_shared_assistant_conversation, forget_shared_assistant,
+    shared_conversation_delete_supported, OutboundDispatchStore, SharedAssistantProblem,
 };
 use openbitfun_core::service::lan_share::dispatch_rpc::LanDispatchRpc;
 use openbitfun_core::service::lan_share::protocol::RequestOpened;
@@ -203,6 +204,25 @@ pub struct LanShareAskRequest {
 pub struct LanShareRemoveRequest {
     pub owner_key: String,
     pub assistant_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanShareConversationSupportRequest {
+    pub owner_device_id: String,
+}
+
+/// What the owner of a shared assistant does for this device's conversations.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanShareConversationSupport {
+    pub delete_conversation: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanShareDeleteConversationRequest {
+    pub job_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -451,6 +471,32 @@ pub async fn lan_share_remove(request: LanShareRemoveRequest) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+/// Whether the owner's device deletes this device's conversations with its
+/// shared assistants on request.
+#[tauri::command]
+pub async fn lan_share_conversation_support(
+    request: LanShareConversationSupportRequest,
+) -> Result<LanShareConversationSupport, String> {
+    shared_conversation_delete_supported(&dispatch_rpc()?, &request.owner_device_id)
+        .await
+        .map(|delete_conversation| LanShareConversationSupport {
+            delete_conversation,
+        })
+        .map_err(|error| error.to_string())
+}
+
+/// Deletes a finished conversation with a shared assistant on its owner's
+/// device and then here.
+#[tauri::command]
+pub async fn lan_share_delete_conversation(
+    request: LanShareDeleteConversationRequest,
+) -> Result<(), String> {
+    let store = OutboundDispatchStore::new(&path_manager()?);
+    delete_shared_assistant_conversation(&dispatch_rpc()?, &store, &request.job_id)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Dispatch to assistants other devices share with this one, over the LAN

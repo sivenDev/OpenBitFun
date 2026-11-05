@@ -68,7 +68,7 @@ pub(super) async fn admit_call(
                 bail!("a device using a shared assistant cannot inspect paths here");
             }
         }
-        "status" | "cancel" | "append" | "continue" | "query" => {
+        "status" | "cancel" | "delete" | "append" | "continue" | "query" => {
             let job_id = job_id(&input);
             let job = store
                 .load_job(job_id)
@@ -342,7 +342,7 @@ mod tests {
     async fn a_device_acts_only_on_its_own_jobs() {
         let fixture = store_with_jobs().await;
         let store = &fixture.store;
-        for verb in ["status", "cancel", "append", "continue"] {
+        for verb in ["status", "cancel", "delete", "append", "continue"] {
             admit_call(
                 store,
                 &fixture.grants,

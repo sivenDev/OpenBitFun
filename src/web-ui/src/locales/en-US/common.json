@@ -542,6 +542,19 @@
           "queuedLimit": "Queued · {{owner}} takes {{limit}} at a time",
           "expired": "Expired",
           "stopped": "Sharing stopped"
+        },
+        "more": "More",
+        "delete": "Delete",
+        "deleteTitle": "Delete this conversation?",
+        "deleteMessage": "It will no longer be kept on your device or on {{owner}}'s device.",
+        "deleteConfirm": "Delete",
+        "deleteFailed": "Couldn't delete the conversation: {{reason}}",
+        "deleteBlocked": {
+          "offline": "Offline",
+          "revoked": "No longer shared",
+          "active": "Stop it first",
+          "needsUpdate": "Needs an update",
+          "checking": "Checking…"
         }
       }
     },

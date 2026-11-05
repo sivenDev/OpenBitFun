@@ -552,6 +552,29 @@ pub(crate) struct DispatchCancelRequest {
     pub(crate) source_share_key: Option<String>,
 }
 
+/// Deletes a finished job that a device using a shared assistant started:
+/// accepted only over the LAN share channel, for that device's own jobs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DispatchDeleteRequest {
+    pub(crate) job_id: String,
+    /// The sharing key of the device the call came from, bound by the LAN
+    /// share host; never accepted from the caller.
+    #[serde(
+        rename = "__sourceShareKey",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) source_share_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DispatchDeleteResponse {
+    pub(crate) job_id: String,
+    pub(crate) deleted: bool,
+}
+
 /// Read-only question about a job's persisted session state.
 ///
 /// Served by a short-lived process straight from persistence — no runtime is
