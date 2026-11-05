@@ -949,6 +949,8 @@
       },
       "sharedAssistant": {
         "sending": "正在傳給「{{name}}」…",
+        "queuedLimit": "{{owner}} 同時只處理 {{limit}} 個任務，這個對話在排隊，輪到時會自動開始",
+        "queued": "這個對話在 {{owner}} 的裝置上排隊，輪到時會自動開始",
         "problems": {
           "notShared": "「{{name}}」沒有共享給你。可以在「發現」中申請使用。",
           "revoked": "對方已停止共享「{{name}}」。可以在「發現」中重新申請，或把它從助理清單中移除。",

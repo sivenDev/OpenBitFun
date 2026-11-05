@@ -18,6 +18,8 @@ import {
   type DispatchStatusResponse,
 } from './types';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
+import { i18nService } from '@/infrastructure/i18n';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { getTurnOutputDurationMs, getTurnTtftMs } from '@/flow_chat/utils/turnUsageMetrics';
 import { stateMachineManager } from '@/flow_chat/state-machine';
 import {
@@ -1394,6 +1396,58 @@ describe('DispatchJobObserver', () => {
     // The owner answered: its device is reachable, the conversation is over.
     expect(dispatchJobStore.getState().transportByJobId['delegation-2']?.reachability).toBe('reachable');
     cleanup();
+  });
+
+  it('says in the conversation that the owner\'s device holds it in its queue', async () => {
+    mocks.listJobs.mockResolvedValue([{
+      jobId: 'delegation-4',
+      sessionId: 'session-queued',
+      target: {
+        kind: 'sharedAssistant',
+        ownerDeviceId: 'owner-device',
+        assistantId: 'writer',
+        displayName: 'Writer',
+      },
+      promptPreview: 'Hello',
+      title: 'Hello',
+      agentType: 'Writer',
+      approvalPolicy: 'remote',
+      lastCursor: 0,
+      lastState: 'queued',
+      createdAt: '2026-11-03T00:00:00Z',
+      updatedAt: '2026-11-03T00:00:01Z',
+    }]);
+    mocks.status.mockResolvedValue(status({ state: 'queued', hold: { reason: 'shareLimit', limit: 1, sinceMs: 1 } }));
+    const translate = vi.spyOn(i18nService, 't').mockImplementation(((key: string, values?: Record<string, unknown>) =>
+      `${key} ${JSON.stringify(values ?? {})}`) as typeof i18nService.t);
+    useLanShareStore.setState({ sharedWithMe: [{ owner: { deviceId: 'owner-device', displayName: 'agent' } }] } as never);
+    const sessions = new Map<string, any>([['session-queued', {
+      sessionId: 'session-queued',
+      config: { dispatchTarget: { kind: 'sharedAssistant', ownerDeviceId: 'owner-device', assistantId: 'writer', displayName: 'Writer' } },
+      dialogTurns: [{ id: 'turn-1', modelRounds: [] }],
+    }]]);
+    const context = createContext();
+    context.flowChatStore.getState = vi.fn(() => ({ sessions }));
+    context.flowChatStore.applyDispatchSnapshot = vi.fn(() => ({ applied: true, cursor: 0 }));
+
+    const cleanup = installDispatchJobObserver(context);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getRuntimeStatus('session-queued')).toEqual({
+      sessionId: 'session-queued',
+      turnId: 'turn-1',
+      roundId: 'dispatch-hold:delegation-4',
+      label: 'flow-chat:chatInput.dispatch.sharedAssistant.queuedLimit {"owner":"agent","limit":1}',
+    });
+
+    // Once the owner's device starts it, the status is the model's again.
+    mocks.status.mockResolvedValue(status({ state: 'running' }));
+    requestDispatchJobRefresh('delegation-4');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getRuntimeStatus('session-queued')).toBeUndefined();
+    cleanup();
+    translate.mockRestore();
+    useLanShareStore.setState({ sharedWithMe: [] } as never);
   });
 
   it('keeps polling a conversation with a shared assistant whose owner is only offline', async () => {

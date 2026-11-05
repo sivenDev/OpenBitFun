@@ -949,6 +949,8 @@
       },
       "sharedAssistant": {
         "sending": "Sending to “{{name}}”…",
+        "queuedLimit": "{{owner}} runs {{limit}} tasks at a time. This conversation is queued and starts on its turn",
+        "queued": "This conversation is queued on {{owner}}'s device and starts on its turn",
         "problems": {
           "notShared": "“{{name}}” is not shared with you. You can ask for it in Discover.",
           "revoked": "The owner stopped sharing “{{name}}”. You can ask again in Discover, or remove it from your assistants.",

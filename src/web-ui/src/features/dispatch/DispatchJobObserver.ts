@@ -8,7 +8,8 @@ import { agenticEventListener } from '@/flow_chat/services/AgenticEventListener'
 import type { FlowChatContext } from '@/flow_chat/services/flow-chat-manager/types';
 import type { DialogTurn } from '@/flow_chat/types/flow-chat';
 import { clearRuntimeStatus } from '@/flow_chat/services/flow-chat-manager/RuntimeStatusModule';
-import { clearRuntimeStatusState } from '@/flow_chat/store/runtimeStatusStore';
+import { clearRuntimeStatusState, showRuntimeStatus } from '@/flow_chat/store/runtimeStatusStore';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { stateMachineManager } from '@/flow_chat/state-machine';
 import { markOptimisticDispatchTurnMetadata } from './optimisticDispatchTurn';
 import {
@@ -799,6 +800,40 @@ function reconcileDispatchTerminalRuntime(
  * commit. Returns whether the cursor moved, which is the only reason to ask for
  * another page in the same poll.
  */
+const SHARED_ASSISTANT_HOLD_ROUND_PREFIX = 'dispatch-hold:';
+
+/**
+ * While the owner's device holds a conversation with a shared assistant in
+ * its queue, the conversation says so where a reply would appear; any other
+ * state takes the status back.
+ */
+function showSharedAssistantHold(
+  context: FlowChatContext,
+  job: DispatchObserverJob,
+  response: Pick<DispatchStatusResponse, 'state' | 'hold'>,
+): void {
+  const roundId = `${SHARED_ASSISTANT_HOLD_ROUND_PREFIX}${job.jobId}`;
+  const session = context.flowChatStore.getState().sessions.get(job.sessionId);
+  const target = session?.config.dispatchTarget;
+  const lastTurn = session?.dialogTurns[session.dialogTurns.length - 1];
+  if (response.state !== 'queued' || target?.kind !== 'sharedAssistant' || !lastTurn) {
+    clearRuntimeStatusState({ sessionId: job.sessionId, roundId });
+    return;
+  }
+  const owner = useLanShareStore.getState().sharedWithMe
+    .find(entry => entry.owner.deviceId === target.ownerDeviceId)?.owner.displayName
+    ?? i18nService.t('flow-chat:permission.answeredByOwnerFallback');
+  const limit = response.hold?.limit;
+  showRuntimeStatus({
+    sessionId: job.sessionId,
+    turnId: lastTurn.id,
+    roundId,
+    label: limit
+      ? i18nService.t('flow-chat:chatInput.dispatch.sharedAssistant.queuedLimit', { owner, limit })
+      : i18nService.t('flow-chat:chatInput.dispatch.sharedAssistant.queued', { owner }),
+  });
+}
+
 async function refreshJobPage(
   context: FlowChatContext,
   requestedJobId: string,
@@ -933,6 +968,7 @@ async function refreshJobPage(
     hold: response.hold ?? null,
     omittedEventCount: response.omittedEventCount,
   });
+  showSharedAssistantHold(context, job, response);
   // Both halves are committed here: the projection holds every event of this
   // page and the cursor is the one that produced it. Capturing the pair now,
   // rather than when the throttled write runs, is what keeps a cached cursor
