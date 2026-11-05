@@ -215,15 +215,19 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-events`
 - `pnpm --dir src/web-ui run test:run src/flow_chat/services/EventHandlerModule.test.ts src/flow_chat/tool-cards`
 
-- [ ] 重启后从被调用助理的工作区收回结果、启动整理、结束事件、下一回合的说明、删除会话即取消均有测试；旧的后台任务记录（没有新字段）照常读入
+- [x] 重启后从被调用助理的工作区收回结果、启动整理、结束事件、下一回合的说明、删除会话即取消均有测试；旧的后台任务记录（没有新字段）照常读入
 
-**进展（2026-11-04，未勾选）：**
+**进展（2026-11-04）：**
 - 3c5810fa0：后台任务新增可空列 `child_storage_path`（原地追加，旧版本照常打开数据库），助理调用在建会话后记下被调用会话的存储位置；`AgentWait` 与过期整理都从那里读回合。原来按发起方的存储读，重启后内存结果清空即读不到。测试 `a_called_assistants_result_is_read_from_its_own_workspace_after_a_restart`。
 - c5ea4a3fa：桌面端启动时整理上一进程留下的本机助理调用（只限有 `child_storage_path` 的任务），回合已完成的保留结果，未完成的标为中断「The app restarted before this call finished」；发起方每次开始新回合时，上下文附一条 `BackgroundResult` 类提醒，列出已结束但未收回的助理调用（本机与共享），提示用 `AgentWait` 读取。测试 `a_call_cut_off_by_a_restart_is_settled_at_startup_and_named_to_the_callers_next_turn`（普通子智能体不在整理与提醒之列）。
 - 删除会话即取消：删除走会话维护流程，已经调用 `cancel_background_subagents_for_parent_session`，助理调用同在其中，无需改代码。
 - 4156f220d（真机发现）：被调用助理只看到任务正文，回答「我没有主人」；现在会话开头有一条提醒，说明来自哪个助理、为同一个人工作、回复交回那个助理。
 - 验证：core `--lib -- agentic::coordination agentic::tools::implementations::task` 385 通过；`openbitfun-desktop` 检查通过；legacy-migration-adapters 55 通过。
-- 未完成：结束事件与发起方空闲时的界面通知（卡片状态已随被调用会话的事件更新；发起方没有进行中的回合时的单独通知尚未做）。
+- 40eeb79ce：调用结束通知。本机或共享助理的调用完成、失败或取消时，若发起方没有进行中的回合且不在屏幕上（窗口隐藏、在首页等其他页面、或看的是别的会话），弹出提示「小岚 已完成「问候交流」里交给它的任务」并带「查看」；完成提示保留 10 秒，失败与取消保留到关闭。测试 `assistantCallNotice.test.ts`（命名、本机 `delegatedBy`、发起方可见/进行中/普通子智能体时不提示）。
+- 与 Change Map 的差异：没有新增调用结束事件。被调用会话自己的回合完成/失败/取消事件已经带着会话 id 到达 Web UI，由会话关系（`delegatedBy.sessionId` 或共享调用的父会话）找到发起方即可，不扩充事件契约，也不涉及跨版本兼容。
+- ed45143a7：删除会话即取消有了专门测试 `deleting_a_session_cancels_the_assistants_it_called`（只取消该会话发起的调用）；旧数据库补列测试同时检查 `child_storage_path`。
+- 真机（2026-11-04，agent002 dev 构建）：助理在「问候交流」里把写诗交给小岚后结束回合，切到首页；小岚写完时弹出上述提示，点「查看」打开「问候交流」。
+- 验证：core `--lib -- agentic::coordination` 301 通过；Web UI `src/flow_chat/services` 53 个文件 717 通过；`tsc`、`eslint`、`pnpm run i18n:audit` 通过。
 - 真机（2026-11-04，dev 构建，隔离数据）：小栖调用小岚写《雨后的城市》，进行中结束应用。重启后任务记录为 `interrupted`「The app restarted before this call finished」，`child_storage_path` 已记下；下一回合小栖回答「小岚的撰写任务因应用重启而中断…需要我重新交给她写吗？」。
 - afecbc746（真机发现）：重启后被调用会话尚未载入，等待卡片把小岚叫成随机昵称「团团」；现在按调用时请求的类型取名。
 - 90281defb（真机发现）：重启后调用卡片读不到被调用会话，把「已开始」当成已结束；现在取发起方会话里最近一次等待记下的结果，真机显示「已取消」。被调用会话在磁盘上仍是进行中，载入时由 Web UI 按中断处理。
