@@ -16,6 +16,7 @@ use openbitfun_core::service::delegation::DelegationTrust;
 use openbitfun_core::service::delegation_audit::{DelegationAuditEvent, DelegationAuditLog};
 use openbitfun_core::service::lan_share::{ensure_tenant, SharedAssistantStore, TenantUser};
 
+use super::protocol::DispatchCallSession;
 use super::protocol::DispatchSubmitRequest;
 use super::share_guard::{call_has_place, share_of, GRANT_WITHDRAWN};
 use super::store::{remove_file_if_present, DispatchStore};
@@ -147,6 +148,7 @@ impl DelegatedCallLedger for DispatchCallLedger {
             Box::new(CallHold {
                 store: self.store.clone(),
                 job_id: self.job_id.clone(),
+                assistant_id: call.local_assistant_id.clone().unwrap_or_default(),
                 slot,
             }),
         ))
@@ -157,15 +159,22 @@ impl DelegatedCallLedger for DispatchCallLedger {
 struct CallHold {
     store: DispatchStore,
     job_id: String,
+    /// The called assistant of this device, for a call to one.
+    assistant_id: String,
     slot: PathBuf,
 }
 
 impl DelegatedCallHold for CallHold {
-    fn record_session(&self, workspace_path: &str, session_id: &str) {
-        if let Err(error) = self
-            .store
-            .record_call_session(&self.job_id, workspace_path, session_id)
-        {
+    fn record_session(&self, workspace_path: &str, session_id: &str, title: &str) {
+        if let Err(error) = self.store.record_call_session(
+            &self.job_id,
+            &DispatchCallSession {
+                assistant_id: self.assistant_id.clone(),
+                workspace_path: workspace_path.to_string(),
+                session_id: session_id.to_string(),
+                title: title.to_string(),
+            },
+        ) {
             tracing::warn!(
                 "Failed to record the session of a call for retention: job_id={}, error={error:#}",
                 self.job_id
@@ -432,13 +441,19 @@ mod tests {
             .open(&local_call())
             .await
             .unwrap();
-        ticket.record_session("/tenants/workspace-notes/device", "called-session");
+        ticket.record_session(
+            "/tenants/workspace-notes/device",
+            "called-session",
+            "Write a line about autumn",
+        );
         assert_eq!(
             fixture.store.call_sessions("delegation-1"),
-            vec![(
-                "/tenants/workspace-notes/device".to_string(),
-                "called-session".to_string()
-            )]
+            vec![DispatchCallSession {
+                assistant_id: CALLED.to_string(),
+                workspace_path: "/tenants/workspace-notes/device".to_string(),
+                session_id: "called-session".to_string(),
+                title: "Write a line about autumn".to_string(),
+            }]
         );
     }
 }

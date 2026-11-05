@@ -14762,7 +14762,11 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             .to_string();
         if let Some(ticket) = &call_ticket {
             if let Some(tenant_workspace) = &ticket.tenant_workspace {
-                ticket.record_session(&tenant_workspace.to_string_lossy(), &subagent_session_id);
+                ticket.record_session(
+                    &tenant_workspace.to_string_lossy(),
+                    &subagent_session_id,
+                    &request.session_name,
+                );
             }
         }
         let subagent_parent_info = match request.subagent_parent_info.clone() {
@@ -25685,7 +25689,7 @@ pub(crate) mod tests {
     struct TestCallHold(Arc<std::sync::atomic::AtomicBool>);
 
     impl super::super::DelegatedCallHold for TestCallHold {
-        fn record_session(&self, _workspace_path: &str, _session_id: &str) {}
+        fn record_session(&self, _workspace_path: &str, _session_id: &str, _title: &str) {}
     }
 
     impl Drop for TestCallHold {

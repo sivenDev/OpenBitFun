@@ -7,9 +7,10 @@ use openbitfun_agent_runtime::sdk::{PermissionReply, PermissionRequest};
 use serde::{Deserialize, Serialize};
 
 use super::protocol::{
-    DispatchAppendRequest, DispatchApprovalPolicy, DispatchAttachment, DispatchContinueRequest,
-    DispatchDelegatedJobSummary, DispatchEvent, DispatchHold, DispatchJobListEntry,
-    DispatchJobState, DispatchSubmitRequest, DispatchTurnKind, DISPATCH_PROTOCOL_VERSION,
+    DispatchAppendRequest, DispatchApprovalPolicy, DispatchAttachment, DispatchCallSession,
+    DispatchContinueRequest, DispatchDelegatedJobSummary, DispatchEvent, DispatchHold,
+    DispatchJobListEntry, DispatchJobState, DispatchSubmitRequest, DispatchTurnKind,
+    DISPATCH_PROTOCOL_VERSION,
 };
 
 const JOB_RECORD_FILE: &str = "job.json";
@@ -1194,6 +1195,7 @@ impl DispatchStore {
                         source_share_key: job.request.source_share_key.clone(),
                         source_user: job.request.source_user.clone(),
                         source: delegation.source.clone(),
+                        calls: self.call_sessions(&job_id),
                     });
             let pending_permission_count = if state.state.is_terminal() {
                 0
@@ -1292,32 +1294,43 @@ impl DispatchStore {
     pub(crate) fn record_call_session(
         &self,
         job_id: &str,
-        workspace_path: &str,
-        session_id: &str,
+        call: &DispatchCallSession,
     ) -> Result<()> {
         let path = self.existing_job_dir(job_id)?.join(CALL_SESSIONS_FILE);
         let mut sessions = Self::read_call_sessions(&path);
-        sessions.push(DispatchCallSession {
-            workspace_path: workspace_path.to_string(),
-            session_id: session_id.to_string(),
-        });
+        sessions.push(call.clone());
         atomic_write_json(&path, &sessions)
     }
 
-    #[cfg(test)]
-    pub(crate) fn call_sessions(&self, job_id: &str) -> Vec<(String, String)> {
-        let path = self.job_dir(job_id).unwrap().join(CALL_SESSIONS_FILE);
-        Self::read_call_sessions(&path)
-            .into_iter()
-            .map(|call| (call.workspace_path, call.session_id))
-            .collect()
+    /// The sessions the job's calls run in.
+    pub(crate) fn call_sessions(&self, job_id: &str) -> Vec<DispatchCallSession> {
+        self.job_dir(job_id)
+            .map(|dir| Self::read_call_sessions(&dir.join(CALL_SESSIONS_FILE)))
+            .unwrap_or_default()
     }
 
     fn read_call_sessions(path: &Path) -> Vec<DispatchCallSession> {
-        path.exists()
+        let mut sessions: Vec<DispatchCallSession> = path
+            .exists()
             .then(|| read_json(path).ok())
             .flatten()
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Records written before they named the called assistant: it is the
+        // directory above the calling device's, `tenants/<assistant>/<device>`.
+        for call in sessions
+            .iter_mut()
+            .filter(|call| call.assistant_id.is_empty())
+        {
+            let tenant = Path::new(&call.workspace_path);
+            if let Some(assistant) = tenant
+                .parent()
+                .filter(|dir| dir.parent().and_then(Path::file_name) == Some("tenants".as_ref()))
+                .and_then(Path::file_name)
+            {
+                call.assistant_id = assistant.to_string_lossy().into_owned();
+            }
+        }
+        sessions
     }
 
     pub(crate) fn clear_hold(&self, job_id: &str) {
@@ -1965,14 +1978,6 @@ impl DispatchStore {
 
 pub(crate) struct WorkspaceLock {
     _file: File,
-}
-
-/// A session a job's call to this device's assistant runs in.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct DispatchCallSession {
-    workspace_path: String,
-    session_id: String,
 }
 
 impl DispatchStore {
@@ -3721,6 +3726,31 @@ mod tests {
     }
 
     #[test]
+    fn a_call_recorded_before_it_named_its_assistant_is_listed_under_it() {
+        let (_dir, store) = store();
+        store
+            .create_job(request("delegation-1"), "Task".to_string())
+            .expect("create job");
+        let path = store
+            .job_dir("delegation-1")
+            .expect("job path")
+            .join(CALL_SESSIONS_FILE);
+        fs::write(
+            &path,
+            serde_json::json!([
+                { "workspacePath": "/home/delegation/tenants/workspace-notes/0123", "sessionId": "called" },
+                { "workspacePath": "/elsewhere/session", "sessionId": "loose" }
+            ])
+            .to_string(),
+        )
+        .expect("legacy record");
+        let calls = store.call_sessions("delegation-1");
+        assert_eq!(calls[0].assistant_id, "workspace-notes");
+        assert_eq!(calls[0].title, "");
+        assert_eq!(calls[1].assistant_id, "");
+    }
+
+    #[test]
     fn delegated_sessions_are_kept_as_long_as_their_share_says() {
         use openbitfun_core::service::lan_share::SharedAssistant;
         use std::sync::{Arc, Mutex};
@@ -3771,21 +3801,19 @@ mod tests {
         // A call the task made to another assistant left a session in the
         // device's workspace under that assistant; it follows the task's.
         let called_tenant = tenant_root.join("workspace-called").join("device");
+        let call = |session_id: &str| DispatchCallSession {
+            assistant_id: "workspace-called".to_string(),
+            workspace_path: called_tenant.to_string_lossy().into_owned(),
+            session_id: session_id.to_string(),
+            title: "Called".to_string(),
+        };
         store
-            .record_call_session(
-                "delegation-short",
-                &called_tenant.to_string_lossy(),
-                "session-called-short",
-            )
+            .record_call_session("delegation-short", &call("session-called-short"))
             .expect("record call session");
         finish("delegation-short", 2);
         delegated("delegation-fresh", "workspace", &tenant);
         store
-            .record_call_session(
-                "delegation-fresh",
-                &called_tenant.to_string_lossy(),
-                "session-called-fresh",
-            )
+            .record_call_session("delegation-fresh", &call("session-called-fresh"))
             .expect("record call session");
         finish("delegation-fresh", 0);
         delegated("delegation-stopped", "workspace-notes", &notes_tenant);

@@ -38,10 +38,10 @@ impl DelegatedCallTicket {
         }
     }
 
-    /// Records the session the call runs in, so it is kept and removed with
-    /// the delegated task's own.
-    pub fn record_session(&self, workspace_path: &str, session_id: &str) {
-        self.hold.record_session(workspace_path, session_id);
+    /// Records the session the call runs in, titled `title`, so it is
+    /// listed, kept and removed with the delegated task's own.
+    pub fn record_session(&self, workspace_path: &str, session_id: &str, title: &str) {
+        self.hold.record_session(workspace_path, session_id, title);
     }
 }
 
@@ -56,7 +56,7 @@ impl std::fmt::Debug for DelegatedCallTicket {
 
 /// What a ticket holds on the host; dropping it releases the place.
 pub trait DelegatedCallHold: Send + Sync {
-    fn record_session(&self, workspace_path: &str, session_id: &str);
+    fn record_session(&self, workspace_path: &str, session_id: &str, title: &str);
 }
 
 /// The host's account of delegated tasks' calls.

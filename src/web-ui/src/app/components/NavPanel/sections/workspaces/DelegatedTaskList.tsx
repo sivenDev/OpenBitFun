@@ -93,7 +93,7 @@ export default function DelegatedTaskList({
     const title = task.title || t('nav.sessions.delegated.untitled');
     const said = [title, detail ?? label].filter(Boolean).join(' · ');
     return (
-      <Tooltip key={task.jobId} content={said} placement="right" followCursor>
+      <Tooltip key={`${task.jobId}:${task.sessionId}`} content={said} placement="right" followCursor>
         <button
           type="button"
           className={['openbitfun-nav-panel__inline-item', 'assistant-session-history__delegated-item', waiting && 'is-waiting', active && 'is-active', detail && 'has-detail']

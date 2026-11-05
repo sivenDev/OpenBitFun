@@ -822,6 +822,23 @@ pub(crate) struct DispatchDelegatedJobSummary {
     pub(crate) source_user: Option<DispatchShareUser>,
     /// What the requester reported about itself; shown, never trusted.
     pub(crate) source: DispatchDelegationSource,
+    /// Sessions the job's calls to this device's other assistants run in.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) calls: Vec<DispatchCallSession>,
+}
+
+/// A session one of a job's calls to this device's assistants runs in, kept
+/// and removed with the job's own.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DispatchCallSession {
+    /// The called assistant: its directory.
+    #[serde(default)]
+    pub(crate) assistant_id: String,
+    pub(crate) workspace_path: String,
+    pub(crate) session_id: String,
+    #[serde(default)]
+    pub(crate) title: String,
 }
 
 #[cfg(test)]

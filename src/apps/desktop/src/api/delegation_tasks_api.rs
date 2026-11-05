@@ -78,41 +78,76 @@ pub async fn delegation_list_tasks() -> Result<Vec<DelegatedTask>, String> {
     Ok(delegated_tasks(&listed))
 }
 
-/// The delegated tasks in a `dispatch list` answer.
+/// The delegated tasks in a `dispatch list` answer, each followed by the
+/// sessions its calls to this device's other assistants run in, listed under
+/// the called assistant.
 fn delegated_tasks(listed: &Value) -> Vec<DelegatedTask> {
-    listed
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let delegation = entry.get("delegation")?;
-            let text = |value: &Value, field: &str| {
-                value.get(field).and_then(Value::as_str).map(str::to_string)
+    let text =
+        |value: &Value, field: &str| value.get(field).and_then(Value::as_str).map(str::to_string);
+    let mut tasks = Vec::new();
+    for entry in listed.as_array().into_iter().flatten() {
+        let Some(delegation) = entry.get("delegation") else {
+            continue;
+        };
+        let Some(job_id) = text(entry, "jobId") else {
+            continue;
+        };
+        let user = delegation.get("sourceUser").unwrap_or(&Value::Null);
+        let source = || DelegatedTaskSource {
+            device_id: text(user, "deviceId").unwrap_or_default(),
+            fingerprint: text(user, "fingerprint").unwrap_or_default(),
+            display_name: text(user, "displayName").unwrap_or_default(),
+            device_name: text(user, "deviceName").unwrap_or_default(),
+        };
+        let state = text(entry, "state").unwrap_or_default();
+        let started_at = text(entry, "startedAt");
+        let pending_permission_count = entry
+            .get("pendingPermissionCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        tasks.push(DelegatedTask {
+            job_id: job_id.clone(),
+            session_id: text(entry, "sessionId").unwrap_or_default(),
+            state: state.clone(),
+            started_at: started_at.clone(),
+            title: text(entry, "title").unwrap_or_default(),
+            assistant_id: text(delegation, "assistantId").unwrap_or_default(),
+            agent_type: text(entry, "agentType").unwrap_or_default(),
+            assistant_workspace: text(delegation, "assistantWorkspace"),
+            pending_permission_count,
+            source: source(),
+        });
+        for call in delegation
+            .get("calls")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let (Some(assistant_id), Some(session_id)) =
+                (text(call, "assistantId"), text(call, "sessionId"))
+            else {
+                continue;
             };
-            let user = delegation.get("sourceUser").unwrap_or(&Value::Null);
-            let source = DelegatedTaskSource {
-                device_id: text(user, "deviceId").unwrap_or_default(),
-                fingerprint: text(user, "fingerprint").unwrap_or_default(),
-                display_name: text(user, "displayName").unwrap_or_default(),
-                device_name: text(user, "deviceName").unwrap_or_default(),
-            };
-            Some(DelegatedTask {
-                job_id: text(entry, "jobId")?,
-                session_id: text(entry, "sessionId").unwrap_or_default(),
-                state: text(entry, "state").unwrap_or_default(),
-                started_at: text(entry, "startedAt"),
-                title: text(entry, "title").unwrap_or_default(),
-                assistant_id: text(delegation, "assistantId").unwrap_or_default(),
-                agent_type: text(entry, "agentType").unwrap_or_default(),
-                assistant_workspace: text(delegation, "assistantWorkspace"),
-                pending_permission_count: entry
-                    .get("pendingPermissionCount")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize,
-                source,
-            })
-        })
-        .collect()
+            if assistant_id.is_empty() || session_id.is_empty() {
+                continue;
+            }
+            tasks.push(DelegatedTask {
+                job_id: job_id.clone(),
+                session_id,
+                state: state.clone(),
+                started_at: started_at.clone(),
+                title: text(call, "title").unwrap_or_default(),
+                agent_type: format!("assistant:{assistant_id}"),
+                assistant_id,
+                assistant_workspace: None,
+                // The task's actions wait on the task's own row; counted
+                // once there.
+                pending_permission_count: 0,
+                source: source(),
+            });
+        }
+    }
+    tasks
 }
 
 fn ensure_delegated(job_id: &str) -> Result<(), String> {
@@ -194,6 +229,42 @@ mod tests {
         assert_eq!(tasks[0].source.display_name, "Bea");
         assert_eq!(tasks[0].source.device_name, "Bea's Mac");
         assert_eq!(tasks[0].source.fingerprint, "AB23CD");
+    }
+
+    #[test]
+    fn a_tasks_calls_are_listed_under_the_called_assistant() {
+        let listed = serde_json::json!([{
+            "jobId": "delegation-1",
+            "sessionId": "s1",
+            "state": "completed",
+            "title": "Plan",
+            "agentType": "assistant:workspace",
+            "delegation": {
+                "assistantId": "workspace",
+                "sourceUser": { "deviceId": "0123", "displayName": "Bea" },
+                "source": {},
+                "calls": [
+                    {
+                        "assistantId": "workspace-notes",
+                        "workspacePath": "/home/me/delegation/tenants/workspace-notes/0123",
+                        "sessionId": "called",
+                        "title": "Write a line"
+                    },
+                    { "workspacePath": "/elsewhere", "sessionId": "shared-call" }
+                ]
+            }
+        }]);
+        let tasks = delegated_tasks(&listed);
+        assert_eq!(tasks.len(), 2);
+        let call = &tasks[1];
+        assert_eq!(call.job_id, "delegation-1");
+        assert_eq!(call.session_id, "called");
+        assert_eq!(call.agent_type, "assistant:workspace-notes");
+        assert_eq!(call.assistant_id, "workspace-notes");
+        assert_eq!(call.title, "Write a line");
+        assert_eq!(call.state, "completed");
+        assert_eq!(call.pending_permission_count, 0);
+        assert_eq!(call.source.display_name, "Bea");
     }
 
     #[test]

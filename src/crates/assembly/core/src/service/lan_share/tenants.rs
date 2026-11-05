@@ -30,6 +30,7 @@ const DEVICE_ID_FILE: &str = "device-id";
 
 /// Records this device's sharing id in `dir` (the directory of its sharing
 /// identity), for processes that run tenants' tasks without the identity.
+#[cfg(feature = "lan-share")]
 pub(crate) fn record_share_device_id(dir: &Path, device_id: &str) -> std::io::Result<()> {
     let path = dir.join(DEVICE_ID_FILE);
     if std::fs::read_to_string(&path).is_ok_and(|recorded| recorded.trim() == device_id) {
