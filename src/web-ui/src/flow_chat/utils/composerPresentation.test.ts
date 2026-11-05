@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ContextItem } from '@/shared/types/context';
 import {
+  assistantMentionsMetadata,
   COMPOSER_PRESENTATION_VERSION,
   composerPresentationContexts,
   composerPresentationSessionReferences,
@@ -125,5 +126,41 @@ describe('composerPresentation', () => {
       version: COMPOSER_PRESENTATION_VERSION,
       segments: [{ kind: 'context', context: {}, tag: 'x', label: 'x', title: 'x' }],
     })).toBeNull();
+  });
+
+  it('names assistants as @name in the text and lists each once in the metadata', () => {
+    const xiaolan: ContextItem = {
+      id: 'assistant-mention-1',
+      type: 'assistant-mention',
+      agentType: 'assistant:workspace',
+      assistantName: 'Xiaolan',
+      timestamp: 3,
+    };
+    const writer: ContextItem = {
+      id: 'assistant-mention-2',
+      type: 'assistant-mention',
+      agentType: 'shared:owner-device/writer',
+      assistantName: 'Writer',
+      ownerDeviceName: 'Owner Mac',
+      timestamp: 4,
+    };
+    const mentioned: ComposerPresentation = {
+      version: COMPOSER_PRESENTATION_VERSION,
+      segments: [
+        { kind: 'context', context: xiaolan, tag: '@Xiaolan', label: '@Xiaolan', title: '@Xiaolan' },
+        { kind: 'text', text: ' and ' },
+        { kind: 'context', context: writer, tag: '@Writer', label: '@Writer', title: '@Writer · Owner Mac' },
+        { kind: 'text', text: ' reply with one word, ' },
+        { kind: 'context', context: { ...xiaolan, id: 'assistant-mention-3' }, tag: '@Xiaolan', label: '@Xiaolan', title: '@Xiaolan' },
+      ],
+    };
+
+    expect(composerPresentationToModelText(mentioned)).toBe('@Xiaolan and @Writer reply with one word, @Xiaolan');
+    expect(parseComposerPresentation(mentioned)).toEqual(mentioned);
+    expect(assistantMentionsMetadata(composerPresentationContexts(mentioned))).toEqual([
+      { agentType: 'assistant:workspace' },
+      { agentType: 'shared:owner-device/writer' },
+    ]);
+    expect(assistantMentionsMetadata([fileReference])).toEqual([]);
   });
 });

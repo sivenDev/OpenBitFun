@@ -13,6 +13,10 @@ export function formatContextForPrompt(context: ContextItem): string {
       // The backend materializes this context into a current-session artifact
       // and injects the safe usage reminder at dispatch time.
       return '';
+    case 'assistant-mention':
+      // The message text names it as `@name`; the backend checks the mention
+      // and tells the agent to call it at dispatch time.
+      return '';
     case 'code-snippet':
       return `[Code Snippet: ${context.filePath}:${context.startLine}-${context.endLine}]`;
     case 'pull-request':

@@ -17,6 +17,7 @@ export const richTextInputAppearanceDescriptor: AppearanceSurfaceDescriptor = {
         'file',
         'directory',
         'session-reference',
+        'assistant-mention',
         'code-snippet',
         'pull-request',
         'mermaid-node',

@@ -34,6 +34,8 @@ import {
   type FlowChatMessageSubmittedRequest,
 } from '../events/flowchatNavigation';
 import {
+  assistantMentionsMetadata,
+  composerPresentationContexts,
   composerPresentationSessionReferences,
   withConversationExcerpts,
   type ComposerPresentation,
@@ -197,13 +199,17 @@ export function useMessageSender(props: UseMessageSenderProps): UseMessageSender
           remoteConnectionId: context.remoteConnectionId,
           remoteSshHost: context.remoteSshHost,
         }));
+      const assistantMentions = assistantMentionsMetadata(
+        presentation ? composerPresentationContexts(presentation) : contexts,
+      );
       const userMessageMetadata =
-        presentation || sessionReferences.length > 0 || turnPermissionMode
+        presentation || sessionReferences.length > 0 || assistantMentions.length > 0 || turnPermissionMode
           ? {
               ...(presentation
                 ? { composerPresentation: presentation }
                 : {}),
               ...(sessionReferences.length > 0 ? { sessionReferences } : {}),
+              ...(assistantMentions.length > 0 ? { assistantMentions } : {}),
               // Read by the coordinator as the turn layer of
               // `turn -> session -> global default`.
               ...(turnPermissionMode ? { permission_mode: turnPermissionMode } : {}),

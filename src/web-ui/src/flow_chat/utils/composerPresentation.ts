@@ -1,4 +1,4 @@
-import type { ContextItem, SessionReferenceContext } from '@/shared/types/context';
+import type { AssistantMentionContext, ContextItem, SessionReferenceContext } from '@/shared/types/context';
 import type { TurnRailCapsulePreview } from '@/shared/types/session-history';
 import { excerptText, formatConversationExcerpt, isConversationExcerpt, isValidConversationExcerpt } from '@/shared/utils/conversationExcerpt';
 
@@ -32,6 +32,7 @@ const CONTEXT_TYPES = new Set<ContextItem['type']>([
   'file',
   'directory',
   'session-reference',
+  'assistant-mention',
   'conversation-excerpt',
   'code-snippet',
   'pull-request',
@@ -202,6 +203,19 @@ export function composerPresentationSessionReferences(
       ? [segment.context]
       : []
   ));
+}
+
+/**
+ * The `assistantMentions` message metadata: each named assistant once, in the
+ * order named.
+ */
+export function assistantMentionsMetadata(
+  contexts: readonly ContextItem[],
+): Array<{ agentType: string }> {
+  const agentTypes = contexts
+    .filter((context): context is AssistantMentionContext => context.type === 'assistant-mention')
+    .map(context => context.agentType);
+  return [...new Set(agentTypes)].map(agentType => ({ agentType }));
 }
 
 function isContextLike(value: unknown): value is ContextItem {

@@ -19,6 +19,7 @@ export type ContextItem =
   | FileContext
   | DirectoryContext
   | SessionReferenceContext
+  | AssistantMentionContext
   | ConversationExcerptContext
   | CodeSnippetContext
   | PullRequestContext
@@ -63,6 +64,19 @@ export interface SessionReferenceContext extends BaseContext {
   remoteConnectionId?: string;
   remoteSshHost?: string;
   workspaceLabel: string;
+}
+
+/**
+ * An assistant the person named with「@」. The current agent is asked to call
+ * it; the message text keeps `@name` for hosts that predate mentions.
+ */
+export interface AssistantMentionContext extends BaseContext {
+  type: 'assistant-mention';
+  /** `assistant:<id>` or `shared:<ownerDeviceId>/<assistantId>`. */
+  agentType: string;
+  assistantName: string;
+  /** The device that shares it; absent for the person's own assistants. */
+  ownerDeviceName?: string;
 }
 
 export interface CodeSnippetContext extends BaseContext {

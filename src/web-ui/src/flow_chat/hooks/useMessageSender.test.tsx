@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useMessageSender } from './useMessageSender';
-import type { ConversationExcerptContext } from '@/shared/types/context';
+import type { AssistantMentionContext, ConversationExcerptContext } from '@/shared/types/context';
 import { activateSurface } from '@/infrastructure/peer-device/deviceSurface';
 import { FLOWCHAT_MESSAGE_SUBMITTED_EVENT } from '../events/flowchatNavigation';
 
@@ -109,6 +109,19 @@ const excerpt: ConversationExcerptContext = {
   fragments: [{ turnId: 'turn-1', text: 'Quoted content', start: 0, end: 14, prefix: '', suffix: '' }],
   comment: 'Explain the assumption',
 };
+const mention: AssistantMentionContext = {
+  id: 'assistant-mention-1', type: 'assistant-mention', timestamp: 2,
+  agentType: 'assistant:workspace', assistantName: 'Xiaolan',
+};
+function MentionProbe() {
+  const sender = useMessageSender({
+    contexts: [mention, { ...mention, id: 'assistant-mention-2' }],
+    currentSessionId: 'created-session',
+    onClearContexts: mocks.onClearContexts,
+  });
+  sendFromProbe = () => sender.sendMessage('@Xiaolan reply with one word');
+  return null;
+}
 function ExcerptProbe({ sessionId }: { sessionId: string }) {
   const sender = useMessageSender({ contexts: [excerpt], currentSessionId: sessionId, onClearContexts: mocks.onClearContexts });
   sendFromProbe = () => sender.sendMessage('Why?', { composerDraft: { value: 'Why?', pendingLargePastes: {} } });
@@ -281,6 +294,14 @@ describe('useMessageSender', () => {
     expect(display).toContain('Quoted content');
     expect(options.pendingQueueDraft.contexts).toEqual([excerpt]);
     expect(options.userMessageMetadata.composerPresentation.segments).toContainEqual(expect.objectContaining({ context: excerpt }));
+  });
+
+  it('carries named assistants once in the metadata and keeps @name in the prompt', async () => {
+    await act(async () => root.render(<MentionProbe />));
+    await act(async () => sendFromProbe?.());
+    const [prompt, , , , , options] = mocks.sendMessage.mock.calls[0];
+    expect(prompt).toBe('@Xiaolan reply with one word');
+    expect(options.userMessageMetadata.assistantMentions).toEqual([{ agentType: 'assistant:workspace' }]);
   });
 
   it('uses the parent snapshot path for the first side message and the normal path for follow-ups', async () => {

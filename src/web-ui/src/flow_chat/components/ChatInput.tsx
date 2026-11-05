@@ -50,6 +50,7 @@ import type {
   FileContext,
   ImageContext,
   SessionReferenceContext,
+  AssistantMentionContext,
 } from '@/types/context.ts';
 import { SmartRecommendations } from './smart-recommendations';
 import { useCurrentWorkspace, useWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
@@ -6744,6 +6745,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 onRefreshMcp={chatMcp.refresh}
                 onSelectMcp={canSelectMcp ? selectContextMcp : undefined}
                 onAddImage={!isAcpTargetSession ? handleContextPickerAddImage : undefined}
+                assistantSessionId={!isAcpTargetSession ? effectiveTargetSessionId || undefined : undefined}
+                onSelectAssistant={!isAcpTargetSession ? (assistant) => {
+                  const context: AssistantMentionContext = {
+                    id: `assistant-mention-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                    type: 'assistant-mention',
+                    agentType: assistant.agentType,
+                    assistantName: assistant.name,
+                    ...(assistant.owner.deviceName ? { ownerDeviceName: assistant.owner.deviceName } : {}),
+                    timestamp: Date.now(),
+                  };
+                  addContext(context);
+                  richTextInputRef.current?.insertContextTagReplacingTrigger?.(context);
+                } : undefined}
                 onSelectContext={(context: FileContext | DirectoryContext | SessionReferenceContext) => {
                   addContext(context);
                   richTextInputRef.current?.insertContextTagReplacingTrigger?.(context);

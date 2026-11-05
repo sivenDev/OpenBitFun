@@ -46,6 +46,7 @@ import { isLocalWorkspaceSession } from '../../utils/sessionWorkspace';
 import { isObserverSessionDriver, resolveSessionDriverId } from '../../session-drivers/resolve';
 import { absoluteSessionTurnIndexForId } from '../../utils/flowChatTurnOrdinal';
 import {
+  assistantMentionsMetadata,
   composerPresentationToAccessibleText,
   composerPresentationToClipboardText,
   composerPresentationContexts,
@@ -112,12 +113,15 @@ function buildPresentationRerunPayload(presentation: ComposerPresentation): {
     remoteSshHost: context.remoteSshHost,
   }));
 
+  const assistantMentions = assistantMentionsMetadata(composerPresentationContexts(presentation));
+
   return {
     message: contextSection ? `${contextSection}\n\n${modelText}` : modelText,
     displayMessage: withConversationExcerptFallback(composerPresentationToEditorText(presentation), composerPresentationContexts(presentation)),
     userMessageMetadata: {
       composerPresentation: presentation,
       ...(sessionReferences.length > 0 ? { sessionReferences } : {}),
+      ...(assistantMentions.length > 0 ? { assistantMentions } : {}),
     },
   };
 }

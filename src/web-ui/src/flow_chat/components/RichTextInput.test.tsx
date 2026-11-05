@@ -556,6 +556,34 @@ describeWithJsdom('RichTextInput external sync', () => {
     expect(reviewPill?.textContent).toContain('Review');
   });
 
+  it('shows a named assistant as an @name capsule that keeps @name in the text', async () => {
+    const mention: ContextItem = {
+      id: 'assistant-mention-1',
+      type: 'assistant-mention',
+      agentType: 'shared:owner-device/writer',
+      assistantName: 'Writer',
+      ownerDeviceName: 'Owner Mac',
+      timestamp: 1,
+    };
+    const inputRef = createRef<RichTextInputElement>();
+    const onChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <RichTextInput ref={inputRef} value="" onChange={onChange} contexts={[mention]} />
+      );
+    });
+    await act(async () => {
+      inputRef.current?.insertTag?.(mention);
+    });
+
+    const tag = container.querySelector<HTMLElement>('[data-context-id="assistant-mention-1"]');
+    expect(tag?.dataset.contextType).toBe('assistant-mention');
+    expect(tag?.dataset.tagFormat).toBe('@Writer');
+    expect(tag?.textContent).toContain('@Writer');
+    expect(tag?.title).toBe('@Writer · Owner Mac');
+  });
+
   it('removes a context capsule with one Backspace from its trailing separator', async () => {
     const fileContext: ContextItem = {
       id: 'external-file-1',

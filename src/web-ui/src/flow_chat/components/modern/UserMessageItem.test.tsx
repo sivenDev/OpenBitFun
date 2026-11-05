@@ -644,6 +644,50 @@ describe('UserMessageItem steering tag', () => {
     expect(content?.querySelectorAll('.user-message-item__reference')).toHaveLength(2);
   });
 
+  it('shows a named assistant as an @name capsule in the sent message', () => {
+    act(() => {
+      root.render(
+        <FlowChatContext.Provider value={{ allowUserMessageRollback: false }}>
+          <UserMessageItem
+            message={{
+              id: 'user-mention-1',
+              content: '@Xiaolan reply with one word',
+              timestamp: 1000,
+              metadata: {
+                composerPresentation: {
+                  version: 1,
+                  segments: [
+                    {
+                      kind: 'context',
+                      context: {
+                        id: 'assistant-mention-1',
+                        type: 'assistant-mention',
+                        agentType: 'assistant:workspace',
+                        assistantName: 'Xiaolan',
+                        timestamp: 1,
+                      },
+                      tag: '@Xiaolan',
+                      label: '@Xiaolan',
+                      title: '@Xiaolan',
+                    },
+                    { kind: 'text', text: ' reply with one word' },
+                  ],
+                },
+                assistantMentions: [{ agentType: 'assistant:workspace' }],
+              },
+            }}
+            turnId="turn-mention-1"
+          />
+        </FlowChatContext.Provider>,
+      );
+    });
+
+    const content = container.querySelector('[data-testid="chat-user-message-content"]');
+    expect(content?.textContent).toContain('@Xiaolan');
+    expect(content?.textContent).toContain('reply with one word');
+    expect(content?.querySelectorAll('.user-message-item__reference')).toHaveLength(1);
+  });
+
   it('copies a message with the readable text and a restorable token payload', async () => {
     const writeText = vi.fn(async () => {});
     const write = vi.fn(async (_items: unknown[]) => {});

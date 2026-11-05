@@ -188,6 +188,7 @@ function getContextDisplayName(context: ContextItem): string {
     case 'file': return context.fileName;
     case 'directory': return context.directoryName;
     case 'session-reference': return context.sessionName;
+    case 'assistant-mention': return `@${context.assistantName}`;
     case 'conversation-excerpt': return context.source.sessionName;
     case 'code-snippet': return `${context.fileName}:${context.startLine}-${context.endLine}`;
     case 'pull-request': return context.label;
@@ -213,6 +214,7 @@ function getContextTagFormat(context: ContextItem): string {
     case 'file': return `#file:${context.fileName}`;
     case 'directory': return `#dir:${context.directoryName}`;
     case 'session-reference': return `[session: ${context.sessionName}]`;
+    case 'assistant-mention': return `@${context.assistantName}`;
     case 'conversation-excerpt': return '';
     case 'code-snippet': return `#code:${context.fileName}:${context.startLine}-${context.endLine}`;
     case 'pull-request': return `#pr:${context.label.replace(/\s+/g, '_')}`;
@@ -241,6 +243,10 @@ function getContextFullPath(context: ContextItem): string {
       return context.directoryPath + (context.recursive ? ' (recursive)' : '');
     case 'session-reference':
       return `${context.workspaceLabel} · ${context.workspacePath}`;
+    case 'assistant-mention':
+      return context.ownerDeviceName
+        ? `@${context.assistantName} · ${context.ownerDeviceName}`
+        : `@${context.assistantName}`;
     case 'conversation-excerpt':
       return context.fragments.map(fragment => fragment.text).join('\n\n');
     case 'code-snippet':

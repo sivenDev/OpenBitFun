@@ -1,11 +1,12 @@
 import React from 'react';
 import { Icon } from '@openbitfun/ui';
-import { AtSign, File } from 'lucide-react';
+import { AtSign, Bot, File } from 'lucide-react';
 import type { ContextType } from '@/shared/types/context';
 
 export function messageContextIcon(type: ContextType | string): React.ReactNode {
   switch (type) {
     case 'session-reference': return <Icon name="session" size="sm" aria-hidden />;
+    case 'assistant-mention': return <Icon glyph={Bot} size="sm" aria-hidden />;
     case 'file':
     case 'image': return <Icon glyph={File} size="sm" aria-hidden />;
     case 'directory': return <Icon name="folder" size="sm" aria-hidden />;

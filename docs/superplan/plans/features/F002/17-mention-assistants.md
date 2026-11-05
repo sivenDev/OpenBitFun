@@ -124,7 +124,9 @@ parent: "F002"
 - 对应模块的单元测试（标签增删、多个点名去重、元数据形状、正文文字、历史回放显示）
 - `pnpm run type-check:web`、`pnpm run lint:web`
 
-- [ ] 标签、发送元数据、正文与显示均有测试
+- [x] 标签、发送元数据、正文与显示均有测试
+
+**进展（2026-11-04）：** 完成。新上下文类型 `assistant-mention`（`shared/types/context.ts`：`agentType`、`assistantName`、可选 `ownerDeviceName`）。`ChatInput` 把选中的助理变成这个上下文并插入标签（ACP 对话不传，菜单也不出现「助理」）；输入框标签显示与正文写法都是「@名字」，悬停提示带共享设备名；`formatContextForPrompt` 不再另外追加。`composerPresentation.ts` 接受这个类型并新增 `assistantMentionsMetadata`（按点名顺序，同一助理只算一次）；`useMessageSender` 发送时把 `assistantMentions` 放进消息元数据，插话与排队沿用同一份元数据；编辑重发（`UserMessageItem` 的重跑负载）同样带上；发送后的消息与历史按已有的引用胶囊显示，图标为 Bot。旧版本收到的展示元数据含未知类型时整体退回正文，正文里仍是「@名字」。验证：新增 4 项测试（展示与元数据去重、发送元数据与正文、发送后的胶囊、输入框标签），`src/flow_chat` 与 `src/shared` 共 503 个文件 5475 项通过；`tsc`、eslint、`i18n:audit`、`appearance:contract-audit`、`theme:color-audit:all` 通过。
 
 ## Task 5: 真机验收
 
