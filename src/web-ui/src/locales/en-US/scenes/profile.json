@@ -229,7 +229,7 @@
         "trustNormal": "Normal",
         "trustFull": "Full",
         "trustNormalHint": "It cannot operate this computer's desktop or scheduled tasks, and asks you before reading your profile, memory, or other conversations.",
-        "trustFullHint": "Works as it does for you, without asking each time, except that it still cannot operate this computer's desktop or scheduled tasks.",
+        "trustFullHint": "It can use files, conversations, and your other assistants as you can; actions that need approval still ask you; it cannot operate this computer's desktop or scheduled tasks.",
         "fullRiskWarning": "Their tasks can use the files and tools on this computer as you can.",
         "fullRiskConfirm": "I understand",
         "retention": "Keep conversations",

@@ -229,7 +229,7 @@
         "trustNormal": "一般",
         "trustFull": "完全信任",
         "trustNormalHint": "不能操作這台電腦的桌面或排程任務；讀取你的資料、記憶和其他對話前會先問你。",
-        "trustFullHint": "和你自己使用時一樣，不再逐次詢問；但仍不能操作這台電腦的桌面或排程任務。",
+        "trustFullHint": "可以像你一樣使用檔案、對話和你的其他助理；需要審批的操作仍會問你；不能操作這台電腦的桌面或排程任務。",
         "fullRiskWarning": "對方的任務能像你一樣使用這台電腦上的檔案和工具。",
         "fullRiskConfirm": "我瞭解",
         "retention": "對話保留",

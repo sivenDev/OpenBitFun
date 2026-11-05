@@ -101,6 +101,34 @@ impl SessionControlTool {
         Ok(session_control_creator_marker(creator_session_id))
     }
 
+    /// The facts of a task from a device this assistant is shared with at
+    /// normal trust, which only lists the conversations of its own tenant
+    /// workspace.
+    fn normal_trust_delegation(
+        context: &ToolUseContext,
+    ) -> Option<crate::service::delegation::DelegatedTurnFacts> {
+        crate::service::delegation::DelegatedTurnFacts::from_tool_data(&context.custom_data)
+            .filter(|facts| facts.trust == crate::service::delegation::DelegationTrust::Normal)
+    }
+
+    /// Why such a task cannot make this call, when that is clear from its
+    /// input. A listed workspace it names is checked again once resolved.
+    fn delegated_refusal(params: &SessionControlInput, context: &ToolUseContext) -> Option<String> {
+        let facts = Self::normal_trust_delegation(context)?;
+        if !matches!(params.action, SessionControlAction::List) {
+            return Some(format!(
+                "SessionControl {} is not available to a task from another device; it can only list that device's conversations",
+                params.action.as_str()
+            ));
+        }
+        params
+            .workspace
+            .as_deref()
+            .map(str::trim)
+            .filter(|workspace| !workspace.is_empty())
+            .and_then(|workspace| facts.session_workspace_refusal("SessionControl", workspace))
+    }
+
     async fn resolve_effective_workspace(
         &self,
         action: SessionControlAction,
@@ -539,6 +567,18 @@ Arguments:
             }
         };
 
+        // Refuse a call a task from another device may not make before the
+        // owner is asked to approve it.
+        if let Some(refusal) = context.and_then(|context| Self::delegated_refusal(&parsed, context))
+        {
+            return ValidationResult {
+                result: false,
+                message: Some(refusal),
+                error_code: Some(403),
+                meta: None,
+            };
+        }
+
         Self::into_validation_result(validate_session_control_input(
             &parsed,
             Self::validation_context(context),
@@ -556,17 +596,10 @@ Arguments:
     ) -> OpenBitFunResult<Vec<ToolResult>> {
         let params: SessionControlInput = serde_json::from_value(input.clone())
             .map_err(|e| OpenBitFunError::tool(format!("Invalid input: {}", e)))?;
-        // A task from a device this assistant is shared with, at normal
-        // trust, only lists the conversations of its own tenant workspace.
-        let delegated =
-            crate::service::delegation::DelegatedTurnFacts::from_tool_data(&context.custom_data)
-                .filter(|facts| facts.trust == crate::service::delegation::DelegationTrust::Normal);
-        if delegated.is_some() && !matches!(params.action, SessionControlAction::List) {
-            return Err(OpenBitFunError::tool(format!(
-                "SessionControl {} is not available to a task from another device; it can only list that device's conversations",
-                params.action.as_str()
-            )));
+        if let Some(refusal) = Self::delegated_refusal(&params, context) {
+            return Err(OpenBitFunError::tool(refusal));
         }
+        let delegated = Self::normal_trust_delegation(context);
         let coordinator = get_global_coordinator()
             .ok_or_else(|| OpenBitFunError::tool("coordinator not initialized".to_string()))?;
         let runtime = CoreServiceAgentRuntime::agent_runtime(coordinator.clone())
@@ -1396,6 +1429,38 @@ mod tests {
             .map(|_| String::new())
             .unwrap_or_else(|error| error.to_string());
         assert!(!error.contains("can only list"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_task_from_another_device_is_refused_before_the_owner_is_asked() {
+        use crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;
+        let tool = SessionControlTool::new();
+        let mut context = empty_context();
+        context
+            .custom_data
+            .insert(DISPATCH_DELEGATION_CONTEXT_KEY.to_string(), json!(true));
+        let refused = |input: Value| {
+            let tool = &tool;
+            let context = &context;
+            async move { tool.validate_input(&input, Some(context)).await }
+        };
+        let delete = refused(json!({ "action": "delete", "session_id": "s" })).await;
+        assert!(!delete.result);
+        assert!(delete.message.unwrap().contains("can only list"));
+        // Naming a workspace other than its own is refused up front, not
+        // after an approval that could only end in a refusal.
+        let other = refused(json!({ "action": "list", "workspace": "default" })).await;
+        assert!(!other.result);
+        assert!(other
+            .message
+            .unwrap()
+            .contains("reaches only the conversations of the device this task came from"));
+        // Its own workspace is resolved, and checked, when the call runs.
+        let own = refused(json!({ "action": "list" })).await;
+        assert!(!own
+            .message
+            .unwrap_or_default()
+            .contains("device this task came from"));
     }
 
     #[tokio::test]
