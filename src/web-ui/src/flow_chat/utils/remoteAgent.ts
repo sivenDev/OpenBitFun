@@ -41,6 +41,38 @@ export function localAssistantFromAgentType(agentType: string | null | undefined
 }
 
 /**
+ * The type a call in a conversation names. In a conversation with an
+ * assistant another device shares, the conversation runs on that owner's
+ * device, so `assistant:<id>` there is one of the owner's assistants, read
+ * as `shared:<owner>/<id>`.
+ */
+export function calledTypeInConversation(
+  agentType: string | null | undefined,
+  conversationOwnerDeviceId: string | null | undefined,
+): string | undefined {
+  const local = localAssistantFromAgentType(agentType);
+  if (local && conversationOwnerDeviceId) {
+    return `${SHARED_ASSISTANT_TYPE_PREFIX}${conversationOwnerDeviceId}/${local}`;
+  }
+  return agentType ?? undefined;
+}
+
+/** The owner device of `session` when it is a conversation with a shared assistant. */
+export function sharedConversationOwnerDevice(
+  session: Pick<Session, 'config'> | null | undefined,
+): string | null {
+  const target = session?.config?.dispatchTarget;
+  return target?.kind === 'sharedAssistant' ? target.ownerDeviceId : null;
+}
+
+/** The name this device knows the owner device `deviceId` by, if any. */
+function ownerName(deviceId: string, sharedWithMe: readonly SharedWithMe[]): string | null {
+  const entry = sharedWithMe.find(candidate => candidate.owner.deviceId === deviceId);
+  if (!entry) return null;
+  return entry.owner.displayName.trim() || entry.owner.deviceName.trim() || null;
+}
+
+/**
  * The name and owner a shared assistant is listed under on this device, or
  * `null` before the list is read or once the assistant is gone from it.
  */
@@ -93,7 +125,10 @@ export function calledAssistantOwner(
 ): { kind: 'mine' } | { kind: 'shared'; owner: string } | null {
   const remote = remoteAgentFromAgentType(agentType);
   if (remote) {
-    const owner = sharedAssistantNames(remote, sharedWithMe)?.owner;
+    // An owner's assistant it does not share with this device is still
+    // named by its owner.
+    const owner = sharedAssistantNames(remote, sharedWithMe)?.owner
+      || ownerName(remote.deviceId, sharedWithMe);
     return { kind: 'shared', owner: owner || remote.deviceId };
   }
   if (localAssistantFromAgentType(agentType) || session?.delegatedBy) return { kind: 'mine' };

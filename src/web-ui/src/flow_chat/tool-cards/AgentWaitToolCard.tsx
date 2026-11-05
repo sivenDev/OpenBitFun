@@ -5,7 +5,14 @@ import { getActiveSurfaceScope } from '@/infrastructure/peer-device/deviceSurfac
 import { flowChatStore } from '../store/FlowChatStore';
 import { resolveSubagentNameKey, SubagentDelegationAvatar } from '../subagent-identity';
 import { openBtwSessionInAuxPane } from '../services/btwSessionPane';
-import { calledAssistantName, calledAssistantSessionName } from '../utils/remoteAgent';
+import {
+  calledAssistantName,
+  calledAssistantSessionName,
+  calledTypeInConversation,
+  localAssistantFromAgentType,
+  remoteAgentFromAgentType,
+  sharedConversationOwnerDevice,
+} from '../utils/remoteAgent';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import { getToolCardStatus, getToolCardStatusDescription } from './toolCardStatus';
@@ -61,18 +68,26 @@ export const AgentWaitToolCard: React.FC<ToolCardProps> = ({
   );
   const avatarTargets = useMemo(() => JSON.parse(avatarSnapshot) as AgentWaitAvatarTarget[], [avatarSnapshot]);
   const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
+  // In a conversation with a shared assistant, `assistant:<id>` is one of
+  // its owner's assistants.
+  const conversationOwner = sharedConversationOwnerDevice(session);
   // An assistant this session called answers under its own name.
   const avatarNames = avatarTargets.map(target => {
     if (!target.sessionId) return t('toolCards.interaction.unknownAgent');
     const targetSession = flowChatStore.getState().sessions.get(target.sessionId);
     const assistantWorkspaces = workspaceManager.getState().assistantWorkspaces;
+    const calledType = calledTypeInConversation(target.agentType, conversationOwner);
+    const callsAssistant = Boolean(
+      localAssistantFromAgentType(calledType) || remoteAgentFromAgentType(calledType),
+    );
     // The spawn's requested type names the assistant even when its session is not loaded yet.
-    return calledAssistantName(target.agentType, assistantWorkspaces, sharedWithMe)
+    return calledAssistantName(calledType, assistantWorkspaces, sharedWithMe)
       ?? calledAssistantName(
         targetSession?.mode ?? targetSession?.config?.agentType,
         assistantWorkspaces,
         sharedWithMe,
       ) ?? calledAssistantSessionName(targetSession, assistantWorkspaces)
+      ?? (callsAssistant ? t('toolCards.taskTool.unnamedAssistant') : null)
       ?? t(resolveSubagentNameKey(target.sessionId));
   });
   const hatching = !session?.isHistorical

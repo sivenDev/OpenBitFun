@@ -24,6 +24,8 @@ import { recordedBackgroundOutcome } from './agentWaitAvatarTargets';
 import {
   calledAssistantName,
   calledAssistantOwner,
+  calledTypeInConversation,
+  sharedConversationOwnerDevice,
   calledAssistantSessionName,
   latestEffectiveModel,
   reportedSharedModel,
@@ -147,7 +149,16 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const { toolCall, status } = toolItem;
   const toolId = toolItem.id ?? toolCall?.id;
   const params = toolItem.partialParams ?? toolCall?.input;
-  const inputAgentType = readString(params, 'agent_type', 'agentType');
+  // In a conversation with a shared assistant, `assistant:<id>` is one of
+  // its owner's assistants.
+  const conversationOwner = useSyncExternalStore(
+    subscribeToFlowChatStore,
+    () => sharedConversationOwnerDevice(sessionId ? flowChatStore.getState().sessions.get(sessionId) : null),
+  );
+  const inputAgentType = calledTypeInConversation(
+    readString(params, 'agent_type', 'agentType'),
+    conversationOwner,
+  );
   const readLinkedSession = useCallback(() => {
     const { sessions } = flowChatStore.getState();
     return resolveInteractionAgentSessionId(toolItem, sessionId ? sessions.get(sessionId) : undefined,
@@ -205,6 +216,7 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
     ? t('toolCards.taskTool.assistantOwnerShared', { owner: assistantOwner.owner })
     : assistantOwner ? t('toolCards.taskTool.assistantOwnerMine') : null;
   const agentDisplayName = assistantName
+    ?? (callsAssistant ? t('toolCards.taskTool.unnamedAssistant') : null)
     ?? (linkedSubagentSessionId
       ? t(resolveSubagentNameKey(linkedSubagentSessionId)) : t('toolCards.interaction.unknownAgent'));
   // A called assistant runs on the model its session actually used; before it

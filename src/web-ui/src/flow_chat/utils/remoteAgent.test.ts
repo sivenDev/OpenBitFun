@@ -8,7 +8,9 @@ import {
   calledAssistantName,
   calledAssistantOwner,
   calledAssistantSessionName,
+  calledTypeInConversation,
   localAssistantFromAgentType,
+  sharedConversationOwnerDevice,
   localAssistantName,
   remoteAgentFromAgentType,
   sharedAssistantNames,
@@ -55,6 +57,34 @@ describe('assistant names', () => {
       .toEqual({ name: 'Writer', owner: 'Ann' });
     expect(sharedAssistantNames({ deviceId: 'laptop', assistantId: 'gone' }, list)).toBeNull();
     expect(sharedAssistantNames({ deviceId: 'laptop', assistantId: 'helper' }, [])).toBeNull();
+  });
+
+  it('reads a call in a shared assistant\'s conversation as one to its owner\'s assistant', () => {
+    expect(calledTypeInConversation('assistant:workspace-notes', 'laptop'))
+      .toBe('shared:laptop/workspace-notes');
+    expect(calledTypeInConversation('assistant:workspace-notes', null)).toBe('assistant:workspace-notes');
+    expect(calledTypeInConversation('shared:desk/helper', 'laptop')).toBe('shared:desk/helper');
+    expect(calledTypeInConversation('Explore', 'laptop')).toBe('Explore');
+
+    // The owner shares only `helper`; its other assistant is still its own,
+    // named by the owner, without a name of its own on this device.
+    const list = [shared('laptop', 'helper', 'Writer')];
+    const called = calledTypeInConversation('assistant:workspace-notes', 'laptop');
+    expect(calledAssistantOwner(called, undefined, list)).toEqual({ kind: 'shared', owner: 'Ann' });
+    expect(calledAssistantName(called, [], list)).toBeNull();
+  });
+
+  it('finds the owner device of a conversation with a shared assistant only', () => {
+    expect(sharedConversationOwnerDevice({
+      config: {
+        dispatchTarget: {
+          kind: 'sharedAssistant', ownerDeviceId: 'laptop', assistantId: 'helper', displayName: 'Writer',
+        },
+      },
+    } as never)).toBe('laptop');
+    expect(sharedConversationOwnerDevice({ config: { dispatchTarget: { kind: 'local' } } } as never)).toBeNull();
+    expect(sharedConversationOwnerDevice({ config: {} } as never)).toBeNull();
+    expect(sharedConversationOwnerDevice(undefined)).toBeNull();
   });
 
   it('finds a local assistant by its folder, never a remote workspace', () => {

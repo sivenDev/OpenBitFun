@@ -2556,7 +2556,8 @@
       "assistantModelDefault": "應用程式預設模型",
       "assistantModelPrimary": "{{name}}（主力模型）",
       "assistantOwnerMine": "我的助理",
-      "assistantOwnerShared": "來自 {{owner}} 的裝置"
+      "assistantOwnerShared": "來自 {{owner}} 的裝置",
+      "unnamedAssistant": "另一個助理"
     },
     "taskDetailPanel": {
       "untitled": "未命名任務",

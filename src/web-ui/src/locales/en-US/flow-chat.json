@@ -2556,7 +2556,8 @@
       "assistantModelDefault": "App default model",
       "assistantModelPrimary": "{{name}} (primary model)",
       "assistantOwnerMine": "My assistant",
-      "assistantOwnerShared": "From {{owner}}'s device"
+      "assistantOwnerShared": "From {{owner}}'s device",
+      "unnamedAssistant": "Another assistant"
     },
     "taskDetailPanel": {
       "untitled": "Untitled Task",
