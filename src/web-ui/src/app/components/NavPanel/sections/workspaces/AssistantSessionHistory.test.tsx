@@ -90,16 +90,14 @@ describe('assistant history default selection', () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
-  it('heads its own sessions only once other devices\' tasks follow them, and hands those tasks to the list', async () => {
-    await render();
-    expect(container.querySelector('[data-testid="nav-assistant-own-sessions-label"]')).toBeNull();
+  it('lists its own sessions without a heading, and hands other devices\' tasks to the list', async () => {
     mocks.tasks.mockReturnValue([{
       jobId: 'a', sessionId: 's-a', state: 'running', title: 'Task a', assistantId: 'assistant',
       agentType: 'assistant:assistant', pendingPermissionCount: 1,
       source: { deviceId: '0123', fingerprint: 'AB23CD', displayName: 'Ann', deviceName: 'Laptop' },
     }]);
     await render();
-    expect(container.querySelector('[data-testid="nav-assistant-own-sessions-label"]')?.textContent).toBe('nav.sessions.delegated.mine');
+    expect(container.textContent).not.toContain('nav.sessions.delegated.mine');
     // The list shows what the history read rather than reading again.
     expect(container.querySelector('[data-testid="nav-delegated-task"]')?.textContent).toContain('Task a');
     expect(mocks.tasks).toHaveBeenCalledWith(workspace);
