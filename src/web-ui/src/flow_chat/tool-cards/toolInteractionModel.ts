@@ -41,6 +41,31 @@ export function readInteractionInput(item: FlowToolItem): Record<string, unknown
     : Object.keys(input).length ? input : params;
 }
 
+/**
+ * The agent type the call that started `childSessionId` in `parent` asked
+ * for, or '' when no recorded call started it.
+ */
+export function spawnedAgentType(
+  childSessionId: string,
+  parent?: Pick<Session, 'dialogTurns'>,
+  context?: ToolSessionContext,
+): string {
+  if (!childSessionId || !parent) return '';
+  for (const turn of parent.dialogTurns ?? []) {
+    for (const round of turn.modelRounds) {
+      for (const candidate of round.items) {
+        if (candidate.type !== 'tool') continue;
+        const effective = projectEffectiveToolItem(candidate);
+        if (!['Task', 'AgentSpawn'].includes(effective.toolName)) continue;
+        if (resolveInteractionAgentSessionId(effective, parent, context) !== childSessionId) continue;
+        const input = readInteractionInput(effective);
+        return toolString(input.agent_type ?? input.agentType) || toolString(input.subagent_type);
+      }
+    }
+  }
+  return '';
+}
+
 /** Agent IDs are not session IDs. Only follow explicit links from recorded calls. */
 export function resolveInteractionAgentSessionId(
   item: FlowToolItem,

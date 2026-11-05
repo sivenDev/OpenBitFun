@@ -92,6 +92,7 @@ const RAW_EVENT_NAMES: Record<string, string> = {
   ContextCompressionFailed: 'agentic://context-compression-failed',
   ThreadGoalUpdated: 'agentic://thread-goal-updated',
   DeepReviewQueueStateChanged: 'agentic://deep-review-queue-state-changed',
+  RemoteCallHoldChanged: 'agentic://remote-call-hold-changed',
   // Upgrade-only raw variant alias from pre-removal targets.
   SessionModelAutoMigrated: 'agentic://session-model-fallback-applied',
   SessionModelFallbackApplied: 'agentic://session-model-fallback-applied',

@@ -8,15 +8,15 @@
 //! session. The job's permission prompts are answered by the device's owner
 //! on that device; this session only says it is waiting.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{debug, warn};
+use openbitfun_events::{RemoteCallHold, RemoteCallHoldReason};
 use openbitfun_runtime_ports::{
-    ExternalAgentTurnEvent, PermissionRequest, PortErrorKind, RemoteAgentAddress,
-    RemoteAgentDelegationPort, RemoteAgentJob, RemoteAgentJobHold, RemoteAgentJobSnapshot,
-    RemoteAgentJobState, RemoteAgentSource, RemoteAgentSubmitRequest,
+    ExternalAgentTurnEvent, PortErrorKind, RemoteAgentAddress, RemoteAgentDelegationPort,
+    RemoteAgentJob, RemoteAgentJobHold, RemoteAgentJobSnapshot, RemoteAgentJobState,
+    RemoteAgentSource, RemoteAgentSubmitRequest,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -149,16 +149,17 @@ pub(crate) async fn run_remote_agent_turn(
         holds: HoldTracker::new(
             turn.coordination_store.clone(),
             &turn.session_id,
-            job_device_name.clone(),
+            job_device_name,
         ),
         // Rounds name no model until the owner's device reports one; its
         // device id is not a model.
         stream: ChildSessionStream::new(&turn.session_id, &turn.dialog_turn_id, &agent_type, ""),
         event_queue: turn.event_queue.clone(),
-        owner_wait: OwnerWait::new(job_device_name),
     };
     let (end, cursor) = observe_job(&port, &link, &turn.cancel_token, &mut sink).await;
-    sink.holds.finish();
+    if let Some(cleared) = sink.holds.finish() {
+        sink.enqueue([cleared]).await;
+    }
     if let Some(closed) = sink.stream.close_round() {
         let _ = turn
             .event_queue
@@ -254,7 +255,6 @@ pub(crate) struct ResumedTaskSink {
     cancel: CancellationToken,
     stream: ChildSessionStream,
     event_queue: Arc<EventQueue>,
-    owner_wait: OwnerWait,
 }
 
 /// The adopted task a [`ResumedTaskSink`] observes.
@@ -276,25 +276,35 @@ impl ResumedTaskSink {
     ) -> Self {
         let job_device_name = device_name(port, &link.job.device_id).await;
         Self {
-            holds: HoldTracker::new(task.store.clone(), task.session_id, job_device_name.clone()),
+            holds: HoldTracker::new(task.store.clone(), task.session_id, job_device_name),
             store: task.store,
             task_pk: task.task_pk,
             stream: ChildSessionStream::new(task.session_id, task.turn_id, task.agent_type, ""),
             event_queue: task.event_queue,
             cancel,
-            owner_wait: OwnerWait::new(job_device_name),
         }
     }
 
     /// Clears what the task waited for once observation ends.
     pub(crate) async fn finish(mut self) {
-        self.holds.finish();
+        if let Some(cleared) = self.holds.finish() {
+            self.enqueue(cleared).await;
+        }
         if let Some(closed) = self.stream.close_round() {
             let _ = self
                 .event_queue
                 .enqueue(closed, Some(EventPriority::Normal))
                 .await;
         }
+    }
+}
+
+impl ResumedTaskSink {
+    async fn enqueue(&self, event: AgenticEvent) {
+        let _ = self
+            .event_queue
+            .enqueue(event, Some(EventPriority::Normal))
+            .await;
     }
 }
 
@@ -311,25 +321,14 @@ impl JobPageSink for ResumedTaskSink {
             }
         };
         if !still_running {
-            self.holds.finish();
+            if let Some(cleared) = self.holds.finish() {
+                self.enqueue(cleared).await;
+            }
             self.cancel.cancel();
             return;
         }
-        if let Some(note) = self.holds.observe(snapshot) {
-            for event in self.stream.project(note) {
-                let _ = self
-                    .event_queue
-                    .enqueue(event, Some(EventPriority::Normal))
-                    .await;
-            }
-        }
-        if let Some(note) = self.owner_wait.note(&snapshot.pending_permissions) {
-            for event in self.stream.project(note) {
-                let _ = self
-                    .event_queue
-                    .enqueue(event, Some(EventPriority::Normal))
-                    .await;
-            }
+        if let Some(changed) = self.holds.observe(snapshot) {
+            self.enqueue(changed).await;
         }
     }
 }
@@ -427,7 +426,6 @@ struct LiveSink {
     holds: HoldTracker,
     stream: ChildSessionStream,
     event_queue: Arc<EventQueue>,
-    owner_wait: OwnerWait,
 }
 
 impl LiveSink {
@@ -457,13 +455,8 @@ impl JobPageSink for LiveSink {
             .flat_map(|event| self.stream.project(event))
             .collect();
         self.enqueue(projected).await;
-        if let Some(note) = self.holds.observe(snapshot) {
-            let projected = self.stream.project(note);
-            self.enqueue(projected).await;
-        }
-        if let Some(note) = self.owner_wait.note(&snapshot.pending_permissions) {
-            let projected = self.stream.project(note);
-            self.enqueue(projected).await;
+        if let Some(changed) = self.holds.observe(snapshot) {
+            self.enqueue([changed]).await;
         }
     }
 }
@@ -556,46 +549,6 @@ impl FinalText {
     }
 }
 
-/// Notes, once per prompt, that the job waits for the owner of its device.
-/// The owner answers on that device, so nothing is filed here.
-struct OwnerWait {
-    device_name: String,
-    /// Target request ids the child session already said it waits for.
-    noted: HashSet<String>,
-}
-
-impl OwnerWait {
-    fn new(device_name: String) -> Self {
-        Self {
-            device_name,
-            noted: HashSet::new(),
-        }
-    }
-
-    /// A note when the device asks its owner something new.
-    fn note(&mut self, pending: &[PermissionRequest]) -> Option<ExternalAgentTurnEvent> {
-        let mut new_request = false;
-        for request in pending {
-            new_request |= self.noted.insert(request.request_id.clone());
-        }
-        new_request.then(|| ExternalAgentTurnEvent::Thought {
-            text: owner_approval_note(&self.device_name),
-        })
-    }
-}
-
-/// Shown in the child session while the device's owner decides.
-pub(crate) fn owner_approval_note(device_name: &str) -> String {
-    format!("Waiting for the owner of {device_name} to approve an action on their device.")
-}
-
-/// Shown in the child session when the job starts to wait on its device.
-pub(crate) fn queued_note(device_name: &str) -> String {
-    format!(
-        "Queued on {device_name} until a task that its owner allows to run at the same time finishes."
-    )
-}
-
 /// What the parent hears while a job waits for the owner of its device: the
 /// reason and what unblocks it.
 fn owner_blocked_reason(device_name: &str) -> String {
@@ -617,13 +570,13 @@ fn queued_reason(device_name: &str, hold: &RemoteAgentJobHold) -> String {
     }
 }
 
-/// Keeps the parent informed of why a job makes no progress on its device:
-/// queued there, or waiting for the device's owner.
+/// Keeps the parent and the caller's view informed of why a job makes no
+/// progress on its device: queued there, or waiting for the device's owner.
 struct HoldTracker {
     store: Arc<CoordinationStore>,
     session_id: String,
     device_name: String,
-    queued: bool,
+    current: Option<RemoteCallHold>,
 }
 
 impl HoldTracker {
@@ -632,37 +585,59 @@ impl HoldTracker {
             store,
             session_id: session_id.to_string(),
             device_name,
-            queued: false,
+            current: None,
         }
     }
 
-    /// Records the hold this page shows, and returns a note for the child
-    /// session when the job starts to queue.
-    fn observe(&mut self, snapshot: &RemoteAgentJobSnapshot) -> Option<ExternalAgentTurnEvent> {
+    /// Records the hold this page shows for the parent, and returns the
+    /// event that tells the caller's view when it changes.
+    fn observe(&mut self, snapshot: &RemoteAgentJobSnapshot) -> Option<AgenticEvent> {
         let holds = self.store.remote_holds();
-        if let Some(hold) = snapshot
-            .hold
-            .as_ref()
-            .filter(|_| !snapshot.state.is_terminal())
-        {
+        let hold = if snapshot.state.is_terminal() {
+            None
+        } else if let Some(hold) = snapshot.hold.as_ref() {
             holds.set(&self.session_id, queued_reason(&self.device_name, hold));
-            let started = !self.queued;
-            self.queued = true;
-            return started.then(|| ExternalAgentTurnEvent::Thought {
-                text: queued_note(&self.device_name),
-            });
-        }
-        self.queued = false;
-        if !snapshot.state.is_terminal() && !snapshot.pending_permissions.is_empty() {
+            Some(RemoteCallHold {
+                reason: match hold.reason {
+                    openbitfun_runtime_ports::RemoteAgentHoldReason::ShareLimit => {
+                        RemoteCallHoldReason::ShareLimit
+                    }
+                },
+                device_name: self.device_name.clone(),
+                limit: hold.limit,
+            })
+        } else if !snapshot.pending_permissions.is_empty() {
             holds.set(&self.session_id, owner_blocked_reason(&self.device_name));
+            Some(RemoteCallHold {
+                reason: RemoteCallHoldReason::OwnerApproval,
+                device_name: self.device_name.clone(),
+                limit: None,
+            })
         } else {
+            None
+        };
+        if hold.is_none() {
             holds.clear(&self.session_id);
         }
-        None
+        self.change_to(hold)
     }
 
-    fn finish(&self) {
+    /// Clears the hold once observation ends, returning the event that says
+    /// so when one was shown.
+    fn finish(&mut self) -> Option<AgenticEvent> {
         self.store.remote_holds().clear(&self.session_id);
+        self.change_to(None)
+    }
+
+    fn change_to(&mut self, hold: Option<RemoteCallHold>) -> Option<AgenticEvent> {
+        if self.current == hold {
+            return None;
+        }
+        self.current = hold.clone();
+        Some(AgenticEvent::RemoteCallHoldChanged {
+            session_id: self.session_id.clone(),
+            hold,
+        })
     }
 }
 

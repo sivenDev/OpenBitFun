@@ -43,6 +43,7 @@ import { absoluteSessionTurnIndexForId } from '../../utils/flowChatTurnOrdinal';
 import { normalizeSessionContinuationPolicy } from '../../utils/sessionMetadata';
 import type {
   DeepReviewQueueStateChangedEvent,
+  RemoteCallHoldChangedEvent,
   ImageAnalysisEvent,
   ModelRoundStartedEvent,
   ModelRoundCompletedEvent,
@@ -332,6 +333,10 @@ function isRecoveringIdleTurn(
     latestTurn.id === turnId &&
     RECOVERABLE_IDLE_TURN_STATUSES.has(latestTurn.status)
   );
+}
+
+function handleRemoteCallHoldChanged(event: RemoteCallHoldChangedEvent): void {
+  FlowChatStore.getInstance().setSessionRemoteCallHold(event.sessionId, event.hold ?? undefined);
 }
 
 function handleDeepReviewQueueStateChanged(event: DeepReviewQueueStateChangedEvent): void {
@@ -963,6 +968,9 @@ export async function initializeEventListeners(
     },
     onDeepReviewQueueStateChanged: (event) => {
       handleDeepReviewQueueStateChanged(event);
+    },
+    onRemoteCallHoldChanged: (event) => {
+      handleRemoteCallHoldChanged(event);
     },
     onModelRoundStarted: afterRelayRecords((event) => {
       handleModelRoundStart(context, event);

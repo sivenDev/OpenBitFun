@@ -8,6 +8,8 @@ import {
   resolveSubagentNameKey,
 } from '../subagent-identity';
 import { AgentControlToolCard } from './AgentControlToolCard';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import flowChatEn from '../../locales/en-US/flow-chat.json';
 import flowChatZh from '../../locales/zh-CN/flow-chat.json';
 
@@ -19,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   modelName: 'Test model',
   childTurnStatus: 'processing' as DialogTurn['status'],
   needsUserAttention: false,
+  remoteCallHold: undefined as undefined | { reason: 'ownerApproval' | 'shareLimit'; deviceName: string; limit?: number },
   childSubagentType: 'SwarmWorker',
   parentTurns: [] as unknown[],
   plannedModel: null as null | { model: { model_name: string } | null; source: string; chosenId: string | null },
@@ -43,6 +46,7 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
       if (key === 'flowChatHeader.agentTreeStatus.running') return 'Running';
       if (key === 'flowChatHeader.agentTreeStatus.completed') return 'Completed';
       if (key === 'toolCards.taskTool.defaultAgentKind') return 'Agent';
+      if (key.startsWith('toolCards.taskTool.remoteHold')) return `${key.split('.').at(-1)}:${options?.device}`;
       if (typeof options?.defaultValue === 'string') return options.defaultValue;
       return key;
     },
@@ -86,6 +90,7 @@ vi.mock('../store/FlowChatStore', () => ({
           createdAt: 1000,
           status: 'active',
           needsUserAttention: mocks.needsUserAttention,
+          remoteCallHold: mocks.remoteCallHold,
           config: { agentType: 'SwarmWorker', modelName: mocks.modelName },
           dialogTurns: [{
             id: 'child-turn',
@@ -191,6 +196,7 @@ describeWithJsdom('AgentControlToolCard', () => {
     mocks.childTurnStatus = 'processing';
     mocks.childSubagentType = 'SwarmWorker';
     mocks.needsUserAttention = false;
+    mocks.remoteCallHold = undefined;
     mocks.parentTurns = [];
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -282,6 +288,34 @@ describeWithJsdom('AgentControlToolCard', () => {
     expect(container.querySelector('[data-openbitfun-part="agentStatus"]')).toBeNull();
   });
 
+  it('says what a call to another device waits for there while it runs', async () => {
+    await act(async () => root.render(
+      <AgentControlToolCard toolItem={agentToolItem('AgentSpawn')} config={config} sessionId="parent-session" />,
+    ));
+    const status = () => container.querySelector('[data-openbitfun-part="agentStatus"]');
+    const publish = () => act(() => { mocks.listeners.forEach(listener => listener()); });
+
+    mocks.remoteCallHold = { reason: 'ownerApproval', deviceName: 'Studio' };
+    publish();
+    expect(status()?.getAttribute('data-status')).toBe('running');
+    expect(status()?.textContent).toContain('remoteHoldOwnerApproval:Studio');
+
+    mocks.remoteCallHold = { reason: 'shareLimit', deviceName: 'Studio', limit: 1 };
+    publish();
+    expect(status()?.textContent).toContain('remoteHoldShareLimit:Studio');
+
+    mocks.remoteCallHold = undefined;
+    publish();
+    expect(status()?.getAttribute('data-status')).toBe('running');
+    expect(status()?.textContent).toContain('Running');
+
+    // A call that already ended reads as ended, whatever was last held.
+    mocks.remoteCallHold = { reason: 'ownerApproval', deviceName: 'Studio' };
+    mocks.childTurnStatus = 'completed';
+    publish();
+    expect(status()).toBeNull();
+  });
+
   it('can open a historical child before its session is hydrated', async () => {
     mocks.includeChildSession = false;
     await act(async () => root.render(
@@ -357,6 +391,27 @@ describeWithJsdom('AgentControlToolCard', () => {
     expect(card.querySelector('[aria-expanded]')).toBeNull();
     await act(async () => card.querySelector<HTMLButtonElement>('[data-openbitfun-part="result"]')!.click());
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Continue with the parser fix');
+  });
+
+  it('names a message to a called shared assistant by the assistant, not a nickname', async () => {
+    const spawn = agentToolItem('AgentSpawn');
+    spawn.toolCall!.input = { ...spawn.toolCall!.input, agent_type: 'shared:device-1/workspace' };
+    mocks.parentTurns = [{ id: 'parent-turn', modelRounds: [{ id: 'round', items: [spawn] }] }];
+    useLanShareStore.setState({ sharedWithMe: [{
+      owner: { deviceId: 'device-1', deviceName: 'Mac', displayName: 'agent' },
+      assistantId: 'workspace', name: 'Helper', grantedAt: '', state: 'available', online: true,
+    } as SharedWithMe] });
+    const send = agentToolItem('AgentSendInput');
+    send.toolCall!.input = { agent_id: 'worker', prompt: 'One more line' };
+    try {
+      await act(async () => root.render(
+        <AgentControlToolCard toolItem={send} config={config} sessionId="parent-session" />,
+      ));
+      const target = container.querySelector('[data-openbitfun-part="target"] [data-overflow-content]');
+      expect(target?.textContent).toBe('Helper');
+    } finally {
+      useLanShareStore.setState({ sharedWithMe: [] });
+    }
   });
 
   it('keeps rejected and failed sends visible instead of substituting the child lifecycle', async () => {

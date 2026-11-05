@@ -132,6 +132,8 @@ function readLinkedAgentSnapshot(sessionId: string): string {
     session?.config?.agentType ?? '',
     session?.config?.modelName ?? '',
     session?.needsUserAttention ?? false,
+    session?.remoteCallHold?.reason ?? '',
+    session?.remoteCallHold?.deviceName ?? '',
     session?.status ?? '',
     session?.persistedStatus ?? '',
     session?.hasUnreadCompletion ?? '',
@@ -195,6 +197,9 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const lifecycle = linkedSession
     ? sessionLineageLifecycleForSession(linkedSession)
     : lifecycleForOutcome(recordedOutcome) ?? fallbackLifecycle(status);
+  // A call to another device's assistant keeps running while it waits there
+  // for that device's owner; its status says for what.
+  const remoteHold = lifecycle === 'running' ? linkedSession?.remoteCallHold : undefined;
   const stableAgentType = linkedSession?.mode?.trim()
     || linkedSession?.config?.agentType?.trim()
     || inputAgentType;
@@ -330,8 +335,12 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
             description: t('subagentIdentity.preview.description'),
           },
         }}
-        statusLabel={lifecycle === 'completed' ? undefined
-          : t(`flowChatHeader.agentTreeStatus.${lifecycle === 'finishing' ? 'running' : lifecycle}`)}
+        statusLabel={remoteHold
+          ? t(remoteHold.reason === 'shareLimit'
+            ? 'toolCards.taskTool.remoteHoldShareLimit'
+            : 'toolCards.taskTool.remoteHoldOwnerApproval', { device: remoteHold.deviceName })
+          : lifecycle === 'completed' ? undefined
+            : t(`flowChatHeader.agentTreeStatus.${lifecycle === 'finishing' ? 'running' : lifecycle}`)}
         statusTone={statusTone}
         onOpenAgent={canOpenSession ? handleOpenSession : undefined}
         openAgentLabel={t('toolCards.taskTool.openInPanel')}

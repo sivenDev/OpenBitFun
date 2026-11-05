@@ -23,6 +23,7 @@ import type {
   ModelRoundAttemptSupersededEvent,
   UserSteeringInjectedEvent,
   DeepReviewQueueStateChangedEvent,
+  RemoteCallHoldChangedEvent,
   AcpContextUsageUpdatedEvent,
   OpenBuiltInBrowserEvent,
   InterruptedDialogTurnEvent,
@@ -67,6 +68,7 @@ export interface AgenticEventCallbacks {
   onToolEvent?: (event: ToolEvent) => void;
   onSubagentSessionLinked?: (event: SubagentSessionLinkedEvent) => void;
   onDeepReviewQueueStateChanged?: (event: DeepReviewQueueStateChangedEvent) => void;
+  onRemoteCallHoldChanged?: (event: RemoteCallHoldChangedEvent) => void;
   onDialogTurnCompleted?: (event: AgenticEvent) => void;
   onDialogTurnFailed?: (event: AgenticEvent) => void;
   onDialogTurnCancelled?: (event: AgenticEvent) => void;
@@ -211,6 +213,14 @@ export class AgenticEventListener {
         const unlisten = agentAPI.onDeepReviewQueueStateChanged((event) => {
           logger.debug('Deep Review queue state changed:', event);
           callbacks.onDeepReviewQueueStateChanged?.(event);
+        });
+        this.unlistenFunctions.push(unlisten);
+      }
+
+      if (callbacks.onRemoteCallHoldChanged) {
+        const unlisten = agentAPI.onRemoteCallHoldChanged((event) => {
+          logger.debug('Remote call hold changed:', event);
+          callbacks.onRemoteCallHoldChanged?.(event);
         });
         this.unlistenFunctions.push(unlisten);
       }
@@ -423,6 +433,9 @@ export class AgenticEventListener {
         callbacks.onDeepReviewQueueStateChanged?.(
           payload as unknown as DeepReviewQueueStateChangedEvent,
         );
+        break;
+      case 'agentic://remote-call-hold-changed':
+        callbacks.onRemoteCallHoldChanged?.(payload as unknown as RemoteCallHoldChangedEvent);
         break;
       case 'agentic://dialog-turn-completed':
         callbacks.onDialogTurnCompleted?.(payload as AgenticEvent);

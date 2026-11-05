@@ -743,6 +743,20 @@ export interface DeepReviewQueueStateChangedEvent extends AgenticEvent {
   queueState: DeepReviewQueueStateEventData;
 }
 
+/** What a call to an assistant on another device waits for on that device. */
+export interface RemoteCallHold {
+  reason: 'ownerApproval' | 'shareLimit';
+  /** The device the call runs on, as this device names it. */
+  deviceName: string;
+  /** For a share limit, how many tasks the owner allows at once. */
+  limit?: number | null;
+}
+
+/** `hold` is null once the call no longer waits on its device. */
+export interface RemoteCallHoldChangedEvent extends AgenticEvent {
+  hold?: RemoteCallHold | null;
+}
+
 export type DeepReviewQueueControlAction =
   | 'pause'
   | 'continue'
@@ -1503,6 +1517,15 @@ export class AgentAPI {
   ): () => void {
     return api.listen<DeepReviewQueueStateChangedEvent>(
       'agentic://deep-review-queue-state-changed',
+      callback
+    );
+  }
+
+  onRemoteCallHoldChanged(
+    callback: (event: RemoteCallHoldChangedEvent) => void
+  ): () => void {
+    return api.listen<RemoteCallHoldChangedEvent>(
+      'agentic://remote-call-hold-changed',
       callback
     );
   }

@@ -2532,6 +2532,8 @@
       "remoteAgentLabel": "{{agent}}（共享的助理）",
       "remoteAgentFromLabel": "{{agent}}（来自 {{owner}} 的设备）",
       "remoteAgentModel": "由共享该助理的设备选择",
+      "remoteHoldOwnerApproval": "等待 {{device}} 审批",
+      "remoteHoldShareLimit": "在 {{device}} 排队中",
       "cancelSession": "取消会话：{{sessionId}}",
       "waitingConfirm": "等待确认",
       "executing": "执行中...",

@@ -1,7 +1,7 @@
 use super::*;
 use openbitfun_runtime_ports::{
-    PermissionReply, PermissionRequestSource, PermissionRequestSourceKind, PortError, PortResult,
-    RemoteAgentDescriptor, RemoteAgentListing,
+    PermissionReply, PermissionRequest, PermissionRequestSource, PermissionRequestSourceKind,
+    PortError, PortResult, RemoteAgentDescriptor, RemoteAgentListing,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -298,21 +298,6 @@ fn target_prompt(request_id: &str) -> PermissionRequest {
     }
 }
 
-#[test]
-fn prompts_wait_for_the_owner_and_are_noted_once() {
-    let mut wait = OwnerWait::new("B1 Desktop".to_string());
-    let note = wait.note(&[target_prompt("target-1")]);
-    assert!(
-        matches!(&note, Some(ExternalAgentTurnEvent::Thought { text }) if *text == owner_approval_note("B1 Desktop")),
-        "{note:?}"
-    );
-    // The same prompt is noted once; a new one is noted again.
-    assert!(wait.note(&[target_prompt("target-1")]).is_none());
-    assert!(wait
-        .note(&[target_prompt("target-1"), target_prompt("target-2")])
-        .is_some());
-}
-
 #[tokio::test]
 async fn a_task_resumed_after_restart_waits_for_the_owner_without_answering() {
     let root = tempfile::tempdir().expect("temp dir");
@@ -365,6 +350,17 @@ async fn a_task_resumed_after_restart_waits_for_the_owner_without_answering() {
     assert_eq!(store.remote_holds().note("child"), None);
 }
 
+fn hold_of(event: Option<AgenticEvent>) -> Option<Option<RemoteCallHold>> {
+    match event {
+        Some(AgenticEvent::RemoteCallHoldChanged { session_id, hold }) => {
+            assert_eq!(session_id, "child");
+            Some(hold)
+        }
+        None => None,
+        Some(other) => panic!("unexpected event: {other:?}"),
+    }
+}
+
 #[test]
 fn the_parent_hears_why_a_job_waits_on_its_device() {
     let root = tempfile::tempdir().expect("temp dir");
@@ -373,35 +369,54 @@ fn the_parent_hears_why_a_job_waits_on_its_device() {
     ));
     let mut holds = HoldTracker::new(store.clone(), "child", "B1".to_string());
 
-    // Queued on the device: the child session says so once, the parent
+    // Queued on the device: the caller's view hears it once, the parent
     // learns the limit and that it starts on its own.
     let mut queued = page(RemoteAgentJobState::Queued, 0, Vec::new());
     queued.hold = Some(RemoteAgentJobHold {
         reason: openbitfun_runtime_ports::RemoteAgentHoldReason::ShareLimit,
         limit: Some(1),
     });
-    let note = holds.observe(&queued);
-    assert!(
-        matches!(&note, Some(ExternalAgentTurnEvent::Thought { text }) if *text == queued_note("B1")),
-        "{note:?}"
+    assert_eq!(
+        hold_of(holds.observe(&queued)),
+        Some(Some(RemoteCallHold {
+            reason: RemoteCallHoldReason::ShareLimit,
+            device_name: "B1".to_string(),
+            limit: Some(1),
+        }))
     );
-    assert!(holds.observe(&queued).is_none());
+    assert_eq!(hold_of(holds.observe(&queued)), None);
     let reason = store.remote_holds().note("child").expect("queued hold");
     assert!(reason.contains("1 task(s) at a time"), "{reason}");
     assert!(reason.contains("Unblock:"), "{reason}");
 
-    // Running and asking the device's owner: the parent learns who must act.
+    // Running and asking the device's owner: the parent learns who must act,
+    // and the caller's view says so once however many prompts follow.
     let mut asking = page(RemoteAgentJobState::Running, 1, Vec::new());
     asking.pending_permissions = vec![target_prompt("target-1")];
-    assert!(holds.observe(&asking).is_none());
+    assert_eq!(
+        hold_of(holds.observe(&asking)),
+        Some(Some(RemoteCallHold {
+            reason: RemoteCallHoldReason::OwnerApproval,
+            device_name: "B1".to_string(),
+            limit: None,
+        }))
+    );
+    asking.pending_permissions = vec![target_prompt("target-1"), target_prompt("target-2")];
+    assert_eq!(hold_of(holds.observe(&asking)), None);
     let reason = store.remote_holds().note("child").expect("owner hold");
     assert!(reason.contains("Unblock: the owner of B1"), "{reason}");
 
     // Answered: nothing holds it any more.
-    holds.observe(&page(RemoteAgentJobState::Running, 2, Vec::new()));
+    assert_eq!(
+        hold_of(holds.observe(&page(RemoteAgentJobState::Running, 2, Vec::new()))),
+        Some(None)
+    );
     assert_eq!(store.remote_holds().note("child"), None);
 
+    // Observation that ends while held clears it; one that ends free says
+    // nothing more.
     holds.observe(&queued);
-    holds.finish();
+    assert_eq!(hold_of(holds.finish()), Some(None));
     assert_eq!(store.remote_holds().note("child"), None);
+    assert_eq!(hold_of(holds.finish()), None);
 }

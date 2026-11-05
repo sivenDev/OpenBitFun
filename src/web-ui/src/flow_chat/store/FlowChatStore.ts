@@ -80,6 +80,7 @@ import {
   agentAPI,
   type LoadSessionTurnWindowResponse,
   type PendingUserQuestionSnapshot,
+  type RemoteCallHold,
   type SessionRuntimeEventSnapshot,
   type SessionInfo as AgentSessionInfo,
   type SessionViewRestoreTiming,
@@ -7549,6 +7550,17 @@ export class FlowChatStore {
       return { ...prev, sessions: newSessions };
     });
     this.onPersistUnreadCompletion?.(sessionId, undefined);
+  }
+
+  public setSessionRemoteCallHold(sessionId: string, hold: RemoteCallHold | undefined): void {
+    this.setState(prev => {
+      const session = prev.sessions.get(sessionId);
+      if (!session || (!session.remoteCallHold && !hold)) return prev;
+
+      const newSessions = new Map(prev.sessions);
+      newSessions.set(sessionId, { ...session, remoteCallHold: hold });
+      return { ...prev, sessions: newSessions };
+    });
   }
 
   public clearSessionNeedsAttention(sessionId: string): void {

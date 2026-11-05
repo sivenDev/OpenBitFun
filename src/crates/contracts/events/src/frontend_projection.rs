@@ -484,6 +484,19 @@ pub fn project_agentic_frontend_event(event: AgenticEvent) -> Option<AgenticFron
                 "reason": reason,
             }),
         )),
+        AgenticEvent::RemoteCallHoldChanged { session_id, hold } => {
+            Some(AgenticFrontendEvent::new(
+                "agentic://remote-call-hold-changed",
+                json!({
+                    "sessionId": session_id,
+                    "hold": hold.map(|hold| json!({
+                        "reason": hold.reason,
+                        "deviceName": hold.device_name,
+                        "limit": hold.limit,
+                    })),
+                }),
+            ))
+        }
         AgenticEvent::DeepReviewQueueStateChanged {
             session_id,
             turn_id,
@@ -586,7 +599,7 @@ mod tests {
     use super::*;
     use crate::{
         DeepReviewQueueReason, DeepReviewQueueState, DeepReviewQueueStatus,
-        ModelRoundAttemptDiagnostic, SessionWorkspaceFacts,
+        ModelRoundAttemptDiagnostic, RemoteCallHold, RemoteCallHoldReason, SessionWorkspaceFacts,
     };
     use openbitfun_core_types::{
         ReasoningContentKind, SessionExecutionTarget, SessionExecutionTargetKind, WorktreeLifecycle,
@@ -937,6 +950,31 @@ mod tests {
             projected.payload["diagnostic"]["rawError"],
             "Provider rejected the payload"
         );
+    }
+
+    #[test]
+    fn remote_call_hold_projection_names_reason_and_device() {
+        let held = project_agentic_frontend_event(AgenticEvent::RemoteCallHoldChanged {
+            session_id: "session-1".to_string(),
+            hold: Some(RemoteCallHold {
+                reason: RemoteCallHoldReason::ShareLimit,
+                device_name: "Studio".to_string(),
+                limit: Some(2),
+            }),
+        })
+        .expect("projected");
+        assert_eq!(held.event_name, "agentic://remote-call-hold-changed");
+        assert_eq!(
+            held.payload["hold"],
+            json!({"reason": "shareLimit", "deviceName": "Studio", "limit": 2})
+        );
+
+        let moving = project_agentic_frontend_event(AgenticEvent::RemoteCallHoldChanged {
+            session_id: "session-1".to_string(),
+            hold: None,
+        })
+        .expect("projected");
+        assert_eq!(moving.payload["hold"], Value::Null);
     }
 
     #[test]

@@ -158,6 +158,28 @@ export function calledAssistantSessionName(
 }
 
 /**
+ * The name a called agent answers under when it is an assistant: from the
+ * type the call asked for (`calledType`, already read in this conversation),
+ * else from its session. `unnamed` stands in for an assistant whose name is
+ * not known yet. Null when the call is not to an assistant.
+ */
+export function calledAssistantDisplayName(
+  calledType: string | null | undefined,
+  session: Pick<Session, 'mode' | 'config' | 'delegatedBy' | 'workspaceId'> | null | undefined,
+  workspaces: readonly WorkspaceInfo[] | null | undefined,
+  sharedWithMe: readonly SharedWithMe[],
+  unnamed: string,
+): string | null {
+  const callsAssistant = Boolean(
+    localAssistantFromAgentType(calledType) || remoteAgentFromAgentType(calledType),
+  );
+  return calledAssistantName(calledType, workspaces, sharedWithMe)
+    ?? calledAssistantName(session?.mode ?? session?.config?.agentType, workspaces, sharedWithMe)
+    ?? calledAssistantSessionName(session, workspaces)
+    ?? (callsAssistant ? unnamed : null);
+}
+
+/**
  * How a call to an assistant reads to the user: the assistant's name and
  * whose it is, never its internal type. `name` is null for a shared
  * assistant before this device reads its list. Null when the call is not to

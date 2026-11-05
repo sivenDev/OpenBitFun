@@ -26,6 +26,8 @@ export function useToolSessionParticipant(
   t: (key: string) => string,
   kind: 'agent' | 'session' = 'session',
   navigation?: { parentSessionId?: string; parentToolCallId?: string; enabled?: boolean },
+  /** The name an agent answers under when it has one, such as an assistant's. */
+  agentName?: string | null,
 ): ToolCardParticipant {
   const hasNavigation = Boolean(navigation);
   const parentSessionId = navigation?.parentSessionId;
@@ -44,7 +46,8 @@ export function useToolSessionParticipant(
   return useMemo<ToolCardParticipant>(() => {
     const [title, subagent, available, parentAvailable, detached, epoch, resolvedParentId] = JSON.parse(snapshot) as [string, boolean, boolean, boolean, boolean, number, string];
     const agent = subagent || kind === 'agent';
-    const label = agent ? sessionId ? t(resolveSubagentNameKey(sessionId)) : fallback : title || fallback;
+    const label = agent ? agentName || (sessionId ? t(resolveSubagentNameKey(sessionId)) : fallback)
+      : title || fallback;
     const canOpen = hasNavigation && navigationEnabled !== false && !detached && sessionId
       && (agent ? parentAvailable && resolvedParentId !== sessionId : available);
     const link = canOpen ? {
@@ -88,5 +91,5 @@ export function useToolSessionParticipant(
       };
     }
     return { ...link, id: sessionId, label, kind: 'session' };
-  }, [snapshot, sessionId, kind, fallback, t, hasNavigation, navigationEnabled, parentToolCallId]);
+  }, [snapshot, sessionId, kind, fallback, t, hasNavigation, navigationEnabled, parentToolCallId, agentName]);
 }

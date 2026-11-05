@@ -6,11 +6,8 @@ import { flowChatStore } from '../store/FlowChatStore';
 import { resolveSubagentNameKey, SubagentDelegationAvatar } from '../subagent-identity';
 import { openBtwSessionInAuxPane } from '../services/btwSessionPane';
 import {
-  calledAssistantName,
-  calledAssistantSessionName,
+  calledAssistantDisplayName,
   calledTypeInConversation,
-  localAssistantFromAgentType,
-  remoteAgentFromAgentType,
   sharedConversationOwnerDevice,
 } from '../utils/remoteAgent';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
@@ -78,17 +75,9 @@ export const AgentWaitToolCard: React.FC<ToolCardProps> = ({
     const targetSession = flowChatStore.getState().sessions.get(target.sessionId);
     const assistantWorkspaces = workspaceManager.getState().assistantWorkspaces;
     const calledType = calledTypeInConversation(target.agentType, conversationOwner, localDeviceId);
-    const callsAssistant = Boolean(
-      localAssistantFromAgentType(calledType) || remoteAgentFromAgentType(calledType),
-    );
     // The spawn's requested type names the assistant even when its session is not loaded yet.
-    return calledAssistantName(calledType, assistantWorkspaces, sharedWithMe)
-      ?? calledAssistantName(
-        targetSession?.mode ?? targetSession?.config?.agentType,
-        assistantWorkspaces,
-        sharedWithMe,
-      ) ?? calledAssistantSessionName(targetSession, assistantWorkspaces)
-      ?? (callsAssistant ? t('toolCards.taskTool.unnamedAssistant') : null)
+    return calledAssistantDisplayName(calledType, targetSession, assistantWorkspaces, sharedWithMe,
+      t('toolCards.taskTool.unnamedAssistant'))
       ?? t(resolveSubagentNameKey(target.sessionId));
   });
   const hatching = !session?.isHistorical

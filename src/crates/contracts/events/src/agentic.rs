@@ -117,6 +117,28 @@ pub struct SessionWorkspaceFacts {
     pub remote_ssh_host: Option<String>,
 }
 
+/// Why a call to an assistant on another device makes no progress there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteCallHoldReason {
+    /// The device's owner has an action of the call to approve there.
+    OwnerApproval,
+    /// The share already runs as many tasks as its owner allows.
+    ShareLimit,
+}
+
+/// What a call to an assistant on another device waits for on that device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCallHold {
+    pub reason: RemoteCallHoldReason,
+    /// The device the call runs on, as this device names it.
+    pub device_name: String,
+    /// For a share limit, how many tasks the owner allows at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AgenticEvent {
@@ -238,6 +260,15 @@ pub enum AgenticEvent {
         /// store's `delegatedBy`), so a client knows it without a reload.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delegated_by: Option<serde_json::Value>,
+    },
+
+    /// A call to an assistant on another device, running as `session_id`,
+    /// waits there for what only that device's owner can resolve; `hold` is
+    /// `None` once it no longer does. Live state for the caller's view.
+    RemoteCallHoldChanged {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hold: Option<RemoteCallHold>,
     },
 
     DialogTurnCompleted {
@@ -727,6 +758,7 @@ impl AgenticEvent {
             | Self::ImageAnalysisCompleted { session_id, .. }
             | Self::DialogTurnStarted { session_id, .. }
             | Self::SubagentSessionLinked { session_id, .. }
+            | Self::RemoteCallHoldChanged { session_id, .. }
             | Self::DialogTurnCompleted { session_id, .. }
             | Self::TokenUsageUpdated { session_id, .. }
             | Self::ContextCompressionStarted { session_id, .. }
@@ -793,6 +825,7 @@ impl AgenticEvent {
             | Self::SessionModelFallbackApplied { .. }
             | Self::SessionReasoningPresetAutoCleared { .. }
             | Self::SubagentSessionLinked { .. }
+            | Self::RemoteCallHoldChanged { .. }
             | Self::DeepReviewQueueStateChanged { .. }
             | Self::ContextCompressionFailed { .. } => AgenticEventPriority::High,
 

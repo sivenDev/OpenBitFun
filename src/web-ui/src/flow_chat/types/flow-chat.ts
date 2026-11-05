@@ -13,6 +13,7 @@ import type {
   SessionTurnCatalog,
 } from '@/shared/types/session-history';
 import type { AiErrorDetail } from '@/shared/ai-errors/aiErrorPresenter';
+import type { RemoteCallHold } from '@/infrastructure/api/service-api/AgentAPI';
 import type { ReviewTargetEvidence, ReviewTeamRunManifest } from '@/shared/services/reviewTeamService';
 import type { ContextItem } from '@/shared/types/context';
 import type { ExternalSessionEcosystem } from '@/shared/types/external-session';
@@ -621,6 +622,12 @@ export interface Session {
    * Cleared when the user switches to the session or the pending action is resolved.
    */
   needsUserAttention?: 'ask_user' | 'tool_confirm';
+
+  /**
+   * For a call to an assistant on another device, what it waits for there.
+   * Live state from the host; never persisted.
+   */
+  remoteCallHold?: RemoteCallHold;
 
   /** Per-run reviewer manifest for Deep Review child sessions. */
   deepReviewRunManifest?: ReviewTeamRunManifest;
