@@ -64,8 +64,8 @@ pub const EVENT_DISCOVERED: &str = "lan_share://discovered";
 /// `{ ownerKey, jobId }`.
 pub const EVENT_JOB_UPDATED: &str = "lan_share://job_updated";
 
-const LAN_SHARE_DIR: &str = "lan-share";
-const IDENTITY_FILE: &str = "identity.json";
+pub(super) const LAN_SHARE_DIR: &str = "lan-share";
+pub(super) const IDENTITY_FILE: &str = "identity.json";
 /// Connections kept per asking device; older ones are closed.
 const MAX_CONNECTIONS_PER_DEVICE: usize = 4;
 /// How long after a request's deadline the asking side looks it up itself
@@ -2087,21 +2087,7 @@ impl LanShareHost {
             .assistants()
             .await
             .map_err(|error| ShareDispatchError::Refused(error.to_string()))?;
-        let from_owner: Vec<&SharedWithMe> = entries
-            .iter()
-            .filter(|entry| entry.owner.device_id == device_id)
-            .collect();
-        let Some(entry) = from_owner
-            .iter()
-            .find(|entry| entry.state == SharedWithMeState::Available)
-            .copied()
-        else {
-            return Err(if from_owner.is_empty() {
-                ShareDispatchError::NotShared
-            } else {
-                ShareDispatchError::Revoked
-            });
-        };
+        let entry = available_from(&entries, device_id)?;
         let owner_key = entry.owner.public_key.clone();
         let public_key = key_bytes(&owner_key).ok_or(ShareDispatchError::NotShared)?;
         let addresses = self.owner_addresses(&owner_key, entry.last_address.as_deref());
@@ -2109,21 +2095,7 @@ impl LanShareHost {
             .owner_connection(&owner_key, &addresses, &public_key)
             .await
             .map_err(unreachable_owner)?;
-        let call = connection.call(
-            METHOD_DISPATCH,
-            json!(DispatchBody {
-                command: command.to_string(),
-                args,
-            }),
-        );
-        match tokio::time::timeout(DISPATCH_CALL_TIMEOUT, call).await {
-            Ok(Ok(answer)) => Ok(answer),
-            Ok(Err(LanError::Remote(message))) => Err(ShareDispatchError::Refused(message)),
-            Ok(Err(error)) => Err(unreachable_owner(error)),
-            Err(_) => Err(ShareDispatchError::Offline(
-                "the owner did not answer in time".to_string(),
-            )),
-        }
+        call_dispatch(&connection, command, args).await
     }
 
     /// Where the owner with `owner_key` may be: what Bonjour lists now, then
@@ -2578,7 +2550,7 @@ fn share_device(public_key: &str) -> String {
     super::shared_assistants::share_device_id(public_key).unwrap_or_default()
 }
 
-fn key_bytes(public_key: &str) -> Option<[u8; 32]> {
+pub(super) fn key_bytes(public_key: &str) -> Option<[u8; 32]> {
     hex::decode(public_key).ok()?.try_into().ok()
 }
 
@@ -2636,7 +2608,51 @@ fn added_peer(device: &AddedDevice) -> Option<DiscoveredPeer> {
     })
 }
 
-fn unreachable_owner(error: LanError) -> ShareDispatchError {
+/// The grant of `device_id` a command may be sent under: an assistant of it
+/// shared with this device and still available.
+pub(super) fn available_from<'a>(
+    entries: &'a [SharedWithMe],
+    device_id: &str,
+) -> Result<&'a SharedWithMe, ShareDispatchError> {
+    let from_owner: Vec<&SharedWithMe> = entries
+        .iter()
+        .filter(|entry| entry.owner.device_id == device_id)
+        .collect();
+    from_owner
+        .iter()
+        .find(|entry| entry.state == SharedWithMeState::Available)
+        .copied()
+        .ok_or(if from_owner.is_empty() {
+            ShareDispatchError::NotShared
+        } else {
+            ShareDispatchError::Revoked
+        })
+}
+
+/// Sends a Dispatch target command over a channel to its owner.
+pub(super) async fn call_dispatch(
+    connection: &LanConnection,
+    command: &str,
+    args: Value,
+) -> Result<Value, ShareDispatchError> {
+    let call = connection.call(
+        METHOD_DISPATCH,
+        json!(DispatchBody {
+            command: command.to_string(),
+            args,
+        }),
+    );
+    match tokio::time::timeout(DISPATCH_CALL_TIMEOUT, call).await {
+        Ok(Ok(answer)) => Ok(answer),
+        Ok(Err(LanError::Remote(message))) => Err(ShareDispatchError::Refused(message)),
+        Ok(Err(error)) => Err(unreachable_owner(error)),
+        Err(_) => Err(ShareDispatchError::Offline(
+            "the owner did not answer in time".to_string(),
+        )),
+    }
+}
+
+pub(super) fn unreachable_owner(error: LanError) -> ShareDispatchError {
     match error {
         LanError::NeedsUpdate { .. }
         | LanError::PeerNeedsUpdate { .. }

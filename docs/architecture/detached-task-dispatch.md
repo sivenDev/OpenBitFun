@@ -577,7 +577,12 @@ and that has no session left is removed by the same cleanup.
 
 On the requesting side, a `shared:<ownerDeviceId>/<assistantId>` subagent drives the
 job (the `RemoteAgentDelegationPort` the host registers; with none registered no
-shared assistant is listed). It belongs to the Assistant category of callable
+shared assistant is listed). The desktop registers it over its share host. A Dispatch
+worker running a task another device delegated has no share host, so it registers the
+same port over `LanShareClient` (`service/lan_share/client.rs`): it reads the sharing
+identity the app created (never creating one), reaches each owner at the address the app
+last recorded or the address the owner was added by, and neither listens nor advertises;
+an owner it cannot reach is reported offline when the call is tried. It belongs to the Assistant category of callable
 subagents together with the device's own assistants (`assistant:<id>`); an
 assistant that cannot take work stays listed with its reason (offline, revoked,
 needs an update, no executor), and a call to it fails for that reason. A task

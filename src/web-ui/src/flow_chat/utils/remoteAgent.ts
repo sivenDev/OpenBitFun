@@ -44,15 +44,21 @@ export function localAssistantFromAgentType(agentType: string | null | undefined
  * The type a call in a conversation names. In a conversation with an
  * assistant another device shares, the conversation runs on that owner's
  * device, so `assistant:<id>` there is one of the owner's assistants, read
- * as `shared:<owner>/<id>`.
+ * as `shared:<owner>/<id>`, and `shared:<this device>/<id>` is one of this
+ * device's own, read as `assistant:<id>`.
  */
 export function calledTypeInConversation(
   agentType: string | null | undefined,
   conversationOwnerDeviceId: string | null | undefined,
+  localDeviceId?: string | null,
 ): string | undefined {
   const local = localAssistantFromAgentType(agentType);
   if (local && conversationOwnerDeviceId) {
     return `${SHARED_ASSISTANT_TYPE_PREFIX}${conversationOwnerDeviceId}/${local}`;
+  }
+  const remote = remoteAgentFromAgentType(agentType);
+  if (remote && localDeviceId && remote.deviceId === localDeviceId) {
+    return `${ASSISTANT_TYPE_PREFIX}${remote.assistantId}`;
   }
   return agentType ?? undefined;
 }

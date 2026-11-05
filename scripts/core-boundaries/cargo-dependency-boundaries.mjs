@@ -1484,6 +1484,11 @@ export function findProductEntrypointCoreFeatureViolations(
       'ssh-remote',
       // Outbound controller for `openbitfun dispatch outbound`.
       'dispatch-store',
+      // A Dispatch worker running a task another device delegated reaches
+      // the owners of assistants shared with this device as this device
+      // (`service/lan_share/client.rs`): it reads the sharing identity the
+      // app created and neither listens nor advertises.
+      'lan-share',
     ]],
     ['openbitfun-acp', [...new Set([...acpClientCoreFeatures, ...acpServerCoreFeatures])]],
     ['openbitfun-app-server', [
@@ -1553,6 +1558,7 @@ export function findProductEntrypointCoreFeatureViolations(
       'opencode-plugin-host',
       'remote-connect',
       'dispatch-store',
+      'lan-share',
     ]],
     ['openbitfun-acp', acpActiveCoreFeatures],
     ['openbitfun-sdk-host-app', coreCompatibilityActiveFeatures],

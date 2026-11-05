@@ -65,6 +65,9 @@ describe('assistant names', () => {
     expect(calledTypeInConversation('assistant:workspace-notes', null)).toBe('assistant:workspace-notes');
     expect(calledTypeInConversation('shared:desk/helper', 'laptop')).toBe('shared:desk/helper');
     expect(calledTypeInConversation('Explore', 'laptop')).toBe('Explore');
+    // The shared assistant calling one of this device's own assistants back.
+    expect(calledTypeInConversation('shared:desk/helper', 'laptop', 'desk')).toBe('assistant:helper');
+    expect(calledTypeInConversation('shared:desk/helper', 'laptop', 'phone')).toBe('shared:desk/helper');
 
     // The owner shares only `helper`; its other assistant is still its own,
     // named by the owner, without a name of its own on this device.

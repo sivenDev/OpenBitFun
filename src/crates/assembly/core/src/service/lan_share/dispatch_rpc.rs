@@ -37,7 +37,7 @@ impl DeviceDispatchRpc for LanDispatchRpc {
     }
 }
 
-fn problem(error: ShareDispatchError) -> anyhow::Error {
+pub(super) fn problem(error: ShareDispatchError) -> anyhow::Error {
     match error {
         ShareDispatchError::NotShared => SharedAssistantProblem::NotShared.into(),
         ShareDispatchError::Revoked => SharedAssistantProblem::Revoked.into(),

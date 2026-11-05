@@ -113,7 +113,9 @@ restrictions remain enforced.
   parts. Hiding a command is not a backend capability restriction.
 - The CLI selects the reviewed `openbitfun-core` owner-feature closure
   (`agent-runtime`, `external-sources`, `plugin-runtime`, `remote-connect`,
-  `ssh-remote`, and `dispatch-store` for the `dispatch outbound` controller)
+  `ssh-remote`, `dispatch-store` for the `dispatch outbound` controller, and
+  `lan-share` so a worker running a task another device delegated can call the
+  assistants shared with this device without listening or advertising)
   plus the Code Agent atomic tool owners and the independent
   `tools-pages` owner. Pages binds to the executing host's AccountRuntime;
   controller-local account state must not enable remote tools. It must not register

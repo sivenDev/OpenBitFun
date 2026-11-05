@@ -86,6 +86,19 @@ impl ShareIdentity {
         }
     }
 
+    /// Loads the identity at `path`, for a process that acts as this device
+    /// but must never create one: a missing file is an error.
+    pub fn load(path: &Path) -> Result<Self> {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("read the LAN sharing identity at {}", path.display()))?;
+        Self::decode(&bytes).with_context(|| {
+            format!(
+                "the LAN sharing identity at {} is unreadable",
+                path.display()
+            )
+        })
+    }
+
     /// Writes the identity with owner-only permissions, atomically.
     pub fn save(&self, path: &Path) -> Result<()> {
         let stored = StoredIdentity {

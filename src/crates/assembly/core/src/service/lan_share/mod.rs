@@ -14,6 +14,13 @@ pub mod browse;
     feature = "agent-runtime",
     feature = "ssh-remote"
 ))]
+pub mod client;
+#[cfg(all(
+    feature = "lan-share",
+    feature = "dispatch-store",
+    feature = "agent-runtime",
+    feature = "ssh-remote"
+))]
 pub mod dispatch_rpc;
 #[cfg(feature = "lan-share")]
 pub mod host;

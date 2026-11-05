@@ -155,9 +155,11 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
     subscribeToFlowChatStore,
     () => sharedConversationOwnerDevice(sessionId ? flowChatStore.getState().sessions.get(sessionId) : null),
   );
+  const localDeviceId = useLanShareStore(state => state.overview?.status.deviceId);
   const inputAgentType = calledTypeInConversation(
     readString(params, 'agent_type', 'agentType'),
     conversationOwner,
+    localDeviceId,
   );
   const readLinkedSession = useCallback(() => {
     const { sessions } = flowChatStore.getState();

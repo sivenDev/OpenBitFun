@@ -1266,4 +1266,56 @@ mod assistant_calls {
 
         user.shutdown().await;
     }
+
+    /// A worker running a task another device delegated reaches the owner as
+    /// this device without the share host, and never creates an identity.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_process_without_the_share_host_calls_a_shared_assistant_as_this_device() {
+        use openbitfun_core::service::lan_share::client::LanShareClient;
+
+        let owner_dir = tempfile::tempdir().unwrap();
+        let user_dir = tempfile::tempdir().unwrap();
+        let runner = Runner::new();
+        let (owner, user) = granted(owner_dir.path(), user_dir.path(), runner.clone()).await;
+        let owner_id = owner.identity().device_id().to_string();
+        let user_id = user.identity().device_id().to_string();
+        let user_key = hex::encode(user.identity().public_key());
+        // The app has quit; only what it left on disk remains.
+        user.shutdown().await;
+
+        let open = |dir: &Path| {
+            LanShareClient::open(
+                &dir.join("lan-share/identity.json"),
+                SharedWithMeStore::new(dir.join("lan-share/shared-with-me.json")),
+                AddedDeviceStore::new(dir.join("lan-share/added-devices.json")),
+            )
+        };
+        let client = Arc::new(
+            open(user_dir.path())
+                .expect("the identity")
+                .allow_loopback(),
+        );
+        let directory = SharedAssistantDirectory::new(client.clone(), client);
+        assert_eq!(directory.local_device_id(), Some(user_id.clone()));
+        let listed = directory.list_agents(RemoteAgentListing::Cached).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].address.device_id, owner_id);
+
+        let chain = vec![format!("{user_id}/workspace")];
+        directory
+            .submit(call(&owner_id, "delegation-worker-1", chain.clone()))
+            .await
+            .expect("the owner takes the call");
+        let submitted = runner.received("dispatch_target_submit");
+        assert_eq!(submitted.len(), 1);
+        assert_eq!(submitted[0]["__sourceShareKey"], user_key);
+        assert_eq!(submitted[0]["delegation"]["callChain"], json!(chain));
+
+        // A device the app never gave an identity has none to act as.
+        let elsewhere = tempfile::tempdir().unwrap();
+        assert!(open(elsewhere.path()).is_err());
+        assert!(!elsewhere.path().join("lan-share/identity.json").exists());
+
+        owner.shutdown().await;
+    }
 }

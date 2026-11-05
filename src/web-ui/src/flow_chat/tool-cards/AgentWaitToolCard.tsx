@@ -68,6 +68,7 @@ export const AgentWaitToolCard: React.FC<ToolCardProps> = ({
   );
   const avatarTargets = useMemo(() => JSON.parse(avatarSnapshot) as AgentWaitAvatarTarget[], [avatarSnapshot]);
   const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
+  const localDeviceId = useLanShareStore(state => state.overview?.status.deviceId);
   // In a conversation with a shared assistant, `assistant:<id>` is one of
   // its owner's assistants.
   const conversationOwner = sharedConversationOwnerDevice(session);
@@ -76,7 +77,7 @@ export const AgentWaitToolCard: React.FC<ToolCardProps> = ({
     if (!target.sessionId) return t('toolCards.interaction.unknownAgent');
     const targetSession = flowChatStore.getState().sessions.get(target.sessionId);
     const assistantWorkspaces = workspaceManager.getState().assistantWorkspaces;
-    const calledType = calledTypeInConversation(target.agentType, conversationOwner);
+    const calledType = calledTypeInConversation(target.agentType, conversationOwner, localDeviceId);
     const callsAssistant = Boolean(
       localAssistantFromAgentType(calledType) || remoteAgentFromAgentType(calledType),
     );

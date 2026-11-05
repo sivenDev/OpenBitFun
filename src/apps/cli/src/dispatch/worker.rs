@@ -203,6 +203,15 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
                 "Calls to other assistants unavailable to a task from another device: {error:#}"
             ),
         }
+        // At full trust the task may also call assistants shared with this
+        // device; the app's share host is not in this process, so the worker
+        // reaches their owners itself.
+        match shared_assistant_calls() {
+            Ok(port) => coordinator.set_remote_agent_port(port),
+            Err(error) => tracing::warn!(
+                "Assistants shared with this device unavailable to a task from another device: {error:#}"
+            ),
+        }
     }
     let mut event_rx = agent_runtime
         .subscribe_events()
@@ -549,6 +558,22 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     store.mark_state(job_id, terminal_state, Some(&turn_id), terminal_error)?;
     store.clear_pending_permissions(job_id);
     Ok(())
+}
+
+fn shared_assistant_calls(
+) -> Result<std::sync::Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>> {
+    use openbitfun_core::service::lan_share::client::LanShareClient;
+    use openbitfun_core::service::lan_share::remote_agents::SharedAssistantDirectory;
+
+    let path_manager = openbitfun_core::infrastructure::PathManager::new()
+        .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
+    let client = std::sync::Arc::new(
+        LanShareClient::for_product_home(&path_manager).map_err(|error| anyhow!(error))?,
+    );
+    Ok(std::sync::Arc::new(SharedAssistantDirectory::new(
+        client.clone(),
+        client,
+    )))
 }
 
 fn call_ledger_for(
