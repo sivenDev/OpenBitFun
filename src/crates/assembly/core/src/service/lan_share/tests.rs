@@ -373,6 +373,13 @@ fn each_device_gets_one_workspace_with_its_own_user_profile() {
         "Bea likes short answers"
     );
 
+    // The owner can still name the device once its profile is the user's own.
+    let tenant = list_tenants(&root)
+        .into_iter()
+        .find(|tenant| tenant.path == first)
+        .unwrap();
+    assert_eq!(tenant_user(&tenant), Some(user("Bea")));
+
     // Another device, or another assistant, is another workspace.
     let other = ensure_tenant(&root, "workspace", &carl, &user("Carl")).unwrap();
     assert_ne!(other, first);
@@ -458,6 +465,16 @@ async fn workspaces_without_a_grant_go_once_their_sessions_are_gone() {
     // Removing a user deletes their workspace at once, sessions and all.
     assert!(delete_tenant(&path_manager, "workspace", &revoked_with_session).unwrap());
     assert!(!kept_dir.exists());
+    for device in [&revoked_with_session, &revoked_empty] {
+        assert!(!root
+            .join("workspace")
+            .join(format!("{device}.user.json"))
+            .exists());
+    }
+    assert!(root
+        .join("workspace")
+        .join(format!("{granted}.user.json"))
+        .exists());
     assert!(!delete_tenant(&path_manager, "workspace", &revoked_with_session).unwrap());
 
     // Without readable shares nothing is pruned.

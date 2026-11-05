@@ -27,6 +27,9 @@ const TENANTS_DIR: &str = "tenants";
 const USER_FILE_NAME: &str = "USER.md";
 const LAN_SHARE_DIR: &str = "lan-share";
 const DEVICE_ID_FILE: &str = "device-id";
+/// Beside each tenant workspace: who it belongs to, so the owner can still
+/// name a device after its access is gone.
+const TENANT_USER_SUFFIX: &str = ".user.json";
 
 /// Records this device's sharing id in `dir` (the directory of its sharing
 /// identity), for processes that run tenants' tasks without the identity.
@@ -79,7 +82,8 @@ pub fn tenant_dir(root: &Path, assistant_id: &str, device_id: &str) -> Result<Pa
 }
 
 /// Who a tenant workspace belongs to, as its `USER.md` starts out.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TenantUser {
     pub display_name: String,
     pub device_name: String,
@@ -112,7 +116,60 @@ pub fn ensure_tenant(
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
     }
+    record_tenant_user(&dir, user);
     Ok(dir)
+}
+
+fn tenant_user_file(dir: &Path) -> PathBuf {
+    let mut name = dir.file_name().unwrap_or_default().to_os_string();
+    name.push(TENANT_USER_SUFFIX);
+    dir.with_file_name(name)
+}
+
+/// Keeps the record of who `dir` belongs to current. The record only names
+/// the device, so failing to write it does not stop the task.
+fn record_tenant_user(dir: &Path, user: &TenantUser) {
+    let path = tenant_user_file(dir);
+    let recorded = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<TenantUser>(&text).ok());
+    if recorded.as_ref() == Some(user) {
+        return;
+    }
+    let written = serde_json::to_string(user)
+        .map_err(std::io::Error::other)
+        .and_then(|text| std::fs::write(&path, text));
+    if let Err(error) = written {
+        warn!(
+            "Tenant user record not written: path={}, error={}",
+            path.display(),
+            error
+        );
+    }
+}
+
+/// Who `tenant` belongs to, from its record or, for a workspace made before
+/// records were kept, from the `USER.md` it started with.
+pub fn tenant_user(tenant: &Tenant) -> Option<TenantUser> {
+    if let Some(user) = std::fs::read_to_string(tenant_user_file(&tenant.path))
+        .ok()
+        .and_then(|text| serde_json::from_str::<TenantUser>(&text).ok())
+    {
+        return Some(user);
+    }
+    let profile = std::fs::read_to_string(tenant.path.join(USER_FILE_NAME)).ok()?;
+    let field = |label: &str| {
+        profile
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(label))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    let display_name = field("- **Name:**")?;
+    Some(TenantUser {
+        display_name,
+        device_name: field("- **Device:**").unwrap_or_default(),
+    })
 }
 
 fn tenant_user_profile(user: &TenantUser) -> String {
@@ -191,6 +248,10 @@ pub fn delete_tenant(
         .map_err(|problem| std::io::Error::new(std::io::ErrorKind::InvalidInput, problem))?;
     let existed = remove_dir_if_real(&path_manager.project_runtime_root(&dir))?;
     let existed = remove_dir_if_real(&dir)? || existed;
+    match std::fs::remove_file(tenant_user_file(&dir)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
     if existed {
         info!(
             "Tenant workspace deleted: assistant_id={}, device_id={}",

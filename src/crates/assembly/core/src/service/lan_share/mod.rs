@@ -62,5 +62,5 @@ pub use shared_with_me::{
 pub use tenants::prune_tenants;
 pub use tenants::{
     delete_tenant, ensure_tenant, is_tenant_path, list_tenants, local_share_device_id, tenant_dir,
-    tenants_root, Tenant, TenantUser,
+    tenant_user, tenants_root, Tenant, TenantUser,
 };

@@ -66,6 +66,7 @@ const share: OwnedShare = {
   blocked: [],
   rootPath: '/home/me/.openbitfun/personal_assistant/workspace',
   tenantDeviceIds: [ann.deviceId, 'fedcba9876543210fedcba9876543210'],
+  tenantDevices: [{ deviceId: 'fedcba9876543210fedcba9876543210', displayName: 'Bea', deviceName: 'Bea\'s Mac' }],
 };
 
 let root: Root;
@@ -125,6 +126,9 @@ describe('managing a shared assistant', () => {
     const left = document.querySelectorAll('[data-testid="assistant-share-left-device"]');
     expect(left).toHaveLength(1);
     expect(left[0].textContent).toContain('fedcba98');
+    // It is still named by who used it.
+    expect(left[0].textContent).toContain('Bea');
+    expect(left[0].textContent).toContain("Bea's Mac");
   });
 
   it('rereads who uses it when opened, since use is recorded outside this window', async () => {

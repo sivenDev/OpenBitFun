@@ -18,8 +18,8 @@ use openbitfun_core::service::lan_share::dispatch_rpc::LanDispatchRpc;
 use openbitfun_core::service::lan_share::protocol::RequestOpened;
 use openbitfun_core::service::lan_share::remote_agents::SharedAssistantDirectory;
 use openbitfun_core::service::lan_share::{
-    delete_tenant, list_tenants, tenants_root, AddressOutcome, DiscoveredDevice, HostStatus,
-    LanShareHost, LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch,
+    delete_tenant, list_tenants, tenant_user, tenants_root, AddressOutcome, DiscoveredDevice,
+    HostStatus, LanShareHost, LanShareOptions, RequestAnswer, ShareConfirmations, ShareDispatch,
     ShareRequestView, ShareSettings, SharedAssistant, SharedWithMeNow,
 };
 use openbitfun_services_core::dispatch_contract::DISPATCH_SOURCE_SHARE_KEY_ARG;
@@ -103,6 +103,19 @@ pub struct OwnedShare {
     /// Devices whose workspace under this assistant is still kept,
     /// including ones that no longer have access.
     pub tenant_device_ids: Vec<String>,
+    /// The same devices with who they belonged to, where it is known.
+    pub tenant_devices: Vec<TenantDevice>,
+}
+
+/// A device whose workspace under a shared assistant is kept.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantDevice {
+    pub device_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -254,14 +267,29 @@ fn owned_shares(
     let tenants = list_tenants(tenants_root);
     shares
         .into_iter()
-        .map(|share| OwnedShare {
-            root_path: assistants_base.join(&share.id),
-            tenant_device_ids: tenants
+        .map(|share| {
+            let own: Vec<_> = tenants
                 .iter()
                 .filter(|tenant| tenant.assistant_id == share.id)
-                .map(|tenant| tenant.device_id.clone())
-                .collect(),
-            share,
+                .collect();
+            OwnedShare {
+                root_path: assistants_base.join(&share.id),
+                tenant_device_ids: own.iter().map(|tenant| tenant.device_id.clone()).collect(),
+                tenant_devices: own
+                    .iter()
+                    .map(|tenant| {
+                        let user = tenant_user(tenant);
+                        TenantDevice {
+                            device_id: tenant.device_id.clone(),
+                            display_name: user.as_ref().map(|user| user.display_name.clone()),
+                            device_name: user
+                                .map(|user| user.device_name)
+                                .filter(|name| !name.is_empty()),
+                        }
+                    })
+                    .collect(),
+                share,
+            }
         })
         .collect()
 }
@@ -591,5 +619,23 @@ mod tests {
         let owned = owned_shares(&tenants, &assistants, vec![share]);
         assert_eq!(owned[0].tenant_device_ids, vec![device.to_string()]);
         assert_eq!(owned[0].root_path, assistants.join("workspace"));
+        // A workspace from before names were recorded is named by the
+        // profile it started with.
+        assert_eq!(owned[0].tenant_devices[0].display_name, None);
+        std::fs::write(
+            tenants.join("workspace").join(device).join("USER.md"),
+            "# USER.md\n\n- **Name:** Bea\n- **Device:** Bea's Mac\n",
+        )
+        .unwrap();
+        let share = owned.into_iter().next().unwrap().share;
+        let owned = owned_shares(&tenants, &assistants, vec![share]);
+        assert_eq!(
+            owned[0].tenant_devices[0].display_name.as_deref(),
+            Some("Bea")
+        );
+        assert_eq!(
+            owned[0].tenant_devices[0].device_name.as_deref(),
+            Some("Bea's Mac")
+        );
     }
 }

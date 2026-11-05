@@ -54,6 +54,15 @@ export interface OwnedShare extends ShareSettings {
   rootPath: string;
   /** Devices whose data under this assistant is still kept. */
   tenantDeviceIds: string[];
+  /** The same devices with who they belonged to. Absent from older builds. */
+  tenantDevices?: TenantDevice[];
+}
+
+/** A device whose data under a shared assistant is kept. */
+export interface TenantDevice {
+  deviceId: string;
+  displayName?: string;
+  deviceName?: string;
 }
 
 /** This device as other devices see it. */

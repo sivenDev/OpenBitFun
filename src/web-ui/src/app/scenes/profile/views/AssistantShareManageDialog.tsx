@@ -112,6 +112,7 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
 
   const grantedDevices = new Set(share.grants.map((grant) => grant.deviceId));
   const leftDevices = share.tenantDeviceIds.filter((deviceId) => !grantedDevices.has(deviceId));
+  const tenantDevices = new Map((share.tenantDevices ?? []).map((device) => [device.deviceId, device]));
   const trustLabel = t(share.trust === 'full'
     ? 'nursery.share.dialog.trustFull'
     : 'nursery.share.dialog.trustNormal');
@@ -205,8 +206,12 @@ const AssistantShareManageDialog: React.FC<AssistantShareManageDialogProps> = ({
             <ul className="assistant-share-manage__list" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="list">
               {leftDevices.map((deviceId) => (
                 <li key={deviceId} className="assistant-share-manage__row" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="row" data-testid="assistant-share-left-device">
-                  <span className="assistant-share-manage__meta" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="meta">
-                    {t('nursery.share.manage.leftDevice', { id: deviceId.slice(0, 8) })}
+                  <span className="assistant-share-manage__who" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="who">
+                    {tenantDevices.get(deviceId)?.displayName ? <span>{tenantDevices.get(deviceId)?.displayName}</span> : null}
+                    <span className="assistant-share-manage__meta" data-openbitfun-component="assistant-share-manage" data-openbitfun-part="meta">
+                      {[tenantDevices.get(deviceId)?.deviceName, t('nursery.share.manage.leftDevice', { id: deviceId.slice(0, 8) })]
+                        .filter(Boolean).join(' · ')}
+                    </span>
                   </span>
                   <Button
                     size="sm"
