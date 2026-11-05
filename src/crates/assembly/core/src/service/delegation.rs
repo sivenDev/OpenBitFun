@@ -142,7 +142,8 @@ pub enum DelegationTrust {
     #[default]
     Normal,
     /// The owner chose to trust the users fully: the task runs like the
-    /// owner's own.
+    /// owner's own, except that it never controls the owner's desktop or
+    /// scheduled jobs.
     Full,
 }
 
@@ -163,17 +164,27 @@ impl DelegationTrust {
     }
 }
 
-/// Tools a delegated task at normal trust cannot use: they reach the owner's
-/// desktop, other sessions, schedules, goals, publishing or this app's own
-/// controls. `SessionHistory` and `SessionControl` are not here: they serve
-/// the task's own tenant workspace and refuse everything else themselves
-/// (see [`DelegatedTurnFacts::session_workspace_refusal`]).
-pub const NORMAL_TRUST_DENIED_TOOLS: [&str; 11] = [
+/// Tools a delegated task cannot use at any trust: they control the owner's
+/// desktop or its scheduled jobs. Such a task runs in the owner's task
+/// runner, not in the desktop app, and the owner never lends either to
+/// another device.
+pub const SHARED_TASK_DENIED_TOOLS: [&str; 3] = ["ComputerUse", "ControlHub", "Cron"];
+
+/// Subagent types built around [`SHARED_TASK_DENIED_TOOLS`].
+pub const SHARED_TASK_DENIED_SUBAGENTS: [&str; 1] = ["ComputerUse"];
+
+const SHARED_TASK_REFUSAL: &str = "is not available to a task from another device: such a task \
+     never controls the owner's desktop or scheduled jobs, at any trust";
+
+/// Tools a delegated task at normal trust cannot use besides
+/// [`SHARED_TASK_DENIED_TOOLS`]: they reach other sessions, goals,
+/// publishing or this app's own controls. `SessionHistory` and
+/// `SessionControl` are not here: they serve the task's own tenant workspace
+/// and refuse everything else themselves (see
+/// [`DelegatedTurnFacts::session_workspace_refusal`]).
+pub const NORMAL_TRUST_DENIED_TOOLS: [&str; 8] = [
     "SessionMessage",
     "ListWorkspaces",
-    "ComputerUse",
-    "ControlHub",
-    "Cron",
     "create_goal",
     "update_goal",
     "PageDeploy",
@@ -184,7 +195,7 @@ pub const NORMAL_TRUST_DENIED_TOOLS: [&str; 11] = [
 
 /// Subagent types built around the tools above; a normal-trust task cannot
 /// start them.
-pub const NORMAL_TRUST_DENIED_SUBAGENTS: [&str; 2] = ["ComputerUse", "OpenBitFun"];
+pub const NORMAL_TRUST_DENIED_SUBAGENTS: [&str; 1] = ["OpenBitFun"];
 
 const NORMAL_TRUST_REFUSAL: &str = "is not available to a task from a device this assistant is \
      shared with: the owner shares it at normal trust";
@@ -422,6 +433,9 @@ impl DelegatedTurnFacts {
 
     /// Why this task cannot start a subagent of `agent_type`, if it cannot.
     pub fn subagent_refusal(&self, agent_type: &str) -> Option<String> {
+        if SHARED_TASK_DENIED_SUBAGENTS.contains(&agent_type) {
+            return Some(format!("agent_type {agent_type} {SHARED_TASK_REFUSAL}"));
+        }
         (self.trust == DelegationTrust::Normal
             && NORMAL_TRUST_DENIED_SUBAGENTS.contains(&agent_type))
         .then(|| format!("agent_type {agent_type} {NORMAL_TRUST_REFUSAL}"))
@@ -456,8 +470,9 @@ impl DelegatedTurnFacts {
 
     /// Narrows `restrictions` for this turn: a task that runs as an
     /// assistant writes only in its tenant workspace, so it can never change
-    /// the assistant's persona, instructions or memory. At normal trust the
-    /// tools in [`NORMAL_TRUST_DENIED_TOOLS`] are refused as well.
+    /// the assistant's persona, instructions or memory. The tools in
+    /// [`SHARED_TASK_DENIED_TOOLS`] are refused at any trust, and at normal
+    /// trust those in [`NORMAL_TRUST_DENIED_TOOLS`] as well.
     #[cfg(feature = "agent-runtime")]
     pub fn restrict_tools(
         &self,
@@ -481,12 +496,18 @@ impl DelegatedTurnFacts {
                 }
             }
         }
+        let mut deny = |tool: &str, refusal: &str| {
+            restrictions.denied_tool_names.insert(tool.to_string());
+            restrictions
+                .denied_tool_messages
+                .insert(tool.to_string(), format!("{tool} {refusal}"));
+        };
+        for tool in SHARED_TASK_DENIED_TOOLS {
+            deny(tool, SHARED_TASK_REFUSAL);
+        }
         if self.trust == DelegationTrust::Normal {
             for tool in NORMAL_TRUST_DENIED_TOOLS {
-                restrictions.denied_tool_names.insert(tool.to_string());
-                restrictions
-                    .denied_tool_messages
-                    .insert(tool.to_string(), format!("{tool} {NORMAL_TRUST_REFUSAL}"));
+                deny(tool, NORMAL_TRUST_REFUSAL);
             }
         }
         restrictions
@@ -649,7 +670,15 @@ mod tests {
             assert!(normal.denied_tool_messages[tool].contains("shares it at normal trust"));
         }
         let full = delegated_facts(DelegationTrust::Full).restrict_tools(Default::default());
-        assert!(full.denied_tool_names.is_empty());
+        // At any trust the task never controls the owner's desktop or
+        // scheduled jobs.
+        for restrictions in [&normal, &full] {
+            for tool in SHARED_TASK_DENIED_TOOLS {
+                assert!(restrictions.denied_tool_names.contains(tool), "{tool}");
+                assert!(restrictions.denied_tool_messages[tool].contains("at any trust"));
+            }
+        }
+        assert_eq!(full.denied_tool_names.len(), SHARED_TASK_DENIED_TOOLS.len());
         // Either way the task writes only in its own directory.
         for restrictions in [&normal, &full] {
             assert_eq!(
@@ -670,7 +699,8 @@ mod tests {
         )));
 
         let full = delegated_facts(DelegationTrust::Full);
-        assert!(full.subagent_refusal("ComputerUse").is_none());
+        assert!(full.subagent_refusal("ComputerUse").is_some());
+        assert!(full.subagent_refusal("OpenBitFun").is_none());
         assert!(full.owner_private_paths().is_empty());
     }
 
