@@ -2,7 +2,7 @@
 id: "F002-17"
 title: "用「@」点名助理：在能调用子智能体的对话里点名自己的或共享的助理，由当前智能体调用"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "「@」菜单增加「助理」一类，列出当前对话能调用的助理（自己的其他助理与别人共享的助理，写名字与归属，不能调用的置灰写原因）。选中后成为输入框里的「@名字」标签；发送时把被点名的助理随消息带给后端，后端在回合开始时再核对一次并明确告诉智能体去调用它，调用沿用 F002-13 的调用记录与展示。可调用的判定由后端按对话给出，与智能体实际拿到的列表同一套规则；Peer Device Mode 转发到对端。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-04"
@@ -139,7 +139,7 @@ parent: "F002"
 - dev：`pnpm run desktop:dev -- --isolated-data`
 - release：`zsh tmp/build-arm64.sh` 后两台安装；agent002 上的前台操作只在屏幕共享窗口中进行
 
-- [ ] Exit Criteria 1–5 通过并记录证据
+- [x] Exit Criteria 1–5 通过并记录证据
 
 **进展（2026-11-04）：** Exit Criteria 1、2 在本机 dev 构建（隔离数据，`--isolated-data`）用 computer use 验收通过；3、4、5 尚未验收。
 - 1：bos 项目对话（标准）里「@」→「助理」列出 小岚、小栖（我的助理）以及「助理 · 来自 agent 的设备」；小栖的对话只列出小岚与共享的助理，不列小栖自己；新建对话切到「极简」后，「@」菜单里没有「助理」。
@@ -150,6 +150,11 @@ parent: "F002"
 - 3（不在线）：agent002 退出期间，本机「@」→「助理」中该项显示「助理 · 来自 agent 的设备 · 不在线」，`aria-disabled`，不能选中；侧栏同时显示离线图标。
 - 4：本机没有登录同账号的对端设备，设备菜单里没有可连接的对端，Peer Device Mode 未能建立，未实机验收；由 CLI 对端主机处理 `list_callable_assistants`（含 `draft`）、登记行 `Proxied` 与 `remote_surface`、`peer_host` 测试覆盖。
 - 5：只有 Peer Device Mode 会把这条消息交给另一版本的主机处理，同样未能实机验收；由 Task 4 的测试覆盖（旧版本遇到未知展示类型时整体退回正文，正文里仍是「@名字」）。
+
+**进展（2026-11-05，两台都是构建自 f13d106b2 的 dev 版）：**
+- 3（发送后、回合开始前变得不能调用）：通过。本机小栖的新对话里选中「@助理 · agent」并写好「请它看看它自己工作区根目录里有哪些文件，把文件名原样告诉我。」，在 agent002 上移除本机的授权后立即发送。回合开始时的核对给模型的提示为「The user also named these with @, but they cannot be called now. Do not call them; tell the user why: - "助理" (shared from the device "agent"): its owner stopped sharing it with this device」；智能体没有发起调用，回复「无法请"助理"查看：设备"agent"的所有者已停止向本设备共享该助理……请所有者恢复共享后再试。」。第一次用「只回复一个字：行」做提示时，提示同样到达，但模型按字面只回了「行」，所以换成必须调用才能回答的请求。随后本机重新申请、agent002 允许，共享恢复为普通信任、保留 7 天、同时 2 个任务。
+- 测试方法：本机 dev 窗口不在当前桌面空间（`document.hidden` 为真），WebKit 不执行 `requestAnimationFrame`，而输入框在 `requestAnimationFrame` 里检测「@」，菜单打不开。只在这次测试的页面里把 `requestAnimationFrame` 换成 `setTimeout`，测完重新加载页面恢复；窗口可见时不受影响，不是产品问题。
+- 4、5 维持上文：两台测试机都没有登录同一账号，Peer Device Mode 建立不了，按 Task 5 的约定以测试覆盖。
 
 ## 风险
 
