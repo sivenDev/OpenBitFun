@@ -104,6 +104,12 @@ describe('the assistants shared with this device in the navigation', () => {
     expect(all('nav-shared-assistant-online')).toHaveLength(1);
     expect(all('nav-shared-assistant-unavailable')).toHaveLength(0);
     expect(all('nav-shared-assistant')[0].className).not.toContain('is-unavailable');
+    // Like a local assistant, the history starts closed and shows only what is viewed or waits.
+    const history = document.querySelector('[data-testid="nav-shared-assistant-history"]')!;
+    expect(history.getAttribute('aria-expanded')).toBe('false');
+    expect(all('nav-shared-assistant-conversation').map(row => row.textContent)).toEqual(['Second draft']);
+    await click(history);
+    expect(history.getAttribute('aria-expanded')).toBe('true');
     const rows = all('nav-shared-assistant-conversation');
     // A row reads its title and an icon; the full sentence is its name and tooltip.
     expect(rows.map(row => row.textContent)).toEqual(['Second draft', 'First']);
@@ -115,6 +121,20 @@ describe('the assistants shared with this device in the navigation', () => {
       .toEqual(['approval', 'queued']);
     expect(rows[0].getAttribute('aria-current')).toBe('true');
     expect(rows[0].className).toContain('is-waiting');
+    // Closed again, it stays closed after the list is shown again.
+    await click(history);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await render();
+    expect(all('nav-shared-assistant-conversation')).toHaveLength(1);
+  });
+
+  it('keep a closed history empty when nothing is viewed or waiting', async () => {
+    mocks.jobs = { a: mocks.jobs.a };
+    await render();
+    expect(all('nav-shared-assistant-conversation')).toHaveLength(0);
+    await click(document.querySelector('[data-testid="nav-shared-assistant-history"]')!);
+    expect(all('nav-shared-assistant-conversation').map(row => row.textContent)).toEqual(['First']);
   });
 
   it('dim an assistant whose owner is out of reach', async () => {
@@ -136,6 +156,7 @@ describe('the assistants shared with this device in the navigation', () => {
       ['b', { ...(mocks.jobs.b as object), updatedAt: 10 }],
     ].map(entry => (Array.isArray(entry) ? entry : [entry.jobId, entry])));
     await render();
+    await click(document.querySelector('[data-testid="nav-shared-assistant-history"]')!);
     const titles = () => all('nav-shared-assistant-conversation').map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent);
     // session-b is the one being viewed, so it stays in sight past the first three.
     expect(titles()).toEqual(['c', 'd', 'e', 'Second draft']);
@@ -147,6 +168,7 @@ describe('the assistants shared with this device in the navigation', () => {
 
   it('open a conversation, the latest one, or a new one', async () => {
     await render();
+    await click(document.querySelector('[data-testid="nav-shared-assistant-history"]')!);
     await click(all('nav-shared-assistant-conversation')[1]);
     expect(mocks.openSession).toHaveBeenCalledWith('session-a');
     await click(document.querySelector('[data-testid="nav-shared-assistant-open"]')!);

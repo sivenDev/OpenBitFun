@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
 import { Icon, IconButton, Tooltip } from '@openbitfun/ui';
-import { Ban, WifiOff } from 'lucide-react';
+import { Ban, ChevronUp, History, WifiOff } from 'lucide-react';
 import { useSceneStore } from '@/app/stores/sceneStore';
 import { isSessionNavRowActive } from '@/app/components/NavPanel/sections/sessions/sessionNavSelection';
 import { dispatchJobStore } from '@/features/dispatch/dispatchJobStore';
@@ -21,7 +21,7 @@ import { notificationService } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
 import { limitRows } from './delegatedTaskGroups';
 import { NavTaskStatusIcon } from './NavTaskStatus';
-import { fullLists } from './navListMemory';
+import { fullLists, openedGroups } from './navListMemory';
 
 const log = createLogger('SharedAssistantList');
 
@@ -103,11 +103,20 @@ export default function SharedAssistantList() {
           activeSessionId: activeSessionId ?? null,
           activeChildHasVisibleRow: false,
         });
-        const { shown: conversations, hidden } = limitRows(
-          sharedAssistantConversations(jobs, ref),
-          fullLists.has(key),
-          job => isActive(job.sessionId),
-        );
+        const statusOf = (job: ReturnType<typeof sharedAssistantConversations>[number]) => {
+          // A conversation not loaded here has been sent before,
+          // unless its first message never left this device.
+          const turns = sessions.get(job.sessionId)?.dialogTurns?.length;
+          return sharedAssistantStatus(job, turns === undefined ? job.state !== 'submitting' : turns > 0);
+        };
+        // Like a local assistant, the history is closed until asked for; closed, it
+        // still shows the conversation being viewed and those waiting on the owner.
+        const historyOpen = openedGroups.get(key) ?? false;
+        const all = sharedAssistantConversations(jobs, ref);
+        const { shown: conversations, hidden } = historyOpen
+          ? limitRows(all, fullLists.has(key), job => isActive(job.sessionId))
+          : { shown: all.filter(job => isActive(job.sessionId) || statusOf(job).kind === 'approval'), hidden: 0 };
+        const historyLabel = historyOpen ? t('nav.workspaces.collapseSessions') : t('nav.sessions.history');
         // Out of reach or no longer shared: the assistant and its conversations read dimmed.
         const reachable = !revoked && assistant.online;
         return (
@@ -139,11 +148,27 @@ export default function SharedAssistantList() {
                   )}
                 </button>
               </Tooltip>
+              <Tooltip content={historyLabel} placement="right" followCursor>
+                <IconButton
+                  size="xs"
+                  variant="quiet"
+                  className={['shared-assistant-nav__action', historyOpen && 'is-open'].filter(Boolean).join(' ')}
+                  aria-label={historyLabel}
+                  aria-expanded={historyOpen}
+                  onClick={() => {
+                    openedGroups.set(key, !historyOpen);
+                    setRevision(revision => revision + 1);
+                  }}
+                  icon={<Icon glyph={historyOpen ? ChevronUp : History} size="xs" aria-hidden="true" />}
+                  data-testid="nav-shared-assistant-history"
+                />
+              </Tooltip>
               {revoked ? null : (
                 <Tooltip content={t('nav.sessions.sharedAssistant.newConversation')}>
                   <IconButton
                     size="xs"
                     variant="quiet"
+                    className="shared-assistant-nav__action"
                     aria-label={t('nav.sessions.sharedAssistant.newConversation')}
                     disabled={busy}
                     onClick={() => run(() => startSharedAssistantConversation(ref))}
@@ -156,11 +181,7 @@ export default function SharedAssistantList() {
             {conversations.length > 0 ? (
               <div className="assistant-session-history__delegated">
                 {conversations.map((job) => {
-                  // A conversation not loaded here has been sent before,
-                  // unless its first message never left this device.
-                  const turns = sessions.get(job.sessionId)?.dialogTurns?.length;
-                  const sent = turns === undefined ? job.state !== 'submitting' : turns > 0;
-                  const status = sharedAssistantStatus(job, sent);
+                  const status = statusOf(job);
                   const detail = statusText(status, owner);
                   const active = isActive(job.sessionId);
                   const title = sessions.get(job.sessionId)?.title || job.title || t('nav.sessions.sharedAssistant.untitled');
