@@ -35,13 +35,17 @@ use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex, RwLock};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+use super::adapter_store::{
+    npx_adapter_launch, AdapterInstallError, AdapterLaunch, AdapterStore, InstalledAdapter,
+};
 use super::builtin_clients::{
     builtin_acp_client_preset, builtin_client_ids, default_config_for_builtin_client,
     migrate_legacy_builtin_client_configs,
 };
 use super::config::{
     AcpClientConfig, AcpClientConfigFile, AcpClientInfo, AcpClientPermissionMode,
-    AcpClientRequirementProbe, AcpClientStatus, RemoteAcpClientRequirementSnapshot,
+    AcpClientRequirementProbe, AcpClientStatus, AcpRequirementProbeItem,
+    RemoteAcpClientRequirementSnapshot,
 };
 use super::dsh_profile::{ensure_bundled_profile, ensure_bundled_profile_remote};
 use super::permission_broker::{
@@ -52,11 +56,10 @@ use super::remote_capability_store::RemoteAcpCapabilityStore;
 use super::remote_session::{preferred_resume_strategies, AcpRemoteSessionStrategy};
 use super::remote_shell::{remote_user_shell_command, render_remote_env_assignments, shell_escape};
 use super::requirements::{
-    acp_requirement_spec, adapter_ready_for_launch, apply_command_environment,
-    install_npm_cli_package, install_remote_npm_cli_package, npx_adapter_launch,
-    predownload_npm_adapter, prepare_npx_adapter, prepare_remote_npx_adapter, probe_executable,
-    probe_npm_adapter, probe_remote_executable, probe_remote_npx_adapter,
-    resolve_configured_command, ADAPTER_DOWNLOAD_TIMEOUT,
+    acp_requirement_spec, apply_command_environment, install_npm_cli_package,
+    install_remote_npm_cli_package, predownload_npm_adapter, probe_executable, probe_npm_adapter,
+    probe_remote_executable, probe_remote_npx_adapter, resolve_configured_command,
+    ADAPTER_DOWNLOAD_TIMEOUT,
 };
 use super::session_options::{
     model_config_id, session_options_from_state, AcpAvailableCommand, AcpSessionContextUsage,
@@ -162,6 +165,9 @@ pub struct AcpClientService {
     config_service: Arc<ConfigService>,
     session_persistence: AcpSessionPersistence,
     remote_capability_store: RemoteAcpCapabilityStore,
+    /// The npm adapters built-in clients launch, installed where OpenBitFun
+    /// controls when they download and update.
+    adapter_store: Arc<AdapterStore>,
     clients: DashMap<String, Arc<AcpClientConnection>>,
     pending_permissions: DashMap<String, PendingPermission>,
     session_permission_modes: DashMap<String, AcpClientPermissionMode>,
@@ -244,6 +250,9 @@ impl AcpClientService {
                     .user_data_dir()
                     .join("ssh_acp_capabilities.json"),
             ),
+            adapter_store: Arc::new(AdapterStore::new(
+                path_manager.managed_runtimes_dir().join("acp-adapters"),
+            )),
             clients: DashMap::new(),
             pending_permissions: DashMap::new(),
             session_permission_modes: DashMap::new(),
@@ -371,7 +380,16 @@ impl AcpClientService {
             let spec = acp_requirement_spec(&id, configs.get(&id));
             let tool = probe_executable(spec.tool_command).await;
             let adapter = match spec.adapter {
-                Some(adapter) => Some(probe_npm_adapter(adapter.package, adapter.bin).await),
+                Some(adapter) => Some(match self.installed_adapter(&id, configs.get(&id)) {
+                    Some(installed) => AcpRequirementProbeItem {
+                        name: adapter.package.to_string(),
+                        installed: true,
+                        version: installed.version,
+                        path: Some(installed.bin),
+                        error: None,
+                    },
+                    None => probe_npm_adapter(adapter.package, adapter.bin).await,
+                }),
                 None => None,
             };
             let runnable = tool.installed
@@ -529,14 +547,17 @@ impl AcpClientService {
             ))
         })?;
 
-        // Download exactly what the launch will run; any other spec lands in a
-        // different npx cache entry and leaves the launch to download it again.
+        // Install what the launch runs, or bring it up to date: this is the
+        // explicit user action, so it may take as long as the download does.
         match config
             .as_ref()
             .and_then(|config| npx_adapter_launch(config, &adapter).map(|launch| (config, launch)))
         {
-            Some((config, launch)) => prepare_npx_adapter(client_id, config, &launch)
+            Some((config, launch)) => self
+                .adapter_store
+                .update(&launch, &config.env)
                 .await
+                .map(|_| ())
                 .map_err(|error| error.into_error(client_id, launch.spec())),
             None => predownload_npm_adapter(adapter.package, adapter.bin).await,
         }
@@ -1829,12 +1850,7 @@ impl AcpClientService {
         {
             ensure_bundled_profile(profile).await?;
         }
-        if let Some(adapter) = acp_requirement_spec(client_id, Some(config)).adapter {
-            if let Some(launch) = npx_adapter_launch(config, &adapter) {
-                let result = prepare_npx_adapter(client_id, config, &launch).await;
-                adapter_ready_for_launch(client_id, launch.spec(), result)?;
-            }
-        }
+        let config = &self.local_adapter_launch(client_id, config).await?;
 
         let program = resolve_configured_command(&config.command, &config.env);
         let mut command = openbitfun_core::util::process_manager::create_tokio_command(&program);
@@ -1924,7 +1940,6 @@ impl AcpClientService {
         ByteStreams<AcpOutgoingStream, AcpIncomingStream>,
         StderrTail,
     )> {
-        let command = render_remote_client_command(config, workspace_path)?;
         let remote_manager = get_remote_workspace_manager().ok_or_else(|| {
             OpenBitFunError::service("Remote workspace manager is not initialized".to_string())
         })?;
@@ -1944,14 +1959,32 @@ impl AcpClientService {
             )
             .await?;
         }
-        if let Some(adapter) = acp_requirement_spec(client_id, Some(config)).adapter {
-            if let Some(launch) = npx_adapter_launch(config, &adapter) {
-                let result =
-                    prepare_remote_npx_adapter(&ssh_manager, remote_connection_id, config, &launch)
-                        .await;
-                adapter_ready_for_launch(client_id, launch.spec(), result)?;
+        let config = &match adapter_launch(client_id, config) {
+            Some(launch) => {
+                let result = self
+                    .adapter_store
+                    .ensure_installed_remote(
+                        &ssh_manager,
+                        remote_connection_id,
+                        &launch,
+                        &config.env,
+                    )
+                    .await;
+                let installed = launch_with_installed_adapter(client_id, config, &launch, result)?;
+                if installed.is_some() {
+                    self.adapter_store.update_remote_in_background(
+                        ssh_manager.clone(),
+                        remote_connection_id,
+                        client_id,
+                        launch.clone(),
+                        config.env.clone(),
+                    );
+                }
+                installed.unwrap_or_else(|| config.clone())
             }
-        }
+            None => config.clone(),
+        };
+        let command = render_remote_client_command(config, workspace_path)?;
         let transport = ssh_manager
             .open_workspace_stdio(remote_connection_id, &command)
             .await
@@ -1980,6 +2013,49 @@ impl AcpClientService {
             ByteStreams::new(Box::pin(writer.compat_write()), Box::pin(reader.compat())),
             stderr_tail,
         ))
+    }
+
+    /// The launch to spawn locally: an npx adapter launch runs the adapter the
+    /// store has installed, installing it first, so the handshake timeout that
+    /// follows never covers a download.
+    async fn local_adapter_launch(
+        &self,
+        client_id: &str,
+        config: &AcpClientConfig,
+    ) -> OpenBitFunResult<AcpClientConfig> {
+        let Some(launch) = adapter_launch(client_id, config) else {
+            return Ok(config.clone());
+        };
+        let result = self
+            .adapter_store
+            .ensure_installed(&launch, &config.env)
+            .await;
+        match launch_with_installed_adapter(client_id, config, &launch, result)? {
+            Some(installed) => {
+                self.adapter_store
+                    .update_in_background(client_id, launch, config.env.clone());
+                Ok(installed)
+            }
+            None => Ok(config.clone()),
+        }
+    }
+
+    /// The adapter a launch of `client_id` would run without installing anything.
+    fn installed_adapter(
+        &self,
+        client_id: &str,
+        config: Option<&AcpClientConfig>,
+    ) -> Option<InstalledAdapter> {
+        let default_config;
+        let config = match config {
+            Some(config) => config,
+            None => {
+                default_config = default_config_for_builtin_client(client_id)?;
+                &default_config
+            }
+        };
+        self.adapter_store
+            .installed(&adapter_launch(client_id, config)?)
     }
 
     async fn resolve_start_client_config(
@@ -2034,6 +2110,47 @@ fn resolve_config_for_client(
         .get(client_id)
         .cloned()
         .or_else(|| remote_connection_id.and_then(|_| default_config_for_builtin_client(client_id)))
+}
+
+fn adapter_launch(client_id: &str, config: &AcpClientConfig) -> Option<AdapterLaunch> {
+    let adapter = acp_requirement_spec(client_id, Some(config)).adapter?;
+    npx_adapter_launch(config, &adapter)
+}
+
+/// Applies the launch policy to an adapter install: the installed adapter
+/// replaces npx, a timed-out install fails the launch because npx would only
+/// repeat the download under the shorter handshake timeout, and any other
+/// failure leaves the configured npx launch to run and report as it always has.
+fn launch_with_installed_adapter(
+    client_id: &str,
+    config: &AcpClientConfig,
+    launch: &AdapterLaunch,
+    result: Result<InstalledAdapter, AdapterInstallError>,
+) -> OpenBitFunResult<Option<AcpClientConfig>> {
+    match result {
+        Ok(installed) => {
+            debug!(
+                "ACP adapter launch: id={} spec={} version={:?} bin={}",
+                client_id,
+                launch.spec(),
+                installed.version,
+                installed.bin
+            );
+            Ok(Some(launch.installed_launch(config, &installed.bin)))
+        }
+        Err(AdapterInstallError::TimedOut) => {
+            Err(AdapterInstallError::TimedOut.into_error(client_id, launch.spec()))
+        }
+        Err(AdapterInstallError::Failed(detail)) => {
+            warn!(
+                "ACP adapter install failed; launching through npx: id={} spec={} error={}",
+                client_id,
+                launch.spec(),
+                detail
+            );
+            Ok(None)
+        }
+    }
 }
 
 fn ensure_remote_client_supported(

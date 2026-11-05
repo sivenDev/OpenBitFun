@@ -1,3 +1,4 @@
+mod adapter_store;
 mod builtin_clients;
 mod config;
 mod dsh_profile;
