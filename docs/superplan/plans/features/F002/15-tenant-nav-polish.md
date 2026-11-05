@@ -95,7 +95,7 @@ parent: "F002"
     - 读取抽成 `useAssistantDelegatedTasks.ts`；展开与「显示其余」的记忆放在 `navListMemory.ts`，两个列表共用。放在组件文件里会触发 react-refresh 告警，所以单独成文件。
     - 分组第二行沿用现有的 `delegated.count`（zh-CN「N 个会话」），没有改成「对话」。
     - 行尾标签用短词（「待审批 2」「运行中」，已结束的显示开始时间），完整说明放在行的 tooltip 中；「运行中/失败」用共享词条。
-    - 真机反馈后（2026-11-04）用户要求删除自己会话上方的「我的」：本地助理的会话不再有小标题，来自其他设备的分组头已足以区分。删除 `delegated.mine`（三种语言）、`.assistant-session-history__mine` 样式与 `sectionLabel` 外观部件；测试改为断言不出现该标题、任务仍交给列表。NavPanel 50 个文件 380 项测试、`type-check:web`、eslint、`check:web`、`i18n:audit`、`theme:color-audit:all` 通过。
+    - 真机反馈后（2026-11-04）用户要求删除自己会话上方的「我的」：本地助理的会话不再有小标题，来自其他设备的分组头已足以区分。删除 `delegated.mine`（三种语言）、`.assistant-session-history__mine` 样式与 `sectionLabel` 外观部件；测试改为断言不出现该标题、任务仍交给列表。NavPanel 50 个文件 380 项测试、`type-check:web`、eslint、`check:web`、`i18n:audit`、`theme:color-audit:all` 通过。真机（2026-11-04，F001 分支 dev 实例，合并 `859febd1f`）：小岚展开后直接是「跨会话沟通机制」「停用测试」「模型回复测试」「显示更多 +18」，没有「我的」，其后是「› 来自 agent 的设备」。
     - 删除不再使用的 `delegated.external` 与 `delegated.waiting`。
 
 ## Task 2: 使用者端「来自共享」的状态与限条
