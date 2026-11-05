@@ -122,6 +122,7 @@ parent: "F002"
   - 证据（2026-11-05）：
     - `share_call.rs` 的 `a_device_acts_only_on_its_own_jobs` 把 `delete` 加入动词表：别的设备的、本机自己的与不存在的任务都回答 `dispatch job '<id>' does not exist`。
     - 运行中的任务回答 `DISPATCH_DELETE_ACTIVE_REFUSAL`，任务还在；没有共享密钥时拒绝。
+    - 所有权在删除时、任务锁内再校验一次，不只靠共享调用的入口检查（安全审查后补充）：删除别的设备的或主人自己的任务回答 `does not exist`，任务还在。
 - [x] `probe` 声明删除能力，保留期清理的现有测试仍通过
   - 证据（2026-11-05）：
     - `probe` 声明 `shared_conversation_delete_v1`；services-core `dispatch_contract` 8 项通过，其中删除能力属于可选能力，且共享密钥可以绑定 `dispatch_target_delete`。

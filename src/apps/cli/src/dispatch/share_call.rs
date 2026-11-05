@@ -46,7 +46,7 @@ fn job_id(input: &Value) -> &str {
 }
 
 /// Another requester's job looks the same as a missing one.
-fn missing(job_id: &str) -> anyhow::Error {
+pub(super) fn missing(job_id: &str) -> anyhow::Error {
     anyhow::anyhow!("dispatch job '{job_id}' does not exist")
 }
 

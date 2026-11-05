@@ -681,22 +681,27 @@ fn append(request: DispatchAppendRequest) -> Result<DispatchAppendResponse> {
 /// assistant, as the retention cleanup would once it expires. The share
 /// call admitted the job as that device's own; nobody else deletes here.
 fn delete(request: DispatchDeleteRequest) -> Result<DispatchDeleteResponse> {
-    if request.source_share_key.is_none() {
+    let Some(share_key) = request.source_share_key else {
         bail!("only a device using a shared assistant deletes its conversations here");
-    }
+    };
     let path_manager = openbitfun_core::infrastructure::PathManager::new()
         .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
     let store = DispatchStore::open(path_manager.product_home_dir().join("dispatch"))?;
     let delegated = DelegatedRetention::for_product_home(path_manager);
-    delete_in_store(&store, &delegated, request.job_id)
+    delete_in_store(&store, &delegated, request.job_id, &share_key)
 }
 
+/// Removes the job only while it is still `share_key`'s own: the check is
+/// repeated under the job's lock, not left to the share call alone.
 fn delete_in_store(
     store: &DispatchStore,
     delegated: &DelegatedRetention,
     job_id: String,
+    share_key: &str,
 ) -> Result<DispatchDeleteResponse> {
-    match store.remove_terminal_job(&job_id, delegated, |_, _| true)? {
+    match store.remove_terminal_job(&job_id, delegated, |_, job| {
+        share_call::owns(job, share_key)
+    })? {
         // Removed now or before: either way it is gone.
         JobRemoval::Removed | JobRemoval::Missing => Ok(DispatchDeleteResponse {
             job_id,
@@ -706,7 +711,9 @@ fn delete_in_store(
             bail!(openbitfun_services_core::dispatch_contract::DISPATCH_DELETE_ACTIVE_REFUSAL)
         }
         JobRemoval::Busy => bail!("this conversation is in use on the owner's device; try again"),
-        JobRemoval::Unreadable | JobRemoval::Kept => {
+        // Another device's or this device's own job answers as a missing one.
+        JobRemoval::Kept => Err(share_call::missing(&job_id)),
+        JobRemoval::Unreadable => {
             bail!("this conversation cannot be deleted on the owner's device")
         }
     }
@@ -1649,27 +1656,49 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = DispatchStore::open(dir.path().join("dispatch")).expect("store");
         let retention = DelegatedRetention::default();
-        for job_id in ["job-done", "job-running"] {
+        let mine = "ab".repeat(32);
+        let theirs = "cd".repeat(32);
+        for (job_id, key) in [
+            ("job-done", Some(&mine)),
+            ("job-running", Some(&mine)),
+            ("job-theirs", Some(&theirs)),
+            ("job-local", None),
+        ] {
+            let mut request = test_request(job_id);
+            request.source_share_key = key.cloned();
             store
-                .create_job(test_request(job_id), "Task".to_string())
+                .create_job(request, "Task".to_string())
                 .expect("create job");
+            let state = if job_id == "job-running" {
+                DispatchJobState::Running
+            } else {
+                DispatchJobState::Succeeded
+            };
+            store
+                .mark_state(job_id, state, None, None)
+                .expect("mark state");
         }
-        store
-            .mark_state("job-done", DispatchJobState::Succeeded, None, None)
-            .expect("mark terminal");
-        store
-            .mark_state("job-running", DispatchJobState::Running, None, None)
-            .expect("mark running");
 
-        let error = delete_in_store(&store, &retention, "job-running".to_string()).unwrap_err();
+        let error =
+            delete_in_store(&store, &retention, "job-running".to_string(), &mine).unwrap_err();
         assert_eq!(
             error.to_string(),
             openbitfun_services_core::dispatch_contract::DISPATCH_DELETE_ACTIVE_REFUSAL
         );
         assert!(store.load_job("job-running").is_ok());
+        // Another device's job and the owner's own read as missing ones and stay.
+        for other in ["job-theirs", "job-local"] {
+            let error = delete_in_store(&store, &retention, other.to_string(), &mine).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("dispatch job '{other}' does not exist")
+            );
+            assert!(store.load_job(other).is_ok());
+        }
         for _ in 0..2 {
             // Deleted now, or before: either way it is gone.
-            let response = delete_in_store(&store, &retention, "job-done".to_string()).unwrap();
+            let response =
+                delete_in_store(&store, &retention, "job-done".to_string(), &mine).unwrap();
             assert!(response.deleted);
             assert!(store.load_job("job-done").is_err());
         }
