@@ -253,9 +253,9 @@ parent: "F002"
 - `cargo +1.95.0 test --locked -p openbitfun-core --no-default-features --features agent-runtime,git,lan-share,dispatch-store,ssh-remote --lib -- ask_user_question`
 - `npx tsc --noEmit -p src/web-ui`、`pnpm run lint:web`、`pnpm run i18n:audit`
 
-- [ ] 列表不列出调用会话、主页折叠记录、卡片侧栏查看、审批归到发起方、提问归到发起方均有测试
+- [x] 列表不列出调用会话、主页折叠记录、卡片侧栏查看、审批归到发起方、提问归到发起方均有测试
 
-**进展（2026-11-04，未勾选）：**
+**进展（2026-11-04）：**
 - 13bd28e6a：导航不列出带 `delegatedBy` 的会话，去掉列表里的「来自 X」标记与词条；助理主页在定时会话与会话之间增加默认折叠的「为其他助理做的任务」（只在有记录时出现），点开打开该会话；带 `delegatedBy` 的会话只读（`fresh_only`），由发起方驱动；调用卡片把类型位置换成归属「我的助理」/「来自 某某 的设备」，不再显示 `assistant:`/`shared:` 类型；点开时带被调用会话自己的 `workspaceId`。
 - 现状确认：被调用会话的审批带 `delegation.parentSessionId`，Web UI 归到发起方的输入区；提问的控制会话取自调用时的父信息，即发起方。两者待真机确认，尚未补专门测试。
 - 验证：Web UI `src/app/scenes/profile src/flow_chat/tool-cards src/flow_chat/utils/remoteAgent.test.ts src/app/components/NavPanel src/flow_chat/session-drivers` 通过；`tsc`、`eslint`、`pnpm run i18n:audit`、`pnpm run theme:color-audit:all` 通过。
@@ -268,6 +268,8 @@ parent: "F002"
 - 继续追问（2026-11-04 主人确认）：此前在侧栏里把共享助理的调用选为对话目标发消息，会按本机子智能体解析并报 `candidate_unavailable`。151ed1111：这样的回合作为远程回合续写同一个任务，并把该调用最近的任务记录前移，下一次追问从正确的游标开始。203cde545：侧栏标题、输入区的对话目标与侧栏模型写被调用助理的名字与主人设备报告的模型（此前是随机昵称「豆豆」与本机配置的 fast）。0fb5cdac8：选中尚未载入的子智能体会话为目标时，读取权限模式要求宿主恢复内部会话，不再提示「无法读取此会话的权限模式」（main 同样存在）。6515263b8：会话概览的「智能体」列表写助理名与归属，不再写模型起的英文名与 `shared:` 地址。
 - 真机（2026-11-04，dev 构建，本机与 agent002 同一二进制 8edd4665）：本机小岚调用 agent002 的「助理」后，在侧栏追问「我刚才问你的问题是什么？」，回答「你刚才问的是：在什么情况下我会拒绝执行你的请求？」；agent002 的助理调用本机小岚后追问「你刚才回复的是哪个字？」，回答「成」。两边侧栏与对话目标都写被调用助理的名字。
 - afecbc746、90281defb：重启后等待卡片的名字与调用卡片的状态（见 Task 4 进展）。
+- 89eacacb1：审批与提问归到发起方的测试。core `a_called_assistants_questions_and_approvals_go_to_its_caller`：被调用助理的会话没有父子关系，回合的父信息是发起方，提问的控制会话与审批的委派都指向发起方；Web UI `permissionRequestRouting.test.ts`「hands a called assistant's request to the conversation that called it」：被调用会话（在它自己的工作区）的审批只归发起方，并挂到发起方的调用卡片。协调器从调用到执行上下文的整段需要真实的助理工作区，测试不创建（避免写入用户目录），这一段由上面的真机记录覆盖。其余各项的测试见 13bd28e6a（`sessionNavHierarchy`、`calledSessions`、`AgentControlToolCard`）。
+- 验证：core `--lib -- tool_context_runtime` 26 通过；Web UI `permissionRequestRouting.test.ts` 11 通过，`tsc` 通过。
 
 ## Task 6: 外部任务的继续调用与计数（暂停至 Task 4、5 之后）
 
