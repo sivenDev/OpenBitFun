@@ -1601,6 +1601,13 @@
   align-items: center;
   gap: var(--openbitfun-space-1);
   padding-inline-end: var(--openbitfun-space-1);
+
+  // Like a local assistant, the actions show on hover or focus.
+  &:not(:hover):not(:focus-within) .shared-assistant-nav__action {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
 }
 
 // The assistant's name and a mark for whether its owner can be reached.

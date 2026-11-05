@@ -118,6 +118,7 @@ parent: "F002"
     - 助理行只写名字，后面一个标识：在线是绿点，不在线是 `WifiOff`，已停止共享是 `Ban`；「来自 X 的设备 · 状态」放进 tooltip 与无障碍名称，去掉第二行。
     - 对话行与主人端任务行去掉状态点和行尾短词，改为行尾图标，沿用会话行 `SessionStatusIndicator` 的图标与色调（待审批 `Hand`、排队 `clock`、运行 `Loader2` 旋转、失败 `CircleAlert`，另加过期 `TimerOff`、共享已停止 `Ban`）；已结束的任务没有图标，开始时间放进 tooltip。完整说明改用 `Tooltip` 组件显示，同时是行的无障碍名称。
     - 删除不再使用的 `sharedAssistant.status.approvalShort`。NavPanel 50 个文件 379 项测试、`type-check:web`、改动目录 eslint、`i18n:audit`（0 警告）、`theme:color-audit:all` 通过。
+    - 用户要求共享助理的会话像本地助理一样可收起和展开：助理行在「新对话」前加历史开关（收起时 `History`，展开时 `ChevronUp`，tooltip 与无障碍名称为「历史会话」/「收起会话」），默认收起；收起时只显示正在看的和等待审批的会话，展开后才限条与「显示其余」；开关状态在本次运行内记住。两个按钮像本地助理一样在悬停或聚焦时显示。NavPanel 50 个文件 380 项测试、`type-check:web`、eslint、`check:web`、`i18n:audit`、`theme:color-audit:all` 通过。
     - 用户指出共享助理下对话的选中状态太浅：任务行的悬停与选中改用会话行的 `navigation-hover-feedback`、`nav-panel-text-row-active` 与 `navigation-selection-feedback`；不可用（变暗）的助理里，选中行的标题仍用主文字色。workspaces 目录 15 个文件 105 项测试与 `theme:color-audit:all` 通过。
 
 ## Task 3: 整体检查与真机核对
