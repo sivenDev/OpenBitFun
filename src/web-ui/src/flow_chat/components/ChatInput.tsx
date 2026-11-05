@@ -750,6 +750,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     return jobId ? state.jobs[jobId] : undefined;
   });
   const effectiveTargetRelationship = resolveSessionRelationship(effectiveTargetSession);
+  const permissionTargetIsSubagent = !isBtwDraftTarget && effectiveTargetRelationship.isSubagent;
   const isBtwSession = effectiveTargetRelationship.displayAsChild;
   const isSubagentInputTarget = effectiveTargetRelationship.isSubagent;
   const caps = useComposerCapabilities({
@@ -2655,6 +2656,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           workspacePath: sessionOwningPath,
           remoteConnectionId: effectiveTargetSession?.remoteConnectionId,
           remoteSshHost: effectiveTargetSession?.remoteSshHost,
+          // A child agent session is internal; the host restores it only when asked.
+          includeInternal: permissionTargetIsSubagent || undefined,
         }));
         if (permissionModeRequestGenerationRef.current !== generation) return;
         setSessionPermissionMode(response.mode ?? null);
@@ -2686,6 +2689,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, [
     activePermissionTurnId,
     effectiveTargetSessionId,
+    permissionTargetIsSubagent,
     sessionOwningId,
     sessionOwningPath,
     effectiveTargetSession?.workspacePath,
