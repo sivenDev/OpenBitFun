@@ -525,8 +525,7 @@
         "waitingShort": "待审批 {{count}}",
         "waitingBadge": "{{count}} 项等待你审批",
         "running": "{{count}} 进行中",
-        "queued": "排队中",
-        "showMore": "显示其余 {{count}} 个"
+        "queued": "排队中"
       },
       "sharedAssistant": {
         "title": "来自共享",

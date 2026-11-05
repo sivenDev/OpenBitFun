@@ -49,6 +49,7 @@ vi.mock('@openbitfun/ui', () => {
     ),
     Icon: () => <span />,
     Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    OverflowText: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
   };
 });
 

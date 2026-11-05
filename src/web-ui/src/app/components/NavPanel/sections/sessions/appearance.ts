@@ -17,7 +17,6 @@ export const sessionsSectionAppearanceDescriptor: AppearanceSurfaceDescriptor = 
     { id: 'groupHeader' },
     { id: 'badge' },
     { id: 'statusMark' },
-    { id: 'more' },
   ],
   states: [
     { id: 'active', selector: { kind: 'self', suffix: '[data-openbitfun-state~="active"]' } },

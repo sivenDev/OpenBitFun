@@ -1,4 +1,4 @@
-import { Icon } from '@openbitfun/ui';
+import { Icon, Tooltip } from '@openbitfun/ui';
 import { Ban, CircleAlert, Hand, Loader2, TimerOff } from 'lucide-react';
 import '../sessions/SessionStatusIndicator.scss';
 
@@ -24,13 +24,13 @@ const presentation = {
 } as const;
 
 /**
- * The icon after a task's title; settled tasks have none. `label` names it for
- * assistive technology; the row's tooltip says it in full.
+ * The icon after a task's title; settled tasks have none. `label` names it,
+ * in its own tooltip and for assistive technology.
  */
 export function NavTaskStatusIcon({ kind, label }: { kind: NavTaskStatusKind; label: string | null }) {
   if (kind === 'done' || kind === 'idle') return null;
   const appearance = presentation[kind];
-  return (
+  const icon = (
     <span
       className="session-status-indicator nav-task-status"
       data-openbitfun-component="sessions-section"
@@ -47,4 +47,5 @@ export function NavTaskStatusIcon({ kind, label }: { kind: NavTaskStatusKind; la
       />
     </span>
   );
+  return label ? <Tooltip content={label} placement="top">{icon}</Tooltip> : icon;
 }

@@ -34,6 +34,7 @@ vi.mock('@/shared/utils/logger', () => ({ createLogger: () => ({ warn: vi.fn() }
 vi.mock('@openbitfun/ui', () => ({
   Icon: ({ name }: { name?: string }) => <span data-icon={name} />,
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  OverflowText: ({ children, className }: { children: React.ReactNode; className?: string }) => <span className={className}>{children}</span>,
 }));
 vi.mock('@/infrastructure/i18n', () => ({
   useI18n: () => ({
@@ -73,7 +74,7 @@ describe('DelegatedTaskList', () => {
   const render = async () => { await act(async () => root.render(<DelegatedTaskList workspace={workspace} />)); };
   const rows = () => Array.from(container.querySelectorAll('[data-testid="nav-delegated-task"]'));
 
-  const titles = () => rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent);
+  const titles = () => rows().map(row => row.querySelector('.openbitfun-nav-panel__inline-item-label')!.textContent);
   const groups = () => Array.from(container.querySelectorAll('[data-testid="nav-delegated-group"]'));
   const toggle = (index: number) => groups()[index].querySelector<HTMLButtonElement>('[data-testid="nav-delegated-group-toggle"]')!;
 
@@ -138,13 +139,16 @@ describe('DelegatedTaskList', () => {
     await render();
     expect(titles()).toEqual(['Task w', 'Task p', 'Task q']);
     const more = container.querySelector<HTMLButtonElement>('[data-testid="nav-delegated-more"]')!;
-    expect(more.textContent).toBe('nav.sessions.delegated.showMore:2');
+    // The same toggle as a session list's: "show more +2", then "show less".
+    expect(more.textContent).toBe('nav.sessions.showMoreLabel+2');
     // Settled tasks have no icon; their tooltip says when they started.
     expect(rows()[1].getAttribute('aria-label')).toContain('2026-11-03T01:00:00.000Z');
     expect(rows()[1].querySelector('[data-openbitfun-part="statusMark"]')).toBeNull();
     await act(async () => more.click());
     expect(titles()).toEqual(['Task w', 'Task p', 'Task q', 'Task r', 'Task s']);
-    expect(container.querySelector('[data-testid="nav-delegated-more"]')).toBeNull();
+    expect(more.textContent).toBe('nav.sessions.showLess');
+    await act(async () => more.click());
+    expect(titles()).toEqual(['Task w', 'Task p', 'Task q']);
 
     // Closed by hand, the group stays closed after the list is shown again.
     await act(async () => toggle(0).click());
@@ -174,7 +178,7 @@ describe('DelegatedTaskList', () => {
 
     // A collapsed history keeps the viewed task visible alongside waiting ones.
     await act(async () => root.render(<DelegatedTaskList workspace={workspace} waitingOnly />));
-    expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
+    expect(rows().map(row => row.querySelector('.openbitfun-nav-panel__inline-item-label')!.textContent))
       .toEqual(['Task b']);
     view.activeSessionId = null;
   });
@@ -182,11 +186,14 @@ describe('DelegatedTaskList', () => {
   it('lists only tasks waiting for the owner while the history is collapsed', async () => {
     mocks.listTasks.mockResolvedValue([task('a', { pendingPermissionCount: 1 }), task('b')]);
     await act(async () => root.render(<DelegatedTaskList workspace={workspace} waitingOnly />));
-    expect(rows().map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent))
+    expect(rows().map(row => row.querySelector('.openbitfun-nav-panel__inline-item-label')!.textContent))
       .toEqual(['Task a']);
-    // Collapsed, rows are not grouped and each names its source.
+    // Collapsed, rows are not grouped and each names its source after its title.
     expect(container.querySelector('[data-testid="nav-delegated-group"]')).toBeNull();
-    expect(rows()[0].textContent).toContain('nav.sessions.delegated.from:Ann');
+    expect(rows()[0].querySelector('.openbitfun-nav-panel__inline-item-workspace-name')!.textContent)
+      .toBe('nav.sessions.delegated.from:Ann|Laptop');
+    expect(rows()[0].getAttribute('aria-label'))
+      .toBe('Task a · nav.sessions.delegated.from:Ann|Laptop · nav.sessions.delegated.waitingShort:1');
   });
 
   it('follows reads other surfaces start', async () => {

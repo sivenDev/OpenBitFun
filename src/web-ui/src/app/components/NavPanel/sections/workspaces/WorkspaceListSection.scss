@@ -1381,84 +1381,22 @@
   > [data-openbitfun-part='trigger'] { width: 100%; }
 }
 
-// Tasks delegated to an assistant, listed under it (DelegatedTaskList).
+// Tasks delegated to an assistant, listed under it (DelegatedTaskList). Rows
+// and toggles are the session list's; only the device groups are styled here.
 .assistant-session-history__delegated {
   display: flex;
   flex-direction: column;
 }
 
-// Two lines tall and indented like a session, inside or outside the history.
-.assistant-session-history__delegated .assistant-session-history__delegated-item.openbitfun-nav-panel__inline-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  block-size: auto;
-  padding-block: var(--openbitfun-space-1);
-  // Same indent as the session rail, which is defined inside the session list only.
-  padding-inline: 30px var(--openbitfun-space-1);
-  inline-size: 100%;
-  border: 0;
-  background: transparent;
-  text-align: start;
-  cursor: pointer;
-
-  // Hover and selection read like a session row's.
-  &:hover {
-    color: var(--openbitfun-color-content-primary);
-    @include shell-surfaces.navigation-hover-feedback;
-  }
-
-  &.is-active {
-    @include nav-font.nav-panel-text-row-active;
-    @include shell-surfaces.navigation-selection-feedback;
-  }
-}
-
 // One group per device that sent tasks, headed by the device. A group that
 // waits for the owner is tinted so it reads before the others.
-.assistant-session-history__delegated-group {
-  display: flex;
-  flex-direction: column;
+.openbitfun-nav-panel__inline-list.assistant-session-history__delegated-group {
   margin-block-start: 2px;
   border-radius: var(--openbitfun-radius-base);
 
   &.is-waiting {
     background: var(--openbitfun-color-status-warning-surface);
   }
-}
-
-// One line naming who sent the tasks; the device, count and time are in its tooltip.
-.assistant-session-history__delegated-heading {
-  display: flex;
-  align-items: center;
-  gap: var(--openbitfun-space-1);
-  inline-size: 100%;
-  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) var(--openbitfun-space-1) 12px;
-  border: 0;
-  border-radius: var(--openbitfun-radius-base);
-  background: transparent;
-  color: var(--openbitfun-color-content-primary);
-  text-align: start;
-  cursor: pointer;
-
-  &:hover {
-    background: var(--openbitfun-color-action-quiet-hover);
-  }
-}
-
-.assistant-session-history__delegated-chevron {
-  flex: none;
-  color: var(--openbitfun-color-content-muted);
-}
-
-.assistant-session-history__delegated-heading-title {
-  flex: 1 1 auto;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 // How many actions wait for the owner in the group.
@@ -1473,51 +1411,29 @@
   text-align: center;
 }
 
-// A task row on one line: status dot, title, and a short trailing label.
-.assistant-session-history__delegated-line {
-  display: flex;
-  align-items: center;
-  gap: var(--openbitfun-space-1);
-  inline-size: 100%;
-  min-inline-size: 0;
-
-  .assistant-session-history__delegated-title {
-    flex: 1 1 auto;
-    min-inline-size: 0;
-  }
-}
-
-.assistant-session-history__delegated-title,
-.assistant-session-history__delegated-detail {
-  max-inline-size: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.assistant-session-history__delegated-detail {
-  color: var(--openbitfun-color-content-muted);
-  font-size: var(--openbitfun-type-meta-font-size);
-}
-
-.assistant-session-history__delegated-item.is-waiting .assistant-session-history__delegated-detail {
+// Collapsed, a waiting task names its sender in the warning tone.
+.nav-task-row.is-waiting .openbitfun-nav-panel__inline-item-workspace-name {
   color: var(--openbitfun-color-status-warning-content);
 }
 
-// "Show the other N" under a group, indented like its rows.
-.assistant-session-history__delegated-more.openbitfun-nav-panel__inline-item {
-  inline-size: 100%;
-  padding-block: 2px;
-  padding-inline: 30px var(--openbitfun-space-1);
-  border: 0;
-  background: transparent;
-  color: var(--openbitfun-color-content-secondary);
-  font-size: var(--openbitfun-type-meta-font-size);
-  text-align: start;
-  cursor: pointer;
+// A task row (NavTaskRow) keeps its status in view on hover, so the status's
+// tooltip can be read: the "..." button, when the row has one, takes the cell
+// after the status instead of covering it.
+.assistant-session-history .openbitfun-nav-panel__inline-item.nav-task-row {
+  .openbitfun-nav-panel__inline-item-trailing {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    inline-size: auto;
+  }
 
-  &:hover {
-    color: var(--openbitfun-color-content-primary);
+  .openbitfun-nav-panel__inline-item-status {
+    display: inline-flex;
+    flex: none;
+    visibility: visible;
+    pointer-events: auto;
   }
 }
 

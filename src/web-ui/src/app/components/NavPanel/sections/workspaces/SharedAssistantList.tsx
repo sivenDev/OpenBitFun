@@ -26,7 +26,7 @@ import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDevi
 import { notificationService } from '@/shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
 import { limitRows } from './delegatedTaskGroups';
-import { NavTaskStatusIcon } from './NavTaskStatus';
+import { NavShowMoreToggle, NavTaskRow } from './NavTaskRow';
 import { fullLists, openedGroups } from './navListMemory';
 
 const log = createLogger('SharedAssistantList');
@@ -62,8 +62,7 @@ interface ConversationRowProps {
 
 /**
  * One conversation with a shared assistant, laid out like a local session
- * row: its status sits after the title and gives way to the "..." menu on
- * hover. Deleting removes it on both devices, so the owner must be
+ * row, with its status and then its "..." menu at the end. Deleting removes it on both devices, so the owner must be
  * reachable, still share the assistant, support it, and not be running the
  * conversation; a new conversation that never reached the owner is removed
  * here at once.
@@ -138,70 +137,43 @@ function SharedConversationRow({
 
   return (
     <>
-      <Tooltip content={said} placement="right" followCursor>
-        <div
-          role="button"
-          tabIndex={0}
-          className={[
-            'openbitfun-nav-panel__inline-item',
-            selected && 'is-active',
-            menuOpen && 'is-menu-open',
-          ].filter(Boolean).join(' ')}
-          data-openbitfun-component="sessions-section"
-          data-openbitfun-part="row"
-          data-overflow-trigger
-          data-openbitfun-state={[selected && 'active', menuOpen && 'menuOpen'].filter(Boolean).join(' ') || undefined}
-          aria-current={selected ? 'true' : undefined}
-          aria-label={said}
-          onClick={onOpen}
-          onKeyDown={(event) => {
-            if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
-            event.preventDefault();
-            onOpen();
-          }}
-          data-testid="nav-shared-assistant-conversation"
-        >
-          <span className="openbitfun-nav-panel__inline-item-main" data-openbitfun-component="sessions-section" data-openbitfun-part="rowMain">
-            <span className="openbitfun-nav-panel__inline-item-copy">
-              <span className="openbitfun-nav-panel__inline-item-primary">
-                <span className="openbitfun-nav-panel__inline-item-title">
-                  <OverflowText behavior="marquee" title="" className="openbitfun-nav-panel__inline-item-label">{title}</OverflowText>
-                </span>
-              </span>
-            </span>
-          </span>
-          <div className="openbitfun-nav-panel__inline-item-trailing">
-            <span className="openbitfun-nav-panel__inline-item-status">
-              <NavTaskStatusIcon kind={status.kind} label={detail} />
-            </span>
-            <div
-              className={`openbitfun-nav-panel__inline-item-actions${menuOpen ? ' is-open' : ''}`}
-              data-openbitfun-component="sessions-section"
-              data-openbitfun-part="actions"
-              data-openbitfun-state={menuOpen ? 'menuOpen' : undefined}
+      <NavTaskRow
+        title={title}
+        status={status.kind}
+        statusLabel={detail}
+        said={said}
+        selected={selected}
+        menuOpen={menuOpen}
+        testId="nav-shared-assistant-conversation"
+        onOpen={onOpen}
+        actions={(
+          <div
+            className={`openbitfun-nav-panel__inline-item-actions${menuOpen ? ' is-open' : ''}`}
+            data-openbitfun-component="sessions-section"
+            data-openbitfun-part="actions"
+            data-openbitfun-state={menuOpen ? 'menuOpen' : undefined}
+          >
+            <button
+              type="button"
+              ref={anchorRef}
+              className={`openbitfun-nav-panel__inline-item-action-btn${menuOpen ? ' is-open' : ''}`}
+              aria-label={`${title} · ${moreLabel}`}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              aria-controls={open ? menuId : undefined}
+              aria-busy={deleting || undefined}
+              disabled={deleting}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggle();
+              }}
+              data-testid="nav-shared-assistant-conversation-more"
             >
-              <button
-                type="button"
-                ref={anchorRef}
-                className={`openbitfun-nav-panel__inline-item-action-btn${menuOpen ? ' is-open' : ''}`}
-                aria-label={`${title} · ${moreLabel}`}
-                aria-haspopup="menu"
-                aria-expanded={open}
-                aria-controls={open ? menuId : undefined}
-                aria-busy={deleting || undefined}
-                disabled={deleting}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggle();
-                }}
-                data-testid="nav-shared-assistant-conversation-more"
-              >
-                {deleting ? <Spinner size="xs" /> : <Icon name="more" size="xs" />}
-              </button>
-            </div>
+              {deleting ? <Spinner size="xs" /> : <Icon name="more" size="xs" />}
+            </button>
           </div>
-        </div>
-      </Tooltip>
+        )}
+      />
       <MenuPopover
         id={menuId}
         aria-label={moreLabel}
@@ -422,30 +394,7 @@ export default function SharedAssistantList() {
                       );
                     })}
                     {historyOpen && limited.hidden > 0 ? (
-                      <button
-                        type="button"
-                        className="openbitfun-nav-panel__inline-toggle"
-                        data-openbitfun-component="sessions-section"
-                        data-openbitfun-part="toggle"
-                        aria-label={showAll ? t('nav.sessions.showLess') : t('nav.sessions.showMore', { count: limited.hidden })}
-                        onClick={toggleFull}
-                        data-testid="nav-shared-assistant-more"
-                      >
-                        <OverflowText className="openbitfun-nav-panel__inline-toggle-label">
-                          {showAll ? t('nav.sessions.showLess') : t('nav.sessions.showMoreLabel')}
-                        </OverflowText>
-                        {showAll ? null : (
-                          <span className="openbitfun-nav-panel__inline-toggle-count" aria-hidden>+{limited.hidden}</span>
-                        )}
-                        <span className="openbitfun-nav-panel__inline-toggle-trailing">
-                          <Icon
-                            name={showAll ? 'chevron-up' : 'chevron-down'}
-                            size="xs"
-                            className="openbitfun-nav-panel__inline-toggle-chevron"
-                            aria-hidden
-                          />
-                        </span>
-                      </button>
+                      <NavShowMoreToggle hidden={limited.hidden} showAll={showAll} onToggle={toggleFull} testId="nav-shared-assistant-more" />
                     ) : null}
                   </div>
                 </div>

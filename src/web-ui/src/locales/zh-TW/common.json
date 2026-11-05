@@ -525,8 +525,7 @@
         "waitingShort": "待核准 {{count}}",
         "waitingBadge": "{{count}} 項等待你核准",
         "running": "{{count}} 進行中",
-        "queued": "排隊中",
-        "showMore": "顯示其餘 {{count}} 個"
+        "queued": "排隊中"
       },
       "sharedAssistant": {
         "title": "來自共享",

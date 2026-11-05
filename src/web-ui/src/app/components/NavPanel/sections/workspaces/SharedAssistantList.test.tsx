@@ -247,12 +247,17 @@ describe('the assistants shared with this device in the navigation', () => {
       ? item.textContent!.replace('nav.sessions.sharedAssistant.delete', '').trim()
       : null);
 
-    it('puts the menu where the status is, as a session row does, without opening the conversation', async () => {
+    it('puts the menu after the status, which stays in view, without opening the conversation', async () => {
       await render();
       const row = all('nav-shared-assistant-conversation')[0];
+      expect(row.classList.contains('nav-task-row')).toBe(true);
+      // Status first, then the menu: two cells, so hovering the row keeps the status readable.
       const trailing = row.querySelector('.openbitfun-nav-panel__inline-item-trailing')!;
-      expect(trailing.querySelector('.openbitfun-nav-panel__inline-item-status [data-openbitfun-part="statusMark"]')).not.toBeNull();
-      expect(trailing.querySelector('.openbitfun-nav-panel__inline-item-actions [data-testid="nav-shared-assistant-conversation-more"]')).not.toBeNull();
+      expect(Array.from(trailing.children).map(cell => cell.className.split(' ')[0])).toEqual([
+        'openbitfun-nav-panel__inline-item-status',
+        'openbitfun-nav-panel__inline-item-actions',
+      ]);
+      expect(trailing.querySelector('[data-openbitfun-part="statusMark"]')!.getAttribute('aria-label')).toBeTruthy();
       await openMenu('Second draft');
       expect(row.className).toContain('is-menu-open');
       expect(mocks.openSession).not.toHaveBeenCalled();

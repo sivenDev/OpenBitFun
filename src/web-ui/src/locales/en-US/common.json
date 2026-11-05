@@ -525,8 +525,7 @@
         "waitingShort": "{{count}} to approve",
         "waitingBadge": "{{count}} waiting for your approval",
         "running": "{{count}} running",
-        "queued": "Queued",
-        "showMore": "Show {{count}} more"
+        "queued": "Queued"
       },
       "sharedAssistant": {
         "title": "Shared with you",

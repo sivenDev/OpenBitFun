@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { Icon, Tooltip } from '@openbitfun/ui';
+import { Icon, OverflowText, Tooltip } from '@openbitfun/ui';
 import { useSceneStore } from '@/app/stores/sceneStore';
 import { openDelegatedTask } from '@/flow_chat/session-drivers/delegated/openDelegatedTask';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
@@ -10,7 +10,7 @@ import type { DelegatedTask } from '@/infrastructure/api/service-api/DelegationA
 import { useI18n } from '@/infrastructure/i18n';
 import type { WorkspaceInfo } from '@/shared/types';
 import { delegatedTaskStatus, groupDelegatedTasks, limitRows, opensByDefault, type DelegatedTaskGroup } from './delegatedTaskGroups';
-import { NavTaskStatusIcon } from './NavTaskStatus';
+import { NavShowMoreToggle, NavTaskRow } from './NavTaskRow';
 import { useAssistantDelegatedTasks } from './useAssistantDelegatedTasks';
 import { fullLists, openedGroups } from './navListMemory';
 
@@ -84,49 +84,33 @@ export default function DelegatedTaskList({
 
   const renderTask = (task: DelegatedTask) => {
     const kind = delegatedTaskStatus(task);
-    const waiting = kind === 'approval';
-    // Selected like a session row while its session is the one shown.
-    const active = isActive(task);
     const label = statusText(task);
-    // Collapsed, rows are not grouped, so each names its source on a second line.
-    const detail = waitingOnly ? [source(task), label].filter(Boolean).join(' · ') : null;
+    // Collapsed, rows are not grouped, so each names its source after its title.
+    const from = waitingOnly ? source(task) : null;
     const title = task.title || t('nav.sessions.delegated.untitled');
-    const said = [title, detail ?? label].filter(Boolean).join(' · ');
     return (
-      <Tooltip key={`${task.jobId}:${task.sessionId}`} content={said} placement="right" followCursor>
-        <button
-          type="button"
-          className={['openbitfun-nav-panel__inline-item', 'assistant-session-history__delegated-item', waiting && 'is-waiting', active && 'is-active', detail && 'has-detail']
-            .filter(Boolean).join(' ')}
-          data-openbitfun-component="sessions-section"
-          data-openbitfun-part="row"
-          data-testid="nav-delegated-task"
-          data-openbitfun-state={active ? 'active' : undefined}
-          aria-current={active ? 'true' : undefined}
-          aria-label={said}
-          onClick={() => open(task)}
-        >
-          {detail ? (
-            <>
-              <span className="assistant-session-history__delegated-title">{title}</span>
-              <span className="assistant-session-history__delegated-detail">{detail}</span>
-            </>
-          ) : (
-            // Where the task stands shows as an icon; the words are in the tooltip.
-            <span className="assistant-session-history__delegated-line">
-              <span className="assistant-session-history__delegated-title">{title}</span>
-              <NavTaskStatusIcon kind={kind} label={label} />
-            </span>
-          )}
-        </button>
-      </Tooltip>
+      <NavTaskRow
+        key={`${task.jobId}:${task.sessionId}`}
+        title={title}
+        status={kind}
+        statusLabel={label}
+        said={[title, from, label].filter(Boolean).join(' · ')}
+        meta={from}
+        selected={isActive(task)}
+        className={kind === 'approval' ? 'is-waiting' : undefined}
+        testId="nav-delegated-task"
+        onOpen={() => open(task)}
+      />
     );
   };
 
   if (waitingOnly) {
     return (
-      <div className="assistant-session-history__delegated" data-testid="nav-delegated-tasks">
-        {shown.map(renderTask)}
+      <div className="openbitfun-nav-panel__workspace-item-sessions">
+        {/* Laid out like the assistant's session list, so its rows line up with sessions. */}
+        <div className="assistant-session-history" data-testid="nav-delegated-tasks">
+          <div className="openbitfun-nav-panel__inline-list">{shown.map(renderTask)}</div>
+        </div>
       </div>
     );
   }
@@ -151,17 +135,23 @@ export default function DelegatedTaskList({
       detail,
       group.waiting > 0 ? t('nav.sessions.delegated.waitingBadge', { count: group.waiting }) : null,
     ].filter(Boolean).join(' · ');
-    const { shown: rows, hidden } = limitRows(group.tasks, fullLists.has(key), isActive);
+    const showAll = fullLists.has(key);
+    const { shown: limited, hidden } = limitRows(group.tasks, false, isActive);
+    const rows = showAll ? group.tasks : limited;
     return (
       <div
         key={group.deviceId}
-        className={['assistant-session-history__delegated-group', group.waiting > 0 && 'is-waiting'].filter(Boolean).join(' ')}
+        className={[
+          'openbitfun-nav-panel__inline-list',
+          'assistant-session-history__delegated-group',
+          group.waiting > 0 && 'is-waiting',
+        ].filter(Boolean).join(' ')}
         data-testid="nav-delegated-group"
       >
         <Tooltip content={said} placement="right" followCursor>
           <button
             type="button"
-            className="assistant-session-history__delegated-heading"
+            className="openbitfun-nav-panel__inline-toggle assistant-session-history__delegated-heading"
             data-openbitfun-component="sessions-section"
             data-openbitfun-part="groupHeader"
             aria-expanded={isOpen}
@@ -169,8 +159,7 @@ export default function DelegatedTaskList({
             onClick={toggle}
             data-testid="nav-delegated-group-toggle"
           >
-            <Icon name={isOpen ? 'chevron-down' : 'chevron-right'} size="xs" className="assistant-session-history__delegated-chevron" aria-hidden="true" />
-            <span className="assistant-session-history__delegated-heading-title">{heading}</span>
+            <OverflowText title="" className="openbitfun-nav-panel__inline-toggle-label assistant-session-history__delegated-heading-title">{heading}</OverflowText>
             {group.waiting > 0 ? (
               <span
                 className="assistant-session-history__delegated-badge"
@@ -181,25 +170,25 @@ export default function DelegatedTaskList({
                 {group.waiting}
               </span>
             ) : null}
+            <span className="openbitfun-nav-panel__inline-toggle-trailing">
+              <Icon name={isOpen ? 'chevron-down' : 'chevron-right'} size="xs" className="openbitfun-nav-panel__inline-toggle-chevron" aria-hidden="true" />
+            </span>
           </button>
         </Tooltip>
         {isOpen ? (
           <>
             {rows.map(renderTask)}
             {hidden > 0 ? (
-              <button
-                type="button"
-                className="openbitfun-nav-panel__inline-item assistant-session-history__delegated-more"
-                data-openbitfun-component="sessions-section"
-                data-openbitfun-part="more"
-                onClick={() => {
-                  fullLists.add(key);
+              <NavShowMoreToggle
+                hidden={hidden}
+                showAll={showAll}
+                onToggle={() => {
+                  if (showAll) fullLists.delete(key);
+                  else fullLists.add(key);
                   setRevision(revision => revision + 1);
                 }}
-                data-testid="nav-delegated-more"
-              >
-                {t('nav.sessions.delegated.showMore', { count: hidden })}
-              </button>
+                testId="nav-delegated-more"
+              />
             ) : null}
           </>
         ) : null}
