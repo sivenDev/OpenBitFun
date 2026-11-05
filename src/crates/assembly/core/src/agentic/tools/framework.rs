@@ -12,6 +12,10 @@ pub use openbitfun_agent_tools::{
 };
 use serde_json::Value;
 
+/// Permission display metadata naming what a tool call does, for a tool whose
+/// grant is only its name.
+pub const CALL_SUMMARY_METADATA_KEY: &str = "callSummary";
+
 /// Tool trait
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -136,16 +140,22 @@ pub trait Tool: Send + Sync {
     /// Describe permission actions and resources without performing side effects.
     fn permission_intents(
         &self,
-        _input: &Value,
+        input: &Value,
         _context: &ToolUseContext,
     ) -> OpenBitFunResult<Vec<PermissionIntent>> {
         if self.is_readonly() {
             Ok(Vec::new())
         } else {
-            Ok(vec![PermissionIntent::new(
-                "custom_tool",
-                vec![self.name().to_string()],
-            )])
+            let mut intent = PermissionIntent::new("custom_tool", vec![self.name().to_string()]);
+            // The tool name is the grant a later call matches; the approver
+            // also needs to see what this call does.
+            intent.display_metadata.insert(
+                CALL_SUMMARY_METADATA_KEY.to_string(),
+                Value::String(
+                    self.render_tool_use_message(input, &ToolRenderOptions { verbose: false }),
+                ),
+            );
+            Ok(vec![intent])
         }
     }
 

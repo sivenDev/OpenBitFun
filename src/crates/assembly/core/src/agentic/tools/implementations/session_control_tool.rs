@@ -1431,6 +1431,27 @@ mod tests {
         assert!(!error.contains("can only list"), "{error}");
     }
 
+    #[test]
+    fn an_approval_says_what_the_call_does_while_granting_the_tool() {
+        let tool = SessionControlTool::new();
+        let intents = tool
+            .permission_intents(
+                &json!({ "action": "delete", "session_id": "s-1" }),
+                &empty_context(),
+            )
+            .expect("intents");
+        assert_eq!(intents[0].action, "custom_tool");
+        assert_eq!(
+            intents[0].save_resources,
+            vec!["SessionControl".to_string()]
+        );
+        assert_eq!(
+            intents[0].display_metadata
+                [crate::agentic::tools::framework::CALL_SUMMARY_METADATA_KEY],
+            json!("Delete session s-1")
+        );
+    }
+
     #[tokio::test]
     async fn a_task_from_another_device_is_refused_before_the_owner_is_asked() {
         use crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY;

@@ -150,7 +150,10 @@ export const ChatInputApprovalBand: React.FC<ChatInputApprovalBandProps> = ({
   const canAnswerAll = pendingCount > 1;
   const effectiveScope: ApprovalScope = canAnswerAll ? scope : 'this';
   const reason = rejectReason.trim();
-  const resourceSummary = request?.resources.join('\n') ?? '';
+  // A tool whose grant is only its name says what this call does instead.
+  const resourceSummary = (request?.action === 'custom_tool'
+    ? metadataString(request.displayMetadata, 'callSummary')
+    : undefined) ?? request?.resources.join('\n') ?? '';
   const { copied, copy } = useCopyTextAction({
     getText: () => resourceSummary,
     successMessage: t('toolCards.common.copied'),

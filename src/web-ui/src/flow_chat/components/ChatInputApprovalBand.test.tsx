@@ -134,6 +134,27 @@ describe('ChatInputApprovalBand', () => {
     expect(resource?.querySelector('[data-openbitfun-component="overflow-text"]')).toBeNull();
   });
 
+  it('shows what a tool granted by its name is asked to do', async () => {
+    await act(async () => {
+      root.render(
+        <ChatInputApprovalBand
+          requests={[request({
+            action: 'custom_tool',
+            resources: ['SessionControl'],
+            saveResources: ['SessionControl'],
+            source: { kind: 'tool_call', identity: 'SessionControl' },
+            displayMetadata: { callSummary: 'Delete session s-1' },
+          })]}
+          onRespond={vi.fn(async () => undefined)}
+          onRespondBatch={vi.fn(async () => undefined)}
+        />
+      );
+    });
+
+    const band = container.querySelector<HTMLElement>('[data-testid="chat-input-approval-band"]');
+    expect(band?.querySelector('code')?.textContent).toBe('Delete session s-1');
+  });
+
   it('keeps the risk on its own line so it cannot be answered unread', async () => {
     await act(async () => {
       root.render(
