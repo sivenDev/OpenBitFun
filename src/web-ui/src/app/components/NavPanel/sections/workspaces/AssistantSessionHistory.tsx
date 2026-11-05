@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@openbitfun/ui';
+import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { useI18n } from '@/infrastructure/i18n';
 import { getActiveSurfaceScope, isSurfaceChangedError } from '@/infrastructure/peer-device/deviceSurface';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
@@ -11,7 +12,7 @@ import type { WorkspaceInfo } from '@/shared/types';
 import SessionsSection from '../sessions/SessionsSection';
 import DelegatedTaskList from './DelegatedTaskList';
 import { useAssistantDelegatedTasks } from './useAssistantDelegatedTasks';
-import { readAssistantDefaultSession, saveAssistantDefaultSession } from './assistantSessionPreferences';
+import { ASSISTANT_DEFAULT_SESSIONS_PATH, readAssistantDefaultSession, saveAssistantDefaultSession } from './assistantSessionPreferences';
 import './AssistantSessionHistory.scss';
 
 interface Props {
@@ -43,6 +44,15 @@ export default function AssistantSessionHistory({ workspace, isActive }: Props) 
   }, [workspace.id]);
 
   useEffect(() => { void loadPreference(); }, [loadPreference]);
+
+  // The default can change elsewhere, e.g. it is cleared when its session is
+  // deleted. Reread quietly; a failed read keeps what is shown.
+  useEffect(() => configManager.watch(ASSISTANT_DEFAULT_SESSIONS_PATH, () => {
+    const scope = getActiveSurfaceScope();
+    void readAssistantDefaultSession(workspace.id)
+      .then(result => { if (scope.isCurrent()) setPreference(result); })
+      .catch(() => undefined);
+  }), [workspace.id]);
 
   const changeDefault = useCallback(async (sessionId: string | null) => {
     if (loading || saving || loadFailed || !preference?.supported) return;

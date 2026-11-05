@@ -6,7 +6,7 @@ vi.mock('@/infrastructure/api/service-api/ConfigAPI', () => ({ configAPI: { getC
 vi.mock('@/infrastructure/config/services/ConfigManager', () => ({ configManager: { updateConfig: mocks.update } }));
 vi.mock('@/infrastructure/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 
-import { readAssistantDefaultSession, saveAssistantDefaultSession } from './assistantSessionPreferences';
+import { clearAssistantDefaultSession, readAssistantDefaultSession, saveAssistantDefaultSession } from './assistantSessionPreferences';
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -43,6 +43,19 @@ describe('host-owned assistant default preferences', () => {
     await expect(readAssistantDefaultSession('a')).rejects.toThrow('Host offline');
     mocks.update.mockImplementation(async (_path, edit) => edit({ a: { unknown: true } }));
     await expect(saveAssistantDefaultSession('a', 'next')).rejects.toThrow('defaultReadFailed');
+  });
+
+  it('clears the default only while it still names the deleted session', async () => {
+    const saved: Record<string, string>[] = [];
+    mocks.update.mockImplementation(async (_path, edit) => saved.push(edit({ a: 'gone', b: 'gone' })));
+    mocks.read.mockResolvedValueOnce({ a: 'gone', b: 'gone' });
+    await clearAssistantDefaultSession('a', 'gone');
+    expect(saved).toEqual([{ b: 'gone' }]);
+
+    mocks.read.mockResolvedValueOnce({ a: 'other' }).mockResolvedValueOnce(undefined);
+    await clearAssistantDefaultSession('a', 'gone');
+    await clearAssistantDefaultSession('a', 'gone');
+    expect(mocks.update).toHaveBeenCalledOnce();
   });
 
   it('discards reads completed after a surface switch', async () => {

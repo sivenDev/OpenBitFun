@@ -61,6 +61,7 @@ import { getChildSessionBadge } from './sessionRowBadges';
 import { useSessionComposerStore } from '@/flow_chat/store/sessionComposerStore';
 import { getActiveSurfaceId, getActiveSurfaceScope, surfaceScopedKey } from '@/infrastructure/peer-device/deviceSurface';
 import { EXTERNAL_SESSION_NAMES, isExternalSessionEcosystem } from '@/shared/types/external-session';
+import { WorkspaceKind } from '@/shared/types/global-state';
 import { resolveSessionDriverId } from '@/flow_chat/session-drivers/resolve';
 import { getWorkspaceSessionHierarchy } from './sessionNavHierarchy';
 import { useWorkspaceSessionCatalog } from './useWorkspaceSessionCatalog';
@@ -123,7 +124,7 @@ import {
 import { useSessionRowRemovalTransition } from './sessionRowShift';
 import { SessionStatusIndicator } from './SessionStatusIndicator';
 import { createSessionsNavSelector } from './sessionsNavSelector';
-import { archiveSessionRow, duplicateSessionRow, openWorktreeWorkspaceRow, renameSessionRow } from './sessionRowActions';
+import { archiveSessionRow, canDeleteEmptySession, deleteEmptySessionRow, duplicateSessionRow, openWorktreeWorkspaceRow, renameSessionRow } from './sessionRowActions';
 import './SessionsSection.scss';
 
 /** A limited flat list reads each workspace's newest rows in steps of this many. */
@@ -1189,6 +1190,21 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
     [t]
   );
 
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const handleDeleteEmpty = useCallback(
+    async (e: React.MouseEvent, sessionId: string, assistantWorkspaceId: string) => {
+      e.stopPropagation();
+      closeSessionMenu();
+      setDeletingSessionId(sessionId);
+      try {
+        await deleteEmptySessionRow(sessionId, assistantWorkspaceId, t);
+      } finally {
+        setDeletingSessionId(current => (current === sessionId ? null : current));
+      }
+    },
+    [closeSessionMenu, t]
+  );
+
   /**
    * Copy the session into a new independent session. The copy is created by the
    * host and appears in this list; the current row and the active session stay
@@ -1451,6 +1467,14 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
           const showAssistantInTooltip = trimmedAssistant.length > 0;
           const dispatchTarget = session.config.dispatchTarget;
           const isDispatched = isNonLocalDispatchTarget(dispatchTarget);
+          // An assistant's empty session can be deleted outright; nothing is lost.
+          const assistantWorkspace = openedWorkspacesList.find(workspace =>
+            workspace.workspaceKind === WorkspaceKind.Assistant && sessionBelongsToWorkspaceNavRow(session, workspace.id));
+          const canDeleteEmpty = Boolean(assistantWorkspace) && canDeleteEmptySession(session, {
+            isAssistant: true,
+            isChild: isChildSession,
+            isRunning: runningSessionIds.has(session.sessionId),
+          });
           const worktreeIsolated = isWorktreeIsolatedSession(session);
           const worktreeRootPath = sessionWorktreeRootPath(session) ?? '';
           const dispatchTargetLabel =
@@ -1938,6 +1962,19 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
                           >
                             <span>{t('nav.sessions.archive')}</span>
                           </MenuItem>
+                          {canDeleteEmpty && assistantWorkspace ? (
+                            <MenuItem
+                              type="button"
+                              leading={<Icon name="delete" size="sm" />}
+                              tone="danger"
+                              disabled={deletingSessionId === session.sessionId}
+                              onClick={e => { void handleDeleteEmpty(e, session.sessionId, assistantWorkspace.id); }}
+                              data-testid="nav-session-menu-delete-empty"
+                              data-session-id={session.sessionId}
+                            >
+                              <span>{t('nav.sessions.delete')}</span>
+                            </MenuItem>
+                          ) : null}
                         </>
                       )}
                     </Menu>,

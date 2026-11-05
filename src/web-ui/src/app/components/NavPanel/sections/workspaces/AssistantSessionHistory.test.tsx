@@ -4,11 +4,26 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceInfo } from '@/shared/types';
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), save: vi.fn(), prepare: vi.fn(), error: vi.fn(), tasks: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  read: vi.fn(), save: vi.fn(), prepare: vi.fn(), error: vi.fn(), tasks: vi.fn(),
+  watchers: new Map<string, () => void>(),
+}));
 vi.mock('./useAssistantDelegatedTasks', () => ({ useAssistantDelegatedTasks: mocks.tasks }));
 vi.mock('@/flow_chat/session-drivers/delegated/openDelegatedTask', () => ({ openDelegatedTask: vi.fn() }));
 vi.mock('@/infrastructure/i18n', () => ({ useI18n: () => ({ t: (key: string) => key, formatDate: () => 'time' }) }));
-vi.mock('./assistantSessionPreferences', () => ({ readAssistantDefaultSession: mocks.read, saveAssistantDefaultSession: mocks.save }));
+vi.mock('./assistantSessionPreferences', () => ({
+  ASSISTANT_DEFAULT_SESSIONS_PATH: 'app.assistant_default_sessions',
+  readAssistantDefaultSession: mocks.read,
+  saveAssistantDefaultSession: mocks.save,
+}));
+vi.mock('@/infrastructure/config/services/ConfigManager', () => ({
+  configManager: {
+    watch: (path: string, callback: () => void) => {
+      mocks.watchers.set(path, callback);
+      return () => mocks.watchers.delete(path);
+    },
+  },
+}));
 vi.mock('@/flow_chat/services/sessionDraftService', () => ({ prepareSessionDraftForCommand: mocks.prepare }));
 vi.mock('@/shared/notification-system', () => ({ notificationService: { error: mocks.error } }));
 vi.mock('@/flow_chat/store/FlowChatStore', () => ({
@@ -70,6 +85,15 @@ describe('assistant history default selection', () => {
     await act(async () => clear.click());
     expect(mocks.save).toHaveBeenLastCalledWith('assistant', null);
     expect(container.querySelector('[data-default]')?.getAttribute('data-default')).toBe('');
+  });
+
+  it('rereads the default when another list clears it', async () => {
+    await render();
+    expect(container.querySelector('[data-default]')?.getAttribute('data-default')).toBe('previous');
+    mocks.read.mockResolvedValue({ supported: true, sessionId: null });
+    await act(async () => mocks.watchers.get('app.assistant_default_sessions')!());
+    expect(container.querySelector('[data-default]')?.getAttribute('data-default')).toBe('');
+    expect(Array.from(container.querySelectorAll('button')).some(button => button.textContent === 'nav.sessions.clearDefault')).toBe(false);
   });
 
   it('retains the previous default if saving fails', async () => {

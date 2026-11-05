@@ -2,7 +2,7 @@
 id: "F003"
 title: "助理的空会话可以删除"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "本机助理名下还没发出过任何一轮对话的会话，在会话菜单里可以直接删除，不需要确认；它是默认会话时清除默认设置；有内容的会话仍先归档再删除。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-05"
@@ -79,8 +79,17 @@ parent: ""
 - `pnpm run type-check:web`
 - `pnpm run i18n:audit`
 
-- [ ] 可删条件（助理、顶层、本机驱动、未运行、为空）与不出现的情况有测试并通过
-- [ ] 草稿只在本机删除、已写入主机的会话经删除接口删除，默认会话被清除，清除失败时删除仍有效
+- [x] 可删条件（助理、顶层、本机驱动、未运行、为空）与不出现的情况有测试并通过
+- [x] 草稿只在本机删除、已写入主机的会话经删除接口删除，默认会话被清除，清除失败时删除仍有效
+  - 证据（2026-11-05）：
+    - `sessionRowActions.test.ts`：空的顶层助理会话与编辑中的草稿可以删除；有内容、非助理、子会话、运行中、有父会话、子智能体、已归档、导入的、临时会话，以及 dispatch 与外部任务驱动的会话都不可以；先删除再清除默认设置；删除失败时不清除默认设置并提示 `nav.sessions.deleteFailed`；只有清除失败时删除仍有效，提示 `nav.sessions.defaultSaveFailed`。
+    - `assistantSessionPreferences.test.ts`：默认设置仍指向被删除的会话时才清除，且只清这个助理的；指向别的会话或主机没有这项设置时不写入。
+    - `AssistantSessionHistory.test.tsx`：别处清除默认设置后，助理历史重新读取，「默认」与「清除默认」随之消失。
+    - `pnpm --dir src/web-ui run test:run src/app/components/NavPanel`：64 个文件 510 项通过；`tsc --noEmit -p src/web-ui` 通过；改动文件 eslint 0 错误；`pnpm run i18n:audit` 通过，0 个警告。
+  - 与计划的差异：
+    - 草稿与已写入主机的会话由 `FlowChatStore.deleteSession` 区分，本计划直接复用，没有另写分支；单元测试覆盖调用顺序，主机路径在真机上核对。
+    - 默认设置的清除放在 `assistantSessionPreferences.ts` 的 `clearAssistantDefaultSession`，`AssistantSessionHistory` 监听这项设置的变化。这样会话从任何一个列表删除，助理历史都会更新。
+    - 新增 `nav.sessions.delete` 与 `nav.sessions.deleteFailed`（三种语言）；清除失败沿用 `nav.sessions.defaultSaveFailed`。
 
 ## Task 2: 整体检查与真机核对
 
@@ -94,8 +103,20 @@ parent: ""
 - `pnpm run theme:color-audit:all`
 - 真机：`pnpm run desktop:dev`（隔离数据），按 Exit Criteria 第 1、3、4 条操作并截图
 
-- [ ] Web UI、外观与主题检查通过
-- [ ] 真机核对第 1、3、4 条
+- [x] Web UI、外观与主题检查通过
+  - 证据（2026-11-05）：`pnpm run theme:color-audit:all` 28 个范围全部通过；`tsc --noEmit` 通过。
+  - `pnpm run check:web` 未通过：排版审计报 4 处违规，都在本计划没有改动的文件里：
+    - `NavPanel/sections/devices/DeviceWorkspaceSections.scss:74-75`
+    - `SceneBar/SceneBar.scss:58-59`（`1b3f3e9cf`、`7d3540286`）
+
+    它们是本分支此前的提交引入的，留给负责这两个文件的改动处理，本计划不放宽审计。
+- [x] 真机核对第 1、3、4 条
+  - 证据（2026-11-05，本地场景，F001 分支 dev 实例 A，隔离数据，WebDriver 4445）：
+    - 在小岚名下新建会话，不发送：菜单是「重命名、创建副本、导出为 Markdown、定时任务、打开会话存储目录、归档、删除」；同一列表里两个有内容的会话（「调用助理创建文件」「调用助理写雨句」）菜单没有「删除」。
+    - 第 3 条：把这个空会话设为默认后，主机设置 `app.assistant_default_sessions` 指向它；从菜单删除后，这项设置变为 `{}`，行从列表消失。会话存储目录中搜不到它的 id，现有会话 `842bd05d…` 的目录还在。
+    - 第 4 条：删除的是正在打开的会话，主区回到空白欢迎页，没有停在已删除的会话上（截图 `f003-after-default-delete.png`，留在本地，没有入库）。
+    - 第 1 条：再新建一个空会话（未设默认、未写入主机的草稿）并删除，行立即消失；重新加载窗口后两个被删除的会话都没有回来，列表中有内容的会话菜单都没有「删除」。
+    - 远程工作区与 Peer Device Mode 没有真机核对：删除与默认设置都走现有接口，本计划没有新增路径；Peer Device Mode 需要同一账号的两台设备。
 
 ## References
 - `docs/superplan/human/features.md`

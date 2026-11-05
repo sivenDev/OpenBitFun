@@ -6,7 +6,11 @@
  * both menus report success and failure identically.
  */
 
+import { clearAssistantDefaultSession } from '@/app/components/NavPanel/sections/workspaces/assistantSessionPreferences';
 import { flowChatManager } from '@/flow_chat/services/FlowChatManager';
+import { resolveSessionDriverId } from '@/flow_chat/session-drivers/resolve';
+import type { Session } from '@/flow_chat/types/flow-chat';
+import { isSessionEmptyForCopy } from '@/flow_chat/utils/sessionCopy';
 import { isOutcomeUnknownError } from '@/infrastructure/api/errors/TauriCommandError';
 import { isSurfaceChangedError } from '@/infrastructure/peer-device/deviceSurface';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
@@ -26,6 +30,53 @@ export async function archiveSessionRow(sessionId: string, t: SessionRowTranslat
     notificationService.success(t('nav.sessions.archivedAll', { count: 1 }), { duration: 3000 });
   } catch (err) {
     log.error('Failed to archive session', err);
+  }
+}
+
+/**
+ * Whether the menu offers deleting `session` outright: an assistant's own
+ * top-level session that has sent nothing yet, so nothing is lost. Sessions
+ * with content are archived first and deleted from the archive.
+ */
+export function canDeleteEmptySession(
+  session: Session,
+  { isAssistant, isChild, isRunning }: { isAssistant: boolean; isChild: boolean; isRunning: boolean },
+): boolean {
+  return isAssistant
+    && !isChild
+    && !isRunning
+    && !session.isTransient
+    && !session.importedSource
+    && session.persistedStatus !== 'archived'
+    && !session.parentSessionId
+    && session.sessionKind !== 'subagent'
+    && resolveSessionDriverId(session.sessionId, session) === 'local'
+    && isSessionEmptyForCopy(session);
+}
+
+/**
+ * Delete an empty assistant session, then stop naming it the assistant's
+ * default session. The deletion stands when only the default fails to clear.
+ */
+export async function deleteEmptySessionRow(
+  sessionId: string,
+  assistantWorkspaceId: string,
+  t: SessionRowTranslate,
+): Promise<void> {
+  try {
+    await flowChatManager.deleteChatSession(sessionId);
+  } catch (error) {
+    if (isSurfaceChangedError(error)) return;
+    log.error('Failed to delete empty session', { sessionId, error });
+    notificationService.error(t('nav.sessions.deleteFailed'), { duration: 4000 });
+    return;
+  }
+  try {
+    await clearAssistantDefaultSession(assistantWorkspaceId, sessionId);
+  } catch (error) {
+    if (isSurfaceChangedError(error)) return;
+    log.warn('Deleted session but failed to clear it as the assistant default', { sessionId, error });
+    notificationService.warning(t('nav.sessions.defaultSaveFailed'), { duration: 4000 });
   }
 }
 

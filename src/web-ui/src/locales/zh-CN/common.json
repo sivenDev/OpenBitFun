@@ -471,6 +471,8 @@
       "batchChildSession": "子会话",
       "batchTurnsLabel": "{{count}} 轮",
       "archive": "归档",
+      "delete": "删除",
+      "deleteFailed": "删除会话失败",
       "archivedBadge": "已归档",
       "assistantBootstrapDraft": "请按照 BOOTSTRAP.md 的说明，和我一起完成助理初始化。",
       "archiveAll": "归档所有会话",

@@ -3,7 +3,7 @@ import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { getActiveSurfaceScope } from '@/infrastructure/peer-device/deviceSurface';
 import { i18nService } from '@/infrastructure/i18n';
 
-const CONFIG_PATH = 'app.assistant_default_sessions';
+export const ASSISTANT_DEFAULT_SESSIONS_PATH = 'app.assistant_default_sessions';
 
 function parsePreferences(value: unknown): Record<string, string> | undefined {
   // Missing on older hosts: latest-session navigation remains available, writes do not.
@@ -18,18 +18,34 @@ function parsePreferences(value: unknown): Record<string, string> | undefined {
 export async function readAssistantDefaultSession(workspaceId: string) {
   const scope = getActiveSurfaceScope();
   // Read the host each time so another controller's selection is observed.
-  const preferences = parsePreferences(await configAPI.getConfig(CONFIG_PATH, { skipRetryOnNotFound: true }));
+  const preferences = parsePreferences(await configAPI.getConfig(ASSISTANT_DEFAULT_SESSIONS_PATH, { skipRetryOnNotFound: true }));
   scope.assertCurrent('read assistant default session');
   return { supported: preferences !== undefined, sessionId: preferences?.[workspaceId] || null };
 }
 
 export async function saveAssistantDefaultSession(workspaceId: string, sessionId: string | null): Promise<void> {
-  await configManager.updateConfig<Record<string, string>>(CONFIG_PATH, value => {
+  await configManager.updateConfig<Record<string, string>>(ASSISTANT_DEFAULT_SESSIONS_PATH, value => {
     const preferences = parsePreferences(value);
     if (!preferences) throw new Error(i18nService.t('common:nav.sessions.defaultUnsupported'));
     const next = { ...preferences };
     if (sessionId) next[workspaceId] = sessionId;
     else delete next[workspaceId];
+    return next;
+  });
+}
+
+/**
+ * Clear the assistant's default session when it is `sessionId`, e.g. after
+ * that session was deleted. A host without the setting has nothing to clear.
+ */
+export async function clearAssistantDefaultSession(workspaceId: string, sessionId: string): Promise<void> {
+  const current = await readAssistantDefaultSession(workspaceId);
+  if (!current.supported || current.sessionId !== sessionId) return;
+  await configManager.updateConfig<Record<string, string>>(ASSISTANT_DEFAULT_SESSIONS_PATH, value => {
+    const preferences = parsePreferences(value);
+    if (!preferences || preferences[workspaceId] !== sessionId) return value;
+    const next = { ...preferences };
+    delete next[workspaceId];
     return next;
   });
 }
