@@ -1,7 +1,8 @@
 //! Target-side record of tasks other devices gave this device's shared
 //! assistants.
 //!
-//! Each such task appends one entry when it is admitted and one when it ends. The log is append-only JSON lines under the product home. A
+//! Each such task appends one entry when it is admitted, one for each call it
+//! makes to another assistant, and one when it ends. The log is append-only JSON lines under the product home. A
 //! damaged line is kept and reported, never dropped, so the owner can see
 //! that something was there.
 
@@ -20,6 +21,8 @@ pub enum DelegationAuditEvent {
     Submitted,
     /// The task's turn ended; `state` says how.
     Finished,
+    /// The task called another assistant, named in `calledAssistant`.
+    AssistantCalled,
 }
 
 /// One event of a task from another device.
@@ -41,6 +44,10 @@ pub struct DelegationAuditEntry {
     /// How far the owner trusted the share's users when the event happened:
     /// `normal` or `full`.
     pub trust: String,
+    /// The assistant the task called (`assistant:<id>` or
+    /// `shared:<device>/<id>`), on `assistant_called`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub called_assistant: Option<String>,
     /// External agents (`acp:<client>`) the task started, on `finished`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_agents: Vec<String>,
@@ -149,10 +156,27 @@ mod tests {
             peer_display_name: "Bea".to_string(),
             peer_device_name: "B1 Desktop".to_string(),
             trust: "normal".to_string(),
+            called_assistant: None,
             external_agents: Vec::new(),
             state: state.map(str::to_string),
             detail: None,
         }
+    }
+
+    #[test]
+    fn a_call_to_another_assistant_names_it_and_older_entries_read_without_it() {
+        let mut call = entry(DelegationAuditEvent::AssistantCalled, None);
+        call.trust = "full".to_string();
+        call.called_assistant = Some("assistant:workspace-notes".to_string());
+        let line = serde_json::to_value(&call).unwrap();
+        assert_eq!(line["event"], "assistant_called");
+        assert_eq!(line["calledAssistant"], "assistant:workspace-notes");
+
+        let older =
+            serde_json::to_value(entry(DelegationAuditEvent::Finished, Some("succeeded"))).unwrap();
+        assert!(older.get("calledAssistant").is_none());
+        let read: DelegationAuditEntry = serde_json::from_value(older).unwrap();
+        assert_eq!(read.called_assistant, None);
     }
 
     #[test]

@@ -6,6 +6,10 @@ mod assistant_turn;
 mod background_outcomes;
 mod control_conversation;
 mod coordination_store;
+mod delegated_calls;
+pub use delegated_calls::{
+    DelegatedCall, DelegatedCallHold, DelegatedCallLedger, DelegatedCallTicket,
+};
 mod delegation_context;
 mod external_agent_turn;
 pub(crate) use assistant_turn::{

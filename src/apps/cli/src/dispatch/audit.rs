@@ -39,6 +39,7 @@ pub(super) fn entry(
         peer_display_name: user.display_name,
         peer_device_name: user.device_name,
         trust: trust.as_str().to_string(),
+        called_assistant: None,
         external_agents,
         state: state.map(|state| {
             match state {
@@ -52,6 +53,37 @@ pub(super) fn entry(
         }),
         detail: detail.map(|detail| detail.chars().take(500).collect()),
     })
+}
+
+/// Records that a task from another device called `called_assistant`, under
+/// that device.
+pub(super) async fn record_call(request: &DispatchSubmitRequest, called_assistant: &str) {
+    if request.source_share_key.is_none() {
+        return;
+    }
+    let trust = super::worker::delegation_trust(request).await;
+    let Some(mut entry) = entry(
+        request,
+        DelegationAuditEvent::AssistantCalled,
+        trust,
+        Vec::new(),
+        None,
+        None,
+    ) else {
+        return;
+    };
+    entry.called_assistant = Some(called_assistant.to_string());
+    append(&entry);
+}
+
+fn append(entry: &DelegationAuditEntry) {
+    let Some(log) = default_log() else {
+        tracing::warn!("Delegation audit log unavailable: no product home");
+        return;
+    };
+    if let Err(error) = log.append(entry) {
+        tracing::warn!("Failed to record a task from another device in the audit log: {error}");
+    }
 }
 
 /// Appends one event for a task from another device to this device's log,
@@ -70,11 +102,5 @@ pub(super) async fn record(
     let Some(entry) = entry(request, event, trust, external_agents, state, detail) else {
         return;
     };
-    let Some(log) = default_log() else {
-        tracing::warn!("Delegation audit log unavailable: no product home");
-        return;
-    };
-    if let Err(error) = log.append(&entry) {
-        tracing::warn!("Failed to record a task from another device in the audit log: {error}");
-    }
+    append(&entry);
 }

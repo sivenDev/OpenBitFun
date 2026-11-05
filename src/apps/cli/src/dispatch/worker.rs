@@ -191,6 +191,19 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     .await?;
     let agent_runtime = runtime.agent_runtime().clone();
     let compatibility = runtime.compatibility().clone();
+    let coordinator = openbitfun_core::agentic::coordination::get_global_coordinator();
+    // A task from another device accounts for the calls it makes to
+    // assistants with its share.
+    if let (Some(coordinator), Some(_)) =
+        (coordinator.as_ref(), job.request.source_share_key.as_ref())
+    {
+        match call_ledger_for(store, &job) {
+            Ok(ledger) => coordinator.set_delegated_call_ledger(std::sync::Arc::new(ledger)),
+            Err(error) => tracing::warn!(
+                "Calls to other assistants unavailable to a task from another device: {error:#}"
+            ),
+        }
+    }
     let mut event_rx = agent_runtime
         .subscribe_events()
         .map_err(|error| anyhow!(error.into_message()))?;
@@ -513,9 +526,49 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
             )),
         ),
     };
+    // The task's calls end with it: a call it did not wait for would
+    // otherwise die with this process, keeping its place and its session
+    // half-written.
+    if let Some(coordinator) = coordinator.as_ref() {
+        match coordinator
+            .cancel_background_calls_of_session(&job.request.session_id)
+            .await
+        {
+            Ok(cancelled) if !cancelled.is_empty() => tracing::info!(
+                "Cancelled calls a dispatch task left running: job_id={}, count={}",
+                job_id,
+                cancelled.len()
+            ),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                "Failed to cancel calls a dispatch task left running: job_id={}, error={error}",
+                job_id
+            ),
+        }
+    }
     store.mark_state(job_id, terminal_state, Some(&turn_id), terminal_error)?;
     store.clear_pending_permissions(job_id);
     Ok(())
+}
+
+fn call_ledger_for(
+    store: &DispatchStore,
+    job: &super::store::DispatchJobRecord,
+) -> Result<super::call_ledger::DispatchCallLedger> {
+    let path_manager = openbitfun_core::infrastructure::PathManager::new()
+        .map_err(|error| anyhow!("resolve OpenBitFun storage root: {error}"))?;
+    Ok(super::call_ledger::DispatchCallLedger::new(
+        store.clone(),
+        job.request.job_id.clone(),
+        job.request.clone(),
+        super::delegation::share_store()?,
+        openbitfun_core::service::lan_share::tenants_root(&path_manager),
+        Some(
+            openbitfun_core::service::delegation_audit::DelegationAuditLog::for_product_home(
+                &path_manager,
+            ),
+        ),
+    ))
 }
 
 fn share_guard_for(job: &super::store::DispatchJobRecord) -> Option<share_guard::ShareGuard> {

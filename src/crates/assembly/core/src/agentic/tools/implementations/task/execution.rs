@@ -420,8 +420,8 @@ impl AgentExecutionTool {
     /// The context a call from this turn to this device's assistant
     /// `agent_type` adds: the call chain with the calling assistant on it,
     /// and who is calling. A call back to an assistant already on the chain
-    /// is circular, and a task another device delegated cannot start a
-    /// session of this device's owner.
+    /// is circular. A task another device delegated may call only at full
+    /// trust (checked at admission); its call stays that device's task.
     pub(super) fn local_assistant_call_context(
         context: &ToolUseContext,
         device_id: &str,
@@ -429,12 +429,6 @@ impl AgentExecutionTool {
         caller_name: Option<&str>,
     ) -> Result<HashMap<String, String>, String> {
         let caller = Self::assistant_caller(context);
-        if caller.external_trust.is_some() {
-            return Err(
-                "a task another device delegated cannot call this device's assistants yet"
-                    .to_string(),
-            );
-        }
         let mut chain = crate::service::delegation::DelegatedTurnFacts::call_chain_from_tool_data(
             &context.custom_data,
         );

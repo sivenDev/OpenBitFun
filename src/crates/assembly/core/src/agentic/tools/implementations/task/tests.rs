@@ -2924,7 +2924,7 @@ async fn local_assistant_admission_refuses_the_caller_itself_and_normal_trust() 
 }
 
 #[test]
-fn a_local_assistant_call_carries_its_chain_and_refuses_a_loop_or_a_delegated_caller() {
+fn a_local_assistant_call_carries_its_chain_and_refuses_a_loop() {
     let chain_key = crate::service::delegation::DELEGATION_CALL_CHAIN_CONTEXT_KEY;
 
     let owner = test_tool_context("Standard");
@@ -2965,16 +2965,29 @@ fn a_local_assistant_call_carries_its_chain_and_refuses_a_loop_or_a_delegated_ca
         Some(r#"["dev1/workspace-writer","dev1/workspace-reader"]"#)
     );
 
+    // A task another device delegated at full trust may call too; the
+    // shared assistant it runs as joins the chain, and its call keeps the
+    // delegation facts for the host to account for.
     let mut delegated = test_tool_context("Standard");
     mark_delegated(&mut delegated, Some("full"));
-    let refusal = AgentExecutionTool::local_assistant_call_context(
+    delegated.custom_data.insert(
+        crate::service::delegation::DELEGATION_ASSISTANT_CONTEXT_KEY.to_string(),
+        serde_json::Value::String(
+            std::env::temp_dir()
+                .join("personal_assistant")
+                .join("workspace-reader")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    );
+    let call = AgentExecutionTool::local_assistant_call_context(
         &delegated,
         "dev1",
         "assistant:workspace-writer",
         None,
     )
-    .unwrap_err();
-    assert!(refusal.contains("another device delegated"), "{refusal}");
+    .expect("a task at full trust may call this device's assistant");
+    assert!(call.contains_key(chain_key));
 }
 
 #[test]

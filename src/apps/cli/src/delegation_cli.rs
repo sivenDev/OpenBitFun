@@ -72,6 +72,10 @@ pub(crate) async fn run(action: DelegationAction) -> Result<()> {
                     DelegationAuditEvent::Finished => {
                         format!("finished {}", entry.state.as_deref().unwrap_or("?"))
                     }
+                    DelegationAuditEvent::AssistantCalled => format!(
+                        "called {}",
+                        escape_terminal_text(entry.called_assistant.as_deref().unwrap_or("?"))
+                    ),
                 };
                 println!(
                     "- {} {} task {} for {} on {} ({}) with {}",

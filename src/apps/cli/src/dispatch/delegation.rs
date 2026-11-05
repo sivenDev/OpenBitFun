@@ -230,6 +230,11 @@ pub(super) mod test_support {
             store.grant(directory, peer(*seed)).await.unwrap();
         }
     }
+
+    /// Revokes the test device `seed`'s access to the assistant `directory`.
+    pub(crate) async fn revoke_key(store: &SharedAssistantStore, directory: &str, seed: u8) {
+        store.revoke(directory, &share_key(seed)).await.unwrap();
+    }
 }
 
 #[cfg(test)]

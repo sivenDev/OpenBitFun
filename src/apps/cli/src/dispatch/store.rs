@@ -21,6 +21,12 @@ const PID_FILE: &str = "job.pid";
 const PREPARING_FILE: &str = "preparing";
 /// Why a queued job waits to start; see [`DispatchHold`].
 const HOLD_FILE: &str = "hold.json";
+/// One file per call to an assistant the job has open; each takes a place
+/// under its share's limit.
+const CALL_SLOTS_DIR: &str = "call-slots";
+/// Sessions the job's calls to this device's assistants run in, kept and
+/// removed with the job's own session.
+const CALL_SESSIONS_FILE: &str = "call-sessions.json";
 const SPAWN_LOCK_FILE: &str = ".spawn.lock";
 const WORKER_LOCK_FILE: &str = ".worker.lock";
 const PENDING_PERMISSIONS_DIR: &str = "permissions/pending";
@@ -1264,6 +1270,56 @@ impl DispatchStore {
         path.exists().then(|| read_json(&path).ok()).flatten()
     }
 
+    /// Takes a place for a call the job opens; removing the returned file
+    /// gives it back.
+    pub(crate) fn add_call_slot(&self, job_id: &str) -> Result<PathBuf> {
+        let dir = self.existing_job_dir(job_id)?.join(CALL_SLOTS_DIR);
+        create_private_dir(&dir)?;
+        let path = dir.join(uuid::Uuid::new_v4().as_simple().to_string());
+        atomic_write_json(&path, &serde_json::json!({}))?;
+        Ok(path)
+    }
+
+    /// The calls the job has open.
+    pub(crate) fn call_slots(&self, job_id: &str) -> usize {
+        self.existing_job_dir(job_id)
+            .ok()
+            .and_then(|dir| fs::read_dir(dir.join(CALL_SLOTS_DIR)).ok())
+            .map_or(0, |entries| entries.flatten().count())
+    }
+
+    /// Records a session one of the job's calls runs in.
+    pub(crate) fn record_call_session(
+        &self,
+        job_id: &str,
+        workspace_path: &str,
+        session_id: &str,
+    ) -> Result<()> {
+        let path = self.existing_job_dir(job_id)?.join(CALL_SESSIONS_FILE);
+        let mut sessions = Self::read_call_sessions(&path);
+        sessions.push(DispatchCallSession {
+            workspace_path: workspace_path.to_string(),
+            session_id: session_id.to_string(),
+        });
+        atomic_write_json(&path, &sessions)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn call_sessions(&self, job_id: &str) -> Vec<(String, String)> {
+        let path = self.job_dir(job_id).unwrap().join(CALL_SESSIONS_FILE);
+        Self::read_call_sessions(&path)
+            .into_iter()
+            .map(|call| (call.workspace_path, call.session_id))
+            .collect()
+    }
+
+    fn read_call_sessions(path: &Path) -> Vec<DispatchCallSession> {
+        path.exists()
+            .then(|| read_json(path).ok())
+            .flatten()
+            .unwrap_or_default()
+    }
+
     pub(crate) fn clear_hold(&self, job_id: &str) {
         if let Ok(job_dir) = self.job_dir(job_id) {
             remove_file_if_present(&job_dir.join(HOLD_FILE));
@@ -1485,6 +1541,7 @@ impl DispatchStore {
             else {
                 continue;
             };
+            let call_sessions = Self::read_call_sessions(&job_dir.join(CALL_SESSIONS_FILE));
             let tombstone = jobs_root.join(format!(
                 ".gc-{}-{}",
                 job_id,
@@ -1544,6 +1601,11 @@ impl DispatchStore {
                     &job_record.request.workspace_path,
                     &job_record.request.session_id,
                 )?;
+                // The sessions of the task's calls to this device's other
+                // assistants follow the task's own.
+                for call in &call_sessions {
+                    delegated.remove_task_session(&call.workspace_path, &call.session_id)?;
+                }
             }
             drop(workspace_runtime_lock);
             drop(git_operation_lock);
@@ -1903,6 +1965,14 @@ impl DispatchStore {
 
 pub(crate) struct WorkspaceLock {
     _file: File,
+}
+
+/// A session a job's call to this device's assistant runs in.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct DispatchCallSession {
+    workspace_path: String,
+    session_id: String,
 }
 
 impl DispatchStore {
@@ -3698,8 +3768,25 @@ mod tests {
         .expect("share");
         assert_eq!(shares[0].settings.session_retention_days, 1);
         delegated("delegation-short", "workspace", &tenant);
+        // A call the task made to another assistant left a session in the
+        // device's workspace under that assistant; it follows the task's.
+        let called_tenant = tenant_root.join("workspace-called").join("device");
+        store
+            .record_call_session(
+                "delegation-short",
+                &called_tenant.to_string_lossy(),
+                "session-called-short",
+            )
+            .expect("record call session");
         finish("delegation-short", 2);
         delegated("delegation-fresh", "workspace", &tenant);
+        store
+            .record_call_session(
+                "delegation-fresh",
+                &called_tenant.to_string_lossy(),
+                "session-called-fresh",
+            )
+            .expect("record call session");
         finish("delegation-fresh", 0);
         delegated("delegation-stopped", "workspace-notes", &notes_tenant);
         finish("delegation-stopped", 2);
@@ -3761,6 +3848,7 @@ mod tests {
             removed,
             vec![
                 (tenant.clone(), "session-delegation-short".to_string()),
+                (called_tenant.clone(), "session-called-short".to_string()),
                 (
                     notes_tenant.clone(),
                     "session-delegation-stopped-old".to_string()

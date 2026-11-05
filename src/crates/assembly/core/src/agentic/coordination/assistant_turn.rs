@@ -4,13 +4,19 @@
 //! session of its own: listed with its other sessions and recording its
 //! caller, not a hidden child of the calling session. The result reaches the
 //! caller as any background subagent's does, through `AgentWait`.
+//!
+//! A call from a task another device delegated is that device's work: the
+//! session is kept in the workspace that device has under the called
+//! assistant, under the same rules as the task that made the call.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use openbitfun_services_core::session::SessionDelegatedBy;
 
 use crate::service::delegation::{
-    DelegatedTurnFacts, DELEGATION_CALL_CHAIN_CONTEXT_KEY, DISPATCH_DELEGATION_CONTEXT_KEY,
+    DelegatedTurnFacts, DELEGATION_ASSISTANT_CONTEXT_KEY, DELEGATION_CALL_CHAIN_CONTEXT_KEY,
+    DELEGATION_TENANT_CONTEXT_KEY, DISPATCH_DELEGATION_CONTEXT_KEY,
 };
 
 /// The calling assistant's agent type, `assistant:<directory>`, in the
@@ -18,6 +24,9 @@ use crate::service::delegation::{
 pub(crate) const ASSISTANT_CALL_CALLER_CONTEXT_KEY: &str = "assistantCallCaller";
 /// The calling assistant's name when the call was made.
 pub(crate) const ASSISTANT_CALL_CALLER_NAME_CONTEXT_KEY: &str = "assistantCallCallerName";
+/// For a call from a delegated task, the workspace the delegating device has
+/// under the called assistant, where the call's session is kept.
+pub(crate) const ASSISTANT_CALL_TENANT_WORKSPACE_CONTEXT_KEY: &str = "assistantCallTenantWorkspace";
 
 const SESSION_NAME_MAX_CHARS: usize = 80;
 
@@ -75,6 +84,13 @@ pub(crate) fn call_reminder(context: &HashMap<String, String>) -> String {
         .filter(|name| !name.is_empty())
         .map(|name| format!("\"{name}\""))
         .unwrap_or_else(|| "Another assistant".to_string());
+    if DelegatedTurnFacts::from_context(context).is_some() {
+        return format!(
+            "The next message comes from {caller}, an assistant on this device working on a task that a person on another device delegated to it. \
+             It is calling you for help with that task. Answer as yourself; your reply goes back to that assistant. \
+             You work under the same sharing rules as that task: what that person may not see, you may not show them either."
+        );
+    }
     format!(
         "The next message comes from {caller}, another assistant of the person you work for, on this same device. \
          It is calling you for help with that person's work. Answer as yourself; your reply goes back to that assistant, \
@@ -96,6 +112,31 @@ pub(crate) fn child_context(call: &HashMap<String, String>) -> HashMap<String, S
     }
     context.remove(ASSISTANT_CALL_CALLER_CONTEXT_KEY);
     context.remove(ASSISTANT_CALL_CALLER_NAME_CONTEXT_KEY);
+    context.remove(ASSISTANT_CALL_TENANT_WORKSPACE_CONTEXT_KEY);
+    context
+}
+
+/// The context of the called assistant's turn for a call from a task another
+/// device delegated. It stays that device's task, at the same trust and on
+/// the same call chain, now running as the called assistant and writing only
+/// in the workspace that device has under it.
+pub(crate) fn tenant_child_context(
+    call: &HashMap<String, String>,
+    assistant_workspace: &Path,
+    tenant_workspace: &Path,
+) -> HashMap<String, String> {
+    let mut context = call.clone();
+    context.remove(ASSISTANT_CALL_CALLER_CONTEXT_KEY);
+    context.remove(ASSISTANT_CALL_CALLER_NAME_CONTEXT_KEY);
+    context.remove(ASSISTANT_CALL_TENANT_WORKSPACE_CONTEXT_KEY);
+    context.insert(
+        DELEGATION_ASSISTANT_CONTEXT_KEY.to_string(),
+        assistant_workspace.to_string_lossy().into_owned(),
+    );
+    context.insert(
+        DELEGATION_TENANT_CONTEXT_KEY.to_string(),
+        tenant_workspace.to_string_lossy().into_owned(),
+    );
     context
 }
 

@@ -1165,6 +1165,8 @@ struct BackgroundSubagentTaskControl {
     subagent_session_id: String,
     suppress_delivery: Arc<AtomicBool>,
     cancel_target: BackgroundSubagentCancelTarget,
+    /// The account of a delegated task's call, released when the call ends.
+    _call_ticket: Option<Arc<super::DelegatedCallTicket>>,
 }
 
 /// Ensures orphaned subagent work is stopped when the parent tool await is dropped.
@@ -1529,6 +1531,8 @@ pub struct ConversationCoordinator {
     remote_exec_port: OnceLock<Arc<dyn RemoteExecPort>>,
     external_agent_executor: OnceLock<Arc<dyn openbitfun_runtime_ports::ExternalAgentExecutor>>,
     remote_agent_port: OnceLock<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>>,
+    /// The host's account of the calls delegated tasks make to assistants.
+    delegated_call_ledger: OnceLock<Arc<dyn super::DelegatedCallLedger>>,
     hook_registry: openbitfun_agent_runtime::native_hooks::RuntimeHookRegistry,
 }
 
@@ -2462,6 +2466,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             remote_exec_port: OnceLock::new(),
             external_agent_executor: OnceLock::new(),
             remote_agent_port: OnceLock::new(),
+            delegated_call_ledger: OnceLock::new(),
             hook_registry: crate::native_hooks::new_runtime_hook_registry(),
         }
     }
@@ -2831,6 +2836,47 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         &self,
     ) -> Option<Arc<dyn openbitfun_runtime_ports::RemoteAgentDelegationPort>> {
         self.remote_agent_port.get().map(Arc::clone)
+    }
+
+    /// Registers the account of calls delegated tasks make to assistants. A
+    /// host that registers none runs no delegated task that may call one.
+    pub fn set_delegated_call_ledger(&self, ledger: Arc<dyn super::DelegatedCallLedger>) {
+        if self.delegated_call_ledger.set(ledger).is_err() {
+            log::warn!("Delegated call ledger is already configured; ignoring duplicate injection");
+        }
+    }
+
+    /// Admits a delegated task's call to an assistant with the host's
+    /// account, or `None` for any other call. A call to this device's
+    /// assistant learns where its session is kept.
+    async fn open_delegated_call(
+        &self,
+        request: &mut SubagentExecutionRequest,
+    ) -> OpenBitFunResult<Option<super::DelegatedCallTicket>> {
+        let Some(call) = request.subagent_type.as_deref().and_then(|agent_type| {
+            super::delegated_calls::delegated_call(&request.context, agent_type)
+        }) else {
+            return Ok(None);
+        };
+        let ledger = self.delegated_call_ledger.get().ok_or_else(|| {
+            OpenBitFunError::tool(format!(
+                "assistant {} cannot be called: this host does not account for calls from a task another device delegated",
+                call.agent_type
+            ))
+        })?;
+        let ticket = ledger.open(&call).await.map_err(|reason| {
+            OpenBitFunError::tool(format!(
+                "assistant {} cannot be called: {reason}",
+                call.agent_type
+            ))
+        })?;
+        if let Some(tenant_workspace) = &ticket.tenant_workspace {
+            request.context.insert(
+                super::assistant_turn::ASSISTANT_CALL_TENANT_WORKSPACE_CONTEXT_KEY.to_string(),
+                tenant_workspace.to_string_lossy().into_owned(),
+            );
+        }
+        Ok(Some(ticket))
     }
 
     /// Settles, at startup, the calls to this device's other assistants that
@@ -13651,7 +13697,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                             "assistant {agent_type} cannot be called from a session that is not kept"
                         )));
                     }
-                    let workspace_id =
+                    let assistant_workspace_id =
                         crate::agentic::agents::local_assistant_workspace_id(assistant_id)
                             .await
                             .ok_or_else(|| {
@@ -13661,16 +13707,57 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                             })?;
                     // The called assistant runs on its own model, not the
                     // caller's or the app-wide mode default.
-                    let model_id =
-                        crate::agentic::agents::assistant_model_for_workspace(&workspace_id)
-                            .await
-                            .map(|choice| choice.model_ref);
+                    let model_id = crate::agentic::agents::assistant_model_for_workspace(
+                        &assistant_workspace_id,
+                    )
+                    .await
+                    .map(|choice| choice.model_ref);
+                    // A delegated task's call runs in the workspace the
+                    // delegating device has under the called assistant.
+                    let (workspace_id, context) = match request
+                        .context
+                        .get(super::assistant_turn::ASSISTANT_CALL_TENANT_WORKSPACE_CONTEXT_KEY)
+                        .map(std::path::PathBuf::from)
+                    {
+                        None => (
+                            assistant_workspace_id,
+                            super::assistant_turn::child_context(&request.context),
+                        ),
+                        Some(tenant_workspace) => {
+                            let workspaces =
+                                crate::service::workspace::get_global_workspace_service()
+                                    .ok_or_else(|| {
+                                        OpenBitFunError::service(
+                                            "Workspace service not initialized".to_string(),
+                                        )
+                                    })?;
+                            let assistant_root = workspaces
+                                .get_workspace(&assistant_workspace_id)
+                                .await
+                                .map(|workspace| workspace.root_path)
+                                .ok_or_else(|| {
+                                    OpenBitFunError::tool(format!(
+                                        "assistant {agent_type} is not on this device"
+                                    ))
+                                })?;
+                            let tenant = workspaces
+                                .register_local_workspace_record(tenant_workspace.clone())
+                                .await?;
+                            (
+                                tenant.id,
+                                super::assistant_turn::tenant_child_context(
+                                    &request.context,
+                                    &assistant_root,
+                                    &tenant_workspace,
+                                ),
+                            )
+                        }
+                    };
                     let mut session_config =
                         Self::build_session_config_for_workspace(workspace_id, model_id).await?;
                     session_config.continuation_policy = SessionContinuationPolicy::FreshOnly;
                     let parent_session_id = request.subagent_parent_info.session_id.clone();
                     let delegation_policy = DelegationPolicy::top_level();
-                    let context = super::assistant_turn::child_context(&request.context);
                     let runtime_tool_restrictions = runtime_tool_restrictions_for_delegated_context(
                         runtime_tool_restrictions_for_delegation_policy(delegation_policy),
                         &context,
@@ -14046,6 +14133,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         parent_session_id: String,
         subagent_session_id: String,
         cancel_target: BackgroundSubagentCancelTarget,
+        call_ticket: Option<super::DelegatedCallTicket>,
     ) -> Arc<AtomicBool> {
         let suppress_delivery = Arc::new(AtomicBool::new(false));
         self.background_subagent_tasks.insert(
@@ -14055,6 +14143,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 subagent_session_id,
                 suppress_delivery: suppress_delivery.clone(),
                 cancel_target,
+                _call_ticket: call_ticket.map(Arc::new),
             },
         );
         suppress_delivery
@@ -14073,6 +14162,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             parent_session_id.to_string(),
             subagent_session_id.to_string(),
             BackgroundSubagentCancelTarget::Direct(token.clone()),
+            None,
         );
         token
     }
@@ -14136,6 +14226,17 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             }
         }
         Ok(cancelled)
+    }
+
+    /// Cancels the background calls and subagents `session_id` started that
+    /// are still running, for a host ending that session's work. Returns the
+    /// sessions they ran in.
+    pub async fn cancel_background_calls_of_session(
+        &self,
+        session_id: &str,
+    ) -> OpenBitFunResult<Vec<String>> {
+        self.cancel_background_subagents_for_parent_session(session_id)
+            .await
     }
 
     pub(crate) async fn cancel_background_subagents_for_parent_session(
@@ -14623,6 +14724,9 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 "Background subagent start was cancelled".to_string(),
             ));
         }
+        let mut request = request;
+        // Held until the call ends; dropped on any refusal below.
+        let mut call_ticket = self.open_delegated_call(&mut request).await?;
         let request = self
             .resolve_hidden_subagent_execution_request(request)
             .await?;
@@ -14650,6 +14754,11 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 )
             })?
             .to_string();
+        if let Some(ticket) = &call_ticket {
+            if let Some(tenant_workspace) = &ticket.tenant_workspace {
+                ticket.record_session(&tenant_workspace.to_string_lossy(), &subagent_session_id);
+            }
+        }
         let subagent_parent_info = match request.subagent_parent_info.clone() {
             Some(info) => info,
             None => {
@@ -14831,6 +14940,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                 subagent_parent_info.session_id.clone(),
                 subagent_session_id.clone(),
                 BackgroundSubagentCancelTarget::Scheduler(cancel_handle.clone()),
+                call_ticket.take(),
             );
             self.stamp_subagent_link_on_parent_tool_item(
                 &subagent_parent_info,
@@ -14945,6 +15055,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             subagent_parent_info.session_id.clone(),
             subagent_session_id.clone(),
             BackgroundSubagentCancelTarget::Direct(background_cancel_token),
+            call_ticket.take(),
         );
         self.stamp_subagent_link_on_parent_tool_item(
             &subagent_parent_info,
@@ -22215,6 +22326,7 @@ pub(crate) mod tests {
             middle.session_id.clone(),
             leaf.session_id.clone(),
             BackgroundSubagentCancelTarget::Direct(token.clone()),
+            None,
         );
         assert_eq!(
             coordinator
@@ -25521,6 +25633,156 @@ pub(crate) mod tests {
             Ok(_) => panic!("the assistant call must not resolve to a session"),
             Err(error) => error.to_string(),
         }
+    }
+
+    fn delegated_call_request(agent_type: &str, delegated: bool) -> SubagentExecutionRequest {
+        let mut context = HashMap::new();
+        if delegated {
+            context.insert(
+                crate::service::delegation::DISPATCH_DELEGATION_CONTEXT_KEY.to_string(),
+                "true".to_string(),
+            );
+            context.insert(
+                crate::service::delegation::DELEGATION_TRUST_CONTEXT_KEY.to_string(),
+                "full".to_string(),
+            );
+        }
+        SubagentExecutionRequest {
+            task_description: "Summarize the notes".to_string(),
+            requested_agent_id: None,
+            context_mode: SubagentContextMode::Fresh,
+            target_session_id: None,
+            subagent_type: Some(agent_type.to_string()),
+            logical_subagent_type: Some(agent_type.to_string()),
+            continuation_policy: SessionContinuationPolicy::Reusable,
+            model_binding_policy: SessionModelBindingPolicy::Mutable,
+            workspace_path: None,
+            model_id: None,
+            inherit_parent_model: false,
+            subagent_parent_info: SubagentParentInfo {
+                session_id: "delegated-task".to_string(),
+                dialog_turn_id: "task-turn".to_string(),
+                tool_call_id: "task-tool".to_string(),
+            },
+            context,
+            permission_runtime_ceiling: PermissionRuntimeCeiling::default(),
+            delegation_policy: DelegationPolicy::top_level().spawn_child(),
+            external_generation_lease: None,
+        }
+    }
+
+    struct TestCallLedger {
+        refusal: Option<&'static str>,
+        released: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    struct TestCallHold(Arc<std::sync::atomic::AtomicBool>);
+
+    impl super::super::DelegatedCallHold for TestCallHold {
+        fn record_session(&self, _workspace_path: &str, _session_id: &str) {}
+    }
+
+    impl Drop for TestCallHold {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::super::DelegatedCallLedger for TestCallLedger {
+        async fn open(
+            &self,
+            call: &super::super::DelegatedCall,
+        ) -> Result<super::super::DelegatedCallTicket, String> {
+            if let Some(refusal) = self.refusal {
+                return Err(refusal.to_string());
+            }
+            Ok(super::super::DelegatedCallTicket::new(
+                call.local_assistant_id
+                    .as_ref()
+                    .map(|id| std::path::PathBuf::from(format!("/tenants/{id}/device-b"))),
+                Box::new(TestCallHold(self.released.clone())),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_delegated_tasks_call_is_accounted_by_the_host_before_it_starts() {
+        let (coordinator, _) = test_coordinator();
+        // The owner's own calls and other subagents need no account.
+        let mut own = delegated_call_request("assistant:workspace-notes", false);
+        assert!(coordinator
+            .open_delegated_call(&mut own)
+            .await
+            .unwrap()
+            .is_none());
+        let mut subagent = delegated_call_request("Explore", true);
+        assert!(coordinator
+            .open_delegated_call(&mut subagent)
+            .await
+            .unwrap()
+            .is_none());
+
+        // A host that keeps no account runs no such call.
+        let mut call = delegated_call_request("assistant:workspace-notes", true);
+        let error = coordinator
+            .open_delegated_call(&mut call)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("does not account for calls"), "{error}");
+
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        coordinator.set_delegated_call_ledger(Arc::new(TestCallLedger {
+            refusal: None,
+            released: released.clone(),
+        }));
+        let ticket = coordinator
+            .open_delegated_call(&mut call)
+            .await
+            .unwrap()
+            .expect("a delegated task's call is accounted");
+        // The call's session is kept in the calling device's workspace under
+        // the called assistant.
+        assert_eq!(
+            call.context[super::super::assistant_turn::ASSISTANT_CALL_TENANT_WORKSPACE_CONTEXT_KEY],
+            "/tenants/workspace-notes/device-b"
+        );
+        // Its place returns when the call's background task lets go of it.
+        coordinator.register_background_subagent_task(
+            7,
+            "delegated-task".to_string(),
+            "called-session".to_string(),
+            BackgroundSubagentCancelTarget::Direct(CancellationToken::new()),
+            Some(ticket),
+        );
+        assert!(!released.load(Ordering::SeqCst));
+        coordinator
+            .cancel_background_calls_of_session("delegated-task")
+            .await
+            .unwrap();
+        assert!(released.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_delegated_tasks_call_the_host_refuses_says_why() {
+        let (coordinator, _) = test_coordinator();
+        coordinator.set_delegated_call_ledger(Arc::new(TestCallLedger {
+            refusal: Some("this share already runs as many tasks as its owner allows (2)"),
+            released: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }));
+        let mut call = delegated_call_request("shared:laptop/writer", true);
+        let error = coordinator
+            .open_delegated_call(&mut call)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "assistant shared:laptop/writer cannot be called: this share already runs"
+            ),
+            "{error}"
+        );
     }
 
     #[tokio::test]

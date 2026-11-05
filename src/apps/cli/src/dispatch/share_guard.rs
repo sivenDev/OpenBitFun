@@ -2,9 +2,10 @@
 //! guard that stops a task when its owner withdraws access.
 //!
 //! The owner sets the number of concurrent tasks on the share; it counts the
-//! tasks of every device the assistant is shared with. A task over it is
-//! accepted and waits, queued, until one of them ends; waiting tasks start in
-//! the order they began to wait. The grant is checked while a turn runs, so
+//! tasks of every device the assistant is shared with, and each call such a
+//! task has open to another assistant. A task over it is accepted and waits,
+//! queued, until one of them ends; waiting tasks start in the order they
+//! began to wait. A call over it is refused, and the task may try again. The grant is checked while a turn runs, so
 //! revoking a device, blocking it or stopping the share stops work already in
 //! progress.
 
@@ -30,7 +31,7 @@ pub(super) const GRANT_WITHDRAWN: &str =
 
 /// The shared assistant a job from another device runs, with that device's
 /// sharing key.
-fn share_of(request: &DispatchSubmitRequest) -> Option<(&str, &str)> {
+pub(super) fn share_of(request: &DispatchSubmitRequest) -> Option<(&str, &str)> {
     Some((
         request.delegation.as_ref()?.assistant_id.as_str(),
         request.source_share_key.as_deref()?,
@@ -65,17 +66,36 @@ fn has_place(
         if share_of(&record.request).is_none_or(|(other, _)| other != assistant_id) {
             continue;
         }
-        let counts = match job.state {
-            DispatchJobState::Running => true,
+        ahead += match job.state {
+            DispatchJobState::Running => 1 + store.call_slots(&job.job_id),
             // A task that waited longer starts first.
-            DispatchJobState::Queued => store
-                .read_hold(&job.job_id)
-                .is_some_and(|hold| (hold.since_ms, job.job_id.as_str()) < (since_ms, job_id)),
-            _ => false,
+            DispatchJobState::Queued => usize::from(
+                store
+                    .read_hold(&job.job_id)
+                    .is_some_and(|hold| (hold.since_ms, job.job_id.as_str()) < (since_ms, job_id)),
+            ),
+            _ => 0,
         };
-        ahead += usize::from(counts);
     }
     Ok(ahead < max as usize)
+}
+
+/// Whether a running task of the shared assistant may open one more call:
+/// its running tasks and their open calls leave a place under `max`.
+pub(super) fn call_has_place(store: &DispatchStore, assistant_id: &str, max: u32) -> Result<bool> {
+    let mut taken = 0usize;
+    for job in store.list_jobs()? {
+        if job.state != DispatchJobState::Running {
+            continue;
+        }
+        let Ok(record) = store.load_job(&job.job_id) else {
+            continue;
+        };
+        if share_of(&record.request).is_some_and(|(other, _)| other == assistant_id) {
+            taken += 1 + store.call_slots(&job.job_id);
+        }
+    }
+    Ok(taken < max as usize)
 }
 
 /// Waits until the task `job_id` from another device may run under its
