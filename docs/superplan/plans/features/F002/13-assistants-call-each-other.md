@@ -312,7 +312,17 @@ parent: "F002"
 **Verification:**
 - 手工：Exit Criteria 第 1–6 条逐条记录。
 
-- [ ] 两台 Mac 真机验收逐条通过，或记录失败与修复
+- [x] 两台 Mac 真机验收逐条通过，或记录失败与修复
+
+**Evidence（2026-11-05）：**
+- 环境：主人决定不打 dmg，用 dev 构建（「不需要真机测试，dev打包就够了」）。A 为本机 dev 构建（隔离数据目录，设备 id `9a4c696a…`，X = 小岚、Y = 小栖）；B 为 agent002 上的 dev 构建（桌面 `aff8faea`、CLI `40b2d71f`，设备 id `072379a9…`，Z = 「助理」，共享给 A，普通信任）。第 2 条复验时 A 为 5440dd158。
+- 第 1 条通过：X 并行调用 Y 与 Z 并转述两者结果（小栖「桥把两岸的思念，轻轻连在一起。」、助理「桥把两岸连在一起，也把思念送到对岸。」）；卡片为「小栖 · 我的助理」「助理 · 来自 agent 的设备」；B 列出任务 `delegation-24ffa7a9…`，来源「zhengxiwan / MacBook-Pro-90」。
+- 第 2 条先失败后修复：Z 等待 B 审批时，X 的等待卡片已显示「1 个任务在其他设备上等待，仍在继续」，但调用卡片仍是「运行中」，侧栏子会话里是英文的「Waiting for the owner of … to approve an action on their device.」；X 给同一调用发消息的卡片把对方叫作随机昵称「爆米花」。5440dd158 修复：内核在调用所等之事变化时发 `RemoteCallHoldChanged`（主人审批或共享上限，带设备名），观察结束时清除，不再往子会话写英文说明；卡片以「等待 {设备} 审批」「在 {设备} 排队中」代替「运行中」；发消息卡片与发起、等待卡片同样用助理名字。复验：X 让 Z 新建 hold-check.txt，卡片显示「等待 agent 审批」，界面无英文说明；在 B 上拒绝后卡片回到结束状态，侧栏显示「已拒绝」与 Z 的说明。X 再给同一调用发消息改用 hold-check-2.txt，发消息卡片的对象为「助理」，卡片再次显示「等待 agent 审批」，拒绝后清除；B 的租户目录下没有留下文件。X 的回合结束后调用才完成时，结果按设计（Task 4）经通知与下一回合提示收回，不自动开启新回合。
+- 第 3 条通过：本机 X→Y→X 被拒绝「circular call: 9a4c…/workspace -> 9a4c…/workspace-9583265c -> 9a4c…/workspace」（被调用方的列表按设计不含调用方，模型在被告知类型后才尝试）。跨设备：B 的共享临时改为完全信任，B 的 worker 拒绝「circular call: 9a4c…/workspace -> 0723…/workspace -> 9a4c…/workspace」；之后 B 已恢复普通信任。
+- 第 4 条通过：B 退出应用后，X 的列表中 Z 仍列出并标不可用，调用明确失败「agent's device is not reachable on the local network」；之后 B 已重新启动。
+- 第 5、6 条沿用 Task 6 与 Task 4、5 的 dev 构建真机证据（见上），本次未改动这些路径。
+- 测试：core `remote_agent_turn` 8 通过（`the_parent_hears_why_a_job_waits_on_its_device` 覆盖排队、主人审批、清除与结束各发一次事件），`--test lan_share_flow` 13 通过；events `remote_call_hold_projection_names_reason_and_device`；Web UI `src/flow_chat` 4826 通过（`says what a call to another device waits for there while it runs`、`names a message to a called shared assistant by the assistant, not a nickname`），`tsc`、`eslint`、`i18n:audit` 通过；`cargo check -p openbitfun-cli`、`-p openbitfun-desktop` 通过。
+- 未覆盖：Peer Device Mode 下对端 CLI 主机的事件扇出没有为 `RemoteCallHoldChanged` 单独验证；未收到该事件的界面保持原来的「运行中」显示。侧栏子会话标题栏仍显示「运行中」，等待原因只在调用卡片上。
 
 ## 风险
 
