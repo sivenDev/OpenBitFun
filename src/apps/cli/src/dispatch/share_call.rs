@@ -8,7 +8,8 @@
 //! job runs with. Approvals never come from such a device; the host refuses
 //! `answer` before it reaches the runner. [`present_response`] keeps the
 //! details of what this device's owner is asked to approve out of every
-//! answer.
+//! answer, and shows where a job runs here only relative to its workspace or
+//! to `~`.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
@@ -108,9 +109,103 @@ pub(super) async fn admit_call(
     Ok(input)
 }
 
+/// Where this device keeps a job, which the device that started it sees only
+/// relative to the job's workspace or to the home directory as `~`.
+#[derive(Debug, Default)]
+pub(super) struct OwnerPaths {
+    workspace: Option<String>,
+    home: Option<String>,
+}
+
+impl OwnerPaths {
+    /// The paths a response to `verb` on the job named by `input` may contain.
+    pub(super) fn for_call(store: &DispatchStore, verb: &str, input: &Value) -> Self {
+        let workspace = (verb == "status")
+            .then(|| store.load_job(job_id(input)).ok())
+            .flatten()
+            .map(|job| job.request.workspace_path);
+        Self::new(
+            workspace,
+            dirs::home_dir().map(|home| home.to_string_lossy().into_owned()),
+        )
+    }
+
+    fn new(workspace: Option<String>, home: Option<String>) -> Self {
+        let usable = |path: Option<String>| {
+            path.map(|path| path.trim_end_matches(std::path::MAIN_SEPARATOR).to_string())
+                .filter(|path| !path.is_empty())
+        };
+        Self {
+            workspace: usable(workspace),
+            home: usable(home),
+        }
+    }
+
+    fn hide(&self, text: &str) -> String {
+        // The job's workspace first: it lies under the home directory.
+        let text = match &self.workspace {
+            Some(path) => replace_path(text, path, "", "."),
+            None => text.to_string(),
+        };
+        match &self.home {
+            Some(path) => replace_path(&text, path, "~/", "~"),
+            None => text,
+        }
+    }
+
+    fn hide_in(&self, value: &mut Value) {
+        match value {
+            Value::String(text) => {
+                let hidden = self.hide(text);
+                if hidden != *text {
+                    *text = hidden;
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(|item| self.hide_in(item)),
+            Value::Object(fields) => fields.values_mut().for_each(|field| self.hide_in(field)),
+            _ => {}
+        }
+    }
+}
+
+/// `text` with every whole occurrence of `path` replaced: by `inside`
+/// where a path within it follows, by `bare` where it ends there. A longer
+/// name that only starts with `path` is kept.
+fn replace_path(text: &str, path: &str, inside: &str, bare: &str) -> String {
+    let separator = std::path::MAIN_SEPARATOR;
+    let mut shown = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(path) {
+        let after = &rest[start + path.len()..];
+        shown.push_str(&rest[..start]);
+        match after.chars().next() {
+            Some(next) if next == separator => {
+                shown.push_str(inside);
+                rest = &after[next.len_utf8()..];
+            }
+            Some(next) if next.is_alphanumeric() || matches!(next, '-' | '_' | '.') => {
+                shown.push_str(path);
+                rest = after;
+            }
+            _ => {
+                shown.push_str(bare);
+                rest = after;
+            }
+        }
+    }
+    shown.push_str(rest);
+    shown
+}
+
 /// What such a device receives back: approval prompts keep only what says
-/// the job waits, and jobs are listed without where they run here.
-pub(super) fn present_response(verb: &str, _request: &Value, mut response: Value) -> Value {
+/// the job waits, jobs are listed without where they run here, and a job's
+/// events name paths here only relative to its workspace or to `~`.
+pub(super) fn present_response(
+    verb: &str,
+    _request: &Value,
+    mut response: Value,
+    paths: &OwnerPaths,
+) -> Value {
     if verb == "list" {
         for entry in response.as_array_mut().into_iter().flatten() {
             if let Some(path) = entry.get_mut("workspacePath") {
@@ -130,6 +225,7 @@ pub(super) fn present_response(verb: &str, _request: &Value, mut response: Value
                 *request = redacted_permission(request);
             }
         }
+        paths.hide_in(&mut response);
     }
     response
 }
@@ -363,7 +459,7 @@ mod tests {
                 "displayMetadata": { "command": "cat ~/.ssh/id_rsa" },
             }],
         });
-        let shown = present_response("status", &json!({}), status);
+        let shown = present_response("status", &json!({}), status, &OwnerPaths::default());
         let text = shown.to_string();
         assert!(!text.contains("id_rsa"), "{text}");
         assert!(!text.contains("/Users/owner"), "{text}");
@@ -371,6 +467,42 @@ mod tests {
             serde_json::from_value(shown["pendingPermissions"][0].clone()).unwrap();
         assert_eq!(request.request_id, "r1");
         assert_eq!(request.action, "bash");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_job_names_paths_here_only_relative_to_its_workspace_or_home() {
+        let paths = OwnerPaths::new(
+            Some("/Users/owner/.openbitfun/delegation/tenants/workspace/abc/".to_string()),
+            Some("/Users/owner".to_string()),
+        );
+        let status = json!({
+            "state": "succeeded",
+            "events": [{
+                "type": "toolResult",
+                "input": { "workspace": "/Users/owner/.openbitfun/delegation/tenants/workspace/abc" },
+                "result": {
+                    "transcript_path": "/Users/owner/.openbitfun/delegation/tenants/workspace/abc/.openbitfun/history/s-1.md",
+                    "note": "read /Users/owner/.openbitfun/personal_assistant/workspace/SOUL.md and /Users/owner-old/x",
+                },
+            }],
+            "cursor": 3,
+        });
+        let shown = present_response("status", &json!({}), status, &paths);
+        let event = &shown["events"][0];
+        assert_eq!(event["input"]["workspace"], ".");
+        assert_eq!(
+            event["result"]["transcript_path"],
+            ".openbitfun/history/s-1.md"
+        );
+        assert_eq!(
+            event["result"]["note"],
+            "read ~/.openbitfun/personal_assistant/workspace/SOUL.md and /Users/owner-old/x"
+        );
+        assert_eq!(shown["cursor"], 3);
+        // Other verbs and a job without known paths are left alone.
+        let listed = present_response("catalog", &json!({}), json!(["/Users/owner/x"]), &paths);
+        assert_eq!(listed, json!(["/Users/owner/x"]));
     }
 
     #[tokio::test]
@@ -417,6 +549,7 @@ mod tests {
                     "assistantWorkspace": "/Users/owner/assistants/workspace",
                 },
             }]),
+            &OwnerPaths::default(),
         );
         assert_eq!(listed[0]["workspacePath"], "");
         assert_eq!(

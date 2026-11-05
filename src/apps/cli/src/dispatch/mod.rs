@@ -76,16 +76,15 @@ async fn run_dispatch_verb_canonical(
         return run_admitted_verb(verb, input).await;
     };
     let original = input.clone();
-    let admitted = share_call::admit_call(
-        &DispatchStore::open_default()?,
-        &delegation::share_store()?,
-        verb,
-        input,
-        &share_key,
-    )
-    .await?;
+    let store = DispatchStore::open_default()?;
+    let admitted =
+        share_call::admit_call(&store, &delegation::share_store()?, verb, input, &share_key)
+            .await?;
+    let paths = share_call::OwnerPaths::for_call(&store, verb, &original);
     let response = run_admitted_verb(verb, admitted).await?;
-    Ok(share_call::present_response(verb, &original, response))
+    Ok(share_call::present_response(
+        verb, &original, response, &paths,
+    ))
 }
 
 async fn run_admitted_verb(verb: &str, input: serde_json::Value) -> Result<serde_json::Value> {
