@@ -158,7 +158,10 @@ export class FlowChatManager {
     installPendingQueueDrainListener(this.context);
     this.peerSessionRefreshCleanup = installPeerSessionRefresh(this.context);
     this.dispatchJobObserverCleanup = installDispatchJobObserver(this.context);
-    this.delegatedTaskFollowerCleanup = installDelegatedTaskFollower(this.context);
+    this.delegatedTaskFollowerCleanup = installDelegatedTaskFollower(
+      this.context,
+      sessionId => this.deleteChatSession(sessionId),
+    );
     this.navStatusCleanup = installSessionNavStatusService();
     // The agentic subscription is this window's only live view of a running
     // Turn, so its lifetime must not depend on a workspace bootstrap that a

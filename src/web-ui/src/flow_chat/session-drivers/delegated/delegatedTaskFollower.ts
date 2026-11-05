@@ -7,7 +7,10 @@
  */
 
 import { createLogger } from '@/shared/utils/logger';
-import { delegationAPI } from '@/infrastructure/api/service-api/DelegationAPI';
+import { notificationService } from '@/shared/notification-system';
+import { i18nService } from '@/infrastructure/i18n';
+import { delegationAPI, type DelegatedTask } from '@/infrastructure/api/service-api/DelegationAPI';
+import { onDelegatedTasksRead } from '@/infrastructure/api/service-api/delegatedTaskReads';
 import { agenticEventListener } from '../../services/AgenticEventListener';
 import type { FlowChatContext } from '../../services/flow-chat-manager/types';
 import { dispatchEventId, projectDispatchAgentEvent } from '@/features/dispatch/DispatchJobObserver';
@@ -34,14 +37,45 @@ export interface DelegatedTaskToFollow {
 let followerContext: FlowChatContext | null = null;
 const following = new Set<string>();
 const appliedEventIds = new Map<string, Set<string>>();
+/** Views being closed because their task is gone. */
+const closing = new Set<string>();
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export function installDelegatedTaskFollower(context: FlowChatContext): () => void {
+/**
+ * `closeView` closes a task's session in this window the way closing it by
+ * hand does. It is used for a task the runner no longer lists.
+ */
+export function installDelegatedTaskFollower(
+  context: FlowChatContext,
+  closeView: (sessionId: string) => Promise<void>,
+): () => void {
   followerContext = context;
+  const unsubscribe = onDelegatedTasksRead((tasks, listed) => {
+    if (listed && followerContext === context) closeVanishedTasks(tasks, closeView);
+  });
   return () => {
+    unsubscribe();
     if (followerContext === context) followerContext = null;
   };
+}
+
+/**
+ * Closes the view of each followed task the runner no longer lists: the
+ * device that sent it deleted it, or its retention ended. Its session is
+ * gone, so the view would only show what was replayed before.
+ */
+function closeVanishedTasks(tasks: DelegatedTask[], closeView: (sessionId: string) => Promise<void>): void {
+  const listed = new Set(tasks.map(task => task.jobId));
+  for (const entry of Object.values(delegatedSessionStore.getState().bySession)) {
+    if (listed.has(entry.jobId) || closing.has(entry.sessionId)) continue;
+    log.info('Delegated task no longer listed; closing its view', { jobId: entry.jobId, sessionId: entry.sessionId });
+    closing.add(entry.sessionId);
+    void closeView(entry.sessionId)
+      .then(() => notificationService.warning(i18nService.t('common:nav.sessions.delegated.unavailable')))
+      .catch((error: unknown) => log.warn('Failed to close the view of a removed delegated task', { jobId: entry.jobId, error }))
+      .finally(() => closing.delete(entry.sessionId));
+  }
 }
 
 /**

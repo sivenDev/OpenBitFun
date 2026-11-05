@@ -2,7 +2,7 @@
 id: "F002-18"
 title: "共享助理的对话：导航写明来源，使用者可以删除对话"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "使用者导航栏「来自共享」中共享的助理右侧直接写「来自 某某的设备」；使用者可以删除自己和共享助理的对话，主人那边的会话与任务记录一起删除，进行中的先停止，主人不在线或不支持时置灰并写原因。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-05"
@@ -176,6 +176,10 @@ parent: "F002"
     - 确认框写明主人名；取消时不删除；失败时提示原因。
 
     主人是否支持只在打开菜单时询问，每次运行每个主人问一次，问不到的下次再问。
+  - 补充（真机核对后）：主人正开着被删除的对话时，视图原先停在删除前的内容。
+    - 现在主人读到的任务列表里没有某个正在查看的任务时，关闭这个视图并提示「这个外部任务的会话已不可用」；保留期到期删除的任务同样处理。
+    - 读取失败不算作任务已删除。
+    - 改动在 `delegatedTaskReads.ts`、`delegatedTaskFollower.ts` 与 `FlowChatManager.ts`；新增 `delegatedTaskFollower.test.ts`，覆盖仍在列表中、读取失败与已删除三种情况，已删除的只关闭一次。
 - [x] 空的新对话直接删除，不确认、不联系主人
   - 证据（2026-11-05）：主人不在线时，空的新对话的「删除」仍可用；点击后不弹确认、不询问主人，直接删除。还没发出第一条消息（状态 `submitting`，没有对话轮次）时才算空的新对话，第一条消息在途时按进行中处理。
   - Web 检查：`test:run src/app/components/NavPanel/sections/workspaces/SharedAssistantList.test.tsx src/features/dispatch` 14 个文件 167 项通过，`src/infrastructure` 227 个文件 2156 项通过；`tsc --noEmit` 与改动文件 eslint 通过；`i18n:audit` 0 个警告。
@@ -193,8 +197,29 @@ parent: "F002"
 - `pnpm run fmt:rs`
 - 真机：本地 dev A 与 agent002 的 dev 构建（部署新 CLI 与桌面端），按批准条件 14 逐条操作并截图
 
-- [ ] Web UI、外观与主题检查通过
-- [ ] 批准条件 14 在两台 Mac 上逐条通过
+- [x] Web UI、外观与主题检查通过
+  - 证据（2026-11-05）：
+    - `theme:color-audit:all` 28 个范围通过；`appearance:contract-audit`、`theme:visual-contract`、`type-check:web` 通过；`fmt:rs` 已运行。
+    - `check:web` 在排版审计停下，报 4 处违规，与 F003 记录的相同，都在本计划没有改动的 `DeviceWorkspaceSections.scss:74-75` 与 `SceneBar.scss:58-59` 中。审计没有放宽，它之后的各项单独运行均通过。
+- [x] 批准条件 14 在两台 Mac 上逐条通过
+  - 场景：局域网双机。本地 dev A（MacBook-Pro-90）是使用者；agent002 是主人，运行部署了本分支调试版桌面端与 CLI 的 `OpenBitFun-dev.app`。主人的共享保持普通信任、保留 7 天、同时 2 个任务。
+  - 证据（2026-11-05）：
+    - 来源：使用者导航栏写「助理 · 来自 agent 的设备」。
+    - 已结束的对话「回复hi」：
+      - 菜单中「删除」可用，确认框写「删除后，你和 agent 的设备上都不再保留这段对话」；
+      - 确认后，使用者的列表与本机任务记录都没有它；
+      - 主人的任务目录 `delegation-789a309a…` 与会话 `874a4ee4…` 都不在了，任务数从 33 变为 32；
+      - 另一个对话 `delegation-0867c431…` 还在；租户文件 `IDENTITY.md`、`USER.md`、`.user.json` 的校验和不变。
+    - 主人正开着的视图：
+      - 第一次核对时，主人列表里的行消失了，打开的视图仍显示删除前的内容，不符合批准条件；见 Task 3 的补充。
+      - 补充后，主人开着「山间邮差的故事」时由使用者删除它，16 秒内视图关闭，提示一次「这个外部任务的会话已不可用」。
+    - 运行中的对话：
+      - 运行中时「删除」置灰，写「先停止这个对话」；
+      - 停止后，主人那边任务为 `cancelled`，「删除」可用，确认删除后两边都没有它；
+      - 另一个自然结束的对话也照常删除。
+    - 新建后没发消息的对话：「删除」可用，点击后立即消失，不弹确认，主人的任务数不变（31）。
+    - 退出主人 app 后，10 秒内使用者显示「不在线」，「删除」置灰写「不在线」。重新打开主人 app 后恢复在线。
+  - 没有在真机上核对的：已撤销与主人不支持删除的情况需要撤销授权或部署旧版本，由 Task 2、3 的测试覆盖。Peer Device Mode 中不显示共享助理列表；远程工作区与这项功能无关。
 
 ## References
 - `docs/superplan/rfcs/F002.md`
