@@ -14066,13 +14066,15 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         task_pk: i64,
         parent_session_id: &str,
         subagent_session_id: &str,
-    ) {
+    ) -> CancellationToken {
+        let token = CancellationToken::new();
         self.register_background_subagent_task(
             task_pk,
             parent_session_id.to_string(),
             subagent_session_id.to_string(),
-            BackgroundSubagentCancelTarget::Direct(CancellationToken::new()),
+            BackgroundSubagentCancelTarget::Direct(token.clone()),
         );
+        token
     }
 
     pub(crate) async fn cancel_background_subagents_for_parent(

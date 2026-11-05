@@ -4346,6 +4346,54 @@ mod tests {
             .contains_key(parent_session_id));
     }
 
+    #[tokio::test]
+    async fn deleting_a_session_cancels_the_assistants_it_called() {
+        let (scheduler, session_manager, _, root) = test_scheduler();
+        let caller_session_id = "caller-session";
+        let workspace = fixture_workspace_dir(root.path().join("workspace"));
+        session_manager
+            .create_session_with_id(
+                Some(caller_session_id.to_string()),
+                "Caller".to_string(),
+                "Claw".to_string(),
+                SessionConfig {
+                    tool_presentation_mode: Default::default(),
+                    workspace_path: Some(workspace.to_string_lossy().to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("create caller session");
+        let storage_path = session_manager
+            .storage_path_binding_for_test(caller_session_id)
+            .expect("caller storage binding");
+        // A called assistant's session lives in its own workspace and is not a
+        // child of the caller, but its background task is held by the caller.
+        let call = scheduler
+            .coordinator
+            .register_background_subagent_task_for_test(
+                1,
+                caller_session_id,
+                "called-assistant-session",
+            );
+        let other_call = scheduler
+            .coordinator
+            .register_background_subagent_task_for_test(
+                2,
+                "another-caller",
+                "another-called-session",
+            );
+
+        let maintenance = scheduler
+            .begin_session_maintenance(caller_session_id, &storage_path, Duration::from_millis(40))
+            .await
+            .expect("maintenance should cancel the call and proceed");
+        drop(maintenance);
+
+        assert!(call.is_cancelled());
+        assert!(!other_call.is_cancelled());
+    }
+
     #[test]
     fn queued_submission_without_started_turn_reports_queued() {
         assert_eq!(

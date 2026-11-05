@@ -1548,6 +1548,13 @@ PRAGMA user_version = 2;
                 .expect("inspect remote_job")
         );
         assert!(candidates.records[0].remote_job.is_none());
+        assert!(coordination_table_has_column(
+            &connection,
+            "background_tasks",
+            "child_storage_path"
+        )
+        .expect("inspect child_storage_path"));
+        assert!(candidates.records[0].child_storage_path.is_none());
     }
 
     #[tokio::test]
