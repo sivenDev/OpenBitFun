@@ -1671,6 +1671,7 @@
     "agentTreeExpand": "Expand branch",
     "agentTreeCollapse": "Collapse branch",
     "agentTreeActions": "Agent session actions",
+    "agentTreeSharedAssistant": "Shared assistant",
     "agentTreeCancel": "Cancel session",
     "agentTreeCancelling": "Cancelling session",
     "agentTreeCancelFailed": "Failed to cancel the Agent session.",

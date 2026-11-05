@@ -4,6 +4,8 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionTreePopover } from './SessionTreePopover';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
 import {
   getSubagentAvatarDefinition,
   resolveSubagentAvatarPresentation,
@@ -193,6 +195,44 @@ describe('SessionTreePopover', () => {
       sessionId: 'child',
       isRoot: false,
     }));
+  });
+
+  it('names a called shared assistant and its owner instead of its address', async () => {
+    mocks.sessions.set('call', { ...createSession('call', 'subagent', 'root'),
+      subagentType: 'shared:device-1/workspace', config: { agentType: 'shared:device-1/workspace' } });
+    const lineage = (sessions: Record<string, unknown>[]) => mocks.getSessionLineage.mockResolvedValue({
+      rootSessionId: 'root',
+      sessions: [
+        { sessionId: 'root', sessionName: 'Root session', agentType: 'code', createdAtMs: 1, status: 'active' },
+        ...sessions,
+      ],
+    });
+    lineage([{ sessionId: 'call', sessionName: 'Call', agentType: 'shared:device-1/workspace', createdAtMs: 2,
+      status: 'active', parentSessionId: 'root', subagentType: 'shared:device-1/workspace', agentId: 'shared-assistant-refusal' }]);
+    const t = (key: string, options?: Record<string, unknown>) => (options?.owner ? `${key}:${options.owner}` : key);
+    const render = async () => {
+      await act(async () => {
+        root.render(<SessionTreePopover sessionId="root" fallbackWorkspaceId="workspace-main" embedded open t={t} />);
+      });
+    };
+    const nodeText = () => container.querySelector<HTMLElement>('[data-session-id="call"]')?.textContent ?? '';
+
+    useLanShareStore.setState({ sharedWithMe: [] });
+    await render();
+    // Before the shared list is read, neither the address nor the device id shows.
+    expect(nodeText()).toContain('flowChatHeader.agentTreeSharedAssistant');
+    expect(nodeText()).not.toContain('device-1');
+
+    useLanShareStore.setState({ sharedWithMe: [{
+      owner: { deviceId: 'device-1', deviceName: 'Mac', displayName: 'agent' },
+      assistantId: 'workspace', name: '助理', grantedAt: '', state: 'available', online: true,
+    } as unknown as SharedWithMe] });
+    await render();
+    expect(nodeText()).toContain('助理');
+    expect(nodeText()).toContain('toolCards.taskTool.assistantOwnerShared:agent');
+    expect(nodeText()).not.toContain('shared:');
+    expect(nodeText()).not.toContain('Shared assistant refusal');
+    useLanShareStore.setState({ sharedWithMe: [] });
   });
 
   it('maps sibling avatars from session IDs and formats Runtime agent IDs as names', async () => {

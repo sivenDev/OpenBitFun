@@ -117,6 +117,25 @@ export function calledAssistantSessionName(
 }
 
 /**
+ * How a call to an assistant reads to the user: the assistant's name and
+ * whose it is, never its internal type. `name` is null for a shared
+ * assistant before this device reads its list. Null when the call is not to
+ * an assistant.
+ */
+export function calledAssistantLabels(
+  agentType: string | null | undefined,
+  session: { delegatedBy?: SessionDelegatedBy; workspaceId?: string } | null | undefined,
+  workspaces: readonly WorkspaceInfo[] | null | undefined,
+  sharedWithMe: readonly SharedWithMe[],
+): { name: string | null; owner: NonNullable<ReturnType<typeof calledAssistantOwner>> } | null {
+  const owner = calledAssistantOwner(agentType, session, sharedWithMe);
+  if (!owner) return null;
+  const name = calledAssistantName(agentType, workspaces, sharedWithMe)
+    ?? calledAssistantSessionName(session, workspaces);
+  return { name, owner };
+}
+
+/**
  * The agent type a tool call in `session` asked for, read from its input. A
  * called assistant's own session runs as `Claw`; the call names the assistant.
  */

@@ -1671,6 +1671,7 @@
     "agentTreeExpand": "展开分支",
     "agentTreeCollapse": "收起分支",
     "agentTreeActions": "智能体会话操作",
+    "agentTreeSharedAssistant": "共享的助理",
     "agentTreeCancel": "取消会话",
     "agentTreeCancelling": "正在取消会话",
     "agentTreeCancelFailed": "取消智能体会话失败。",

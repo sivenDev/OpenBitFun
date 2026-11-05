@@ -8,6 +8,9 @@ import { getActiveSurfaceScope } from '@/infrastructure/peer-device/deviceSurfac
 import { computeFixedPopoverPosition } from '@/shared/utils/fixedPopoverViewport';
 import { useAnchoredPopoverPosition } from '@/shared/utils/useAnchoredPopoverPosition';
 import { flowChatStore } from '../../store/FlowChatStore';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
+import { calledAssistantLabels } from '../../utils/remoteAgent';
 import {
   buildSessionLineageTree,
   collectExpandedRunningBranches,
@@ -106,6 +109,7 @@ export const SessionTreePopover: React.FC<SessionTreePopoverProps> = ({
   const requestGenerationRef = useRef(0);
   const [actionMenuPosition, setActionMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const isOpen = embedded ? open : internalIsOpen;
+  const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
 
   const refreshSnapshot = useCallback(async () => {
     if (!sessionId) return;
@@ -417,8 +421,27 @@ export const SessionTreePopover: React.FC<SessionTreePopoverProps> = ({
     const statusLabel = isCancelling
       ? t('flowChatHeader.agentTreeCancelling')
       : lifecycleLabel(node.lifecycle, t);
-    const secondaryLabel = node.subagentType || node.agentType;
-    const primaryLabel = nodeDisplayTitle(node);
+    // A call to an assistant reads as the assistant and whose it is, as its
+    // tool card does; its type is an internal address.
+    const assistantCall = node.isRoot ? null : calledAssistantLabels(
+      node.subagentType || node.agentType,
+      flowChatStore.getState().sessions.get(node.sessionId),
+      workspaceManager.getState().assistantWorkspaces,
+      sharedWithMe,
+    );
+    // Until the shared list is read, the owner is only a device id.
+    const secondaryLabel = !assistantCall
+      ? node.subagentType || node.agentType
+      : assistantCall.owner.kind === 'mine'
+        ? t('toolCards.taskTool.assistantOwnerMine')
+        : assistantCall.name
+          ? t('toolCards.taskTool.assistantOwnerShared', { owner: assistantCall.owner.owner })
+          : undefined;
+    const primaryLabel = assistantCall
+      ? assistantCall.name ?? (assistantCall.owner.kind === 'shared'
+        ? t('flowChatHeader.agentTreeSharedAssistant')
+        : nodeDisplayTitle(node))
+      : nodeDisplayTitle(node);
     const nodeMeta = secondaryLabel;
     const canCancel = !!onCancelSession && !node.isRoot && nodeHasActiveWork(node);
     const canDelete = !!onDeleteSession && !node.isRoot;
