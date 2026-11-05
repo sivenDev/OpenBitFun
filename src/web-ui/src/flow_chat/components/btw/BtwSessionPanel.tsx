@@ -26,6 +26,9 @@ import {createTab} from '@/shared/utils/tabUtils';
 import { type LineRange } from '@/shared/editor/LineRange';
 import { DEFAULT_RETAINED_MOUNT_MS, RetainedMountBoundary } from '@/shared/presence';
 import {resolveSessionRelationship} from '../../utils/sessionMetadata';
+import {subagentDisplayName} from '../../utils/subagentDisplayName';
+import {latestEffectiveModel, remoteAgentFromAgentType, reportedSharedModel} from '../../utils/remoteAgent';
+import {useLanShareStore} from '@/infrastructure/lan-share/lanShareStore';
 import {agentAPI} from '@/infrastructure/api';
 import {globalEventBus} from '@/infrastructure/event-bus';
 import {notificationService} from '@/shared/notification-system';
@@ -66,7 +69,6 @@ import { getMotionAwareScrollBehavior } from '../../utils/motionPreference';
 import { sessionLineageLifecycleForSession } from '../../utils/sessionLineage';
 import {
   SubagentAvatar,
-  resolveSubagentNameKey,
 } from '../../subagent-identity';
 import { FlowChatManager } from '../../services/FlowChatManager';
 import { useSessionReadOnOpen } from '../../hooks/useSessionReadOnOpen';
@@ -160,6 +162,7 @@ const BtwSessionPanelContent: React.FC<BtwSessionPanelProps & { viewState: BtwPa
   viewState,
 }) => {
   const { t } = useTranslation('flow-chat');
+  const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
   useEffect(() => childSessionId ? flowChatStore.retainSessionHistory(childSessionId) : undefined, [childSessionId]);
   const { childSession, parentMetadata, reviewTaskOutcome } = useBtwSessionState(
     childSessionId, parentSessionId, viewKind === 'review-check',
@@ -226,9 +229,13 @@ const BtwSessionPanelContent: React.FC<BtwSessionPanelProps & { viewState: BtwPa
   const headerTitle = viewKind === 'review-check'
     ? childBadgeLabel
     : childKind === 'subagent'
-      ? t(resolveSubagentNameKey(childSessionId ?? ''))
+      ? subagentDisplayName(t, childSessionId ?? '', childSession, sharedWithMe)
       : displayTitle?.trim() || resolveSessionTitle(childSession, childTitleFallback);
-  const headerModelName = childKind === 'subagent' ? childSession?.config?.modelName?.trim() : undefined;
+  // A shared assistant runs on its owner's model; the local config names none.
+  const childAgentType = childSession?.subagentType || childSession?.config?.agentType;
+  const headerModelName = childKind !== 'subagent' ? undefined : remoteAgentFromAgentType(childAgentType)
+    ? reportedSharedModel(childAgentType, latestEffectiveModel(childSession)) ?? undefined
+    : childSession?.config?.modelName?.trim();
   const sessionVirtualItems = useMemo(
     () => sessionToVirtualItems(childSession ?? null),
     [childSession],

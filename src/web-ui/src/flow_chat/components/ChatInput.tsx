@@ -252,7 +252,8 @@ import { isBtwSessionDraft } from '../utils/modelSelectionTarget';
 import { hasSessionStarted, isSessionBindingLocked } from '../utils/sessionLifecycle';
 import { prepareSessionDraftForCommand } from '../services/sessionDraftService';
 import { useSessionWorkspaceSelection } from '../hooks/useSessionWorkspaceSelection';
-import { SubagentAvatar, resolveSubagentNameKey } from '../subagent-identity';
+import { SubagentAvatar } from '../subagent-identity';
+import { subagentDisplayName } from '../utils/subagentDisplayName';
 import { sessionLineageLifecycleForSession } from '../utils/sessionLineage';
 import { workspaceAPI } from '@/infrastructure/api/service-api/WorkspaceAPI';
 import { useLocalFileDrop } from '@/infrastructure/files/useLocalFileDrop';
@@ -770,8 +771,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   });
   const canReloadContext = reloadContextSupported && Boolean(effectiveTargetSessionId);
   const { entries: acpPlanEntries } = useAcpPlan(acpSessionForInput?.sessionId ?? null);
+  const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
   const currentSessionTitle = currentSessionId && resolveSessionRelationship(currentSession).isSubagent
-    ? t(resolveSubagentNameKey(currentSessionId))
+    ? subagentDisplayName(t, currentSessionId, currentSession, sharedWithMe)
     : currentSession?.title?.trim() || t('session.untitled');
   const activeBtwSession = activeBtwSessionId
     ? flowChatState.sessions.get(activeBtwSessionId)
@@ -785,7 +787,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     ? activeBtwRelationship.kind
     : 'btw';
   const activeBtwSubagentName = activeBtwRelationship.isSubagent && activeBtwSessionId
-    ? t(resolveSubagentNameKey(activeBtwSessionId))
+    ? subagentDisplayName(t, activeBtwSessionId, activeBtwSession, sharedWithMe)
     : undefined;
   const activeBtwTargetLabel = activeBtwSubagentName || t(`childSession.kinds.${activeBtwKind}.short`, {
     defaultValue: t('chatInput.targetBtw'),
