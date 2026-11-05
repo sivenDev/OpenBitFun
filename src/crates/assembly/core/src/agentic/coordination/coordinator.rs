@@ -7101,6 +7101,28 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         };
         ensure_session_accepts_conversation(&session)?;
         self.ensure_session_runtime_ownership(&session_id, None)?;
+        if session.kind == SessionKind::Subagent
+            && super::remote_agent_turn::remote_agent_address(&session.agent_type).is_some()
+        {
+            if image_contexts
+                .as_ref()
+                .is_some_and(|images| !images.is_empty())
+            {
+                return Err(OpenBitFunError::Validation(format!(
+                    "Remote agent '{}' cannot receive images",
+                    session.agent_type
+                )));
+            }
+            return self
+                .start_remote_agent_follow_up(
+                    session,
+                    user_input,
+                    original_user_input,
+                    turn_id,
+                    extra_user_message_metadata,
+                )
+                .await;
+        }
         let session_workspace = Self::build_workspace_binding(&session.config).await;
 
         let previous_agent_type = session.last_user_dialog_agent_type.clone();
@@ -8289,6 +8311,164 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         });
         active_registration.disarm();
 
+        Ok(())
+    }
+
+    /// Runs a turn the user sends straight to a call to another device's
+    /// shared assistant. It continues the same job on the owner's device, as
+    /// the caller's own follow-ups do; this device has no agent definition
+    /// for the assistant, so the turn runs outside the execution engine.
+    async fn start_remote_agent_follow_up(
+        &self,
+        session: Session,
+        user_input: String,
+        original_user_input: Option<String>,
+        turn_id: Option<String>,
+        user_message_metadata: Option<serde_json::Value>,
+    ) -> OpenBitFunResult<()> {
+        let session_id = session.session_id.clone();
+        let agent_type = session.agent_type.clone();
+        let coordination_store = self.background_subagent_outcomes.coordination_store();
+        let parent_session_id = coordination_store
+            .remote_job_parent_for_child(&session_id)
+            .await?
+            .ok_or_else(|| {
+                OpenBitFunError::Validation(format!(
+                    "Remote agent '{agent_type}' has no earlier job to continue in this session"
+                ))
+            })?;
+        let parent_agent_type = self
+            .session_manager
+            .get_session(&parent_session_id)
+            .map(|parent| parent.agent_type)
+            .unwrap_or_default();
+
+        let turn_index = self.session_manager.get_turn_count(&session_id);
+        let turn_id = self
+            .session_manager
+            .start_dialog_turn_with_existing_context(
+                &session_id,
+                agent_type.clone(),
+                user_input.clone(),
+                turn_id,
+                user_message_metadata.clone(),
+            )
+            .await?;
+        let active_counter = self
+            .active_turns_per_session
+            .entry(session_id.clone())
+            .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+            .clone();
+        active_counter.fetch_add(1, Ordering::SeqCst);
+        let turn_settlement_registration = self
+            .turn_settlements
+            .register_accepted(session_id.clone(), turn_id.clone());
+        let cancel_token = CancellationToken::new();
+        self.execution_engine
+            .register_cancel_token(&turn_id, cancel_token.clone());
+        if let Err(error) = self
+            .session_manager
+            .update_session_state_for_turn_if_processing(
+                &session_id,
+                &turn_id,
+                SessionState::Processing {
+                    current_turn_id: turn_id.clone(),
+                    phase: ProcessingPhase::Thinking,
+                },
+            )
+            .await
+        {
+            warn!(
+                "Failed to set remote agent follow-up to Processing: session_id={}, turn_id={}, error={}",
+                session_id, turn_id, error
+            );
+        }
+        self.emit_event(AgenticEvent::DialogTurnStarted {
+            session_id: session_id.clone(),
+            turn_id: turn_id.clone(),
+            turn_index,
+            user_input: user_input.clone(),
+            original_user_input: original_user_input.filter(|original| original != &user_input),
+            user_message_metadata,
+            session_workspace: self
+                .session_manager
+                .get_session_workspace_facts(&session_id),
+        })
+        .await;
+
+        let turn = super::remote_agent_turn::RemoteAgentTurn {
+            port: self.remote_agent_port(),
+            coordination_store,
+            event_queue: self.event_queue.clone(),
+            agent_type,
+            parent_session_id: parent_session_id.clone(),
+            session_id: session_id.clone(),
+            dialog_turn_id: turn_id.clone(),
+            prompt: user_input,
+            source: openbitfun_runtime_ports::RemoteAgentSource {
+                session_id: parent_session_id,
+                agent_type: parent_agent_type,
+                display_name: None,
+            },
+            call_chain: Vec::new(),
+            cancel_token,
+        };
+        let event_queue = self.event_queue.clone();
+        let session_manager = self.session_manager.clone();
+        let execution_engine = self.execution_engine.clone();
+        let scheduler_notify_tx = self.scheduler_notify_tx.get().cloned();
+        tokio::spawn(async move {
+            let _turn_settlement_registration = turn_settlement_registration;
+            match super::remote_agent_turn::run_remote_agent_turn(turn).await {
+                Ok(execution_result) => {
+                    Self::emit_outside_engine_turn_completed(
+                        event_queue.as_ref(),
+                        session_manager.as_ref(),
+                        &session_id,
+                        &turn_id,
+                        &execution_result,
+                    )
+                    .await;
+                    Self::persist_completed_dialog_turn(
+                        event_queue.as_ref(),
+                        session_manager.as_ref(),
+                        scheduler_notify_tx.as_ref(),
+                        &session_id,
+                        &turn_id,
+                        &execution_result,
+                        None,
+                    )
+                    .await;
+                }
+                Err(OpenBitFunError::Cancelled(_)) => {
+                    Self::persist_cancelled_dialog_turn_with_messages(
+                        event_queue.as_ref(),
+                        session_manager.as_ref(),
+                        scheduler_notify_tx.as_ref(),
+                        &session_id,
+                        &turn_id,
+                        true,
+                        &[],
+                    )
+                    .await;
+                }
+                Err(error) => {
+                    Self::persist_failed_dialog_turn(
+                        event_queue.as_ref(),
+                        session_manager.as_ref(),
+                        scheduler_notify_tx.as_ref(),
+                        &session_id,
+                        &turn_id,
+                        &error,
+                        true,
+                    )
+                    .await;
+                }
+            }
+            execution_engine.cleanup_cancel_token(&turn_id).await;
+            active_counter.fetch_sub(1, Ordering::SeqCst);
+            session_manager.reset_session_state_if_processing(&session_id, &turn_id);
+        });
         Ok(())
     }
 
@@ -17506,11 +17686,11 @@ fn merge_prepended_messages_for_turn(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        append_skill_agent_listing_diff_reminders, apply_assistant_model_default, apply_primary_agent_model_default,
-        btw_session_memory_mode, build_subagent_session_relationship,
-        commit_interrupted_turn_intent, delegation_policy_for_agent_turn,
-        external_delegation_agent_id, lineage_active_turn_after_transcript,
-        lineage_post_admission_cancellation_error,
+        append_skill_agent_listing_diff_reminders, apply_assistant_model_default,
+        apply_primary_agent_model_default, btw_session_memory_mode,
+        build_subagent_session_relationship, commit_interrupted_turn_intent,
+        delegation_policy_for_agent_turn, external_delegation_agent_id,
+        lineage_active_turn_after_transcript, lineage_post_admission_cancellation_error,
         lineage_session_is_settling_without_active_state, loaded_session_workspace_id_for_locator,
         logical_subagent_type_or_runtime, merge_prepended_messages_for_turn,
         normalize_model_selection, normalize_subagent_max_concurrency,

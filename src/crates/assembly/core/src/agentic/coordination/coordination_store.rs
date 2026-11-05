@@ -862,6 +862,58 @@ ORDER BY tasks.task_pk DESC LIMIT 1
         .await
     }
 
+    /// The session that delegated `child_session_id`'s most recent job.
+    pub(crate) async fn remote_job_parent_for_child(
+        &self,
+        child_session_id: &str,
+    ) -> OpenBitFunResult<Option<String>> {
+        let child_session_id = child_session_id.to_string();
+        self.with_connection(move |connection| {
+            connection
+                .query_row(
+                    r#"
+SELECT tasks.parent_session_id FROM background_tasks AS tasks
+JOIN agents ON agents.agent_pk = tasks.agent_pk
+WHERE agents.child_session_id = ?1 AND tasks.remote_job IS NOT NULL
+ORDER BY tasks.task_pk DESC LIMIT 1
+                    "#,
+                    params![child_session_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(db_error)
+        })
+        .await
+    }
+
+    /// Moves `child_session_id`'s most recent job record forward, for a turn
+    /// that continued the job without a task of its own: one the user sent
+    /// to the child directly.
+    pub(crate) async fn set_latest_remote_job_for_child(
+        &self,
+        child_session_id: &str,
+        remote_job: String,
+    ) -> OpenBitFunResult<bool> {
+        let child_session_id = child_session_id.to_string();
+        self.with_connection(move |connection| {
+            let changed = connection
+                .execute(
+                    r#"
+UPDATE background_tasks SET remote_job = ?1 WHERE task_pk = (
+  SELECT tasks.task_pk FROM background_tasks AS tasks
+  JOIN agents ON agents.agent_pk = tasks.agent_pk
+  WHERE agents.child_session_id = ?2 AND tasks.remote_job IS NOT NULL
+  ORDER BY tasks.task_pk DESC LIMIT 1
+)
+                    "#,
+                    params![remote_job, child_session_id],
+                )
+                .map_err(db_error)?;
+            Ok(changed > 0)
+        })
+        .await
+    }
+
     /// Running delegated tasks that an earlier process started.
     pub(crate) async fn orphaned_remote_tasks(
         &self,
@@ -2471,6 +2523,37 @@ PRAGMA user_version = 2;
                 .await
                 .expect("latest after completion"),
             Some("job-1".to_string())
+        );
+        // A turn the user sends to the child directly has no task; it moves
+        // the latest record forward for the next follow-up.
+        assert_eq!(
+            competing
+                .remote_job_parent_for_child("child")
+                .await
+                .expect("parent"),
+            Some("parent".to_string())
+        );
+        assert!(competing
+            .set_latest_remote_job_for_child("child", "job-1@42".to_string())
+            .await
+            .expect("move cursor"));
+        assert_eq!(
+            competing
+                .latest_remote_job_for_child("child")
+                .await
+                .expect("latest after follow-up"),
+            Some("job-1@42".to_string())
+        );
+        assert!(!competing
+            .set_latest_remote_job_for_child("local-child", "job-y".to_string())
+            .await
+            .expect("no delegated job"));
+        assert_eq!(
+            competing
+                .remote_job_parent_for_child("local-child")
+                .await
+                .expect("no parent"),
+            None
         );
     }
 }

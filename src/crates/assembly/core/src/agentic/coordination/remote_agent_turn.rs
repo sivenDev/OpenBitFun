@@ -203,11 +203,21 @@ pub(crate) async fn run_remote_agent_turn(
 }
 
 async fn record_link(turn: &RemoteAgentTurn, link: &RemoteJobLink) {
-    match turn
+    let recorded = match turn
         .coordination_store
         .set_remote_job(&turn.parent_session_id, &turn.dialog_turn_id, link.encode())
         .await
     {
+        // A turn the user sent to the child directly has no task of its own;
+        // the job's latest record carries its cursor for the next follow-up.
+        Ok(false) => {
+            turn.coordination_store
+                .set_latest_remote_job_for_child(&turn.session_id, link.encode())
+                .await
+        }
+        other => other,
+    };
+    match recorded {
         Ok(true) => {}
         Ok(false) => warn!(
             "Remote agent job has no background task to record it; a restart will not observe it: job_id={}",
