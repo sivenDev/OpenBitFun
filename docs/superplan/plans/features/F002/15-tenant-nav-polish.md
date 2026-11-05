@@ -2,7 +2,7 @@
 id: "F002-15"
 title: "导航中的共享助理：按设备分组精修与状态一眼可见"
 type: "feature"
-status: "in_progress"
+status: "complete"
 summary: "主人端助理名下先列「我的」会话，再按使用者设备分组，分组头清楚可辨、行内不再重复「外部任务」、有待审批的分组置顶并带数量、每组限条；使用者端「来自共享」的在线、排队、等待审批与共享已停止一眼可见；不新增页面或导航入口。"
 source: "docs/superplan/human/features.md"
 created: "2026-11-04"
