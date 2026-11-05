@@ -82,16 +82,6 @@ export default function AssistantSessionHistory({ workspace, isActive }: Props) 
           {t('nav.sessions.defaultReadFailed')}
         </Button>
       )}
-      {delegatedTasks.length > 0 && (
-        <div
-          className="assistant-session-history__mine"
-          data-openbitfun-component="sessions-section"
-          data-openbitfun-part="sectionLabel"
-          data-testid="nav-assistant-own-sessions-label"
-        >
-          {t('nav.sessions.delegated.mine')}
-        </div>
-      )}
       <SessionsSection
         workspaceId={workspace.id}
         workspacePath={workspace.rootPath}

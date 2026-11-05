@@ -505,7 +505,6 @@
         "untitled": "Untitled task",
         "unavailable": "This external task session is no longer available",
         "count": "{{count}} conversations",
-        "mine": "Mine",
         "fromDevice": "From {{name}}’s device",
         "waitingShort": "{{count}} to approve",
         "waitingBadge": "{{count}} waiting for your approval",

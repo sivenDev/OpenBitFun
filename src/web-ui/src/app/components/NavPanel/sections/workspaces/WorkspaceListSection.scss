@@ -1465,13 +1465,6 @@
   }
 }
 
-// The assistant's own sessions get a heading once other devices' groups follow them.
-.assistant-session-history__mine {
-  padding: var(--openbitfun-space-1) var(--openbitfun-space-1) 0 30px;
-  color: var(--openbitfun-color-content-muted);
-  font-size: var(--openbitfun-type-meta-font-size);
-}
-
 // One group per device that sent tasks, headed by the device. A group that
 // waits for the owner is tinted so it reads before the others.
 .assistant-session-history__delegated-group {

@@ -505,7 +505,6 @@
         "untitled": "未命名任务",
         "unavailable": "这个外部任务的会话已不可用",
         "count": "{{count}} 个会话",
-        "mine": "我的",
         "fromDevice": "来自 {{name}} 的设备",
         "waitingShort": "待审批 {{count}}",
         "waitingBadge": "{{count}} 项等待你审批",
