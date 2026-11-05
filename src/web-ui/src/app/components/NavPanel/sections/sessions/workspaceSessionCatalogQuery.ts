@@ -3,6 +3,7 @@ import type { Session } from '@/flow_chat/types/flow-chat';
 import { EXTERNAL_SESSION_NAMES } from '@/shared/types/external-session';
 import { sessionBelongsToWorkspaceNavRow } from '@/flow_chat/utils/sessionOrdering';
 import { isUnmaterializedSessionDraft } from '@/flow_chat/utils/sessionDraft';
+import { resolveSessionDriverId } from '@/flow_chat/session-drivers/resolve';
 import { getWorkspaceSessionHierarchy } from './sessionNavHierarchy';
 import {
   hasWorkspaceSessionFilters,
@@ -13,10 +14,36 @@ import {
   type WorkspaceSessionShow,
 } from '../../workspaceSessionView';
 
+const isCountedCatalogRow = (session: Session, source: WorkspaceSessionSourceAgent) =>
+  !isUnmaterializedSessionDraft(session) && session.persistedStatus !== 'archived'
+    && matchesWorkspaceSourceAgent(session, source);
+
+/** Catalog rows the hierarchy leaves out: sessions another assistant started
+ * by calling this one, shown at the caller instead. The host lists and pages
+ * them like any other row. */
+function calledAssistantCatalogRows(sessions: Iterable<Session>, workspaceId: string | undefined, source: WorkspaceSessionSourceAgent): Session[] {
+  return Array.from(sessions).filter(session => session.delegatedBy && !session.isTransient
+    && session.sessionKind !== 'subagent' && isCountedCatalogRow(session, source)
+    && (workspaceId ? sessionBelongsToWorkspaceNavRow(session, workspaceId) : !session.workspaceId));
+}
+
 export function countPersistedWorkspaceCatalogSessions(sessions: Iterable<Session>, workspaceId: string | undefined, source: WorkspaceSessionSourceAgent): number {
-  return getWorkspaceSessionHierarchy(sessions, workspaceId ? [workspaceId] : []).topLevelSessions
-    .filter(session => !isUnmaterializedSessionDraft(session) && session.persistedStatus !== 'archived'
-      && matchesWorkspaceSourceAgent(session, source)).length;
+  const rows = Array.from(sessions);
+  return getWorkspaceSessionHierarchy(rows, workspaceId ? [workspaceId] : []).topLevelSessions
+    .filter(session => isCountedCatalogRow(session, source)).length
+    + calledAssistantCatalogRows(rows, workspaceId, source).length;
+}
+
+/** Loaded catalog rows a workspace list does not show: calls this assistant
+ * received, and tasks delegated to it (DelegatedTaskList shows those with
+ * their source). The reader must load this many more rows for "show more" to
+ * reveal rows that actually display. */
+export function countHiddenWorkspaceCatalogSessions(sessions: Iterable<Session>, workspaceId: string | undefined, source: WorkspaceSessionSourceAgent): number {
+  const rows = Array.from(sessions);
+  return getWorkspaceSessionHierarchy(rows, workspaceId ? [workspaceId] : []).topLevelSessions
+    .filter(session => isCountedCatalogRow(session, source)
+      && resolveSessionDriverId(session.sessionId, session) === 'delegated').length
+    + calledAssistantCatalogRows(rows, workspaceId, source).length;
 }
 
 export function workspaceSessionCatalogTotal(visibleCount: number, catalog: { paged: boolean; total?: number; knownCount?: number }): number {

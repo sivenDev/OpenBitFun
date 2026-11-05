@@ -66,7 +66,7 @@ import { getWorkspaceSessionHierarchy } from './sessionNavHierarchy';
 import { useWorkspaceSessionCatalog } from './useWorkspaceSessionCatalog';
 import { useArchivedSessionMetadata } from './useArchivedSessionMetadata';
 import ArchivedSessionMenuItems from './ArchivedSessionMenuItems';
-import { captureWorkspaceSessionCatalogQuery, countPersistedWorkspaceCatalogSessions, resolveWorkspaceSessionCatalogSource, workspaceSessionCatalogQuery, workspaceSessionCatalogSources, workspaceSessionCatalogTotal } from './workspaceSessionCatalogQuery';
+import { captureWorkspaceSessionCatalogQuery, countHiddenWorkspaceCatalogSessions, countPersistedWorkspaceCatalogSessions, resolveWorkspaceSessionCatalogSource, workspaceSessionCatalogQuery, workspaceSessionCatalogSources, workspaceSessionCatalogTotal } from './workspaceSessionCatalogQuery';
 import { useWorkspaceSessionDiscovery } from './useWorkspaceSessionDiscovery';
 import { useSessionNavExpansion } from './useSessionNavExpansion';
 import {
@@ -423,6 +423,9 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
   const getKnownCatalogCount = useCallback(() => countPersistedWorkspaceCatalogSessions(
     flowChatStore.getState().sessions.values(), workspaceId, sourceAgent,
   ), [workspaceId, sourceAgent]);
+  const loadedHiddenCount = useMemo(() => countHiddenWorkspaceCatalogSessions(
+    flowChatState.sessions.values(), workspaceId, sourceAgent,
+  ), [flowChatState.sessions, sourceAgent, workspaceId]);
   const catalog = useWorkspaceSessionCatalog({
     workspaceId,
     enabled: isVisible && !workspaceScopes?.length && metadataPageState.loadedScope === initialMetadataKey,
@@ -430,8 +433,9 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
     onPage: observeDiscovery,
     query: catalogQuery,
     captureQuery: captureCatalogQuery,
-    // One step ahead of what is shown, so "show more" reveals loaded rows.
-    targetCount: displayCount + SESSIONS_PREFETCH_COUNT,
+    // One step ahead of what is shown, so "show more" reveals loaded rows;
+    // received calls and delegated tasks are host rows this list does not show.
+    targetCount: displayCount + SESSIONS_PREFETCH_COUNT + loadedHiddenCount,
     firstPage: metadataPageState.loadedScope === initialMetadataKey ? metadataPageState.firstPage : undefined,
     getKnownCount: getKnownCatalogCount,
   });

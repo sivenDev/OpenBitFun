@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/flow_chat/types/flow-chat';
 import { DEFAULT_WORKSPACE_SESSION_FILTERS, DEFAULT_WORKSPACE_SESSION_VIEW } from '../../workspaceSessionView';
-import { captureWorkspaceSessionCatalogQuery, countPersistedWorkspaceCatalogSessions, resolveWorkspaceSessionCatalogSource, sessionCatalogQueryKey, workspaceSessionCatalogQuery, workspaceSessionCatalogSources, workspaceSessionCatalogTotal } from './workspaceSessionCatalogQuery';
+import { captureWorkspaceSessionCatalogQuery, countHiddenWorkspaceCatalogSessions, countPersistedWorkspaceCatalogSessions, resolveWorkspaceSessionCatalogSource, sessionCatalogQueryKey, workspaceSessionCatalogQuery, workspaceSessionCatalogSources, workspaceSessionCatalogTotal } from './workspaceSessionCatalogQuery';
+
+vi.mock('@/flow_chat/session-drivers/resolve', () => ({
+  resolveSessionDriverId: (sessionId: string) => (sessionId.startsWith('delegated') ? 'delegated' : 'local'),
+}));
 
 const session = (id: string, overrides: Partial<Session> = {}): Session => ({
   sessionId: id, workspaceId: 'main', createdAt: 10, lastFinishedAt: 20, config: {}, ...overrides,
@@ -40,6 +44,18 @@ describe('workspace catalog query selection', () => {
     expect(countPersistedWorkspaceCatalogSessions(rows, 'main', 'all')).toBe(2);
     expect(countPersistedWorkspaceCatalogSessions(rows, 'main', 'codex')).toBe(1);
     expect(countPersistedWorkspaceCatalogSessions(rows.filter(value => value.sessionId !== 'codex'), 'main', 'all')).toBe(1);
+  });
+  it('counts the loaded host rows a workspace list leaves out', () => {
+    const called = { createdBy: 'assistant-call-1' };
+    const rows = [session('native'), session('delegated-1'), session('delegated-2'),
+      session('delegated-archived', { persistedStatus: 'archived' }),
+      session('delegated-elsewhere', { workspaceId: 'other' }),
+      session('called-1', { delegatedBy: called } as Partial<Session>),
+      session('called-archived', { delegatedBy: called, persistedStatus: 'archived' } as Partial<Session>),
+      session('called-elsewhere', { delegatedBy: called, workspaceId: 'other' } as Partial<Session>)];
+    expect(countHiddenWorkspaceCatalogSessions(rows, 'main', 'all')).toBe(3);
+    // A call this assistant received is a host row the reader has loaded.
+    expect(countPersistedWorkspaceCatalogSessions(rows, 'main', 'all')).toBe(4);
   });
   it('uses bounded paging for the default view and every source selector', () => {
     for (const source of ['all', 'openbitfun', 'codex', 'zcode']) {
