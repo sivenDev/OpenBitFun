@@ -215,6 +215,7 @@ function mergeParamsPartialEventData(
 
 export const __test_only__ = {
   relayRecordsBeforeEvent,
+  handleUserSteeringInjected,
   handleSessionDeleted,
   resolveDialogTurnDisplayContent,
   mergeParamsPartialEventData,
@@ -1562,6 +1563,30 @@ function handleSessionReasoningPresetAutoCleared(
  * existed (status was upgraded if applicable) or the target turn/round is not
  * yet available.
  */
+/**
+ * Steering ids of messages appended to another device's dispatch job, shown
+ * as pending until that device injects them. The target names the injected
+ * message by its own steering id, so it is matched by content.
+ */
+export const DISPATCH_APPEND_STEERING_PREFIX = 'dispatch-append-';
+
+/** Marks the oldest pending appended message with `content` in `sessionId` as injected. */
+function adoptPendingDispatchAppend(sessionId: string, content: string, roundIndex: number): boolean {
+  const store = FlowChatStore.getInstance();
+  const session = store.getState().sessions.get(sessionId);
+  for (const turn of [...(session?.dialogTurns ?? [])].reverse()) {
+    const pending = turn.modelRounds.flatMap(round => round.items).find(item => (
+      item.type === 'user-steering' && item.status === 'pending'
+      && item.steeringId.startsWith(DISPATCH_APPEND_STEERING_PREFIX) && item.content === content
+    ));
+    if (pending) {
+      store.updateModelRoundItem(sessionId, turn.id, pending.id, { status: 'completed', roundIndex } as any);
+      return true;
+    }
+  }
+  return false;
+}
+
 export function insertSteeringItemIfAbsent(params: {
   sessionId: string;
   turnId: string;
@@ -1651,6 +1676,7 @@ function handleUserSteeringInjected(_context: FlowChatContext, event: any): void
     log.warn('UserSteeringInjected: missing fields', { event });
     return;
   }
+  if (adoptPendingDispatchAppend(sessionId, content, roundIndex)) return;
 
   insertSteeringItemIfAbsent({
     sessionId,

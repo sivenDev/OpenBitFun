@@ -57,6 +57,10 @@ import {
 import { claimSubmissionRetry, releaseSubmissionRetry } from '../idempotency';
 import { addSubmittedDialogTurn, applyGeneratingTitlePlaceholder } from '../shared';
 import { finishSubmittedMessagePreview } from '../../services/submittedMessagePresentation';
+import {
+  DISPATCH_APPEND_STEERING_PREFIX,
+  insertSteeringItemIfAbsent,
+} from '../../services/flow-chat-manager/EventHandlerModule';
 
 const log = createLogger('DispatchSessionDriver');
 
@@ -169,6 +173,24 @@ async function appendToDispatchJob(
     );
   }
   releaseSubmissionRetry(APPEND_RETRY_SCOPE, sessionId, retry.id);
+  // The target shows it only once its running turn injects it, which a long
+  // reply delays until it finishes; show it now as pending.
+  const latestTurn = FlowChatStore.getInstance().getState().sessions.get(sessionId)?.dialogTurns.at(-1);
+  if (latestTurn) {
+    try {
+      insertSteeringItemIfAbsent({
+        sessionId,
+        turnId: latestTurn.id,
+        steeringId: `${DISPATCH_APPEND_STEERING_PREFIX}${retry.id}`,
+        content: displayMessage?.trim() ? displayMessage : message,
+        roundIndex: latestTurn.modelRounds.at(-1)?.index,
+        status: 'pending',
+      });
+    } catch (error) {
+      // The target accepted it; its injection event still renders it.
+      log.warn('Pending appended message render failed', { error });
+    }
+  }
   requestDispatchJobRefresh(jobId);
 }
 

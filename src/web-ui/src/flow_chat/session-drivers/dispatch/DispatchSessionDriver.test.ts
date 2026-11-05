@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
+  append: vi.fn(),
   registerJob: vi.fn(),
   updateProgress: vi.fn(),
   updateTitle: vi.fn(),
   refresh: vi.fn(),
   finishPreview: vi.fn(),
 }));
-vi.mock('@/features/dispatch/dispatchApi', () => ({ dispatchApi: { submit: mocks.submit } }));
+vi.mock('@/features/dispatch/dispatchApi', () => ({ dispatchApi: { submit: mocks.submit, append: mocks.append } }));
 vi.mock('@/features/dispatch/dispatchJobStore', () => ({
   dispatchJobStore: {
     getState: () => ({ registerJob: mocks.registerJob, updateProgress: mocks.updateProgress, updateTitle: mocks.updateTitle, jobs: {} }),
@@ -26,6 +27,7 @@ vi.mock('../../services/submittedMessagePresentation', () => ({ finishSubmittedM
 vi.mock('../../store/runtimeStatusStore', () => ({ showRuntimeStatus: vi.fn(), clearRuntimeStatusState: vi.fn() }));
 
 import { dispatchSessionDriver } from './DispatchSessionDriver';
+import { FlowChatStore } from '../../store/FlowChatStore';
 import type { SessionConfig } from '../../services/flow-chat-manager/types';
 import type { Session } from '../../types/flow-chat';
 
@@ -160,5 +162,35 @@ describe('a conversation with a shared assistant', () => {
     } as never, {} as never);
 
     expect(mocks.updateTitle).toHaveBeenCalledWith('delegation-1', 'Hello', 'generated');
+  });
+
+  it('shows a message appended to a running reply at once, as pending', async () => {
+    const session = {
+      sessionId: 'session-1',
+      config: { ...sharedConfig, dispatchJobId: 'delegation-1', dispatchJobState: 'running' },
+      dialogTurns: [{
+        id: 'turn-1', sessionId: 'session-1', status: 'processing', startTime: 1,
+        userMessage: { id: 'user-1', content: 'Tell a story', timestamp: 1 },
+        modelRounds: [{ id: 'round-1', index: 0, items: [], isStreaming: true, isComplete: false, status: 'streaming', startTime: 1 }],
+      }],
+    } as unknown as Session;
+    const store = FlowChatStore.getInstance();
+    const previous = store.getState();
+    store.setState(state => ({ ...state, sessions: new Map([['session-1', session]]) }));
+    mocks.append.mockResolvedValue({ accepted: true, messageId: 'm-1' });
+    try {
+      await dispatchSessionDriver.steer(
+        { flowChatStore: store } as never,
+        'session-1',
+        { message: 'Name the cat Pudding' } as never,
+      );
+      const items = store.getState().sessions.get('session-1')?.dialogTurns[0]?.modelRounds[0]?.items ?? [];
+      expect(items).toEqual([expect.objectContaining({
+        type: 'user-steering', content: 'Name the cat Pudding', status: 'pending',
+      })]);
+      expect(mocks.refresh).toHaveBeenCalledWith('delegation-1');
+    } finally {
+      store.setState(() => previous);
+    }
   });
 });

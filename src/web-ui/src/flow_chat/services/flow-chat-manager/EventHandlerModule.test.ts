@@ -33,6 +33,7 @@ import { markCurrentTurnItemsAsCancelled } from '../../utils/turnCancellation';
 
 const {
   buildBuiltInBrowserTabOptions,
+  handleUserSteeringInjected,
   handleCompressionCompleted,
   handleTokenUsageUpdate,
 } = __test_only__;
@@ -1890,6 +1891,33 @@ describe('insertSteeringItemIfAbsent', () => {
       content: 'Please adjust this now',
       status: 'pending',
     });
+  });
+
+  it('lets a dispatch target confirm a pending appended message under its own steering id', () => {
+    const appended = (id: string, content: string): FlowUserSteeringItem => ({
+      id: `steering_dispatch-append-${id}`, type: 'user-steering', steeringId: `dispatch-append-${id}`,
+      content, roundIndex: 0, timestamp: 1001, status: 'pending',
+    });
+    createSessionWithTurn({
+      id: 'turn-1',
+      sessionId: 'session-1',
+      userMessage: { id: 'user-1', content: 'Tell a story', timestamp: 900 },
+      modelRounds: [makeRound('round-1', [appended('a', 'Name the cat Pudding'), appended('b', 'End with BANANA')])],
+      status: 'processing',
+      startTime: 900,
+    });
+
+    handleUserSteeringInjected({} as never, {
+      sessionId: 'session-1', turnId: 'turn-1', steeringId: 'target-steer-9',
+      displayContent: 'End with BANANA', roundIndex: 1,
+    });
+
+    const items = FlowChatStore.getInstance().getState().sessions.get('session-1')
+      ?.dialogTurns[0]?.modelRounds.flatMap(round => round.items) ?? [];
+    expect(items.map(item => [item.id, item.status])).toEqual([
+      ['steering_dispatch-append-a', 'pending'],
+      ['steering_dispatch-append-b', 'completed'],
+    ]);
   });
 
   it('dedupes an existing steering item across all rounds when backend confirms it', () => {
