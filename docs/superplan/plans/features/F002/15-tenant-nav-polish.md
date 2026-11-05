@@ -118,7 +118,7 @@ parent: "F002"
     - 助理行只写名字，后面一个标识：在线是绿点，不在线是 `WifiOff`，已停止共享是 `Ban`；「来自 X 的设备 · 状态」放进 tooltip 与无障碍名称，去掉第二行。
     - 对话行与主人端任务行去掉状态点和行尾短词，改为行尾图标，沿用会话行 `SessionStatusIndicator` 的图标与色调（待审批 `Hand`、排队 `clock`、运行 `Loader2` 旋转、失败 `CircleAlert`，另加过期 `TimerOff`、共享已停止 `Ban`）；已结束的任务没有图标，开始时间放进 tooltip。完整说明改用 `Tooltip` 组件显示，同时是行的无障碍名称。
     - 删除不再使用的 `sharedAssistant.status.approvalShort`。NavPanel 50 个文件 379 项测试、`type-check:web`、改动目录 eslint、`i18n:audit`（0 警告）、`theme:color-audit:all` 通过。
-    - 用户要求共享助理的会话像本地助理一样可收起和展开：助理行在「新对话」前加历史开关（收起时 `History`，展开时 `ChevronUp`，tooltip 与无障碍名称为「历史会话」/「收起会话」），默认收起；收起时只显示正在看的和等待审批的会话，展开后才限条与「显示其余」；开关状态在本次运行内记住。两个按钮像本地助理一样在悬停或聚焦时显示。NavPanel 50 个文件 380 项测试、`type-check:web`、eslint、`check:web`、`i18n:audit`、`theme:color-audit:all` 通过。真机（2026-11-04，F001 分支 dev 实例，合并 `80f47e3ef`）：启动后「助理」默认收起、没有会话行；聚焦助理行后出现历史与「+」两个按钮；点「历史会话」后列出「身份介绍」「回顾之前的对话」（行尾 `Ban`）「老钟表匠与徒弟的故事」；点「收起会话列表」后又只剩助理行。
+    - 用户要求共享助理的会话像本地助理一样可收起和展开：助理行在「新对话」前加历史开关（收起时 `History`，展开时 `ChevronUp`，tooltip 与无障碍名称为「历史会话」/「收起会话」），默认收起；收起时只显示正在看的和等待审批的会话，展开后才限条与「显示其余」；开关状态在本次运行内记住。两个按钮像本地助理一样在悬停或聚焦时显示。NavPanel 50 个文件 380 项测试、`type-check:web`、eslint、`check:web`、`i18n:audit`、`theme:color-audit:all` 通过。真机（2026-11-04，F001 分支 dev 实例，合并 `80f47e3ef`）：启动后「助理」默认收起、没有会话行；聚焦助理行后出现历史与「+」两个按钮；点「历史会话」后列出「身份介绍」「回顾之前的对话」（行尾 `TimerOff`，已过期）「老钟表匠与徒弟的故事」；点「收起会话列表」后又只剩助理行。
     - 用户指出共享助理下对话的选中状态太浅：任务行的悬停与选中改用会话行的 `navigation-hover-feedback`、`nav-panel-text-row-active` 与 `navigation-selection-feedback`；不可用（变暗）的助理里，选中行的标题仍用主文字色。workspaces 目录 15 个文件 105 项测试与 `theme:color-audit:all` 通过。
 
 ## Task 3: 整体检查与真机核对
@@ -136,12 +136,13 @@ parent: "F002"
 - [x] Web UI、外观与主题检查通过
   - 证据（2026-11-04）：`pnpm run check:web` 通过（canvas SDK 检查、外观契约与排版审计 0 违规、`tsc --noEmit`）；`pnpm run theme:color-audit:all` 通过，28 个范围全部通过，没有提高基线。新的样式部件（`sectionLabel`、`groupHeader`、`badge`、`statusMark`、`more`）已注册到 `sessions-section` 外观描述；颜色只用现有的语义 token。
   - 环境说明：新 worktree 里没有 `src/web-ui/src/generated/api`（由 Rust 的 ts-rs 测试导出，已被 gitignore），类型检查报找不到模块。这次从原工作区复制了同一提交（`8b159c359`）导出的文件，没有改动它们。
-- [ ] 真机截图与 Exit Criteria 第 1 条一致，记录所用场景（本地）
+- [x] 真机截图与 Exit Criteria 第 1 条一致，记录所用场景（本地）
   - 部分证据（2026-11-04，本地 `desktop:dev -- --isolated-data`，数据复制自 obf-local）：使用者端已核对，「来自共享」中已停止共享的助理只显示名字和 `Ban` 标识，对话行行尾是图标，hover 显示完整说明；选中行修正后清晰可见。主人端尚未在真机上看到按设备分组：本机 `openbitfun dispatch list` 有一个来自 agent002-Mac-Mini 的任务（`assistant:workspace`，已完成），应出现在「小岚」的历史里，但这次没能在后台打开小岚的历史会话。
   - 主人端真机（2026-11-04，用户打开的 obf-local 打包版，F001 分支合并后）：小岚名下「我的」之后是「来自 agent 的设备」一组，3 个会话，选中行清晰。用户指出分组头前面的首字母方块（「A」）没有必要，第二行「agent002-Mac-Mini · 3 个会话 · 时间」让排版难看。改为：分组头一行，只有展开箭头、「来自 X 的设备」和待审批角标；设备名、数量、运行数或时间、待审批数放进 tooltip 与无障碍名称；删除首字母方块及其样式。workspaces 目录 15 个文件 105 项测试、`type-check:web`、eslint、`check:web`、`theme:color-audit:all` 通过。改后的样子待合并到 F001 分支并重新打包后再看。
   - 改后真机（2026-11-04 12:33，F001 分支 dev 实例，合并 `26b6603a6`，obf-local 数据）：小岚名下「我的」标签之后是一行「› 来自 agent 的设备」，没有首字母方块和第二行；无障碍名称是「来自 agent 的设备 · agent002-Mac-Mini · 3 个会话 · 11月4日 11:52」。点开后 3 个会话各占一行。旁注：这个实例最初没有 `openbitfun` CLI，列表静默为空，在同一 `target/debug` 构建 CLI 后 30 秒内出现。未核对：窗口不在当前桌面，展开后箭头没有转向，可能是后台窗口暂停了 CSS 过渡；hover tooltip 也需要用户在前台看一眼。
   - 用户确认箭头需要修复：分组头改为像工作区行一样切换图标（展开 `chevron-down`，收起 `chevron-right`），不再依赖 CSS 旋转和过渡，删除旋转样式；测试断言两种箭头。workspaces 目录 105 项测试、`type-check:web`、eslint、`check:web`、`theme:color-audit:all` 通过。
   - 修复后真机（2026-11-04，F001 分支 dev 实例重启后，已合并 `f2bee52dc`，窗口在当前桌面）：收起时「› 来自 agent 的设备」，点开后变为「∨ 来自 agent 的设备」，下面 3 个会话各占一行。hover tooltip 仍待用户确认。
+  - hover tooltip 真机（2026-11-04 20:59，用户授权临时接管前台与真实指针，F001 分支 dev 实例）：「助理」行显示「来自 agent 的设备」，悬停时出现历史与「+」；历史按钮显示「历史会话」；对话行「回顾之前的对话」显示「回顾之前的对话 · 已过期」；小岚名下分组头显示「来自 agent 的设备 · agent002-Mac-Mini · 3 个会话 · 11月4日 11:52」。
 
 ## References
 - `docs/superplan/rfcs/F002.md`
