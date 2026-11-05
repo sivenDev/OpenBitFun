@@ -66,6 +66,12 @@ pub trait DelegatedCallLedger: Send + Sync {
     /// not: access withdrawn, trust lowered, or the share already runs as
     /// many tasks as it allows.
     async fn open(&self, call: &DelegatedCall) -> Result<DelegatedCallTicket, String>;
+
+    /// This device's sharing id, which the task's call chain names this
+    /// device by, so a call that comes back across devices is seen as a loop.
+    fn local_device_id(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The call a turn with `context` is asking to start, when the turn is a

@@ -54,6 +54,6 @@ pub use shared_with_me::{
 #[cfg(feature = "local-storage")]
 pub use tenants::prune_tenants;
 pub use tenants::{
-    delete_tenant, ensure_tenant, is_tenant_path, list_tenants, tenant_dir, tenants_root, Tenant,
-    TenantUser,
+    delete_tenant, ensure_tenant, is_tenant_path, list_tenants, local_share_device_id, tenant_dir,
+    tenants_root, Tenant, TenantUser,
 };

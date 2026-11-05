@@ -568,7 +568,10 @@ fn call_ledger_for(
                 &path_manager,
             ),
         ),
-    ))
+    )
+    .with_device_id(openbitfun_core::service::lan_share::local_share_device_id(
+        &path_manager,
+    )))
 }
 
 fn share_guard_for(job: &super::store::DispatchJobRecord) -> Option<share_guard::ShareGuard> {

@@ -806,6 +806,7 @@ impl AgentExecutionTool {
                     let device_id = coordinator
                         .remote_agent_port()
                         .and_then(|port| port.local_device_id())
+                        .or_else(|| coordinator.delegated_call_device_id())
                         .unwrap_or_else(|| LOCAL_DEVICE_CALL_CHAIN_ID.to_string());
                     let caller = Self::assistant_caller(context);
                     let caller_name = match caller.own_assistant_id.as_deref() {

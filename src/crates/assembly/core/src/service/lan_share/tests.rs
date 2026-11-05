@@ -935,3 +935,17 @@ mod browse_state {
         assert!(browse.addresses(&id).is_empty());
     }
 }
+
+#[test]
+fn a_worker_reads_the_sharing_id_its_host_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let path_manager = PathManager::with_user_root_for_tests(dir.path().join("config"));
+    assert_eq!(local_share_device_id(&path_manager), None);
+    let lan_share = path_manager.product_home_dir().join("lan-share");
+    let device_id = share_device_id(&key(1)).unwrap();
+    super::tenants::record_share_device_id(&lan_share, &device_id).unwrap();
+    assert_eq!(local_share_device_id(&path_manager), Some(device_id));
+    // Anything else in the file is not an id.
+    std::fs::write(lan_share.join("device-id"), "local").unwrap();
+    assert_eq!(local_share_device_id(&path_manager), None);
+}

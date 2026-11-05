@@ -2846,6 +2846,12 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         }
     }
 
+    /// This device's sharing id from the host's account of delegated
+    /// tasks' calls, for a process with no LAN port of its own.
+    pub(crate) fn delegated_call_device_id(&self) -> Option<String> {
+        self.delegated_call_ledger.get()?.local_device_id()
+    }
+
     /// Admits a delegated task's call to an assistant with the host's
     /// account, or `None` for any other call. A call to this device's
     /// assistant learns where its session is kept.
@@ -25690,6 +25696,10 @@ pub(crate) mod tests {
 
     #[async_trait::async_trait]
     impl super::super::DelegatedCallLedger for TestCallLedger {
+        fn local_device_id(&self) -> Option<String> {
+            Some("owner-device".to_string())
+        }
+
         async fn open(
             &self,
             call: &super::super::DelegatedCall,
@@ -25737,6 +25747,11 @@ pub(crate) mod tests {
             refusal: None,
             released: released.clone(),
         }));
+        // The task's call chain names this device by the host's sharing id.
+        assert_eq!(
+            coordinator.delegated_call_device_id().as_deref(),
+            Some("owner-device")
+        );
         let ticket = coordinator
             .open_delegated_call(&mut call)
             .await

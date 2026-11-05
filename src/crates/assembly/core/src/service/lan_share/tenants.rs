@@ -25,6 +25,31 @@ use crate::service::delegation::{assistant_agent_type, assistant_directory};
 const DELEGATION_DIR: &str = "delegation";
 const TENANTS_DIR: &str = "tenants";
 const USER_FILE_NAME: &str = "USER.md";
+const LAN_SHARE_DIR: &str = "lan-share";
+const DEVICE_ID_FILE: &str = "device-id";
+
+/// Records this device's sharing id in `dir` (the directory of its sharing
+/// identity), for processes that run tenants' tasks without the identity.
+pub(crate) fn record_share_device_id(dir: &Path, device_id: &str) -> std::io::Result<()> {
+    let path = dir.join(DEVICE_ID_FILE);
+    if std::fs::read_to_string(&path).is_ok_and(|recorded| recorded.trim() == device_id) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(path, device_id)
+}
+
+/// This device's sharing id as its sharing host last recorded it, or `None`
+/// when this device has not shared yet.
+pub fn local_share_device_id(path_manager: &PathManager) -> Option<String> {
+    let path = path_manager
+        .product_home_dir()
+        .join(LAN_SHARE_DIR)
+        .join(DEVICE_ID_FILE);
+    let recorded = std::fs::read_to_string(path).ok()?;
+    let device_id = recorded.trim();
+    is_share_device_id(device_id).then(|| device_id.to_string())
+}
 
 /// Parent of every tenant workspace. Nothing under it is a source of the
 /// owner's memories.

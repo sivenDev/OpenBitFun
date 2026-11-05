@@ -356,6 +356,13 @@ impl LanShareHost {
     pub async fn start(options: LanShareOptions) -> Result<Self, String> {
         let identity = ShareIdentity::load_or_create(&options.identity_path)
             .map_err(|error| format!("{error:#}"))?;
+        // A worker running a task another device delegated names this device
+        // in call chains by this id, without the identity's key.
+        if let Some(dir) = options.identity_path.parent() {
+            if let Err(error) = super::tenants::record_share_device_id(dir, identity.device_id()) {
+                warn!("Failed to record this device's sharing id: {error}");
+            }
+        }
         let queue = RequestQueue::new(millis(options.request_window), millis(options.cooldown));
         let host = Self {
             inner: Arc::new(Inner {

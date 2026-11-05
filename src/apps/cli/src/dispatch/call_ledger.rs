@@ -30,6 +30,7 @@ pub(super) struct DispatchCallLedger {
     grants: SharedAssistantStore,
     tenants_root: PathBuf,
     audit: Option<DelegationAuditLog>,
+    device_id: Option<String>,
 }
 
 impl DispatchCallLedger {
@@ -48,7 +49,14 @@ impl DispatchCallLedger {
             grants,
             tenants_root,
             audit,
+            device_id: None,
         }
+    }
+
+    /// Names this device in call chains by its sharing id.
+    pub(super) fn with_device_id(mut self, device_id: Option<String>) -> Self {
+        self.device_id = device_id;
+        self
     }
 
     fn record(&self, call: &DelegatedCall) {
@@ -76,6 +84,10 @@ impl DispatchCallLedger {
 
 #[async_trait::async_trait]
 impl DelegatedCallLedger for DispatchCallLedger {
+    fn local_device_id(&self) -> Option<String> {
+        self.device_id.clone()
+    }
+
     async fn open(&self, call: &DelegatedCall) -> Result<DelegatedCallTicket, String> {
         let Some((assistant_id, share_key)) = share_of(&self.request) else {
             return Err("this task did not come from another device".to_string());
