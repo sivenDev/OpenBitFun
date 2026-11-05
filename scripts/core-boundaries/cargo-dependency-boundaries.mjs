@@ -147,7 +147,8 @@ const SERVICES_INTEGRATIONS_TOKIO_FEATURES = new Map([
   ['account-identity', ['rt', 'sync']],
   // Large catalog validation/hash work uses spawn_blocking, outside async IO workers.
   ['models-dev', ['fs', 'rt', 'sync', 'time']],
-  ['browser-control', ['time']],
+  // Browser profile files and process probes use spawn_blocking off async IO workers.
+  ['browser-control', ['rt', 'time']],
   ['canvas-runtime', ['fs']],
   ['deep-research', []],
   ['git', ['fs', 'io-util', 'macros', 'rt', 'time']],
@@ -555,11 +556,13 @@ const THIRD_PARTY_CAPABILITY_PROFILES = new Map([
   ['image', {
     label: 'Image',
     packages: new Map([
+      ['openbitfun-computer-use', dependencyProfile(['jpeg', 'png'], { useDefaultFeatures: false })],
       ['openbitfun-services-core', dependencyProfile([], {
         optional: true,
         useDefaultFeatures: false,
         ownerFeatureCapabilities: new Map([
           ['pet-packages', ['gif', 'jpeg', 'png', 'webp']],
+          ['workspace-icons', ['jpeg', 'png', 'webp']],
         ]),
       })],
       ['openbitfun-cli', dependencyProfile(['gif', 'jpeg', 'png', 'webp'], {
@@ -1467,13 +1470,20 @@ export function findProductEntrypointCoreFeatureViolations(
   const CORE_TEST_SUPPORT_FEATURE = 'test-support';
   const reviewedCoreFeatureClosures = new Map([
     ['openbitfun-cli', [
+      'workspace-icons',
       'tools-pages',
       ...coreCompatibilityReviewedFeatures,
       'product-search',
       'remote-connect',
+      // The CLI Peer Host answers `start_file_watch` / `stop_file_watch` for an
+      // attached controller, so it consumes the watcher owner directly instead
+      // of inheriting it from `external-sources`.
+      'file-watch',
       'plugin-runtime',
       'opencode-plugin-host',
       'ssh-remote',
+      // Outbound controller for `openbitfun dispatch outbound`.
+      'dispatch-store',
     ]],
     ['openbitfun-acp', [...new Set([...acpClientCoreFeatures, ...acpServerCoreFeatures])]],
     ['openbitfun-app-server', [
@@ -1534,6 +1544,7 @@ export function findProductEntrypointCoreFeatureViolations(
   ];
   const reviewedActiveCoreFeatureClosures = new Map([
     ['openbitfun-cli', [
+      'workspace-icons',
       'tools-pages',
       ...acpActiveCoreFeatures,
       'i18n-runtime',
@@ -1541,6 +1552,7 @@ export function findProductEntrypointCoreFeatureViolations(
       'product-search',
       'opencode-plugin-host',
       'remote-connect',
+      'dispatch-store',
     ]],
     ['openbitfun-acp', acpActiveCoreFeatures],
     ['openbitfun-sdk-host-app', coreCompatibilityActiveFeatures],
@@ -1792,9 +1804,10 @@ export function findProductEntrypointCoreFeatureViolations(
 
   const corePackage = packages.find((pkg) => pkg.name === 'openbitfun-core');
   if (corePackage) {
-    const forbiddenCoreFeatures = [
+    const forbiddenCoreFeaturesFor = (rootName) => [
       'product-full',
-      'dispatch-store',
+      // The CLI is a reviewed dispatch controller; other closures are not.
+      ...(rootName === 'openbitfun-cli' ? [] : ['dispatch-store']),
     ];
     const reportedUnexpectedFeatures = new Set();
 
@@ -1935,7 +1948,7 @@ export function findProductEntrypointCoreFeatureViolations(
 
           if (targetPackage.name === 'openbitfun-core') {
             const activeCoreFeatures = targetState.featureState.active;
-            const unexpected = forbiddenCoreFeatures.find((feature) =>
+            const unexpected = forbiddenCoreFeaturesFor(rootName).find((feature) =>
               activeCoreFeatures.has(feature))
               ?? [...activeCoreFeatures]
                 .filter((feature) => !allowedCoreFeatures.has(feature))

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DEFAULT_SESSION_VIEW_KEY } from '@/flow_chat/services/workspaceSessionTotals';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { Session } from '@/flow_chat/types/flow-chat';
 import { isWorktreeIsolatedSession } from '@/flow_chat/utils/sessionOrdering';
@@ -6,7 +7,7 @@ import { EXTERNAL_SESSION_NAMES, isExternalSessionEcosystem, type ExternalSessio
 
 export type WorkspaceSessionGrouping = 'grouped' | 'all';
 export type WorkspaceSessionOrdering = 'updated' | 'status' | 'created' | 'name';
-export type WorkspaceSessionShow = 'all' | 'unread' | 'attention';
+export type WorkspaceSessionShow = 'all' | 'unread' | 'attention' | 'archived';
 export type WorkspaceSessionStatus = 'running' | 'attention' | 'error' | 'completed' | 'idle';
 export type WorkspaceSessionEnvironment = 'local' | 'remote' | 'detached';
 export type WorkspaceSessionSource = 'openbitfun' | 'external';
@@ -246,12 +247,28 @@ export function matchesWorkspaceSessionView(
 ): boolean {
   if (show === 'unread' && !session.hasUnreadCompletion) return false;
   if (show === 'attention' && !session.needsUserAttention) return false;
-  if (filters.hideArchived && session.persistedStatus === 'archived') return false;
+  if (show === 'archived') {
+    if (session.persistedStatus !== 'archived') return false;
+  } else if (filters.hideArchived && session.persistedStatus === 'archived') return false;
   if (filters.hiddenStatuses.includes(deriveWorkspaceSessionStatus(session, isRunning))) return false;
   if (filters.hiddenEnvironments.includes(deriveWorkspaceSessionEnvironment(session))) return false;
   if (filters.hiddenSources.includes(deriveWorkspaceSessionSource(session))) return false;
   if (filters.hiddenWorktrees.includes(deriveWorkspaceSessionWorktree(session))) return false;
   return true;
+}
+
+/**
+ * Identity of a session view for remembered totals. The default view (all
+ * sources, all sessions, no filters) is the one a plain host total describes.
+ */
+export function workspaceSessionViewKey(
+  sourceAgent: WorkspaceSessionSourceAgent,
+  show: WorkspaceSessionShow,
+  filters: WorkspaceSessionFilters,
+): string {
+  return sourceAgent === 'all' && show === 'all' && !hasWorkspaceSessionFilters(filters)
+    ? DEFAULT_SESSION_VIEW_KEY
+    : JSON.stringify([sourceAgent, show, filters]);
 }
 
 export function hasWorkspaceSessionFilters(filters: WorkspaceSessionFilters): boolean {

@@ -7,6 +7,8 @@ mod external_history;
 #[cfg(feature = "external-sources")]
 pub(crate) use external_history::external_history_catalog;
 mod session_catalog;
+mod usage_context;
+pub(crate) use usage_context::SessionUsageContextSnapshot;
 
 use crate::agentic::core::{
     sanitize_persisted_session_state, CompressionState, Message, MessageContent,
@@ -8409,6 +8411,7 @@ mod tests {
             workspace_id: "main".into(),
             ordering: SessionCatalogOrdering::Created,
             source: "all".into(),
+            sources: Vec::new(),
             sort_timestamps: Default::default(),
         };
         let first = manager
@@ -8492,12 +8495,26 @@ mod tests {
             .unwrap();
         assert!(filtered.catalog_reset);
         assert_eq!(filtered.total_top_level_count, 0);
+        let mut changed_allowlist = query.clone();
+        changed_allowlist.sources = vec!["openbitfun".into()];
+        let allowlisted = manager
+            .list_session_metadata_page_with_query(
+                workspace.path(),
+                second.next_cursor.as_deref(),
+                5,
+                Some(&changed_allowlist),
+            )
+            .await
+            .unwrap();
+        assert!(allowlisted.catalog_reset);
+        assert_eq!(allowlisted.total_top_level_count, 12);
+        assert_ne!(allowlisted.catalog_revision, first.catalog_revision);
         let replay = manager
             .list_session_metadata_page_with_query(workspace.path(), None, 5, Some(&query))
             .await
             .unwrap();
         assert_eq!(replay.catalog_revision, refreshed.catalog_revision);
-        assert_eq!(manager.session_catalog_build_count_for_test().await, 3);
+        assert_eq!(manager.session_catalog_build_count_for_test().await, 4);
 
         // A deleted selected entry still triggers the existing index repair.
         std::fs::remove_file(
@@ -8512,7 +8529,7 @@ mod tests {
             .unwrap();
         assert_eq!(repaired.total_top_level_count, 11);
         assert_eq!(repaired.sessions[0].session_id, "catalog-10");
-        assert_eq!(manager.session_catalog_build_count_for_test().await, 4);
+        assert_eq!(manager.session_catalog_build_count_for_test().await, 5);
     }
 
     #[tokio::test]

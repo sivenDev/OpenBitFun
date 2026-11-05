@@ -1,5 +1,28 @@
 # FlowChat History Paging
 
+## History loading presentation
+
+`HistorySessionLoadingBoundary` covers open intents, cold hydration and bookmark
+restoration with one content-independent composition: seven 24px lines, a rounded
+user bubble and a shared light field. It retains the loading surface until the
+existing initial-content gate and `data-open-viewport-settled` both release.
+Only then does it read the rendered window once to align the decorative lines
+horizontally. Their height stays fixed; the measured rows are never animated,
+re-keyed or scrolled by this boundary.
+
+All abstract marks finish fading before the transcript's outer paint layer
+reveals. Its presentation callback releases the existing two-paint barrier for
+background history completion, so measurable but still hidden text does not
+count as a painted conversation. Interaction and focus stay guarded through
+that handoff. Session and surface-activation identity changes cancel old work;
+failures, inactive scenes,
+reduced motion and hidden documents settle without retaining an animation.
+Ordinary streaming and virtual-window remounts do not replay the transition.
+This is shared Web UI presentation and adds no persistence or transport shape.
+The old `historyOpenIntentSpinner` appearance part remains a hidden compatibility
+slot so installed appearance packages still validate; the new visual is exposed
+through `historySkeleton`.
+
 ## Inactive history residency
 
 Reader bookmarks retain the semantic snapshot, intent and ordinal range, never
@@ -641,9 +664,17 @@ first, then restores that row-and-offset relationship through
 `viewportOwner.shift` and opens the ordinary anchor settle window so later
 measurements keep it stable.
 
-The saved `scrollTop` is only a materialization hint when the anchor Turn has
-not entered the rendered virtual window yet. It is never the final answer: once
-the Turn exists in the DOM, its semantic offset is authoritative. A snapshot
+When the exact row has not entered the rendered window, restoration measures
+the mounted rows, resolves the saved key in the current virtualizer, and uses
+its current bounds plus the saved intra-row offset to materialize it. That first
+placement stays within the estimated row when the saved offset exceeds the
+estimate; otherwise a long answer could remain outside the mounted window. It then
+publishes the actual offset back to window selection without waiting for a
+native scroll event. Repeatedly using the old absolute `scrollTop` can select a
+different Turn indefinitely because a remount starts with a new measurement
+cache. The saved absolute offset remains a compatibility fallback when the key
+cannot be resolved. Once the row exists in the DOM, its semantic offset is
+authoritative. A snapshot
 whose reader was away from the tail also suppresses the session-open tail
 follow, including when the reader was using the ordinary tail projection rather
 than an explicit history window. Snapshot publication remains gated until that

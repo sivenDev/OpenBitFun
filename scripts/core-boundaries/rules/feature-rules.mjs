@@ -44,13 +44,13 @@ export const optionalDependencyFeatureOwnerRules = [
     reason:
       'services-core optional implementation dependencies must stay behind their exact owner capability',
     dependencies: [
-      { depName: 'image', ownerFeatures: ['pet-packages'] },
+      { depName: 'image', ownerFeatures: ['pet-packages', 'workspace-icons'] },
       { depName: 'zip', ownerFeatures: ['pet-packages'] },
-      { depName: 'uuid', ownerFeatures: ['pet-packages', 'resource-capacity'] },
+      { depName: 'uuid', ownerFeatures: ['pet-packages', 'resource-capacity', 'workspace-icons'] },
       { depName: 'aes-gcm', ownerFeatures: ['credential-vault'] },
       { depName: 'anyhow', ownerFeatures: ['credential-vault', 'dispatch-workspace', 'workspace-runtime', 'workspace-transfer', 'session-recovery'] },
       { depName: 'async-trait', ownerFeatures: ['permission', 'workspace-runtime'] },
-      { depName: 'base64', ownerFeatures: ['pet-packages', 'credential-vault', 'filesystem'] },
+      { depName: 'base64', ownerFeatures: ['pet-packages', 'credential-vault', 'filesystem', 'workspace-icons'] },
       {
         depName: 'openbitfun-core-types',
         ownerFeatures: ['filesystem', 'local-storage', 'product-identity', 'workspace-persistence'],
@@ -84,6 +84,7 @@ export const optionalDependencyFeatureOwnerRules = [
         depName: 'sha2',
         ownerFeatures: [
           'pet-packages',
+          'workspace-icons',
           'dispatch-workspace',
           'filesystem',
           'local-storage',
@@ -123,7 +124,7 @@ export const optionalDependencyFeatureOwnerRules = [
       'runtime-ports optional capabilities must stay behind their exact contract slice',
     dependencies: [
       { depName: 'anyhow', ownerFeatures: ['workspace-ports'] },
-      { depName: 'openbitfun-core-types', ownerFeatures: ['agent-api', 'ts'] },
+      { depName: 'openbitfun-core-types', ownerFeatures: ['agent-api', 'remote-workspace-ports', 'ts'] },
       { depName: 'openbitfun-events', ownerFeatures: ['external-agent-port'] },
       { depName: 'openbitfun-product-domains', ownerFeatures: ['permission', 'product-search', 'remote-agent-port', 'ts'] },
       { depName: 'tokio', ownerFeatures: ['remote-exec-port', 'terminal-port', 'workspace-ports'] },
@@ -292,7 +293,7 @@ export const optionalDependencyFeatureOwnerRules = [
       { depName: 'openbitfun-agent-workflows', ownerFeatures: ['deep-research'] },
       {
         depName: 'openbitfun-core-types',
-        ownerFeatures: ['deep-research', 'remote-connect', 'remote-ssh-concrete', 'speech'],
+        ownerFeatures: ['deep-research', 'ptc-runtime', 'remote-connect', 'remote-ssh-concrete', 'speech'],
       },
       { depName: 'openbitfun-product-domains', ownerFeatures: ['account-identity', 'canvas-runtime', 'function-agents', 'hook-import', 'miniapp-market', 'miniapp-runtime', 'miniapp-storage', 'plugin-source', 'remote-connect'] },
       { depName: 'openbitfun-runtime-ports', ownerFeatures: ['deep-research', 'git', 'ptc-runtime', 'remote-connect', 'remote-ssh', 'remote-ssh-concrete', 'script-tool-runtime', 'web-tools'] },
@@ -356,7 +357,6 @@ export const optionalDependencyFeatureOwnerRules = [
       { depName: 'sherpa-onnx', ownerFeatures: ['speech'] },
       { depName: 'shellexpand', ownerFeatures: ['remote-ssh-concrete'] },
       { depName: 'sse-stream', ownerFeatures: ['mcp'] },
-      { depName: 'ssh_config', ownerFeatures: ['remote-ssh-concrete', 'ssh_config'] },
       { depName: 'terminal-core', ownerFeatures: ['remote-ssh', 'remote-ssh-concrete'] },
       { depName: 'tar', ownerFeatures: ['speech'] },
       { depName: 'thiserror', ownerFeatures: ['account-identity', 'browser-control', 'git', 'hook-import', 'lan-share', 'miniapp-market', 'plugin-source', 'remote-connect', 'remote-ssh', 'remote-ssh-concrete', 'review-platform', 'speech', 'web-tools', 'workspace-search'] },
@@ -418,7 +418,7 @@ export const capabilityContractDependencyRules = [
       'ptc-runtime': [],
       'remote-agent-port': ['dep:openbitfun-product-domains'],
       'remote-exec-port': ['dep:tokio'],
-      'remote-workspace-ports': [],
+      'remote-workspace-ports': ['dep:openbitfun-core-types'],
       'runtime-event-port': [],
       'script-tool-runtime': [],
       'terminal-port': ['dep:tokio'],
@@ -600,6 +600,7 @@ export const capabilityContractDependencyRules = [
           'ssh-remote',
           'tools-basic',
           'tools-mcp',
+          'workspace-icons',
           'workspace-runtime',
           'workspace-search',
           'workspace-watch',
@@ -615,7 +616,9 @@ export const capabilityContractDependencyRules = [
         ['remote-connect'],
         ['product-full'],
       )],
-      ['tool-runtime', capabilityConsumer([capabilityEdge()])],
+      // Native resources consume only the portable automation contract and tokens.
+      ['openbitfun-computer-use', capabilityConsumer([capabilityEdge(['computer-use-contract', 'element-token'])])],
+      ['tool-runtime', capabilityConsumer([capabilityEdge(['computer-use-contract'])])],
     ]),
   },
   {
@@ -1753,6 +1756,21 @@ export const coreClosedFeatureProfileRules = [
     requiredFeatureRefs: ['dep:terminal-core'],
     exact: true,
     reason: 'openbitfun-core terminal must select only the standalone terminal service owner',
+  },
+  {
+    manifestPath: 'src/crates/assembly/core/Cargo.toml',
+    featureName: 'workspace-icons',
+    requiredFeatureRefs: ['workspace-runtime', 'openbitfun-services-core/workspace-icons'],
+    allowedTransitiveFeatureRefs: ['filesystem', 'local-storage', 'process-runtime'],
+    exact: true,
+    reason: 'workspace icon metadata must compose only the workspace catalog and bounded asset service',
+  },
+  {
+    manifestPath: 'src/crates/services/services-core/Cargo.toml',
+    featureName: 'workspace-icons',
+    requiredFeatureRefs: ['dep:image', 'image/png', 'image/jpeg', 'image/webp', 'dep:base64', 'dep:sha2', 'dep:uuid'],
+    exact: true,
+    reason: 'workspace icon assets need only static raster codecs, encoding, content hashes and atomic file names',
   },
   {
     manifestPath: 'src/crates/assembly/core/Cargo.toml',

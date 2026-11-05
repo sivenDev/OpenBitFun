@@ -2014,7 +2014,12 @@
   .openbitfun-chat-input__boost-submenu-spinner {
     animation: none;
   }
-}.flow-text-block .markdown-renderer pre,
+}.flow-text-block:not([hidden]):not(.flow-text-block--runtime-status) {
+  display: flex;
+  flex-direction: column;
+}
+
+.flow-text-block .markdown-renderer pre,
 .flow-text-block .markdown-renderer .code-block-wrapper,
 .flow-text-block .markdown-renderer .table-wrapper,
 .flow-text-block .markdown-renderer .mermaid-block,
@@ -2068,6 +2073,9 @@
   }
 }
 .user-message-item-shell {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
   --_user-message-radius: var(--openbitfun-control-flow-chat-user-message-radius);
   --_user-message-padding-inline: var(--_user-message-radius);
   position: relative;
@@ -2099,6 +2107,10 @@
    * it changes only paint on the contents, never this row's measured layout.
    */
   position: relative;
+}
+
+.user-message-item:not(.user-message-item--expanded):not(.user-message-item--editing) {
+  max-width: min(28rem, var(--openbitfun-control-flow-chat-user-message-max-width));
 }
 
 .user-message-item__surface {
@@ -2274,6 +2286,22 @@
   max-height: 4.75em; /* Collapsed: up to 3 compact lines. */
   user-select: text;
   transition: none;
+}
+
+.user-message-item__content-preview::after {
+  content: "…";
+}
+
+.user-message-item__content-overflow {
+  display: none;
+}
+
+.user-message-item--expanded .user-message-item__content-preview::after {
+  content: none;
+}
+
+.user-message-item--expanded .user-message-item__content-overflow {
+  display: contents;
 }
 
 .user-message-item--expanded {

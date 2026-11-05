@@ -6,6 +6,96 @@ import { resourceBudget } from '@/shared/utils/resourceBudget';
 
 const log = createLogger('RelaySessionHistory');
 
+/**
+ * One frame. `setTimeout`, not `requestAnimationFrame`: a hidden window suspends
+ * animation frames, and live records must keep applying while it is hidden.
+ */
+const RECORD_FLUSH_DELAY_MS = 16;
+
+/**
+ * A page in flight renders as one batch at its ready event, even when its record
+ * events span frames. Only a backstop, so a stalled page cannot hold live records.
+ */
+const PAGE_RECORD_FLUSH_DELAY_MS = 250;
+
+/**
+ * How long opening may wait for the host's first page. Past it, opening fails
+ * with a retryable error instead of parking the surface in hydration.
+ */
+const FIRST_PAGE_TIMEOUT_MS = 15_000;
+
+/** The host did not deliver the first page in time; retrying opens a fresh read. */
+export class RelayHistoryFirstPageOverdueError extends Error {
+  readonly retryable = true;
+  constructor(readonly sessionId: string) {
+    super(`Relay session first page overdue: ${sessionId}`);
+    this.name = 'RelayHistoryFirstPageOverdueError';
+  }
+}
+
+/**
+ * A session stream opened before its device is rendered: a cross-device open
+ * starts it on click, so the host reads the session while the switch runs.
+ * Events are buffered until the session's history owner adopts the stream.
+ */
+interface WarmSessionStream {
+  subscription: Promise<string>;
+  events: Array<{ kind: 'record' | 'gap' | 'syncError' | 'ready' | 'interaction'; value: unknown }>;
+  dispose: () => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/** A warm stream nobody adopted (the open failed or moved on) closes after this. */
+const WARM_STREAM_TTL_MS = 30_000;
+const warmStreams = new Map<string, WarmSessionStream>();
+const warmKey = (surfaceId: string, sessionId: string) => `${surfaceId}\u0000${sessionId}`;
+
+/** Start reading `sessionId` on `surfaceId` (a peer) before that device is rendered. */
+export function prewarmRelaySessionHistory(surfaceId: string, sessionId: string): void {
+  const key = warmKey(surfaceId, sessionId);
+  if (warmStreams.has(key)) return;
+  const events: WarmSessionStream['events'] = [];
+  const forThisSession = (value: unknown) => (value as { sessionId?: unknown } | null)?.sessionId === sessionId;
+  const disposers = [
+    remoteConnectAPI.onSessionRecord(value => { if (forThisSession(value)) events.push({ kind: 'record', value }); }),
+    remoteConnectAPI.onSessionGap(value => { if (forThisSession(value)) events.push({ kind: 'gap', value }); }),
+    remoteConnectAPI.onSessionSyncError(value => { if (forThisSession(value)) events.push({ kind: 'syncError', value }); }),
+    remoteConnectAPI.onSessionReady(value => { if (forThisSession(value)) events.push({ kind: 'ready', value }); }),
+    remoteConnectAPI.onSessionInteractionChanged(value => { if (forThisSession(value)) events.push({ kind: 'interaction', value }); }),
+  ];
+  const subscription = remoteConnectAPI.subscribeSession(surfaceId, sessionId);
+  const stream: WarmSessionStream = {
+    subscription,
+    events,
+    dispose: () => disposers.splice(0).forEach(dispose => dispose()),
+    timer: setTimeout(() => {
+      if (warmStreams.get(key) !== stream) return;
+      warmStreams.delete(key);
+      stream.dispose();
+      void subscription.then(id => remoteConnectAPI.unsubscribeSession(id)).catch(() => undefined);
+    }, WARM_STREAM_TTL_MS),
+  };
+  // A failed warm read is not an error: the owner opens its own stream.
+  void subscription.catch(error => {
+    if (warmStreams.get(key) !== stream) return;
+    warmStreams.delete(key);
+    clearTimeout(stream.timer);
+    stream.dispose();
+    log.debug('Session stream prewarm failed', { sessionId, error });
+  });
+  warmStreams.set(key, stream);
+}
+
+function takeWarmStream(surfaceId: string, sessionId: string): WarmSessionStream | undefined {
+  const key = warmKey(surfaceId, sessionId);
+  const stream = warmStreams.get(key);
+  if (!stream) return undefined;
+  warmStreams.delete(key);
+  clearTimeout(stream.timer);
+  stream.dispose();
+  return stream;
+}
+
 export interface RelayHistoryReady {
   sessionId: string;
   hasMore: boolean;
@@ -33,29 +123,61 @@ export class RelaySessionHistory {
   private rejectPage: ((error: unknown) => void) | null = null;
   private visible = false;
   private prefetchCredit = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly fail: (error: unknown) => void;
+  private readonly resumeInteraction: (() => Promise<void>) | undefined;
+  private readonly warm: WarmSessionStream | undefined;
+  private readonly handlers: Partial<Record<WarmSessionStream['events'][number]['kind'], (value: any) => void>> = {};
 
+  /**
+   * `onRecord` must only reduce the record: the host sends each record of a page
+   * as its own event, so rendering there is quadratic in the items of a long
+   * turn. It returns true for a record that cannot wait for the next frame.
+   * `onFlush` renders what was reduced. Live pages have no ready event, so the
+   * timer is what publishes them; a replayed page flushes before its ready event
+   * so a reader never sees ready without records.
+   */
   constructor(
     readonly sessionId: string,
-    onRecord: (record: SessionRecord) => void,
+    onRecord: (record: SessionRecord) => boolean | void,
     onReady: (ready: RelayHistoryReady) => void,
     onError: (error: unknown) => void,
     onResumed?: () => Promise<void>,
+    private readonly onFlush?: () => void,
+    onResync?: () => void,
   ) {
+    this.fail = error => { this.rejectReady(error); this.rejectPage?.(error); onError(error); };
+    this.resumeInteraction = onResumed;
+    // Taken before this owner listens, so no event is both buffered and live.
+    this.warm = takeWarmStream(this.scope.surfaceId, sessionId);
     // Register before asking Rust to replay its cache or fetch the first page.
-    this.listeners.push(remoteConnectAPI.onSessionRecord(value => {
+    this.listeners.push(remoteConnectAPI.onSessionRecord(this.handlers.record = value => {
       if (!this.isCurrent()) return;
       const record = value as SessionRecord;
       if (record.sessionId !== this.sessionId) return;
-      try { onRecord(record); } catch (error) { this.rejectReady(error); this.rejectPage?.(error); onError(error); }
+      try {
+        if (onRecord(record) === true) this.flush();
+        else this.scheduleFlush();
+      } catch (error) { this.fail(error); }
     }));
-    this.listeners.push(remoteConnectAPI.onSessionSyncError(error => {
+    // A restarted host stream replays its latest page under fresh revisions and
+    // sends no tombstones for what it dropped (a rollback, undo, or history
+    // rewrite). Records already received are rendered first; the replay that
+    // follows, up to its ready event, is then the whole truth.
+    this.listeners.push(remoteConnectAPI.onSessionGap(this.handlers.gap = gap => {
+      if (!this.isCurrent() || gap.sessionId !== this.sessionId || gap.resync !== true) return;
+      this.flush();
+      try { onResync?.(); } catch (error) { this.fail(error); }
+    }));
+    this.listeners.push(remoteConnectAPI.onSessionSyncError(this.handlers.syncError = error => {
       if (!this.isCurrent() || error.sessionId !== this.sessionId || error.targetDeviceId !== this.scope.surfaceId) return;
-      this.rejectReady(new Error(error.message));
-      this.rejectPage?.(new Error(error.message));
-      onError(new Error(error.message));
+      // Records received before the failure stay rendered.
+      this.flush();
+      this.fail(new Error(error.message));
     }));
-    this.listeners.push(remoteConnectAPI.onSessionReady(ready => {
+    this.listeners.push(remoteConnectAPI.onSessionReady(this.handlers.ready = ready => {
       if (!this.isCurrent() || ready.sessionId !== this.sessionId) return;
+      if (!this.flush()) return;
       const resumed = this.pageApplied === null;
       this.ready = ready;
       if (resumed && onResumed) void onResumed().catch(error => {
@@ -65,22 +187,37 @@ export class RelaySessionHistory {
       this.resolveReady();
       this.pageApplied?.();
     }));
-    this.listeners.push(remoteConnectAPI.onSessionInteractionChanged(event => {
+    this.listeners.push(remoteConnectAPI.onSessionInteractionChanged(this.handlers.interaction = event => {
       if (!this.isCurrent() || event.sessionId !== this.sessionId || !onResumed) return;
       void onResumed().catch(error => log.warn('Session interaction mailbox refresh failed', {sessionId:this.sessionId,error}));
     }));
     // A closed subscription may never have had an open() caller.
     void this.firstPage.catch(() => {});
     if (typeof document !== 'undefined') {
-      const resumePrefetch = () => {
+      const onVisibilityChanged = () => {
+        // Hidden windows throttle the flush timer; never leave a returning view stale.
+        if (this.flushTimer !== null) this.flush();
         if (document.visibilityState !== 'hidden') this.scheduleHistoryPrefetch();
       };
-      document.addEventListener('visibilitychange', resumePrefetch);
-      this.listeners.push(() => document.removeEventListener('visibilitychange', resumePrefetch));
+      document.addEventListener('visibilitychange', onVisibilityChanged);
+      this.listeners.push(() => document.removeEventListener('visibilitychange', onVisibilityChanged));
     }
   }
 
   private isCurrent(): boolean { return !this.closed && this.scope.isCurrent(); }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer !== null) return;
+    const pageInFlight = this.ready === null || this.pageApplied !== null;
+    this.flushTimer = setTimeout(() => this.flush(), pageInFlight ? PAGE_RECORD_FLUSH_DELAY_MS : RECORD_FLUSH_DELAY_MS);
+  }
+
+  private flush(): boolean {
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    if (!this.isCurrent()) return false;
+    try { this.onFlush?.(); return true; } catch (error) { this.fail(error); return false; }
+  }
 
   /** Visibility gates optional history IO only; live records/mailboxes stay subscribed. */
   setVisible(visible: boolean): void {
@@ -102,20 +239,55 @@ export class RelaySessionHistory {
     this.scope.assertCurrent('open relay session history');
     if (this.closed) throw new Error('Session subscription is closed');
     try {
-      const id = await remoteConnectAPI.subscribeSession(this.scope.surfaceId, this.sessionId);
+      // A stream warmed by the click: what it buffered is applied first, in order.
+      const warm = this.warm;
+      if (warm) for (const event of warm.events.splice(0)) this.handlers[event.kind]?.(event.value);
+      const id = warm
+        ? await warm.subscription.catch(() => remoteConnectAPI.subscribeSession(this.scope.surfaceId, this.sessionId))
+        : await remoteConnectAPI.subscribeSession(this.scope.surfaceId, this.sessionId);
       if (!this.isCurrent()) {
         await remoteConnectAPI.unsubscribeSession(id);
         this.scope.assertCurrent('finish opening relay session history');
         throw new Error('Session subscription is closed');
       }
       this.subscriptionId = id;
-      await this.firstPage;
+      await this.waitForFirstPage();
       this.scheduleHistoryPrefetch();
     } catch (error) {
       this.rejectReady(error);
       this.close();
       throw error;
     }
+  }
+
+  /**
+   * A stalled host stream must not park the surface in hydration, and must not
+   * be reported as a complete empty history either. Records already received
+   * stay rendered, the interaction mailbox is read directly so a blocking
+   * question stays answerable, and opening fails with a retryable error.
+   */
+  private async waitForFirstPage(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const overdue = new Promise<'overdue'>(resolve => {
+      timer = setTimeout(() => resolve('overdue'), FIRST_PAGE_TIMEOUT_MS);
+    });
+    try {
+      const outcome = await Promise.race([this.firstPage.then(() => 'ready' as const), overdue]);
+      if (outcome === 'ready') return;
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
+    const error = new RelayHistoryFirstPageOverdueError(this.sessionId);
+    if (!this.isCurrent()) throw error;
+    log.warn('Relay session first page overdue; failing the open as retryable', { sessionId: this.sessionId });
+    this.flush();
+    if (this.resumeInteraction) {
+      void this.resumeInteraction().catch(mailboxError => {
+        log.warn('Session interaction mailbox refresh failed', { sessionId: this.sessionId, error: mailboxError });
+      });
+    }
+    this.fail(error);
+    throw error;
   }
 
   // Warm one adjacent page after a visible open or reader request. Never drain
@@ -156,6 +328,9 @@ export class RelaySessionHistory {
   }
 
   close(): void {
+    if (this.closed) return;
+    // After a surface change the store keeps these pending for the next ready.
+    if (this.flushTimer !== null) this.flush();
     if (this.closed) return;
     this.closed = true;
     if (this.historyTimer !== null) clearTimeout(this.historyTimer);

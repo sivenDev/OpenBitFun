@@ -35,6 +35,7 @@ export {
   createSharedAssistantSession,
   hydrateSessionHistoryForDetail,
   preloadHistoricalSessionForOpen,
+  prewarmHistoricalSession,
   switchChatSession,
   deleteChatSession,
   archiveChatSession,

@@ -200,6 +200,9 @@ pub struct AppConfig {
     /// primary model is used until it is chosen again.
     #[serde(default)]
     pub assistant_default_models: HashMap<String, String>,
+    /// Project defaults keyed by the owning host's project workspace ID.
+    #[serde(default)]
+    pub project_defaults: HashMap<String, crate::project_defaults::ProjectDefaultsConfig>,
     /// Global, user-defined groups used to organize Agent tool pickers.
     #[serde(default, skip_serializing_if = "UserToolGroupsConfig::is_empty")]
     pub user_tool_groups: UserToolGroupsConfig,
@@ -1222,6 +1225,9 @@ pub struct ModelRoutingConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_mode: Option<String>,
     pub router_model_id: Option<String>,
+    /// Explicit classifier response contract. Unknown future values stay readable
+    /// and are rejected by an execution host that cannot implement them.
+    pub protocol: String,
     /// Optional exact-tokenizer override on the execution host. Empty or unavailable
     /// paths use automatic estimates; retain this legacy field for older installs.
     pub tokenizer_path: String,
@@ -1240,6 +1246,7 @@ impl Default for ModelRoutingConfig {
         Self {
             default_mode: None,
             router_model_id: None,
+            protocol: "openai_logprobs".into(),
             tokenizer_path: String::new(),
             simple_threshold: 0.75,
             timeout_ms: 10_000,
@@ -1356,8 +1363,9 @@ pub struct AIConfig {
     #[serde(default = "default_true")]
     pub allow_tool_json_repair: bool,
 
-    /// Allow Computer use (desktop automation) when the desktop host is available (all session modes).
-    #[serde(default)]
+    /// Allow Computer Use when the executing host has a native provider.
+    /// System consent and tool approval remain independent; persisted opt-outs win.
+    #[serde(default = "default_true")]
     pub computer_use_enabled: bool,
 
     /// Preferred browser for CDP browser control. Empty/default uses the system default browser.
@@ -2170,6 +2178,7 @@ impl Default for AppConfig {
             keybindings: None,
             assistant_default_sessions: HashMap::new(),
             assistant_default_models: HashMap::new(),
+            project_defaults: HashMap::new(),
             user_tool_groups: UserToolGroupsConfig::default(),
             user_skill_groups: UserSkillGroupsConfig::default(),
             skill_market: SkillMarketConfig::default(),
@@ -2318,7 +2327,7 @@ impl Default for AIConfig {
             enable_context_compression_prefetch: true,
             enable_edit_constraint_guard: false,
             allow_tool_json_repair: true,
-            computer_use_enabled: false,
+            computer_use_enabled: true,
             browser_control_preferred_browser: String::new(),
             web_search: WebSearchConfig::default(),
             browser_control_auto_connect_on_startup: false,
@@ -2562,6 +2571,41 @@ mod tests {
             }
             let round_trip: super::AIConfig = serde_json::from_value(saved).unwrap();
             assert_eq!(round_trip.model_routing.tokenizer_path, path);
+        }
+    }
+
+    #[test]
+    fn model_routing_protocol_reads_legacy_and_round_trips_extension_and_future_profiles() {
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({"timeout_ms": 10000}),
+        ] {
+            let config: super::ModelRoutingConfig = serde_json::from_value(payload).unwrap();
+            assert_eq!(config.protocol, "openai_logprobs");
+        }
+        for protocol in [
+            "openai_logprobs",
+            "openai_router_extension",
+            "future_classifier",
+        ] {
+            let payload = serde_json::json!({
+                "protocol": protocol, "router_model_id": "router", "timeout_ms": 120000,
+                "tokenizer_path": "/execution-host/tokenizer.json", "summary_enabled": false
+            });
+            let config: super::ModelRoutingConfig =
+                serde_json::from_value(payload.clone()).unwrap();
+            let saved = serde_json::to_value(&config).unwrap();
+            for key in [
+                "protocol",
+                "router_model_id",
+                "timeout_ms",
+                "tokenizer_path",
+                "summary_enabled",
+            ] {
+                assert_eq!(saved[key], payload[key]);
+            }
+            let restored: super::ModelRoutingConfig = serde_json::from_value(saved).unwrap();
+            assert_eq!(restored.protocol, protocol);
         }
     }
 
@@ -3790,6 +3834,45 @@ mod tests {
             config.agent_model_defaults.subagents.fork,
             SubagentModelSelection::Inherit
         );
+    }
+
+    #[test]
+    fn computer_use_defaults_on_and_preserves_persisted_choices() {
+        assert!(AIConfig::default().computer_use_enabled);
+        let legacy: AIConfig =
+            serde_json::from_value(serde_json::json!({"max_rounds": 42})).unwrap();
+        assert!(legacy.computer_use_enabled);
+        let reloaded: AIConfig =
+            serde_json::from_value(serde_json::to_value(&legacy).unwrap()).unwrap();
+        assert!(reloaded.computer_use_enabled);
+        assert_eq!(reloaded.max_rounds, 42);
+
+        // Only an absent legacy field takes the default; damaged preferences
+        // must remain errors instead of silently enabling native control.
+        for invalid in [
+            serde_json::json!("false"),
+            serde_json::Value::Null,
+            serde_json::json!(1),
+        ] {
+            assert!(serde_json::from_value::<AIConfig>(serde_json::json!({
+                "computer_use_enabled": invalid
+            }))
+            .is_err());
+        }
+
+        for enabled in [false, true] {
+            let config: AIConfig = serde_json::from_value(serde_json::json!({
+                "computer_use_enabled": enabled,
+                "max_rounds": 42
+            }))
+            .unwrap();
+            assert_eq!(config.computer_use_enabled, enabled);
+            let payload = serde_json::to_value(&config).unwrap();
+            assert_eq!(payload["computer_use_enabled"], enabled);
+            let reloaded: AIConfig = serde_json::from_value(payload).unwrap();
+            assert_eq!(reloaded.computer_use_enabled, enabled);
+            assert_eq!(reloaded.max_rounds, 42);
+        }
     }
 
     #[test]

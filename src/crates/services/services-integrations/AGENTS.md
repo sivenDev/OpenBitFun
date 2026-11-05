@@ -42,6 +42,9 @@ slices that are outside pure product logic but still platform-neutral.
   Only the requested page's bodies enter the bounded log; the pending source
   batch is at most one persisted turn, which can itself be large. No wire or
   persisted-format migration is required; all controllers retain `read_stream`.
+  `limit` is a budget for history reads: a page grows to the first record of its
+  oldest turn so no turn splits across pages, within the hard event and byte
+  bounds. Controllers must not assume a page holds at most `limit` events.
 - The `remote-persistence` feature is the lightweight persisted-shape owner shared
   by Remote Connect, remote SSH, and offline migration. Keep it free of network,
   SSH transport, and runtime orchestration dependencies so owner readers and
@@ -56,7 +59,9 @@ slices that are outside pure product logic but still platform-neutral.
   session-selected `WorkspaceFileSystem`; `remote-connect` therefore selects
   `runtime-ports/workspace-ports` without enabling an SSH implementation. Core
   supplies the session root and provider. IM adapters consume authorized bytes
-  and must not re-resolve paths on the bot host.
+  and must not re-resolve paths on the bot host. Explicit controller file reads may use
+  provider scope outside the workspace; automatic output delivery and runtime
+  artifact URIs retain workspace/root confinement.
 - Remote workspace facts, session metadata, file projection DTOs, and
   workspace/projection host traits belong in `openbitfun-runtime-ports`.
 - Workspace-root source selection, persistence/workspace service reads,
@@ -193,6 +198,12 @@ and `OPENBITFUN_TEST_SFTP_SERVER` set. This runs real OpenSSH SFTP over loopback
 and the Docker command adapter against a local POSIX shell fixture; the latter
 does not establish real Docker-daemon or Windows WSL coverage.
 
+For recursive remote directory deletion, use the same package/features with
+`--lib recursive_directory_delete`. This covers one SSH exec with no per-file
+SFTP requests, literal filenames, symlink preservation, invalid targets and
+command rejection, plus the Docker command adapter against a local POSIX shell.
+It does not establish real Docker, Windows WSL, Peer Device or mobile coverage.
+
 For the remote Flashgrep distribution gate and retained protocol helpers, use:
 
 ```bash
@@ -236,3 +247,21 @@ three serial-baseline / prefetched-cold / revalidated-warm samples. The baseline
 retains the previous serial chunk algorithm with the same filesystem provider;
 browser rendering and public-network variability are outside this measurement.
 Do not turn timing ratios into CI assertions.
+
+For workspace icon RemoteCommand reads, capability negotiation and explicit
+mobile/IM editing rejection:
+
+```bash
+cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::tests::workspace_icon_
+```
+
+For WeChat inbound CDN files, attachment storage, and provider-neutral bot contracts:
+
+```bash
+cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib remote_connect::bot::
+cargo test --locked -p openbitfun-services-integrations --no-default-features --features remote-connect --lib session_attachment_contract_tests
+```
+
+The attachment fixtures exercise real local file IO and a simulated POSIX remote
+filesystem, including offline rejection. They do not establish live WeChat, SSH,
+Peer Device, or Detached Dispatch coverage.

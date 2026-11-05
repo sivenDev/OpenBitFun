@@ -45,8 +45,13 @@
       "title": "桌面小卡片",
       "subtitle": "在主視窗之外顯示提醒、PR 狀態、進度、天氣等值得隨時看一眼的小卡片",
       "enable": "啟用小卡片",
-      "description": "關閉後卡片會隱藏，智能體也無法再建立或更新卡片，現有卡片會保留。",
-      "unsupported": "請更新目前主機後再管理小卡片。"
+      "description": "關閉後卡片會隱藏，智慧體也無法再建立或更新卡片，現有卡片會保留。",
+      "unsupported": "請更新目前主機後再管理小卡片。",
+      "pinnedOn": "已釘選到桌面，位於圖示之上並在其他應用程式之下",
+      "pinnedOff": "未釘選到桌面",
+      "pinRecoveryFailed": "Windows 桌面無法使用，已取消釘選。開啟即可重新釘選。",
+      "pinCard": "將「{{title}}」釘選到桌面",
+      "pinFailed": "無法切換釘選狀態，請重試。"
     },
     "workspaceSearch": {
       "title": "加速工作區搜尋",
@@ -105,9 +110,23 @@
     "description": "選擇模型看到工具的方式，只對切換設定後新建的工作階段生效。",
     "native": "原生工具",
     "ptc": "PTC（TypeScript）",
-    "ptcTooltip": "PTC 透過 RunCode 執行 TypeScript。"
+    "ptcTooltip": "PTC 透過 RunCode 執行 TypeScript。",
+    "ptcPython": "PTC（Python）",
+    "ptcPythonTooltip": "PTC 透過 RunCode 執行 Python。"
   },
   "projectPermissions": {
+    "title": "工具與命令權限",
+    "entryCount": "權限項目",
+    "summary": "允許 {{allow}} · 詢問 {{ask}} · 拒絕 {{deny}}",
+    "incomplete": "部分權限暫未載入完成",
+    "listTitle": "授權列表",
+    "empty": "暫無授權",
+    "unsaved": "有未儲存的修改",
+    "addAuthorization": "新增授權",
+    "editAuthorization": "編輯授權",
+    "clearRemembered": "清除記憶授權",
+    "source": "來源",
+    "actions": "操作",
     "description": "「始終允許」會儲存為目前專案的記憶授權；靜態專案規則會在工具執行前直接套用",
     "grantsTitle": "記憶授權",
     "grantsEmpty": "目前專案沒有記憶授權。",
@@ -139,7 +158,7 @@
     "saveRules": "儲存規則",
     "rulesSaveSuccess": "已儲存靜態專案規則",
     "rulesSaveFailed": "儲存靜態專案規則失敗",
-    "rulesConflict": "規則檔案已在外部變更，請重新開啟專案權限後再儲存。",
+    "rulesConflict": "規則檔案已在外部變更，請取消本機修改並重新整理後再試。",
     "cancel": "取消",
     "effects": {
       "allow": "允許",

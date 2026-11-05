@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "047384179d84384a9b7094406a4197438d73d613e1dad5303d73144905413041",
-  "count": 216,
+  "catalogDigest": "063065dc4d6f508c17ee0039692ae71554c41689790ba4f3eb2f8882351cf696",
+  "count": 208,
   "reasonCounts": {
     "externalAuth": 4,
     "secretEntry": 5,
-    "unstructuredInteraction": 182,
-    "visualSelection": 25
+    "unstructuredInteraction": 173,
+    "visualSelection": 26
   },
   "entries": [
     {
@@ -650,6 +650,23 @@
         "command:get_statistics",
         "command:get_global_config_status",
         "command:update_app_status"
+      ]
+    },
+    {
+      "capabilityId": "feature.projects",
+      "itemId": "workspace-icon",
+      "titleZh": "选择项目图案和颜色，或使用自定义图片",
+      "titleEn": "Choose project icon shapes and colors, or use a custom image",
+      "reasonCode": "visualSelection",
+      "reasonZh": "点击项目资源页的大图标，从工作学习或生活兴趣分类选择图案及颜色，或分别上传浅色、深色图片，预览后保存到工作区所属主机。",
+      "reasonEn": "Click the large icon on the Project resources page to choose a work/study or life/hobby icon and color, or upload separate light and dark images, preview them, then save on the workspace host.",
+      "presentationTarget": {
+        "kind": "action",
+        "actionId": "project.open"
+      },
+      "evidence": [
+        "command:get_workspace_icon",
+        "command:set_workspace_icon"
       ]
     },
     {
@@ -1678,8 +1695,8 @@
       "reasonZh": "“发现 OpenCode、Claude Code、Codex 等外部 AI 来源与可用内容”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Discover OpenCode, Claude Code, Codex, and other external AI sources and content” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:get_external_ecosystem_awareness_command",
@@ -1698,8 +1715,8 @@
       "reasonZh": "“按来源启用或停用集成，并选择管理、预览或只读策略”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Enable or disable each source and choose managed, preview, or read-only policy” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:set_external_source_enabled_command",
@@ -1716,8 +1733,8 @@
       "reasonZh": "“发现、移除和重新添加 Codex 来源会话，并在 OpenBitFun 分支中续聊”由用户在生态兼容页开启发现或选择已移除的来源。打开来源时刷新历史，首次发送创建独立分支。归档、移除和分支删除各自独立，原应用历史保持不变。智能体打开入口，由用户选择具体会话。",
       "reasonEn": "“Discover, remove and restore Codex source sessions, then continue in OpenBitFun branches” requires the user to enable discovery or select a removed source in ecosystem compatibility. Opening a source refreshes its history and first send creates an independent branch. Archives, source removal and branch deletion stay independent; original history is preserved. The Agent opens the entry for the user to choose a session.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:list_removed_external_sessions",
@@ -1735,8 +1752,8 @@
       "reasonZh": "“发现、移除和重新添加 Zcode 来源会话，并在 OpenBitFun 分支中续聊”由用户在生态兼容页开启发现或选择已移除的来源。打开来源时刷新历史，首次发送创建独立分支。归档、移除和分支删除各自独立，原应用历史保持不变。智能体打开入口，由用户选择具体会话。",
       "reasonEn": "“Discover, remove and restore Zcode source sessions, then continue in OpenBitFun branches” requires the user to enable discovery or select a removed source in ecosystem compatibility. Opening a source refreshes its history and first send creates an independent branch. Archives, source removal and branch deletion stay independent; original history is preserved. The Agent opens the entry for the user to choose a session.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:list_removed_external_sessions",
@@ -1754,8 +1771,8 @@
       "reasonZh": "“展开外部 Prompt/Command 内容并处理与原生命令的冲突”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Expand external prompt/command content and resolve conflicts with native commands” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:expand_external_prompt_command_command",
@@ -1772,8 +1789,8 @@
       "reasonZh": "“启用外部智能体，处理同名冲突并绑定模型”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Enable external agents, resolve naming conflicts, and bind models” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:choose_external_subagent_conflict_command",
@@ -1791,8 +1808,8 @@
       "reasonZh": "“预览 MCP 导入计划，逐个处理服务器冲突并应用”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Preview MCP import plans, resolve server conflicts individually, and apply them” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:plan_external_mcp_import_command",
@@ -1811,8 +1828,8 @@
       "reasonZh": "“选择外部工具目标、解决冲突并控制是否启用”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Choose external tool targets, resolve conflicts, and control activation” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:set_external_tool_target_decision_command",
@@ -1829,8 +1846,8 @@
       "reasonZh": "“查看外部 Hooks 目录、规划导入、修改选择并应用”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Inspect external hook catalogs, plan imports, edit selections, and apply” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:get_external_hook_catalog",
@@ -1848,8 +1865,8 @@
       "reasonZh": "“在迁移前查看冲突、安全影响和来源控制快照”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Review conflicts, security impact, and source-control snapshots before migration” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:get_external_source_control_snapshot",
@@ -1866,8 +1883,8 @@
       "reasonZh": "“在文件管理器或远程环境中定位外部配置来源”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
       "reasonEn": "“Reveal external configuration sources in the file manager or remote environment” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
-        "kind": "action",
-        "actionId": "surface.ecosystemCompatibility.open"
+        "kind": "settings",
+        "pageId": "tools.external-import"
       },
       "evidence": [
         "command:reveal_external_source_location",
@@ -2004,36 +2021,19 @@
     {
       "capabilityId": "feature.remote-connect",
       "itemId": "connection-methods",
-      "titleZh": "选择局域网或官方 Relay",
-      "titleEn": "Choose LAN or the official Relay",
+      "titleZh": "使用官方 Relay 或桌面内置局域网 Relay；两者可同时运行，登录均需联网",
+      "titleEn": "Use the official or Desktop-hosted LAN Relay; both can run together and need internet for sign-in",
       "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“选择局域网或官方 Relay”需要结合当前网络与设备状态，确认目标主机后才能连接；智能体打开连接入口，由用户完成选择。",
-      "reasonEn": "“Choose LAN or the official Relay” depends on the current network and device state and requires the user to confirm the target host; the Agent opens the connection entry for that choice.",
+      "reasonZh": "“使用官方 Relay 或桌面内置局域网 Relay；两者可同时运行，登录均需联网”需要结合当前网络与设备状态，由用户确认目标主机。官方 Relay 无需部署；私有 Relay 需配套客户端构建，界面没有自定义服务器地址或部署向导。",
+      "reasonEn": "“Use the official or Desktop-hosted LAN Relay; both can run together and need internet for sign-in” depends on network and device state and requires target confirmation. The official Relay needs no deployment; a private Relay requires matching client builds, with no custom-server field or deployment wizard in the UI.",
       "presentationTarget": {
         "kind": "event",
         "eventName": "openbitfun:open-remote-connect"
       },
       "evidence": [
-        "command:remote_connect_get_methods"
-      ]
-    },
-    {
-      "capabilityId": "feature.remote-connect",
-      "itemId": "start-stop-status",
-      "titleZh": "启动、停止 Remote Connect 并查看实时连接状态和设备信息",
-      "titleEn": "Start or stop Remote Connect and inspect live status and device information",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“启动、停止 Remote Connect 并查看实时连接状态和设备信息”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Start or stop Remote Connect and inspect live status and device information” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "event",
-        "eventName": "openbitfun:open-remote-connect"
-      },
-      "evidence": [
-        "command:remote_connect_start",
-        "command:remote_connect_stop",
-        "command:remote_connect_status",
-        "command:remote_connect_get_device_info"
+        "command:remote_connect_get_methods",
+        "source:src/apps/desktop/src/api/remote_connect_api/relay_routes_tests.rs#dual_relay_rpc_persistence_and_teardown_are_independent",
+        "source:src/crates/services/relay-service/src/identity.rs#IDENTITY_ME_URL"
       ]
     },
     {
@@ -2057,33 +2057,12 @@
     },
     {
       "capabilityId": "feature.remote-connect",
-      "itemId": "bots",
-      "titleZh": "配置飞书、Telegram、微信等 Bot 并单独停止 Bot",
-      "titleEn": "Configure Feishu, Telegram, WeChat, and other bots, and stop a bot independently",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“配置飞书、Telegram、微信等 Bot 并单独停止 Bot”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Configure Feishu, Telegram, WeChat, and other bots, and stop a bot independently” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "event",
-        "eventName": "openbitfun:open-remote-connect"
-      },
-      "evidence": [
-        "command:remote_connect_configure_bot",
-        "command:remote_connect_stop_bot",
-        "command:remote_connect_weixin_qr_start",
-        "command:remote_connect_weixin_qr_poll",
-        "command:remote_connect_get_bot_verbose_mode",
-        "command:remote_connect_set_bot_verbose_mode"
-      ]
-    },
-    {
-      "capabilityId": "feature.remote-connect",
       "itemId": "account",
-      "titleZh": "使用 GitHub 登录、退出并查看身份状态",
-      "titleEn": "Sign in with GitHub, sign out, and inspect identity status",
+      "titleZh": "通过共享登录页使用 GitHub 或邮箱验证码登录、退出并查看身份状态",
+      "titleEn": "Sign in through the shared page with GitHub or an email code, sign out, and inspect identity status",
       "reasonCode": "externalAuth",
-      "reasonZh": "GitHub 账户登录必须由用户在外部认证页面确认；智能体可以打开入口并读取非秘密状态，但不能冒充账户持有人。",
-      "reasonEn": "GitHub account sign-in requires confirmation on an external authentication page; the Agent may open the entry and read non-secret status but cannot impersonate the account holder.",
+      "reasonZh": "登录必须由用户在外部认证页面完成。GitHub 与邮箱是独立账号，各设备需使用同一种方式和同一账号；旧客户端或服务可能仅支持 GitHub。智能体可打开入口并读取非秘密状态，不能代替用户认证。",
+      "reasonEn": "The user must complete sign-in on the external authentication page. GitHub and email are independent accounts; devices need the same method and account. Older clients or services may support GitHub only. The Agent may open the entry and read non-secret status, but cannot authenticate for the user.",
       "presentationTarget": {
         "kind": "event",
         "eventName": "openbitfun:open-remote-connect"
@@ -2093,7 +2072,8 @@
         "command:account_github_poll",
         "command:account_github_info",
         "command:account_logout",
-        "command:account_status"
+        "command:account_status",
+        "source:src/crates/services/services-integrations/src/account_identity/mod.rs#/auth/desktop/start?methods=all"
       ]
     },
     {
@@ -2102,8 +2082,8 @@
       "titleZh": "列出、连接、查看设备型号与系统、设置别名和删除同账户设备",
       "titleEn": "List, connect, inspect model and OS, set aliases, and remove same-account devices",
       "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“列出、连接、查看设备型号与系统、设置别名和删除同账户设备”需要选择设备并确认操作。设备目录使用控制端的账户身份，不随 Peer Device 切换到目标主机。别名优先于技术名称显示，但不修改技术名称；型号与系统信息由设备自身上报。仅支持对应能力的 Relay 可更新或清除别名，旧 Relay 明确显示不支持。智能体打开设备管理入口，由用户确认后续交互。",
-      "reasonEn": "“List, connect, inspect model and OS, set aliases, and remove same-account devices” requires device selection and confirmation. The device directory uses the controller's account identity, not the selected Peer host. Aliases take display priority without changing technical names; model and OS metadata come from the device itself. Alias updates and clearing require Relay capability support; older Relays explicitly remain unsupported. The Agent opens device management and leaves subsequent interaction to the user.",
+      "reasonZh": "“列出、连接、查看设备型号与系统、设置别名和删除同账户设备”需要选择设备并确认操作。设备目录使用控制端的账户身份，不随 Peer Device 切换到目标主机。别名优先于技术名称显示，但不修改技术名称；型号与系统信息由设备自身上报。仅支持对应能力的 Relay 可更新或清除别名，旧 Relay 明确显示不支持。智能体打开设备管理入口，由用户确认后续交互。读取设备列表请调用 feature.detached-dispatch 的 list-targets。",
+      "reasonEn": "“List, connect, inspect model and OS, set aliases, and remove same-account devices” requires device selection and confirmation. The device directory uses the controller's account identity, not the selected Peer host. Aliases take display priority without changing technical names; model and OS metadata come from the device itself. Alias updates and clearing require Relay capability support; older Relays explicitly remain unsupported. The Agent opens device management and leaves subsequent interaction to the user. To read the device list, call list-targets on feature.detached-dispatch.",
       "presentationTarget": {
         "kind": "event",
         "eventName": "openbitfun:open-remote-connect"
@@ -2136,26 +2116,6 @@
         "command:peer_control_detach",
         "command:peer_controller_set_active",
         "command:peer_mode_ping"
-      ]
-    },
-    {
-      "capabilityId": "feature.detached-dispatch",
-      "itemId": "targets",
-      "titleZh": "列出可派发目标并探测版本、连接和运行能力",
-      "titleEn": "List dispatch targets and probe their version, connectivity, and runtime capabilities",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“列出可派发目标并探测版本、连接和运行能力”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“List dispatch targets and probe their version, connectivity, and runtime capabilities” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "event",
-        "eventName": "openbitfun:open-remote-connect",
-        "detail": {
-          "group": "account"
-        }
-      },
-      "evidence": [
-        "command:dispatch_list_targets",
-        "command:dispatch_probe_target"
       ]
     },
     {
@@ -2224,46 +2184,6 @@
     },
     {
       "capabilityId": "feature.detached-dispatch",
-      "itemId": "submit",
-      "titleZh": "把包含工作区、会话、模型和权限策略的持久任务提交到目标",
-      "titleEn": "Submit a durable job with workspace, session, model, and permission policy to the target",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“把包含工作区、会话、模型和权限策略的持久任务提交到目标”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Submit a durable job with workspace, session, model, and permission policy to the target” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "event",
-        "eventName": "openbitfun:open-remote-connect",
-        "detail": {
-          "group": "account"
-        }
-      },
-      "evidence": [
-        "command:dispatch_submit"
-      ]
-    },
-    {
-      "capabilityId": "feature.detached-dispatch",
-      "itemId": "status-list",
-      "titleZh": "列出派发任务并查询运行状态、结果和错误",
-      "titleEn": "List dispatched jobs and query their status, result, and errors",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“列出派发任务并查询运行状态、结果和错误”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“List dispatched jobs and query their status, result, and errors” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "event",
-        "eventName": "openbitfun:open-remote-connect",
-        "detail": {
-          "group": "account"
-        }
-      },
-      "evidence": [
-        "command:dispatch_list_jobs",
-        "command:dispatch_status",
-        "command:dispatch_query"
-      ]
-    },
-    {
-      "capabilityId": "feature.detached-dispatch",
       "itemId": "transcript",
       "titleZh": "保存、追加和重新加载可断线恢复的执行记录",
       "titleEn": "Save, append, and reload reconnectable execution transcripts",
@@ -2286,11 +2206,11 @@
     {
       "capabilityId": "feature.detached-dispatch",
       "itemId": "permission-continuation",
-      "titleZh": "远程回答权限请求，并继续或取消目标端任务",
-      "titleEn": "Answer permission requests remotely and continue or cancel target-side work",
+      "titleZh": "远程回答权限请求并继续目标端任务",
+      "titleEn": "Answer permission requests remotely and continue target-side work",
       "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“远程回答权限请求，并继续或取消目标端任务”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Answer permission requests remotely and continue or cancel target-side work” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
+      "reasonZh": "“远程回答权限请求并继续目标端任务”需要用户逐条确认权限与后续输入，目前没有能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
+      "reasonEn": "“Answer permission requests remotely and continue target-side work” needs the user to confirm each permission and follow-up input and has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
       "presentationTarget": {
         "kind": "event",
         "eventName": "openbitfun:open-remote-connect",
@@ -2300,8 +2220,7 @@
       },
       "evidence": [
         "command:dispatch_answer",
-        "command:dispatch_continue",
-        "command:dispatch_cancel"
+        "command:dispatch_continue"
       ]
     },
     {
@@ -2325,55 +2244,6 @@
     },
     {
       "capabilityId": "feature.pages",
-      "itemId": "pages-list",
-      "titleZh": "查看账户下的 Pages 与每个页面的当前发布状态",
-      "titleEn": "List account Pages and inspect each page's current publishing state",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“查看账户下的 Pages 与每个页面的当前发布状态”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“List account Pages and inspect each page's current publishing state” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "pages"
-      },
-      "evidence": [
-        "command:page_list"
-      ]
-    },
-    {
-      "capabilityId": "feature.pages",
-      "itemId": "immutable-versions",
-      "titleZh": "保存不可变页面版本并浏览版本历史",
-      "titleEn": "Save immutable page versions and browse version history",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“保存不可变页面版本并浏览版本历史”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Save immutable page versions and browse version history” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "pages"
-      },
-      "evidence": [
-        "command:page_save_version",
-        "command:page_list_versions"
-      ]
-    },
-    {
-      "capabilityId": "feature.pages",
-      "itemId": "visibility",
-      "titleZh": "更新标题、公开/私有可见性和访问设置",
-      "titleEn": "Update titles, public/private visibility, and access settings",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“更新标题、公开/私有可见性和访问设置”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Update titles, public/private visibility, and access settings” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "pages"
-      },
-      "evidence": [
-        "command:page_update"
-      ]
-    },
-    {
-      "capabilityId": "feature.pages",
       "itemId": "share-open",
       "titleZh": "创建可打开和分享的页面链接",
       "titleEn": "Create an openable, shareable link for a page",
@@ -2386,39 +2256,6 @@
       },
       "evidence": [
         "command:page_create_open_link"
-      ]
-    },
-    {
-      "capabilityId": "feature.pages",
-      "itemId": "unpublish",
-      "titleZh": "取消发布页面，同时保留可再次发布的版本",
-      "titleEn": "Unpublish a page while retaining versions for later publication",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“取消发布页面，同时保留可再次发布的版本”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Unpublish a page while retaining versions for later publication” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "pages"
-      },
-      "evidence": [
-        "command:page_unpublish"
-      ]
-    },
-    {
-      "capabilityId": "feature.pages",
-      "itemId": "delete",
-      "titleZh": "删除单个版本或整个 Page",
-      "titleEn": "Delete an individual version or an entire Page",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“删除单个版本或整个 Page”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Delete an individual version or an entire Page” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "pages"
-      },
-      "evidence": [
-        "command:page_delete_version",
-        "command:page_delete"
       ]
     },
     {
@@ -2597,6 +2434,26 @@
         "command:hide_agent_companion_desktop_pet",
         "command:resize_agent_companion_desktop_pet",
         "command:show_main_window"
+      ]
+    },
+    {
+      "capabilityId": "feature.desktop-cards",
+      "itemId": "desktop-pinning",
+      "titleZh": "在卡片菜单、首页卡片列表或设置里把卡片固定到 Windows 桌面，隐藏的卡片同样可以切换固定状态",
+      "titleEn": "Pin a card to the Windows desktop from the card menu, the Home card list, or Settings, including hidden cards",
+      "reasonCode": "unstructuredInteraction",
+      "reasonZh": "“在卡片菜单、首页卡片列表或设置里把卡片固定到 Windows 桌面，隐藏的卡片同样可以切换固定状态”会让卡片进入 Explorer 桌面层，位于桌面图标之上、其他应用之下，并且需要 Explorer 可用且 DPI 上下文一致才能成立；DesktopCard 工具的配置里没有这项显示偏好，因此由用户在卡片菜单或管理列表里切换，智能体只打开精确入口。",
+      "reasonEn": "“Pin a card to the Windows desktop from the card menu, the Home card list, or Settings, including hidden cards” moves the card into the Explorer desktop layer, above the icons and behind other apps, and only holds while Explorer is available with a matching DPI context; the DesktopCard tool configuration deliberately does not carry this display preference, so the user toggles it from the card menu or a management list and the Agent only opens the exact entry.",
+      "presentationTarget": {
+        "kind": "settings",
+        "pageId": "application.pet",
+        "sectionId": "desktop-cards"
+      },
+      "evidence": [
+        "command:desktop_card_set_always_on_top",
+        "source:src/apps/desktop/src/desktop_cards/desktop_layer.rs#SHELLDLL_DefView",
+        "source:src/web-ui/src/app/scenes/personal-overview/OverviewDesktopCardsSection.tsx#desktopCards.pin",
+        "source:src/web-ui/src/app/scenes/settings/pages/application/DesktopCardsSettingsSection.tsx#desktop-card-pin-row"
       ]
     },
     {

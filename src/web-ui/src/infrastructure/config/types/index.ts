@@ -83,7 +83,16 @@ export interface AppConfig {
   assistant_default_sessions?: Record<string, string>;
   /** Absent on hosts that predate assistant default models; keyed by assistant ID. */
   assistant_default_models?: Record<string, string>;
+  /** Absent on hosts that predate project defaults. */
+  project_defaults?: Record<string, ProjectDefaultsConfig>;
   user_skill_groups?: UserSkillGroupsConfig;
+}
+
+export interface ProjectDefaultsConfig {
+  primary_model?: string | null;
+  fast_model?: string | null;
+  mode?: string | null;
+  [key: string]: unknown;
 }
 
 export interface UserToolGroupsConfig {
@@ -465,6 +474,8 @@ export interface ModelRoutingConfig {
   /** Retained legacy data; subagent selection uses its existing configuration. */
   subagent_model?: string;
   router_model_id?: string | null;
+  /** Unknown future protocols remain readable; the execution host validates support. */
+  protocol?: string;
   /** Legacy optional override; the GUI preserves it without exposing an input. */
   tokenizer_path?: string;
   simple_threshold: number;
@@ -474,7 +485,7 @@ export interface ModelRoutingConfig {
 
 export interface AIConfig {
   models: AIModelConfig[];
-  tool_presentation_mode?: 'native' | 'ptc';
+  tool_presentation_mode?: 'native' | 'ptc' | 'ptc_python';
   default_models: DefaultModelsConfig;
   model_routing?: ModelRoutingConfig;
   agent_model_defaults: AgentModelDefaultsConfig;

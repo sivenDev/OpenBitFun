@@ -47,6 +47,7 @@ import {
   type SharedAssistantSessionTarget,
   hydrateSessionHistoryForDetail as hydrateSessionHistoryForDetailModule,
   preloadHistoricalSessionForOpen as preloadHistoricalSessionForOpenModule,
+  prewarmHistoricalSession as prewarmHistoricalSessionModule,
   switchChatSession as switchChatSessionModule,
   deleteChatSession as deleteChatSessionModule,
   archiveChatSession as archiveChatSessionModule,
@@ -149,8 +150,8 @@ export class FlowChatManager {
     registerDriverSessionLookup(
       sessionId => this.context.flowChatStore.getState().sessions.get(sessionId),
     );
-    this.context.flowChatStore.registerPersistUnreadCompletionCallback((sessionId, value) => {
-      updateSessionMetadata(this.context, sessionId, ['unreadCompletion', 'needsUserAttention']).catch(err => {
+    this.context.flowChatStore.registerPersistUnreadCompletionCallback((sessionId, value, receipt) => {
+      updateSessionMetadata(this.context, sessionId, ['unreadCompletion', 'needsUserAttention'], { unreadReceipt: receipt }).catch(err => {
         log.warn('Failed to persist unread completion change', { sessionId, value, err });
       });
     });
@@ -693,6 +694,10 @@ export class FlowChatManager {
 
   async switchChatSession(sessionId: string, isStillRelevant?: () => boolean): Promise<void> {
     return switchChatSessionModule(this.context, sessionId, isStillRelevant);
+  }
+
+  prewarmHistoricalSession(sessionId: string): void {
+    prewarmHistoricalSessionModule(this.context, sessionId);
   }
 
   preloadHistoricalSessionForOpen(sessionId: string): void {

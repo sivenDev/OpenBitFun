@@ -48,15 +48,15 @@
     "languageRowHint": "选择一个语言包作为当前界面语言",
     "appearanceRowHint": "选择界面外观",
     "systemAppearance": "跟随系统",
-    "systemAppearanceDescription": "跟随系统自动切换亮色或暗色外观",
+    "systemAppearanceDescription": "跟随系统自动切换浅色或暗色外观",
     "presets": {
       "openbitfun-dark": {
         "name": "暗色",
         "description": "默认暗色外观"
       },
       "openbitfun-light": {
-        "name": "亮色",
-        "description": "亮色外观 - 纯白界面、柔和中性灰与深海军蓝操作色"
+        "name": "浅色",
+        "description": "浅色外观 - 纯白界面、柔和中性灰与深海军蓝操作色"
       },
       "openbitfun-monochrome": {
         "name": "黑白撞色",
@@ -207,6 +207,7 @@
       "loadFailed": "加载日志配置失败",
       "saveFailed": "保存日志级别失败",
       "levelUpdated": "日志级别已更新",
+      "levelSavedNotApplied": "日志级别已保存，但该设备仍按 {{level}} 级别记录日志。",
       "sensitiveDiagnosticsUpdated": "敏感调试信息日志偏好已更新",
       "refreshed": "运行时状态已刷新",
       "openedFolder": "日志文件夹已打开",

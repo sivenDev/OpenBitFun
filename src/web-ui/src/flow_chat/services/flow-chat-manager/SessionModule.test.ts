@@ -40,6 +40,8 @@ const agentApiMocks = vi.hoisted(() => ({
 const configApiMocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
 }));
+const projectDefaults = vi.hoisted(() => ({ read: vi.fn(async (_id: string) => ({ supported: true, defaults: {} as { mode?: string } })) }));
+vi.mock('@/infrastructure/config/services/ProjectDefaultsService', () => ({ readProjectDefaults: projectDefaults.read }));
 
 const configManagerMocks = vi.hoisted(() => ({
   getConfigs: vi.fn(),
@@ -295,6 +297,7 @@ function createContext(
 }
 
 describe('resolveAgentTypeForSessionCreation', () => {
+  beforeEach(() => { projectDefaults.read.mockResolvedValue({ supported: true, defaults: {} }); });
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -310,6 +313,30 @@ describe('resolveAgentTypeForSessionCreation', () => {
     ]);
 
     await expect(resolveAgentTypeForSessionCreation(undefined, null)).resolves.toBe('PlannerPlus');
+  });
+
+  it('uses the owning project mode before the global preference and preserves explicit choices', async () => {
+    projectDefaults.read.mockResolvedValue({ supported: true, defaults: { mode: 'Ultimate' } });
+    agentApiMocks.getAvailableModes.mockResolvedValue([{ id: 'Standard' }, { id: 'Ultimate' }]);
+    const workspace = { id: 'ssh-project', workspaceKind: 'remote' } as any;
+    await expect(resolveAgentTypeForSessionCreation(undefined, workspace)).resolves.toBe('Ultimate');
+    expect(projectDefaults.read).toHaveBeenCalledWith('ssh-project');
+    await expect(resolveAgentTypeForSessionCreation('Standard', workspace)).resolves.toBe('Standard');
+  });
+
+  it('issues the default-mode reads together and keeps the project mode when the global read fails', async () => {
+    const project = createDeferred<{ supported: boolean; defaults: { mode?: string } }>();
+    const reader = vi.fn(() => project.promise);
+    configApiMocks.getConfig.mockRejectedValue(new Error('preference unavailable'));
+    agentApiMocks.getAvailableModes.mockResolvedValue([{ id: 'Standard' }, { id: 'Ultimate' }]);
+    const resolved = resolveAgentTypeForSessionCreation(undefined, { id: 'project' } as any, reader);
+    await Promise.resolve();
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(configApiMocks.getConfig).toHaveBeenCalledTimes(1);
+    expect(agentApiMocks.getAvailableModes).toHaveBeenCalledTimes(1);
+    expect(projectDefaults.read).not.toHaveBeenCalled();
+    project.resolve({ supported: true, defaults: { mode: 'Ultimate' } });
+    await expect(resolved).resolves.toBe('Ultimate');
   });
 
   it('does not override any explicit mode, including the Standard Harness id', async () => {

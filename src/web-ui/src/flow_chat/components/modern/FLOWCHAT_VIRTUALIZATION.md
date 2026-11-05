@@ -1,5 +1,51 @@
 # FlowChat Virtualization
 
+## Historical scrolling and measurement
+
+Manual scrolling keeps the host's native wheel/touch behavior. Perceived
+smoothness depends on stable content coordinates as well as frame time; adding
+an easing loop to a height correction would expose the correction as motion.
+The implementation follows the read-before-write guidance in
+[rendering performance](https://web.dev/articles/rendering-performance) and
+[layout thrashing](https://web.dev/articles/avoid-large-complex-layouts-and-layout-thrashing).
+No new motion is introduced, so the existing reduced-motion policy and follow
+targets remain unchanged.
+
+Newly attached rows are measured as one batch in the layout phase, including
+while the reader is scrolling. The library's `measureElement` still registers
+observation, but it skips its inline size update during a gesture; the adapter
+therefore supplies the already-read height through `resizeItem` in that commit.
+In this flow layout the real row heights affect following content immediately.
+Waiting for ResizeObserver lets the old virtual padding and real rows disagree
+for a visible frame.
+
+Explicit item/offset aims retain the library's own attachment-measurement policy.
+A smooth aim intentionally leaves distant rows estimated: forcing their sizes
+can move its target and make the library replace the animation with an `auto`
+jump. Reader intent cancels the aim before scrolling, so newly attached rows
+resume synchronous measurement in the first reader-controlled commit.
+
+Above-viewport measurement shifts pass through the viewport register and credit
+the DOM anchor with the **actual applied** displacement. Otherwise the anchor
+counts that repair as reader travel and applies it again. The anchor remains
+independent of the virtualizer; the list joins these two owners.
+
+The native scroll handler shares one `flowChatViewportGeometry` sample among
+leading-extent, anchor and session-snapshot readers. It is local to that event,
+and discarded if a follow write changes the offset. Layout commits, resize and
+navigation read fresh geometry; this is not a cross-frame cache.
+
+The packaged macOS WebView fixture (80 Turns with Markdown, code, tables and
+collapsed tool groups) reproduced 17 reverse frames during 72 fast upward wheel
+actions, with a maximum 499.45px reversal. After these changes the same five
+slow/fast bidirectional phases had zero reversals over 4px and zero blank frames;
+row/scroller rectangle reads fell from 37,331 to 28,489 across those phases.
+Fast-up frame intervals still reached 26ms at p95 and 53ms at maximum in the
+final run; continuity is established here, not a constant 60fps guarantee.
+These are instrumented native-WebView samples, not physical trackpad or
+cross-platform latency measurements. See `FLOWCHAT_VERIFICATION.md` for the
+repeatable fixture and its limits.
+
 ## Accepted steering display
 
 The host queue's optional `steeringDisplay` receipt projects an accepted message
@@ -23,8 +69,9 @@ mount animation is added, and execution order remains host-owned.
 
 ## Measured row spacing
 
-`VirtualItemRenderer` establishes a `flow-root` on the measured wrapper so
-descendant block margins remain inside its border box. A row replaced by virtual
+`VirtualItemRenderer` establishes a column flex formatting context on the measured
+wrapper so descendant block margins remain inside its border box. Like the former
+`flow-root`, it contains spacing without clipping decorations. A row replaced by virtual
 padding must retain its full occupied height, including trailing item spacing.
 Do not substitute clipping overflow: user-message decorations and controls can
 extend outside the reading column. The rhythm test protects this stylesheet
@@ -123,12 +170,13 @@ for the first model call (the accepted attempt after a retry). Text, thinking an
 tool output count as effective output; metadata-only packets do not. The host
 reports this optional duration, so controller clock skew and event delivery
 latency do not affect it. The speed levels use output tokens divided by the sum
-of each call's first-effective-output-to-stream-end time, with thresholds at 15,
-40 and 80 tokens/s disclosed in the Tooltip. HTTP setup, TTFT, tool execution and
-post-stream usage persistence are excluded. Missing or inconsistent timing in
-any model call, or retries whose earlier attempt timing is unavailable, omit speed
-rather than substituting turn wall time. Negative-index controller setup/audit
-rows are presentation only and do not participate in either metric.
+of each call's request-to-completion time, including TTFT but excluding tool
+execution, with thresholds at 15, 40 and 80 tokens/s. Tooltips show only the
+measured values and level, not the formula or thresholds.
+Missing or inconsistent timing in any model call, or retries whose earlier
+attempt timing is unavailable, omit speed rather than substituting partial turn
+time. Negative-index controller setup/audit rows are presentation only and do
+not participate in either metric.
 Legacy records omit unknown TTFT;
 reported zero remains valid. Timing survives the normal history save/load path. Total usage and the cache ring form one unit,
 hidden only when both values are missing. If usage is known but the cache ratio
@@ -416,12 +464,21 @@ embedded transcripts without a rail keep their own layout. The scroller remains
 full width.
 The shared content-padding token defaults to 0.75rem on wide and narrow surfaces,
 keeping the reading column compact while leaving room for decoration and targets.
-The borderless bubble extends into that gutter by its corner radius, and its inner
-padding matches that radius so user text, timestamps, reply prose, and completion
-metadata keep the same content axis. Content-fit bubbles have an 8rem minimum that
-is capped by the 72% message-width limit on narrow surfaces. Content below that
-minimum stays shrink-wrapped and centered; content that reaches the available line
-width retains leading text alignment and wraps normally.
+The borderless bubble ends at the reading column's trailing content edge, with
+inner padding matching its corner radius. Bubbles fit their content without a
+minimum width. Collapsed previews are capped at 28rem and the shared message-width
+limit (72% of the column, up to 48rem by default). Text after the third explicit
+line break is kept in a span outside layout while collapsed, so hidden long lines
+do not contribute to intrinsic width. The visible prefix sizes the bubble; CSS
+still clamps wrapped text to three visual lines. A generated ellipsis marks the
+hidden suffix without changing the rendered-text coordinate sequence. Reference
+capsules stay intact, and copy/edit continue to use the full source.
+Expanding restores the suffix and removes the preview cap: the bubble grows
+leftward as needed from the same trailing edge and downward up to its existing
+60vh scroll limit. Editing retains the full reading-column width. Narrow columns
+remain bounded by the shared width limit.
+These changes use normal layout and the existing resize measurement path, with
+no layout animation or viewport writes.
 Both metadata rows align the last icon frame with the content's trailing edge,
 retaining 28px hit targets and the same compact action gap. Each action cluster
 wraps as a whole when space is limited. A half-space-1 gap groups user metadata
@@ -583,6 +640,46 @@ continues to participate in the existing footer/reservation contract.
 Native transcript selections use the application selection style. Do not add
 descendant `::selection` overrides to the chat root: WebKitGTK reports show
 uncached highlight pseudo-style resolution during long-transcript repaint.
+
+The measured row, timeline bridge and user-message shell use column flex layout.
+This keeps the positioned model round and right-aligned bubble as flex items,
+avoiding WebKit's block-selection gap fill across turn padding, paragraph gaps
+and the empty space beside a bubble. See `RenderBlock::selectionGaps` in
+[WebKit](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/rendering/RenderBlock.cpp).
+The internal model-round stack stays in block/inline flow so parallel capsules,
+Markdown margins, lists and card grids keep their existing layout. Selection
+remains native: no `user-select: none` on transcript ancestors, range replacement,
+custom selection overlay, extra selection listener or platform-specific path.
+The flex boundary also contains the margins used by virtual-row measurement;
+do not restore block layout in an embedded pane. Stylesheet and DOM fixtures do
+not establish native selection paint; cross-message selection and scroll geometry
+still require native WebView acceptance.
+
+The text leaf also owns a column flex boundary: making only the outer model
+round a flex item leaves the Markdown/plain-text body behind a block wrapper.
+`FlowTextBlock` makes its immediate body a flex item independently of its host
+(direct/timeline reply, collected group, retry history or subagent projection).
+The Deep Research wrapper already supplies the equivalent grid-item boundary.
+Keep the body itself in block flow so paragraph/list margin collapse and inline
+markup remain intact. Exclude `[hidden]` and the horizontal runtime-status row
+from this layout rule. DOM/CSS integration fixtures cover those boundaries and
+native range contents; they cannot prove WebKit's selection pixels.
+
+Markdown table cells retain native table layout. Their renderer-owned cell boxes
+use transparent selection paint for padding and unused row height; an inner flex
+boundary isolates the text body while preserving inline runs, alignment and
+column sizing. These are exact cell-owner pseudo selectors, not a chat-root
+descendant override. Text continues to use the application selection colors;
+forced-colors rendering still needs native acceptance. The two layout wrappers are transparent to excerpt
+text indexing so stored pre-wrapper offsets and cross-cell anchors remain valid.
+
+Code fences have further independent selection roots: the response parser's
+outer `pre`, the positioned/scrollable code body, and the inner highlighted or
+fallback `pre`. Each uses column flex layout, making `code` a flex item while
+keeping its token runs in normal preformatted flow. This covers both one-line
+and multiline fences, including unlabelled fences and the thinking fallback.
+Keep `white-space: pre`, source whitespace, horizontal overflow, and hover-line
+geometry intact. No source nodes or excerpt offsets change for code fences.
 
 Search, temporary excerpts and persistent annotations use `flowChatHighlights`
 to own both their CSS Highlight ranges and attributes on every intersecting text

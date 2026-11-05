@@ -1,5 +1,6 @@
 mod audit;
 mod delegation;
+pub(crate) mod outbound;
 mod permissions;
 pub(crate) mod protocol;
 mod query_file;
@@ -555,6 +556,8 @@ async fn query_in_store(
                     workspace_path: Some(job.request.workspace_path.clone()),
                     remote_connection_id: None,
                     remote_ssh_host: None,
+                    include_system_prompt_preview: false,
+                    context_preview_category: None,
                     include_hidden_subagents: false,
                 },
             )
@@ -905,6 +908,8 @@ async fn inspect_model_readiness() -> Result<ModelReadiness> {
                 default_models: Default::default(),
                 models_dev_reasoning_catalog: None,
                 reasoning_preset_selection_supported: true,
+                session_model_write_fence_supported: false,
+                session_model_write_token: None,
                 session_model_id: None,
                 session_reasoning_preset: None,
             });
