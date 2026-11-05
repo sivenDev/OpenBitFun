@@ -13,6 +13,11 @@ import { FlowChatStore, mergeModelRoundAttemptDiagnostics } from '../../store/Fl
 import { initializeAcpPlanState } from '../acpPlanState';
 import { isSessionTurnRetired } from '../../store/sessionMutationStore';
 import { stateMachineManager } from '../../state-machine';
+import { i18nService } from '@/infrastructure/i18n';
+import { assistantCallNotice, type AssistantCallOutcome } from '../assistantCallNotice';
+import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
+import { useSceneStore } from '@/app/stores/sceneStore';
+import { isSessionSceneId } from '@/app/components/SceneBar/types';
 import { SessionExecutionEvent, SessionExecutionState } from '../../state-machine/types';
 import { agenticEventListener, type AgenticEventCallbacks } from '../AgenticEventListener';
 import { 
@@ -560,6 +565,48 @@ function ensureSubagentSession(
   );
 }
 
+const noticedAssistantCallTurns = new Set<string>();
+
+/** Tells the user a call to an assistant ended when they are elsewhere. */
+function noticeEndedAssistantCall(event: any, outcome: AssistantCallOutcome): void {
+  const sessionId = event?.sessionId ?? event?.session_id;
+  const turnId = event?.turnId ?? event?.turn_id;
+  if (!sessionId || !turnId) return;
+  const key = `${sessionId}:${turnId}`;
+  if (noticedAssistantCallTurns.has(key)) return;
+  const notice = assistantCallNotice(FlowChatStore.getInstance().getState(), sessionId, outcome, {
+    t: (key, values) => i18nService.t(`flow-chat:${key}`, values),
+    translate: key => i18nService.t(key),
+    sharedWithMe: useLanShareStore.getState().sharedWithMe,
+    callerIsRunning: callerSessionId =>
+      stateMachineManager.getCurrentState(callerSessionId) === SessionExecutionState.PROCESSING,
+    // The active session stays set while another scene (home, settings) is
+    // shown, so the caller is in view only on a visible conversation scene.
+    callerIsVisible: callerSessionId => typeof document !== 'undefined'
+      && document.visibilityState === 'visible'
+      && isSessionSceneId(useSceneStore.getState().activeTabId)
+      && FlowChatStore.getInstance().getState().activeSessionId === callerSessionId,
+  });
+  if (!notice) return;
+  noticedAssistantCallTurns.add(key);
+  const show = outcome === 'completed' ? notificationService.success : notificationService.error;
+  show.call(notificationService, notice.message, {
+    // Long enough to reach the action; failures stay until dismissed.
+    duration: outcome === 'completed' ? 10_000 : undefined,
+    actions: [{
+      label: i18nService.t('flow-chat:assistantCallNotice.open'),
+      onClick: () => {
+        // Loaded on use: session activation depends on the manager that
+        // owns this module.
+        void import('../sessionActivation').then(({ openMainSession }) =>
+          openMainSession(notice.callerSessionId)).catch(error => {
+          log.warn('Failed to open the conversation that made an assistant call', { error });
+        });
+      },
+    }],
+  });
+}
+
 function reconcileBackgroundSubagentSession(subagentSessionId?: string | null): void {
   if (!subagentSessionId) {
     return;
@@ -928,12 +975,15 @@ export async function initializeEventListeners(
     }),
     onDialogTurnCompleted: afterRelayRecords((event) => {
       handleDialogTurnComplete(context, event, onTodoWriteResult);
+      noticeEndedAssistantCall(event, event?.success === false ? 'failed' : 'completed');
     }),
     onDialogTurnFailed: afterRelayRecords((event) => {
       handleDialogTurnFailed(context, event);
+      noticeEndedAssistantCall(event, 'failed');
     }),
     onDialogTurnCancelled: afterRelayRecords((event) => {
       handleDialogTurnCancelled(context, event, onTodoWriteResult);
+      noticeEndedAssistantCall(event, 'cancelled');
     }),
     onDialogTurnInterrupted: afterRelayRecords((event) => {
       handleDialogTurnInterrupted(context, event);

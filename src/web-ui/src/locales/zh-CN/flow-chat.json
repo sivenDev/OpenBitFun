@@ -1637,6 +1637,12 @@
     "label": "轮次列表",
     "untitledTurn": "未命名轮次"
   },
+  "assistantCallNotice": {
+    "completed": "{{agent}} 已完成「{{conversation}}」里交给它的任务",
+    "failed": "{{agent}} 没能完成「{{conversation}}」里交给它的任务",
+    "cancelled": "{{agent}} 在「{{conversation}}」里的任务已取消",
+    "open": "查看"
+  },
   "flowChatHeader": {
     "turnBadge": "第 {{current}} 轮",
     "btwBackTooltipWithTurn": "返回到来源会话：{{title}}（第 {{turn}} 轮）",

@@ -1637,6 +1637,12 @@
     "label": "Turn list",
     "untitledTurn": "Untitled turn"
   },
+  "assistantCallNotice": {
+    "completed": "{{agent}} finished the task from \"{{conversation}}\"",
+    "failed": "{{agent}} could not finish the task from \"{{conversation}}\"",
+    "cancelled": "{{agent}}'s task from \"{{conversation}}\" was cancelled",
+    "open": "View"
+  },
   "flowChatHeader": {
     "turnBadge": "Turn {{current}}",
     "btwBackTooltipWithTurn": "Go back to the source session: {{title}} (Turn {{turn}})",
