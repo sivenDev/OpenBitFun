@@ -147,9 +147,9 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-core --lib agentic::session`
 - `pnpm --dir src/web-ui run test:run src/app/components/NavPanel/sections`
 
-- [ ] 后台调用与收回、会话标记、主人与租户调用各自进入正确的工作空间、调用链传递、X→Y→X 拒绝、没有该字段的会话读入均有测试
+- [x] 后台调用与收回、会话标记、主人与租户调用各自进入正确的工作空间、调用链传递、X→Y→X 拒绝、没有该字段的会话读入均有测试
 
-**进展（2026-11-03，未勾选）：**
+**进展（2026-11-03；2026-11-05 随 Task 6 勾选：租户调用进入被调用助理名下的租户工作空间，见 Task 6 进展）：**
 - 调用：`Task`/`AgentSpawn` 的 `assistant:<id>` 不再返回「cannot be called from this version yet」。准入后按调用链做本机环检测（设备 id 取 `RemoteAgentDelegationPort::local_device_id`，没有端口时用 `local`），把「原链 + `<设备>/<调用方助理>`」写入 `dispatchDelegationCallChain`，并写入调用方 `assistantCallCaller`/`assistantCallCallerName`。
 - 会话：协调器在新建分支中识别助理类型，在目标助理的默认工作区以 `Claw` 新建普通会话（不是隐藏子会话，`continuation_policy = FreshOnly`，名称取任务首行）。会话元数据写入 `delegatedBy {assistant, assistantName?, sessionId, callChain}`，不写子会话关系。子回合上下文去掉调用方的委派事实，只保留调用链。`SubagentSessionLinked` 新增 `assistantSession`（默认 false，旧版本忽略），Web UI 只把任务卡片链接到该会话，不把它改成调用方的子会话。
 - 界面：会话列表对有 `delegatedBy` 的会话显示「来自 X」，悬停说明「X 调用这个助理时开始的会话」（zh-CN/zh-TW/en-US）。
@@ -288,7 +288,16 @@ parent: "F002"
 - `cargo test --locked -p openbitfun-core --features lan-share --lib service::delegation`
 - `cargo test --locked -p openbitfun-cli --bin openbitfun dispatch::`
 
-- [ ] 普通程度拒绝、完全信任可用、计数、审计、撤销即停止均有测试
+- [x] 普通程度拒绝、完全信任可用、计数、审计、撤销即停止均有测试
+
+**进展（2026-11-05，主人确认：到上限时立即拒绝并说明原因；租户在被调用助理名下的会话随原共享的保留期限一起删除；调用本机其他助理与调用共享给本机的助理都计入原共享的同时任务数）：**
+- dbf10327c：内核新增 `DelegatedCallLedger`（`agentic/coordination/delegated_calls.rs`）。外部任务的回合要调用 `assistant:` 或 `shared:` 时，协调器先向执行该任务的宿主登记；没有登记方的宿主拒绝「this host does not account for calls from a task another device delegated」，宿主拒绝时说明原因。本机助理的调用在被调用助理名下、同一使用者的租户工作空间运行（`tenants/<被调用助理>/<设备>`），保留委派事实，提示词说明「这是另一台设备上的人交给它的任务，同样的共享规则适用」。`execution.rs` 不再按信任程度拒绝，普通程度在工具层（类目不生成）与宿主处拒绝。
+- CLI 宿主 `dispatch/call_ledger.rs`：每次调用重新核对授权（撤销后拒绝），信任程度须为完全（否则「this share does not allow calling other assistants」）；在准入锁内检查原共享的同时任务数，运行中的任务每个计 1 加其进行中的调用数，到上限时拒绝「this share already runs as many tasks as its owner allows (N); try again when one of them finishes」；否则写调用位（调用结束即删除）与审计条目 `assistant_called`（记原使用者、设备与被调用助理）。调用会话记在任务目录 `call-sessions.json`，保留期到期时与任务自己的会话一起删除。任务结束（含撤销导致的取消）时，worker 取消该任务会话发起的后台调用。
+- 5ee3330b6：宿主把本机共享设备 id 写到 `lan-share/device-id`，CLI worker 以它在调用链中称呼本机（此前写 `local`，跨设备回环检测认不出）。f25343333：发起方卡片在共享会话中把主人的其他助理写成「另一个助理 · 来自 某某 的设备」。36ca19d70：主人的导航在被调用助理名下「来自 某某 的设备」分组中列出这些调用会话（`dispatch list` 带出 `calls`，桌面端每个调用一行，审批数只记在任务自己那一行），点开只读查看；旧格式的记录按租户目录推出被调用助理。
+- 测试：CLI `call_ledger` 的 `a_call_at_full_trust_runs_in_the_callers_workspace_under_the_called_assistant`、`calls_count_against_the_share_and_are_refused_over_its_limit`、`calls_are_refused_at_normal_trust_or_once_access_ends`、`a_calls_session_is_recorded_with_the_task`；`store` 的保留期测试（调用会话随任务删除）与 `a_call_recorded_before_it_named_its_assistant_is_listed_under_it`；core `a_delegated_tasks_call_is_accounted_by_the_host_before_it_starts`、`a_delegated_tasks_call_the_host_refuses_says_why`、`a_delegated_tasks_call_stays_that_devices_task_under_the_called_assistant`、`a_call_to_another_assistant_names_it_and_older_entries_read_without_it`、`a_worker_reads_the_sharing_id_its_host_recorded`；桌面 `a_tasks_calls_are_listed_under_the_called_assistant`。
+- 验证：CLI `dispatch::` 122 通过；core 上述过滤项通过，`--test lan_share_flow` 12 通过；桌面 `delegation_tasks_api` 4 通过；Web UI `src/app/components/NavPanel/sections/workspaces` 161 通过，`remoteAgent.test.ts` 通过，`tsc`、`eslint`、`pnpm run i18n:audit` 通过。
+- 真机（2026-11-05，本机 dev 构建为主人，agent002 dev 构建 8edd4665 为使用者，在共享的小岚的对话「模型检查指令」与「自我介绍与性格描述」中）：普通程度下小岚回答「无法调用小栖：当前共享环境不允许调用其他助理」。改为完全信任后，小岚调用小栖并转述「冬天把喧嚣藏进雪里，让每一盏灯都更像归途。」；任务 `delegation-77ca5f2a…` 的调用链为 `9a4c696a…/workspace`（本机共享 id），调用位在结束后释放，`call-sessions.json` 记下会话与标题，审计 `assistant_called`（trust full，agent / agent002-Mac-Mini，calledAssistant `assistant:workspace-9583265c`）。agent002 的卡片显示「另一个助理 · 来自 zhengxiwan 的设备」。主人导航中小栖名下「来自 agent 的设备」列出该调用，点开只读显示小栖自己的回合。
+- 已知缺口：外部任务调用「共享给本机的助理」（`shared:`）在 CLI 宿主上不可用。worker 进程没有注册 `RemoteAgentDelegationPort`（只有桌面进程有），这类调用在登记后会因找不到端口而失败。计数与审计的代码路径已覆盖 `shared:`，但端到端不可用。因此 Exit Criteria 第 3 条中「外部任务跨设备再调用」需要另行补上 worker 的局域网端口。
 
 ## Task 7: 两台 Mac 真机验收
 
