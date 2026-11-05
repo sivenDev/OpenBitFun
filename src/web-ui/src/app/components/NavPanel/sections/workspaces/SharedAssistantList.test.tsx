@@ -113,7 +113,7 @@ describe('the assistants shared with this device in the navigation', () => {
     expect(all('nav-shared-assistant')).toHaveLength(1);
     // Who shares it reads beside the name; the accessible name says the same once.
     const header = document.querySelector('[data-testid="nav-shared-assistant-open"]')!;
-    expect(header.querySelector('.assistant-session-history__delegated-title')!.textContent).toBe('Writer');
+    expect(header.querySelector('.openbitfun-nav-panel__assistant-item-label')!.textContent).toBe('Writer');
     expect(header.querySelector('[data-testid="nav-shared-assistant-source"]')!.textContent)
       .toBe('nav.sessions.sharedAssistant.from Ann');
     expect(header.getAttribute('aria-label')).toBe('Writer · nav.sessions.sharedAssistant.from Ann');
@@ -136,8 +136,10 @@ describe('the assistants shared with this device in the navigation', () => {
     ]);
     expect(rows.map(row => row.querySelector('[data-openbitfun-part="statusMark"]')!.getAttribute('data-status')))
       .toEqual(['approval', 'queued']);
+    // Rows are session rows: the one being viewed is selected like a session.
     expect(rows[0].getAttribute('aria-current')).toBe('true');
-    expect(rows[0].className).toContain('is-waiting');
+    expect(rows[0].className).toContain('openbitfun-nav-panel__inline-item');
+    expect(rows[0].className).toContain('is-active');
     // Closed again, it stays closed after the list is shown again.
     await click(history);
     act(() => root.unmount());
@@ -177,13 +179,18 @@ describe('the assistants shared with this device in the navigation', () => {
     ].map(entry => (Array.isArray(entry) ? entry : [entry.jobId, entry])));
     await render();
     await click(document.querySelector('[data-testid="nav-shared-assistant-history"]')!);
-    const titles = () => all('nav-shared-assistant-conversation').map(row => row.querySelector('.assistant-session-history__delegated-title')!.textContent);
+    const titles = () => all('nav-shared-assistant-conversation').map(row => row.querySelector('.openbitfun-nav-panel__inline-item-label')!.textContent);
     // session-b is the one being viewed, so it stays in sight past the first three.
     expect(titles()).toEqual(['c', 'd', 'e', 'Second draft']);
-    const more = document.querySelector('[data-testid="nav-shared-assistant-more"]')!;
-    expect(more.textContent).toBe('nav.sessions.delegated.showMore 1');
-    await click(more);
+    // The toggle reads like a local assistant's: a short label and a count.
+    const more = () => document.querySelector('[data-testid="nav-shared-assistant-more"]')!;
+    expect(more().getAttribute('aria-label')).toBe('nav.sessions.showMore 1');
+    expect(more().textContent).toBe('nav.sessions.showMoreLabel+1');
+    await click(more());
     expect(titles()).toEqual(['c', 'd', 'e', 'f', 'Second draft']);
+    expect(more().textContent).toBe('nav.sessions.showLess');
+    await click(more());
+    expect(titles()).toEqual(['c', 'd', 'e', 'Second draft']);
   });
 
   it('open a conversation, the latest one, or a new one', async () => {
@@ -231,7 +238,7 @@ describe('the assistants shared with this device in the navigation', () => {
       const history = document.querySelector('[data-testid="nav-shared-assistant-history"]')!;
       if (history.getAttribute('aria-expanded') !== 'true') await click(history);
       const row = all('nav-shared-assistant-conversation').find(item => item.textContent === title)!;
-      const more = row.parentElement!.querySelector('[data-testid="nav-shared-assistant-conversation-more"]')!;
+      const more = row.querySelector('[data-testid="nav-shared-assistant-conversation-more"]')!;
       if (more.getAttribute('aria-expanded') === 'true') await click(more);
       await click(more);
       return document.getElementById(more.getAttribute('aria-controls')!)!.querySelector('[data-menu-id="delete"]')!;
@@ -239,6 +246,17 @@ describe('the assistants shared with this device in the navigation', () => {
     const blockedBy = (item: Element) => (item.getAttribute('aria-disabled') === 'true'
       ? item.textContent!.replace('nav.sessions.sharedAssistant.delete', '').trim()
       : null);
+
+    it('puts the menu where the status is, as a session row does, without opening the conversation', async () => {
+      await render();
+      const row = all('nav-shared-assistant-conversation')[0];
+      const trailing = row.querySelector('.openbitfun-nav-panel__inline-item-trailing')!;
+      expect(trailing.querySelector('.openbitfun-nav-panel__inline-item-status [data-openbitfun-part="statusMark"]')).not.toBeNull();
+      expect(trailing.querySelector('.openbitfun-nav-panel__inline-item-actions [data-testid="nav-shared-assistant-conversation-more"]')).not.toBeNull();
+      await openMenu('Second draft');
+      expect(row.className).toContain('is-menu-open');
+      expect(mocks.openSession).not.toHaveBeenCalled();
+    });
 
     it('deletes a finished one on both devices after a confirmation that names the owner', async () => {
       mocks.jobs = { ...mocks.jobs, c: settled };

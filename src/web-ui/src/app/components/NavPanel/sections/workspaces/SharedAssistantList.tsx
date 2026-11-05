@@ -1,6 +1,7 @@
 import { useId, useRef, useState, useSyncExternalStore } from 'react';
-import { Icon, IconButton, MenuPopover, Tooltip, type MenuEntry } from '@openbitfun/ui';
-import { Ban, ChevronUp, History, WifiOff } from 'lucide-react';
+import { ActionItem, Icon, MenuPopover, OverflowText, Spinner, Tooltip, type MenuEntry } from '@openbitfun/ui';
+import { Ban, ChevronUp, History, MessageCirclePlus, WifiOff } from 'lucide-react';
+import { AssistantAvatar } from '@/app/components/AssistantAvatar';
 import { useSceneStore } from '@/app/stores/sceneStore';
 import { isSessionNavRowActive } from '@/app/components/NavPanel/sections/sessions/sessionNavSelection';
 import { dispatchJobStore, type DispatchObserverJob } from '@/features/dispatch/dispatchJobStore';
@@ -44,24 +45,32 @@ type DeleteBlock = 'offline' | 'revoked' | 'active' | 'needsUpdate' | 'checking'
 /** Whether the owner deletes conversations, as far as this menu knows. */
 type OwnerSupport = 'checking' | 'yes' | 'no' | 'unreachable';
 
-interface ConversationActionsProps {
+interface ConversationRowProps {
   job: DispatchObserverJob;
   assistant: SharedAssistantRef;
   owner: string;
   title: string;
+  status: SharedAssistantStatus;
+  /** What the status says, for the tooltip and assistive technology. */
+  detail: string | null;
+  /** The conversation is the one being viewed. */
+  selected: boolean;
   revoked: boolean;
   online: boolean;
-  /** The conversation waits on the owner or runs there. */
-  active: boolean;
+  onOpen: () => void;
 }
 
 /**
- * The "..." menu of one conversation with a shared assistant. Deleting
- * removes it on both devices, so the owner must be reachable, still share
- * the assistant, support it, and not be running the conversation; a new
- * conversation that never reached the owner is removed here at once.
+ * One conversation with a shared assistant, laid out like a local session
+ * row: its status sits after the title and gives way to the "..." menu on
+ * hover. Deleting removes it on both devices, so the owner must be
+ * reachable, still share the assistant, support it, and not be running the
+ * conversation; a new conversation that never reached the owner is removed
+ * here at once.
  */
-function SharedConversationActions({ job, assistant, owner, title, revoked, online, active }: ConversationActionsProps) {
+function SharedConversationRow({
+  job, assistant, owner, title, status, detail, selected, revoked, online, onOpen,
+}: ConversationRowProps) {
   const { t } = useI18n('common');
   const [open, setOpen] = useState(false);
   const [support, setSupport] = useState<OwnerSupport>('checking');
@@ -70,6 +79,8 @@ function SharedConversationActions({ job, assistant, owner, title, revoked, onli
   const menuId = useId();
   const localOnly = isLocalOnlyConversation(job);
   const moreLabel = t('nav.sessions.sharedAssistant.more');
+  const active = status.kind === 'approval' || status.kind === 'queued' || status.kind === 'running';
+  const said = detail ? `${title} · ${detail}` : title;
 
   const block: DeleteBlock | null = localOnly ? null
     : revoked ? 'revoked'
@@ -123,24 +134,73 @@ function SharedConversationActions({ job, assistant, owner, title, revoked, onli
     shortcut: block ? t(`nav.sessions.sharedAssistant.deleteBlocked.${block}`) : undefined,
     onSelect: () => void remove(),
   }];
+  const menuOpen = open || deleting;
 
   return (
-    <div className="shared-assistant-nav__conversation-actions" data-menu-open={open || undefined}>
-      <Tooltip content={moreLabel} disabled={open}>
-        <IconButton
-          ref={anchorRef}
-          size="xs"
-          variant="quiet"
-          aria-label={`${moreLabel} · ${title}`}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-controls={open ? menuId : undefined}
-          loading={deleting}
-          disabled={deleting}
-          onClick={toggle}
-          icon={<Icon name="more" size="xs" aria-hidden="true" />}
-          data-testid="nav-shared-assistant-conversation-more"
-        />
+    <>
+      <Tooltip content={said} placement="right" followCursor>
+        <div
+          role="button"
+          tabIndex={0}
+          className={[
+            'openbitfun-nav-panel__inline-item',
+            selected && 'is-active',
+            menuOpen && 'is-menu-open',
+          ].filter(Boolean).join(' ')}
+          data-openbitfun-component="sessions-section"
+          data-openbitfun-part="row"
+          data-overflow-trigger
+          data-openbitfun-state={[selected && 'active', menuOpen && 'menuOpen'].filter(Boolean).join(' ') || undefined}
+          aria-current={selected ? 'true' : undefined}
+          aria-label={said}
+          onClick={onOpen}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            onOpen();
+          }}
+          data-testid="nav-shared-assistant-conversation"
+        >
+          <span className="openbitfun-nav-panel__inline-item-main" data-openbitfun-component="sessions-section" data-openbitfun-part="rowMain">
+            <span className="openbitfun-nav-panel__inline-item-copy">
+              <span className="openbitfun-nav-panel__inline-item-primary">
+                <span className="openbitfun-nav-panel__inline-item-title">
+                  <OverflowText behavior="marquee" title="" className="openbitfun-nav-panel__inline-item-label">{title}</OverflowText>
+                </span>
+              </span>
+            </span>
+          </span>
+          <div className="openbitfun-nav-panel__inline-item-trailing">
+            <span className="openbitfun-nav-panel__inline-item-status">
+              <NavTaskStatusIcon kind={status.kind} label={detail} />
+            </span>
+            <div
+              className={`openbitfun-nav-panel__inline-item-actions${menuOpen ? ' is-open' : ''}`}
+              data-openbitfun-component="sessions-section"
+              data-openbitfun-part="actions"
+              data-openbitfun-state={menuOpen ? 'menuOpen' : undefined}
+            >
+              <button
+                type="button"
+                ref={anchorRef}
+                className={`openbitfun-nav-panel__inline-item-action-btn${menuOpen ? ' is-open' : ''}`}
+                aria-label={`${title} · ${moreLabel}`}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-controls={open ? menuId : undefined}
+                aria-busy={deleting || undefined}
+                disabled={deleting}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggle();
+                }}
+                data-testid="nav-shared-assistant-conversation-more"
+              >
+                {deleting ? <Spinner size="xs" /> : <Icon name="more" size="xs" />}
+              </button>
+            </div>
+          </div>
+        </div>
       </Tooltip>
       <MenuPopover
         id={menuId}
@@ -151,15 +211,16 @@ function SharedConversationActions({ job, assistant, owner, title, revoked, onli
         items={items}
         placement="bottom"
       />
-    </div>
+    </>
   );
 }
 
 /**
  * Assistants other devices share with this one, each with its conversations.
  * They run on their owner's device and belong to no workspace here, so they
- * have their own group. A connected peer's list is not this device's, so
- * nothing is listed in Peer Device Mode.
+ * have their own group, but each reads like a local assistant: its card, then
+ * its conversations as session rows. A connected peer's list is not this
+ * device's, so nothing is listed in Peer Device Mode.
  */
 export default function SharedAssistantList() {
   const { t } = useI18n('common');
@@ -167,7 +228,7 @@ export default function SharedAssistantList() {
   const sharedWithMe = useLanShareStore(state => state.sharedWithMe);
   const jobs = dispatchJobStore(state => state.jobs);
   const [busy, setBusy] = useState(false);
-  // Re-renders after an assistant's other conversations are shown.
+  // Re-renders after an assistant's history is opened, closed, or shown in full.
   const [, setRevision] = useState(0);
   const activeTabId = useSceneStore(state => state.activeTabId);
   const sessions = useSyncExternalStore(
@@ -225,7 +286,7 @@ export default function SharedAssistantList() {
           activeSessionId: activeSessionId ?? null,
           activeChildHasVisibleRow: false,
         });
-        const statusOf = (job: ReturnType<typeof sharedAssistantConversations>[number]) => {
+        const statusOf = (job: DispatchObserverJob) => {
           // A conversation not loaded here has been sent before,
           // unless its first message never left this device.
           const turns = sessions.get(job.sessionId)?.dialogTurns?.length;
@@ -235,32 +296,62 @@ export default function SharedAssistantList() {
         // still shows the conversation being viewed and those waiting on the owner.
         const historyOpen = openedGroups.get(key) ?? false;
         const all = sharedAssistantConversations(jobs, ref);
-        const { shown: conversations, hidden } = historyOpen
-          ? limitRows(all, fullLists.has(key), job => isActive(job.sessionId))
-          : { shown: all.filter(job => isActive(job.sessionId) || statusOf(job).kind === 'approval'), hidden: 0 };
+        const showAll = fullLists.has(key);
+        const limited = limitRows(all, false, job => isActive(job.sessionId));
+        const conversations = historyOpen
+          ? (showAll ? all : limited.shown)
+          : all.filter(job => isActive(job.sessionId) || statusOf(job).kind === 'approval');
         const historyLabel = historyOpen ? t('nav.workspaces.collapseSessions') : t('nav.sessions.history');
         // Out of reach or no longer shared: the assistant and its conversations read dimmed.
         const reachable = !revoked && assistant.online;
+        const viewing = all.some(job => isActive(job.sessionId));
+        const open = () => run(() => openSharedAssistantConversation(ref, !revoked));
+        const toggleFull = () => {
+          if (showAll) fullLists.delete(key);
+          else fullLists.add(key);
+          setRevision(revision => revision + 1);
+        };
         return (
           <div
             key={key}
-            className={['shared-assistant-nav__assistant', !reachable && 'is-unavailable'].filter(Boolean).join(' ')}
+            className={[
+              'openbitfun-nav-panel__assistant-item',
+              'shared-assistant-nav__assistant',
+              viewing && 'is-active',
+              !reachable && 'is-unavailable',
+            ].filter(Boolean).join(' ')}
             data-testid="nav-shared-assistant"
           >
-            <div className="shared-assistant-nav__header">
+            <div className="openbitfun-nav-panel__assistant-item-card" data-openbitfun-product-component="workspace-item" data-openbitfun-product-part="card">
+              <button
+                type="button"
+                className="openbitfun-nav-panel__assistant-item-open-btn"
+                data-openbitfun-product-component="workspace-item"
+                data-openbitfun-product-part="action"
+                tabIndex={-1}
+                aria-hidden="true"
+                onClick={open}
+              >
+                <span className="openbitfun-nav-panel__assistant-item-avatar" data-openbitfun-product-component="workspace-item" data-openbitfun-product-part="icon">
+                  <AssistantAvatar size={22} name={assistant.name} />
+                </span>
+              </button>
               {/* Who shares it reads beside the name; whether it can be reached shows as a mark, its words in the tooltip. */}
               <Tooltip content={source} placement="right" followCursor>
-                <button
+                <ActionItem
+                  data-overflow-trigger
+                  data-openbitfun-product-component="workspace-item"
+                  data-openbitfun-product-part="name"
                   type="button"
-                  className="openbitfun-nav-panel__inline-item shared-assistant-nav__name"
-                  data-openbitfun-component="sessions-section"
-                  data-openbitfun-part="row"
+                  className="openbitfun-nav-panel__assistant-item-name-action"
+                  triggerClassName="openbitfun-nav-panel__assistant-item-name-btn shared-assistant-nav__name"
+                  labelBehavior="static"
                   aria-label={`${assistant.name} · ${source}`}
                   aria-busy={busy}
-                  onClick={() => run(() => openSharedAssistantConversation(ref, !revoked))}
+                  onClick={open}
                   data-testid="nav-shared-assistant-open"
                 >
-                  <span className="assistant-session-history__delegated-title">{assistant.name}</span>
+                  <OverflowText className="openbitfun-nav-panel__assistant-item-label">{assistant.name}</OverflowText>
                   {reachable ? (
                     <span className="shared-assistant-nav__online" data-testid="nav-shared-assistant-online" aria-hidden="true" />
                   ) : (
@@ -269,99 +360,95 @@ export default function SharedAssistantList() {
                     </span>
                   )}
                   <span className="shared-assistant-nav__source" data-testid="nav-shared-assistant-source" aria-hidden="true">{from}</span>
-                </button>
+                </ActionItem>
               </Tooltip>
-              <Tooltip content={historyLabel} placement="right" followCursor>
-                <IconButton
-                  size="xs"
-                  variant="quiet"
-                  className={['shared-assistant-nav__action', historyOpen && 'is-open'].filter(Boolean).join(' ')}
-                  aria-label={historyLabel}
-                  aria-expanded={historyOpen}
-                  onClick={() => {
-                    openedGroups.set(key, !historyOpen);
-                    setRevision(revision => revision + 1);
-                  }}
-                  icon={<Icon glyph={historyOpen ? ChevronUp : History} size="xs" aria-hidden="true" />}
-                  data-testid="nav-shared-assistant-history"
-                />
-              </Tooltip>
-              {revoked ? null : (
-                <Tooltip content={t('nav.sessions.sharedAssistant.newConversation')}>
-                  <IconButton
-                    size="xs"
-                    variant="quiet"
-                    className="shared-assistant-nav__action"
-                    aria-label={t('nav.sessions.sharedAssistant.newConversation')}
-                    disabled={busy}
-                    onClick={() => run(() => startSharedAssistantConversation(ref))}
-                    icon={<Icon name="plus" size="sm" aria-hidden="true" />}
-                    data-testid="nav-shared-assistant-new"
-                  />
-                </Tooltip>
-              )}
-            </div>
-            {conversations.length > 0 ? (
-              <div className="assistant-session-history__delegated">
-                {conversations.map((job) => {
-                  const status = statusOf(job);
-                  const detail = statusText(status, owner);
-                  const active = isActive(job.sessionId);
-                  const title = sessions.get(job.sessionId)?.title || job.title || t('nav.sessions.sharedAssistant.untitled');
-                  const said = detail ? `${title} · ${detail}` : title;
-                  const waiting = status.kind === 'approval' || status.kind === 'queued' || status.kind === 'running';
-                  return (
-                    <div key={job.jobId} className="shared-assistant-nav__conversation">
-                      <Tooltip content={said} placement="right" followCursor>
-                        <button
-                          type="button"
-                          className={[
-                            'openbitfun-nav-panel__inline-item',
-                            'assistant-session-history__delegated-item',
-                            status.kind === 'approval' && 'is-waiting',
-                            active && 'is-active',
-                          ].filter(Boolean).join(' ')}
-                          data-openbitfun-component="sessions-section"
-                          data-openbitfun-part="row"
-                          data-openbitfun-state={active ? 'active' : undefined}
-                          aria-current={active ? 'true' : undefined}
-                          aria-label={said}
-                          onClick={() => run(() => openSharedAssistantConversationJob(job, ref))}
-                          data-testid="nav-shared-assistant-conversation"
-                        >
-                          <span className="assistant-session-history__delegated-line">
-                            <span className="assistant-session-history__delegated-title">{title}</span>
-                            <NavTaskStatusIcon kind={status.kind} label={detail} />
-                          </span>
-                        </button>
-                      </Tooltip>
-                      <SharedConversationActions
-                        job={job}
-                        assistant={ref}
-                        owner={owner}
-                        title={title}
-                        revoked={revoked}
-                        online={assistant.online}
-                        active={waiting}
-                      />
-                    </div>
-                  );
-                })}
-                {hidden > 0 ? (
+              <div className="openbitfun-nav-panel__assistant-item-menu" data-openbitfun-product-component="workspace-item" data-openbitfun-product-part="menu">
+                <Tooltip content={historyLabel} placement="right" followCursor>
                   <button
                     type="button"
-                    className="openbitfun-nav-panel__inline-item assistant-session-history__delegated-more"
-                    data-openbitfun-component="sessions-section"
-                    data-openbitfun-part="more"
+                    className={`openbitfun-nav-panel__assistant-item-menu-trigger${historyOpen ? ' is-open' : ''}`}
+                    data-openbitfun-product-component="workspace-item"
+                    data-openbitfun-product-part="action"
+                    aria-label={historyLabel}
+                    aria-expanded={historyOpen}
                     onClick={() => {
-                      fullLists.add(key);
+                      openedGroups.set(key, !historyOpen);
                       setRevision(revision => revision + 1);
                     }}
-                    data-testid="nav-shared-assistant-more"
+                    data-testid="nav-shared-assistant-history"
                   >
-                    {t('nav.sessions.delegated.showMore', { count: hidden })}
+                    <Icon glyph={historyOpen ? ChevronUp : History} size="xs" />
                   </button>
-                ) : null}
+                </Tooltip>
+                {revoked ? null : (
+                  <Tooltip content={t('nav.sessions.sharedAssistant.newConversation')} placement="right" followCursor>
+                    <button
+                      type="button"
+                      className="openbitfun-nav-panel__assistant-item-menu-trigger"
+                      data-openbitfun-product-component="workspace-item"
+                      data-openbitfun-product-part="action"
+                      aria-label={t('nav.sessions.sharedAssistant.newConversation')}
+                      disabled={busy}
+                      onClick={() => run(() => startSharedAssistantConversation(ref))}
+                      data-testid="nav-shared-assistant-new"
+                    >
+                      <Icon glyph={MessageCirclePlus} size="xs" />
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
+            {conversations.length > 0 ? (
+              <div className="openbitfun-nav-panel__workspace-item-sessions">
+                <div className="assistant-session-history" data-openbitfun-component="sessions-section" data-openbitfun-part="root">
+                  <div className="openbitfun-nav-panel__inline-list">
+                    {conversations.map((job) => {
+                      const status = statusOf(job);
+                      const title = sessions.get(job.sessionId)?.title || job.title || t('nav.sessions.sharedAssistant.untitled');
+                      return (
+                        <SharedConversationRow
+                          key={job.jobId}
+                          job={job}
+                          assistant={ref}
+                          owner={owner}
+                          title={title}
+                          status={status}
+                          detail={statusText(status, owner)}
+                          selected={isActive(job.sessionId)}
+                          revoked={revoked}
+                          online={assistant.online}
+                          onOpen={() => run(() => openSharedAssistantConversationJob(job, ref))}
+                        />
+                      );
+                    })}
+                    {historyOpen && limited.hidden > 0 ? (
+                      <button
+                        type="button"
+                        className="openbitfun-nav-panel__inline-toggle"
+                        data-openbitfun-component="sessions-section"
+                        data-openbitfun-part="toggle"
+                        aria-label={showAll ? t('nav.sessions.showLess') : t('nav.sessions.showMore', { count: limited.hidden })}
+                        onClick={toggleFull}
+                        data-testid="nav-shared-assistant-more"
+                      >
+                        <OverflowText className="openbitfun-nav-panel__inline-toggle-label">
+                          {showAll ? t('nav.sessions.showLess') : t('nav.sessions.showMoreLabel')}
+                        </OverflowText>
+                        {showAll ? null : (
+                          <span className="openbitfun-nav-panel__inline-toggle-count" aria-hidden>+{limited.hidden}</span>
+                        )}
+                        <span className="openbitfun-nav-panel__inline-toggle-trailing">
+                          <Icon
+                            name={showAll ? 'chevron-up' : 'chevron-down'}
+                            size="xs"
+                            className="openbitfun-nav-panel__inline-toggle-chevron"
+                            aria-hidden
+                          />
+                        </span>
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             ) : null}
           </div>

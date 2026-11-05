@@ -1526,8 +1526,9 @@
   flex: none;
 }
 
-// Assistants other devices share with this one, each with its conversations
-// (SharedAssistantList). Conversation rows reuse the delegated task rows.
+// Assistants other devices share with this one (SharedAssistantList). Each
+// reuses the local assistant card and session rows; only what a local
+// assistant does not have is styled here.
 .shared-assistant-nav {
   display: flex;
   flex-direction: column;
@@ -1540,48 +1541,14 @@
   font-size: var(--openbitfun-type-meta-font-size);
 }
 
-.shared-assistant-nav__header {
-  display: flex;
-  align-items: center;
-  gap: var(--openbitfun-space-1);
-  padding-inline-end: var(--openbitfun-space-1);
-
-  // Like a local assistant, the actions show on hover or focus.
-  &:not(:hover):not(:focus-within) .shared-assistant-nav__action {
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-  }
-}
-
-// The assistant's name and a mark for whether its owner can be reached.
-.shared-assistant-nav__name.openbitfun-nav-panel__inline-item {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 6px;
-  min-inline-size: 0;
-  block-size: auto;
-  padding: var(--openbitfun-space-1) var(--openbitfun-space-2);
-  border: 0;
-  background: transparent;
-  text-align: start;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--openbitfun-color-content-primary);
-    background: var(--openbitfun-color-action-quiet-hover);
-  }
+// The name keeps its width; who shares it gives way first when the row is narrow.
+.shared-assistant-nav__name .openbitfun-nav-panel__assistant-item-label {
+  flex: 0 1 auto;
 }
 
 .shared-assistant-nav__standing {
   display: inline-flex;
   flex: none;
-}
-
-// The name keeps its width; who shares it gives way first when the row is narrow.
-.shared-assistant-nav__name .assistant-session-history__delegated-title {
-  flex: 0 1 auto;
 }
 
 .shared-assistant-nav__source {
@@ -1592,34 +1559,6 @@
   font-size: var(--openbitfun-type-meta-font-size);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-// One conversation and its "..." menu. The menu button takes the place of the
-// status mark on hover or focus, and stays while its menu is open.
-.shared-assistant-nav__conversation {
-  position: relative;
-
-  &:not(:hover):not(:focus-within) .shared-assistant-nav__conversation-actions:not([data-menu-open]) {
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-  }
-
-  &:hover,
-  &:focus-within,
-  &:has([data-menu-open]) {
-    .nav-task-status {
-      visibility: hidden;
-    }
-  }
-}
-
-.shared-assistant-nav__conversation-actions {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-end: var(--openbitfun-space-1);
-  display: flex;
-  align-items: center;
 }
 
 .shared-assistant-nav__online {
@@ -1633,11 +1572,8 @@
 // Offline or no longer shared: the assistant and its conversations read dimmed,
 // except the one being viewed, which reads selected like any other.
 .shared-assistant-nav__assistant.is-unavailable {
-  .assistant-session-history__delegated-title {
+  .openbitfun-nav-panel__assistant-item-label,
+  .openbitfun-nav-panel__inline-item:not(.is-active) .openbitfun-nav-panel__inline-item-label {
     color: var(--openbitfun-color-content-muted);
-  }
-
-  .assistant-session-history__delegated-item.is-active .assistant-session-history__delegated-title {
-    color: var(--openbitfun-color-content-primary);
   }
 }
