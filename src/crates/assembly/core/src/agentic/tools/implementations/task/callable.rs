@@ -146,12 +146,10 @@ impl SessionFacts {
         agent_type: Option<&str>,
     ) -> OpenBitFunResult<Self> {
         let sessions = coordinator.get_session_manager();
-        let mut session = sessions
+        let session = sessions
             .get_session(session_id)
             .ok_or_else(|| OpenBitFunError::NotFound(format!("Session not found: {session_id}")))?;
-        if let Some(agent_type) = agent_type {
-            session.agent_type = agent_type.to_string();
-        }
+        let agent_type = agent_type.unwrap_or(&session.agent_type).to_string();
         let binding = sessions.resolve_session_workspace_binding(session_id).await;
         let workspace_id = binding
             .as_ref()
@@ -159,18 +157,58 @@ impl SessionFacts {
         let workspace_root = binding
             .as_ref()
             .map(|binding| binding.root_path().to_path_buf());
+        Self::assemble(agent_type, workspace_id, workspace_root).await
+    }
+
+    /// A conversation the person has opened but not yet sent from exists
+    /// only in the client, which tells its mode and project.
+    async fn of_draft(draft: &CallableAssistantsDraft) -> OpenBitFunResult<Self> {
+        let workspace_id = draft
+            .workspace_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty());
+        let workspace_root = match workspace_id {
+            Some(id) => {
+                let workspace = match crate::service::workspace::get_global_workspace_service() {
+                    Some(service) => service.get_workspace(id).await,
+                    None => None,
+                };
+                Some(
+                    workspace
+                        .ok_or_else(|| {
+                            OpenBitFunError::NotFound(format!("Workspace not found: {id}"))
+                        })?
+                        .root_path,
+                )
+            }
+            None => None,
+        };
+        Self::assemble(
+            draft.agent_type.trim().to_string(),
+            workspace_id.map(str::to_string),
+            workspace_root,
+        )
+        .await
+    }
+
+    async fn assemble(
+        agent_type: String,
+        workspace_id: Option<String>,
+        workspace_root: Option<std::path::PathBuf>,
+    ) -> OpenBitFunResult<Self> {
         let can_spawn = get_agent_registry()
-            .get_agent_tools(&session.agent_type, workspace_id.as_deref())
+            .get_agent_tools(&agent_type, workspace_id.as_deref())
             .await
             .iter()
             .any(|tool| tool == "AgentSpawn" || tool == "Task");
         let ceiling = crate::agentic::permission_policy::load_parent_permission_runtime_ceiling(
-            Some(&session.agent_type),
+            Some(&agent_type),
             workspace_id.as_deref(),
         )
         .await?;
         Ok(Self {
-            agent_type: session.agent_type,
+            agent_type,
             workspace_id,
             workspace_root,
             can_spawn,
@@ -197,14 +235,38 @@ impl SessionFacts {
     }
 }
 
+/// What the client knows of a conversation that has no session yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallableAssistantsDraft {
+    /// The mode its first turn will run in.
+    pub agent_type: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+}
+
 /// The assistants the person may name in `session_id`: this device's other
 /// assistants, then the shared ones that can take work, then those that
 /// cannot, each marked so. Lists none, with the reason, when the
-/// conversation could not call one.
+/// conversation could not call one. `draft` describes a conversation that
+/// has not started and so has no session to read.
 pub async fn callable_assistants_for_session(
     session_id: &str,
+    draft: Option<&CallableAssistantsDraft>,
 ) -> OpenBitFunResult<CallableAssistants> {
-    callable_assistants(session_id, None).await
+    let Some(coordinator) = get_global_coordinator() else {
+        return Ok(CallableAssistants::refused(
+            CallableAssistantsRefusal::Unavailable,
+        ));
+    };
+    let facts = match (
+        coordinator.get_session_manager().get_session(session_id),
+        draft,
+    ) {
+        (None, Some(draft)) => SessionFacts::of_draft(draft).await?,
+        _ => SessionFacts::read(&coordinator, session_id, None).await?,
+    };
+    callable_assistants_from(&coordinator, facts).await
 }
 
 async fn callable_assistants(
@@ -217,6 +279,13 @@ async fn callable_assistants(
         ));
     };
     let facts = SessionFacts::read(&coordinator, session_id, agent_type).await?;
+    callable_assistants_from(&coordinator, facts).await
+}
+
+async fn callable_assistants_from(
+    coordinator: &crate::agentic::coordination::ConversationCoordinator,
+    facts: SessionFacts,
+) -> OpenBitFunResult<CallableAssistants> {
     if let Some(refusal) = facts.refusal() {
         return Ok(CallableAssistants::refused(refusal));
     }
@@ -555,6 +624,21 @@ mod tests {
                 "assistants": [],
             })
         );
+    }
+
+    #[test]
+    fn a_draft_conversation_is_read_from_what_the_client_sends() {
+        let draft: CallableAssistantsDraft = serde_json::from_value(serde_json::json!({
+            "agentType": "Standard",
+            "workspaceId": "ws-1",
+        }))
+        .expect("draft with a project");
+        assert_eq!(draft.agent_type, "Standard");
+        assert_eq!(draft.workspace_id.as_deref(), Some("ws-1"));
+        let draft: CallableAssistantsDraft =
+            serde_json::from_value(serde_json::json!({ "agentType": "Minimal" }))
+                .expect("draft without a project");
+        assert_eq!(draft.workspace_id, None);
     }
 
     fn assistant(

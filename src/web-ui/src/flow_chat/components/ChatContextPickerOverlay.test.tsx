@@ -73,6 +73,7 @@ interface HarnessProps {
   onSelectContext?: ChatContextPickerProps['onSelectContext'];
   onClose?: ChatContextPickerProps['onClose'];
   assistantSessionId?: string;
+  assistantDraft?: ChatContextPickerProps['assistantDraft'];
   onSelectAssistant?: ChatContextPickerProps['onSelectAssistant'];
 }
 
@@ -93,6 +94,7 @@ const Harness: React.FC<HarnessProps> = ({
   onSelectContext = vi.fn(),
   onClose = vi.fn(),
   assistantSessionId,
+  assistantDraft,
   onSelectAssistant,
 }) => {
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -124,6 +126,7 @@ const Harness: React.FC<HarnessProps> = ({
         onSelectContext={onSelectContext}
         onClose={onClose}
         assistantSessionId={assistantSessionId}
+        assistantDraft={assistantDraft}
         onSelectAssistant={onSelectAssistant}
       />
     </div>
@@ -386,7 +389,7 @@ describe('ChatContextPicker overlay', () => {
       />,
     ));
 
-    expect(SubagentAPI.listCallableAssistants).toHaveBeenCalledWith('session-1');
+    expect(SubagentAPI.listCallableAssistants).toHaveBeenCalledWith('session-1', undefined);
     expect(option('assistants')?.textContent).toBe('contextPicker.assistants.label');
     await act(async () => option('assistants')?.click());
 
@@ -422,6 +425,45 @@ describe('ChatContextPicker overlay', () => {
       <Harness entryView="sources" assistantSessionId="older-peer-session" onSelectAssistant={vi.fn()} />,
     ));
     expect(option('sessions')).toBeTruthy();
+    expect(option('assistants')).toBeNull();
+  });
+
+  it('lists for a conversation that has not started from its mode and project, again when the mode changes', async () => {
+    vi.mocked(SubagentAPI.listCallableAssistants).mockResolvedValueOnce({
+      supported: true,
+      assistants: [{ agentType: 'assistant:workspace', name: 'Xiaolan', owner: { kind: 'mine' }, available: true }],
+    });
+    await act(async () => root.render(
+      <Harness
+        entryView="sources"
+        assistantSessionId="draft-session"
+        assistantDraft={{ agentType: 'Standard', workspaceId: 'workspace-id' }}
+        onSelectAssistant={vi.fn()}
+      />,
+    ));
+    expect(SubagentAPI.listCallableAssistants).toHaveBeenLastCalledWith(
+      'draft-session',
+      { agentType: 'Standard', workspaceId: 'workspace-id' },
+    );
+    expect(option('assistants')).toBeTruthy();
+
+    vi.mocked(SubagentAPI.listCallableAssistants).mockResolvedValueOnce({
+      supported: false,
+      reason: 'mode',
+      assistants: [],
+    });
+    await act(async () => root.render(
+      <Harness
+        entryView="sources"
+        assistantSessionId="draft-session"
+        assistantDraft={{ agentType: 'Minimal', workspaceId: 'workspace-id' }}
+        onSelectAssistant={vi.fn()}
+      />,
+    ));
+    expect(SubagentAPI.listCallableAssistants).toHaveBeenLastCalledWith(
+      'draft-session',
+      { agentType: 'Minimal', workspaceId: 'workspace-id' },
+    );
     expect(option('assistants')).toBeNull();
   });
 

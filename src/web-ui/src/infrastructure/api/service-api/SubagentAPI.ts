@@ -193,6 +193,12 @@ export interface CallableAssistant {
   unavailableReason?: RemoteAgentUnavailableReason | string;
 }
 
+/** A conversation that has not started: the mode its first turn runs in and its project. */
+export interface CallableAssistantsDraft {
+  agentType: string;
+  workspaceId?: string;
+}
+
 export interface CallableAssistants {
   supported: boolean;
   reason?: CallableAssistantsRefusal | string;
@@ -216,9 +222,12 @@ export const SubagentAPI = {
   },
 
   /** The assistants the person may name with「@」in a conversation. */
-  async listCallableAssistants(sessionId: string): Promise<CallableAssistants> {
+  async listCallableAssistants(
+    sessionId: string,
+    draft?: CallableAssistantsDraft,
+  ): Promise<CallableAssistants> {
     return api.invoke<CallableAssistants>('list_callable_assistants', {
-      request: { sessionId },
+      request: { sessionId, ...(draft ? { draft } : {}) },
     });
   },
 

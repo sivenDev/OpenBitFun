@@ -26,6 +26,10 @@ pub struct ListSubagentsRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ListCallableAssistantsRequest {
     pub session_id: String,
+    /// Sent for a conversation that has not started, which has no session yet.
+    #[serde(default)]
+    pub draft:
+        Option<openbitfun_core::agentic::tools::implementations::task::CallableAssistantsDraft>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -198,6 +202,7 @@ pub async fn list_callable_assistants(
 ) -> Result<openbitfun_core::agentic::tools::implementations::task::CallableAssistants, String> {
     openbitfun_core::agentic::tools::implementations::task::callable_assistants_for_session(
         &request.session_id,
+        request.draft.as_ref(),
     )
     .await
     .map_err(|error| error.to_string())

@@ -42,6 +42,7 @@ import { useAcpPlan } from '../hooks/useAcpPlan';
 import { usePromptSuggestionsEnabled } from '../hooks/usePromptSuggestionsEnabled';
 import { filterSlashCommands, useAcpSlashCommands } from '../hooks/useAcpSlashCommands';
 import { acpSessionRef, acpSlashCommandText } from '../utils/acpSession';
+import { isUnmaterializedSessionDraft } from '../utils/sessionDraft';
 import { AcpPlanPanel } from './AcpPlanPanel';
 import type { FlowChatState, QueuedMessage } from '../types/flow-chat';
 import type {
@@ -1526,6 +1527,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     acpTargetAgentType,
     composerMode: currentMode,
   });
+  // A conversation that has not started has no session to read its
+  // callable assistants from; its mode and project stand in.
+  const assistantDraftWorkspaceId = isUnmaterializedSessionDraft(effectiveTargetSession)
+    ? effectiveTargetSession?.draft?.workspaceId
+    : undefined;
+  const assistantDraft = useMemo(
+    () => (assistantDraftWorkspaceId !== undefined
+      ? { agentType: effectiveSendAgentType, workspaceId: assistantDraftWorkspaceId || undefined }
+      : undefined),
+    [assistantDraftWorkspaceId, effectiveSendAgentType],
+  );
   const targetModeInfo = useMemo(() => {
     const normalizedAgentType = effectiveSendAgentType.trim().toLowerCase();
     return normalizedAgentType
@@ -6746,6 +6758,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 onSelectMcp={canSelectMcp ? selectContextMcp : undefined}
                 onAddImage={!isAcpTargetSession ? handleContextPickerAddImage : undefined}
                 assistantSessionId={!isAcpTargetSession ? effectiveTargetSessionId || undefined : undefined}
+                assistantDraft={assistantDraft}
                 onSelectAssistant={!isAcpTargetSession ? (assistant) => {
                   const context: AssistantMentionContext = {
                     id: `assistant-mention-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,

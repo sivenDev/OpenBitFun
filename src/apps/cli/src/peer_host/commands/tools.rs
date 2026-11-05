@@ -30,9 +30,19 @@ pub(crate) async fn get_all_tools_info() -> Result<Value, String> {
 pub(crate) async fn list_callable_assistants(args: &Value) -> Result<Value, String> {
     let request = crate::peer_host::args::request_value(args);
     let session_id = crate::peer_host::args::get_string(request, "sessionId")?;
+    let draft = match request.get("draft") {
+        Some(draft) if !draft.is_null() => Some(
+            serde_json::from_value::<
+                openbitfun_core::agentic::tools::implementations::task::CallableAssistantsDraft,
+            >(draft.clone())
+            .map_err(|error| format!("Invalid draft conversation: {error}"))?,
+        ),
+        _ => None,
+    };
     let callable =
         openbitfun_core::agentic::tools::implementations::task::callable_assistants_for_session(
             &session_id,
+            draft.as_ref(),
         )
         .await
         .map_err(|error| error.to_string())?;

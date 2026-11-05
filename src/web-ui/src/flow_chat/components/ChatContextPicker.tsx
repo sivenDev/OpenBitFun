@@ -30,7 +30,11 @@ import type {
   FileSearchResultGroup,
 } from '@/infrastructure/api/service-api/tauri-commands';
 import type { SessionReferenceCandidate } from '@/infrastructure/api/service-api/SessionAPI';
-import { SubagentAPI, type CallableAssistant } from '@/infrastructure/api/service-api/SubagentAPI';
+import {
+  SubagentAPI,
+  type CallableAssistant,
+  type CallableAssistantsDraft,
+} from '@/infrastructure/api/service-api/SubagentAPI';
 import type {
   DirectoryContext,
   FileContext,
@@ -91,6 +95,8 @@ export interface ChatContextPickerProps {
   onAddImage?: () => void;
   /** The conversation whose callable assistants the Assistants source lists. */
   assistantSessionId?: string;
+  /** Sent when that conversation has not started and has no session yet. */
+  assistantDraft?: CallableAssistantsDraft;
   onSelectAssistant?: (assistant: CallableAssistant) => void;
 }
 
@@ -184,6 +190,7 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
   onSelectMcp,
   onAddImage,
   assistantSessionId,
+  assistantDraft,
   onSelectAssistant,
 }) => {
   const { t } = useTranslation('flow-chat');
@@ -483,10 +490,12 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
     };
   }, [isSearchMode, sessionLookupKey, surfaceScope, trimmedQuery]);
 
+  const draftAgentType = assistantDraft?.agentType;
+  const draftWorkspaceId = assistantDraft?.workspaceId;
   // Listed once per opening and conversation. A host that cannot call
   // assistants here, or predates the command, leaves the source out.
   const assistantLookupKey = isOpen && onSelectAssistant && assistantSessionId
-    ? surfaceScope.key(surfaceScope.epoch, assistantSessionId)
+    ? surfaceScope.key(surfaceScope.epoch, assistantSessionId, draftAgentType, draftWorkspaceId)
     : null;
   const assistants = useMemo(
     () => (assistantLookup?.key === assistantLookupKey ? assistantLookup.items : []),
@@ -499,7 +508,8 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
       return;
     }
     let cancelled = false;
-    void SubagentAPI.listCallableAssistants(assistantSessionId)
+    const draft = draftAgentType ? { agentType: draftAgentType, workspaceId: draftWorkspaceId } : undefined;
+    void SubagentAPI.listCallableAssistants(assistantSessionId, draft)
       .then(result => {
         if (cancelled || !surfaceScope.isCurrent()) return;
         setAssistantLookup({ key: assistantLookupKey, items: result.supported ? result.assistants : [] });
@@ -512,7 +522,7 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [assistantLookupKey, assistantSessionId, surfaceScope]);
+  }, [assistantLookupKey, assistantSessionId, draftAgentType, draftWorkspaceId, surfaceScope]);
 
   const normalizedSearchQuery = trimmedQuery.toLocaleLowerCase();
   const isFileLoading = isSearchMode
