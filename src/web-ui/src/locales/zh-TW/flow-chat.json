@@ -1234,6 +1234,16 @@
     "currentStatus": "目前狀態: {{status}}"
   },
   "contextPicker": {
+    "assistants": {
+      "label": "$t(shared:agents.Claw)",
+      "offline": "不在線",
+      "incompatible": "版本不相容",
+      "unreachable": "暫時連不上",
+      "agentUnavailable": "暫時無法執行",
+      "revoked": "已停止共享",
+      "executorMissing": "對方無法執行任務",
+      "unavailable": "暫時無法使用"
+    },
     "sessions": {
       "label": "工作階段",
       "empty": "沒有可引用的工作階段",

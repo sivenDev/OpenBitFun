@@ -1234,6 +1234,16 @@
     "currentStatus": "当前状态: {{status}}"
   },
   "contextPicker": {
+    "assistants": {
+      "label": "$t(shared:agents.Claw)",
+      "offline": "不在线",
+      "incompatible": "版本不兼容",
+      "unreachable": "暂时连不上",
+      "agentUnavailable": "暂时不能运行",
+      "revoked": "已停止共享",
+      "executorMissing": "对方不能运行任务",
+      "unavailable": "暂时不可用"
+    },
     "sessions": {
       "label": "会话",
       "empty": "没有可引用的会话",

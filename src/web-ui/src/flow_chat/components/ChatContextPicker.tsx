@@ -1,7 +1,7 @@
 import { subscribeOverlayInteraction, createOverlayPortal, Disclosure } from '@openbitfun/ui';
 /**
  * Unified chat context picker.
- * The source level exposes files, sessions, skills, MCP, and images; typing searches providers together.
+ * The source level exposes files, sessions, skills, MCP, assistants, and images; typing searches providers together.
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from '@openbitfun/ui';
 import { useTranslation } from 'react-i18next';
-import { File, Loader2, MessageCircle, Plug, RotateCcw } from 'lucide-react';
+import { Bot, File, Loader2, MessageCircle, Plug, RotateCcw } from 'lucide-react';
 import { sessionAPI, workspaceAPI } from '@/infrastructure/api';
 import { getActiveSurfaceScope, isLocalSurface, onSurfaceActivated } from '@/infrastructure/peer-device/deviceSurface';
 import { usePeerDeviceModeOptional } from '@/infrastructure/peer-device/peerDeviceContextState';
@@ -30,6 +30,7 @@ import type {
   FileSearchResultGroup,
 } from '@/infrastructure/api/service-api/tauri-commands';
 import type { SessionReferenceCandidate } from '@/infrastructure/api/service-api/SessionAPI';
+import { SubagentAPI, type CallableAssistant } from '@/infrastructure/api/service-api/SubagentAPI';
 import type {
   DirectoryContext,
   FileContext,
@@ -55,6 +56,7 @@ const SOURCE_LABELS = {
   skills: 'chatInput.boostSkills',
   mcp: 'contextPicker.mcp.label',
   sessions: 'contextPicker.sessions.label',
+  assistants: 'contextPicker.assistants.label',
 } as const;
 
 export interface ChatContextPickerProps {
@@ -87,6 +89,9 @@ export interface ChatContextPickerProps {
   onRefreshMcp?: () => void;
   onSelectMcp?: (item: ContextPickerMcpItem) => void;
   onAddImage?: () => void;
+  /** The conversation whose callable assistants the Assistants source lists. */
+  assistantSessionId?: string;
+  onSelectAssistant?: (assistant: CallableAssistant) => void;
 }
 
 export interface ContextPickerSkill {
@@ -107,8 +112,25 @@ type ContextPickerItem =
   | { kind: 'session'; item: SessionReferenceCandidate }
   | { kind: 'skill'; item: ContextPickerSkill }
   | { kind: 'mcp'; item: ContextPickerMcpItem }
+  | { kind: 'assistant'; item: CallableAssistant }
   | { kind: 'source'; id: keyof typeof SOURCE_LABELS }
   | { kind: 'action'; id: 'add-image' | 'retry-skills' };
+
+/** Why a shared assistant cannot take work, in the picker's words. */
+function assistantUnavailableLabel(
+  reason: CallableAssistant['unavailableReason'],
+  t: (key: string) => string,
+): string {
+  switch (reason) {
+    case 'offline': return t('contextPicker.assistants.offline');
+    case 'incompatible': return t('contextPicker.assistants.incompatible');
+    case 'unreachable': return t('contextPicker.assistants.unreachable');
+    case 'agent_unavailable': return t('contextPicker.assistants.agentUnavailable');
+    case 'revoked': return t('contextPicker.assistants.revoked');
+    case 'executor_missing': return t('contextPicker.assistants.executorMissing');
+    default: return t('contextPicker.assistants.unavailable');
+  }
+}
 
 function mergeFileSearchResults(
   previous: FileItem[],
@@ -161,6 +183,8 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
   onRefreshMcp,
   onSelectMcp,
   onAddImage,
+  assistantSessionId,
+  onSelectAssistant,
 }) => {
   const { t } = useTranslation('flow-chat');
   const surfaceScope = useSyncExternalStore(onSurfaceActivated, getActiveSurfaceScope);
@@ -174,6 +198,7 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
   const unsupportedSkills = skillDiagnostics.filter(item => item.unsupportedField);
   const [results, setResults] = useState<FileItem[]>([]);
   const [sessionLookup, setSessionLookup] = useState<{ key: string; items: SessionReferenceCandidate[] | null }>();
+  const [assistantLookup, setAssistantLookup] = useState<{ key: string; items: CallableAssistant[] }>();
   const [workspaceReferences, setWorkspaceReferences] = useState<WorkspaceReferenceEntry[]>([]);
   const [currentFiles, setCurrentFiles] = useState<FileItem[]>([]);
   const [isDirectoryLoading, setIsDirectoryLoading] = useState(false);
@@ -458,6 +483,37 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
     };
   }, [isSearchMode, sessionLookupKey, surfaceScope, trimmedQuery]);
 
+  // Listed once per opening and conversation. A host that cannot call
+  // assistants here, or predates the command, leaves the source out.
+  const assistantLookupKey = isOpen && onSelectAssistant && assistantSessionId
+    ? surfaceScope.key(surfaceScope.epoch, assistantSessionId)
+    : null;
+  const assistants = useMemo(
+    () => (assistantLookup?.key === assistantLookupKey ? assistantLookup.items : []),
+    [assistantLookup, assistantLookupKey],
+  );
+
+  useEffect(() => {
+    if (assistantLookupKey === null || !assistantSessionId) {
+      setAssistantLookup(undefined);
+      return;
+    }
+    let cancelled = false;
+    void SubagentAPI.listCallableAssistants(assistantSessionId)
+      .then(result => {
+        if (cancelled || !surfaceScope.isCurrent()) return;
+        setAssistantLookup({ key: assistantLookupKey, items: result.supported ? result.assistants : [] });
+      })
+      .catch(error => {
+        if (cancelled || !surfaceScope.isCurrent()) return;
+        log.warn('Context picker could not list callable assistants', error);
+        setAssistantLookup({ key: assistantLookupKey, items: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [assistantLookupKey, assistantSessionId, surfaceScope]);
+
   const normalizedSearchQuery = trimmedQuery.toLocaleLowerCase();
   const isFileLoading = isSearchMode
     ? isFileSearchLoading
@@ -498,8 +554,15 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
     ...(onSelectSkill ? [{ kind: 'source' as const, id: 'skills' as const }] : []),
     ...(onSelectMcp ? [{ kind: 'source' as const, id: 'mcp' as const }] : []),
     { kind: 'source', id: 'sessions' },
+    ...(assistants.length > 0 ? [{ kind: 'source' as const, id: 'assistants' as const }] : []),
     ...(onAddImage ? [{ kind: 'action' as const, id: 'add-image' as const }] : []),
-  ], [onAddImage, onSelectSkill, onSelectMcp]);
+  ], [assistants.length, onAddImage, onSelectSkill, onSelectMcp]);
+  const assistantItems = useMemo<ContextPickerItem[]>(
+    () => assistants
+      .filter(item => !normalizedSearchQuery || item.name.toLocaleLowerCase().includes(normalizedSearchQuery))
+      .map(item => ({ kind: 'assistant', item })),
+    [assistants, normalizedSearchQuery],
+  );
   const mcpItems = useMemo<ContextPickerItem[]>(() => (
     onSelectMcp && !mcpLoading && !mcpLoadFailed && !mcpUnavailable
       ? chatMcpItems(mcpCatalog?.tools ?? [], searchQuery).map(item => ({ kind: 'mcp', item }))
@@ -529,6 +592,7 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
           ? filteredSkills.map(item => ({ kind: 'skill' as const, item }))
           : []),
         ...sessionItems,
+        ...assistantItems,
         ...mcpItems,
         ...(onSelectSkill && skillsLoadFailed && onRetrySkills
           ? [{ kind: 'action' as const, id: 'retry-skills' as const }]
@@ -542,11 +606,13 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
     if (view === 'skills') return skillItems;
     if (view === 'mcp') return mcpItems;
     if (view === 'sessions') return sessionItems;
+    if (view === 'assistants') return assistantItems;
     return [
       ...currentFiles.map(item => ({ kind: 'file' as const, item })),
       ...(currentPath ? [] : referenceItems.map(item => ({ kind: 'file' as const, item }))),
     ];
   }, [
+    assistantItems,
     currentFiles,
     currentPath,
     filteredSkills,
@@ -613,6 +679,13 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
   }, []);
 
   useEffect(() => {
+    if (view === 'assistants' && assistants.length === 0) {
+      setView(entryView);
+      setSelectedIndex(0);
+    }
+  }, [assistants.length, entryView, view]);
+
+  useEffect(() => {
     if (view === 'mcp' && !onSelectMcp) {
       setView('sources');
       setSelectedIndex(0);
@@ -640,6 +713,13 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
     }
     if (selection.kind === 'mcp') {
       onSelectMcp?.(selection.item);
+      onClose();
+      return;
+    }
+    if (selection.kind === 'assistant') {
+      // An assistant that cannot take work stays listed with its reason.
+      if (!selection.item.available || !surfaceScope.isCurrent()) return;
+      onSelectAssistant?.(selection.item);
       onClose();
       return;
     }
@@ -681,7 +761,7 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
       timestamp,
     });
     onClose();
-  }, [onAddImage, onClose, onRetrySkills, onSelectContext, onSelectSkill, onSelectMcp, openSource, surfaceScope]);
+  }, [onAddImage, onClose, onRetrySkills, onSelectAssistant, onSelectContext, onSelectSkill, onSelectMcp, openSource, surfaceScope]);
 
   const handleItemClick = useCallback((selection: ContextPickerItem, event: React.MouseEvent<HTMLElement>) => {
     // Browsing keeps its own affordance: the trailing chevron opens a directory,
@@ -891,6 +971,12 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
               const session = selection.kind === 'session' ? selection.item : null;
               const skill = selection.kind === 'skill' ? selection.item : null;
               const mcp = selection.kind === 'mcp' ? selection.item : null;
+              const assistant = selection.kind === 'assistant' ? selection.item : null;
+              const assistantOwner = assistant
+                ? assistant.owner.kind === 'shared'
+                  ? t('toolCards.taskTool.assistantOwnerShared', { owner: assistant.owner.deviceName ?? '' })
+                  : t('toolCards.taskTool.assistantOwnerMine')
+                : undefined;
               const key = selection.kind === 'source'
                 ? `source-${selection.id}`
                 : selection.kind === 'action'
@@ -901,6 +987,8 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
                       ? `skill-${skill.key}`
                       : mcp
                         ? mcp.key
+                      : assistant
+                        ? `assistant-${assistant.agentType}`
                       : `file-${file?.referenceStableKey || file?.path}`;
               const label = selection.kind === 'source'
                 ? t(SOURCE_LABELS[selection.id])
@@ -908,12 +996,13 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
                   ? t(selection.id === 'add-image'
                     ? 'input.addImage'
                     : 'chatInput.boostSkillsLoadFailed')
-                  : session?.sessionName ?? skill?.name ?? mcp?.label ?? file?.name;
+                  : session?.sessionName ?? skill?.name ?? mcp?.label ?? assistant?.name ?? file?.name;
               const skillDescription = skill?.description?.trim() || undefined;
               const isEnterableDirectory = Boolean(file?.isDirectory) && !isSearchMode;
               return (
                 <ListboxOption data-overflow-trigger
                   active={index === selectedIndex}
+                  disabled={assistant ? !assistant.available : undefined}
                   className={skill ? 'chat-context-picker__skill-option' : undefined}
                   title={skill ? '' : undefined}
                   key={key}
@@ -934,6 +1023,8 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
                       ? <Plug aria-hidden="true" />
                       : selection.id === 'sessions'
                         ? <MessageCircle aria-hidden="true" />
+                        : selection.id === 'assistants'
+                          ? <Bot aria-hidden="true" />
                         : <Icon name={selection.id === 'files' ? 'files' : 'book-open'} size="lg" aria-hidden="true" />
                     : selection.kind === 'action'
                       ? selection.id === 'add-image'
@@ -943,6 +1034,8 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
                         ? <Icon name="book-open" size="lg" aria-hidden="true" />
                         : mcp
                           ? <Plug aria-hidden="true" />
+                        : assistant
+                          ? <Bot aria-hidden="true" />
                         : isSession
                           ? <MessageCircle aria-hidden="true" />
                           : file?.isDirectory
@@ -964,6 +1057,11 @@ export const ChatContextPicker: React.FC<ChatContextPickerProps> = ({
                         </OverflowText>
                       )
                     : (mcp ? t('contextPicker.mcp.server') : undefined)
+                    ?? (assistant
+                      ? assistant.available
+                        ? assistantOwner
+                        : `${assistantOwner} · ${assistantUnavailableLabel(assistant.unavailableReason, t)}`
+                      : undefined)
                     ?? session?.workspaceLabel
                     ?? (file?.referenceStableKey
                       ? file.referenceDescription || file.path

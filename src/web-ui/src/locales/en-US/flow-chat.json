@@ -1234,6 +1234,16 @@
     "currentStatus": "Current status: {{status}}"
   },
   "contextPicker": {
+    "assistants": {
+      "label": "Assistants",
+      "offline": "Offline",
+      "incompatible": "Incompatible version",
+      "unreachable": "Can't connect right now",
+      "agentUnavailable": "Can't run right now",
+      "revoked": "No longer shared",
+      "executorMissing": "That device can't run tasks",
+      "unavailable": "Unavailable right now"
+    },
     "sessions": {
       "label": "Sessions",
       "empty": "No sessions available to reference",

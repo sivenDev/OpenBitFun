@@ -109,7 +109,9 @@ parent: "F002"
 - `pnpm --dir src/web-ui run test:run src/flow_chat/components`（菜单相关测试文件）
 - `pnpm run type-check:web`、`pnpm run lint:web`、`pnpm run i18n:audit`、`pnpm run appearance:contract-audit`
 
-- [ ] 列出、置灰、隐藏与搜索均有测试
+- [x] 列出、置灰、隐藏与搜索均有测试
+
+**进展（2026-11-04）：** 完成（主人同意后先在 `d1e23c7ed` 合入 `origin/main`，在新的按来源结构上实现）。`ChatContextPicker` 新增 `assistantSessionId` 与 `onSelectAssistant`：菜单打开时按当前会话调用一次 `SubagentAPI.listCallableAssistants`（按设备界面与会话为键，切换会话或设备时重新请求，旧结果丢弃）；返回「不支持」、空列表或请求失败（对端没有这个命令）时不出现「助理」来源，也不进搜索结果；列表为空时若停在「助理」视图会退回来源列表。条目写名字与归属（复用 `toolCards.taskTool.assistantOwnerMine/Shared`），不能接活的项 `aria-disabled` 并写原因（`contextPicker.assistants.*`，三种语言；标签的中文用共享术语 `$t(shared:agents.Claw)`），点击或回车不会选中；搜索按名字过滤。与输入框的连接（选中后插入「@名字」标签）放在 Task 4。验证：`ChatContextPickerOverlay.test.tsx` 25 项（新增 3 项：列出与置灰、不支持与请求失败时隐藏、搜索），`tsc`、eslint、`i18n:audit`、`appearance:contract-audit` 通过。
 
 ## Task 4: 标签、发送与消息显示
 

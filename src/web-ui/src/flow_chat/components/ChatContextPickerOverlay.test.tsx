@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionAPI, workspaceAPI } from '@/infrastructure/api';
 import { activateSurface, LOCAL_SURFACE_ID } from '@/infrastructure/peer-device/deviceSurface';
+import { SubagentAPI } from '@/infrastructure/api/service-api/SubagentAPI';
 import {
   ChatContextPicker,
   type ChatContextPickerEntryView,
@@ -38,6 +39,12 @@ vi.mock('@/infrastructure/api', () => ({
   },
 }));
 
+vi.mock('@/infrastructure/api/service-api/SubagentAPI', () => ({
+  SubagentAPI: {
+    listCallableAssistants: vi.fn().mockResolvedValue({ supported: false, assistants: [] }),
+  },
+}));
+
 vi.mock('@/infrastructure/api/service-api/ExternalSourcesAPI', () => ({
   externalSourcesAPI: {
     getWorkspaceReferences: vi.fn().mockResolvedValue({ references: [] }),
@@ -65,6 +72,8 @@ interface HarnessProps {
   onAddImage?: ChatContextPickerProps['onAddImage'];
   onSelectContext?: ChatContextPickerProps['onSelectContext'];
   onClose?: ChatContextPickerProps['onClose'];
+  assistantSessionId?: string;
+  onSelectAssistant?: ChatContextPickerProps['onSelectAssistant'];
 }
 
 const Harness: React.FC<HarnessProps> = ({
@@ -83,6 +92,8 @@ const Harness: React.FC<HarnessProps> = ({
   onAddImage,
   onSelectContext = vi.fn(),
   onClose = vi.fn(),
+  assistantSessionId,
+  onSelectAssistant,
 }) => {
   const anchorRef = useRef<HTMLButtonElement>(null);
   return (
@@ -112,6 +123,8 @@ const Harness: React.FC<HarnessProps> = ({
         onAddImage={onAddImage}
         onSelectContext={onSelectContext}
         onClose={onClose}
+        assistantSessionId={assistantSessionId}
+        onSelectAssistant={onSelectAssistant}
       />
     </div>
   );
@@ -342,6 +355,92 @@ describe('ChatContextPicker overlay', () => {
       'workspace-id',
       '/workspace',
     );
+  });
+
+  it('lists the assistants a conversation can call, greying out those that cannot take work', async () => {
+    const xiaolan = {
+      agentType: 'assistant:workspace',
+      name: 'Xiaolan',
+      owner: { kind: 'mine' as const },
+      available: true,
+    };
+    const writer = {
+      agentType: 'shared:owner-device/writer',
+      name: 'Writer',
+      owner: { kind: 'shared' as const, deviceName: 'Owner Mac' },
+      available: false,
+      unavailableReason: 'offline',
+    };
+    vi.mocked(SubagentAPI.listCallableAssistants).mockResolvedValue({
+      supported: true,
+      assistants: [xiaolan, writer],
+    });
+    const onSelectAssistant = vi.fn();
+    const onClose = vi.fn();
+    await act(async () => root.render(
+      <Harness
+        entryView="sources"
+        assistantSessionId="session-1"
+        onSelectAssistant={onSelectAssistant}
+        onClose={onClose}
+      />,
+    ));
+
+    expect(SubagentAPI.listCallableAssistants).toHaveBeenCalledWith('session-1');
+    expect(option('assistants')?.textContent).toBe('contextPicker.assistants.label');
+    await act(async () => option('assistants')?.click());
+
+    const rows = document.querySelectorAll<HTMLElement>('[data-openbitfun-context-kind="assistant"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain('Xiaolan');
+    expect(rows[0].textContent).toContain('toolCards.taskTool.assistantOwnerMine');
+    expect(rows[1].textContent).toContain('Writer');
+    expect(rows[1].textContent).toContain('contextPicker.assistants.offline');
+    expect(rows[1].getAttribute('aria-disabled')).toBe('true');
+
+    await act(async () => rows[1].click());
+    expect(onSelectAssistant).not.toHaveBeenCalled();
+    await act(async () => rows[0].click());
+    expect(onSelectAssistant).toHaveBeenCalledWith(xiaolan);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('leaves assistants out where the conversation cannot call them or the host cannot say', async () => {
+    vi.mocked(SubagentAPI.listCallableAssistants).mockResolvedValueOnce({
+      supported: false,
+      reason: 'mode',
+      assistants: [],
+    });
+    await act(async () => root.render(
+      <Harness entryView="sources" assistantSessionId="minimal-session" onSelectAssistant={vi.fn()} />,
+    ));
+    expect(option('sessions')).toBeTruthy();
+    expect(option('assistants')).toBeNull();
+
+    vi.mocked(SubagentAPI.listCallableAssistants).mockRejectedValueOnce(new Error('unknown command'));
+    await act(async () => root.render(
+      <Harness entryView="sources" assistantSessionId="older-peer-session" onSelectAssistant={vi.fn()} />,
+    ));
+    expect(option('sessions')).toBeTruthy();
+    expect(option('assistants')).toBeNull();
+  });
+
+  it('finds assistants by name in typed search', async () => {
+    vi.useFakeTimers();
+    vi.mocked(SubagentAPI.listCallableAssistants).mockResolvedValue({
+      supported: true,
+      assistants: [
+        { agentType: 'assistant:workspace', name: 'Xiaolan', owner: { kind: 'mine' }, available: true },
+        { agentType: 'assistant:nest', name: 'Nest', owner: { kind: 'mine' }, available: true },
+      ],
+    });
+    await act(async () => root.render(
+      <Harness entryView="sources" searchQuery="lan" assistantSessionId="session-1" onSelectAssistant={vi.fn()} />,
+    ));
+    const rows = document.querySelectorAll<HTMLElement>('[data-openbitfun-context-kind="assistant"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain('Xiaolan');
+    vi.useRealTimers();
   });
 
   it('browses recent sessions from the default sources and inserts a reference with its workspace identity', async () => {
