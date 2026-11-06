@@ -24,7 +24,7 @@ use openbitfun_agent_runtime::sdk::{
     AgentTurnSettlementPort, AgentTurnSettlementRequest, AgentTurnSettlementResult,
     AgentTurnSettlementStatus, SessionTranscript,
 };
-use openbitfun_core_types::{SESSION_PROVIDER_ACP, SESSION_PROVIDER_METADATA_KEY};
+use openbitfun_core_types::{SessionKind, SESSION_PROVIDER_ACP, SESSION_PROVIDER_METADATA_KEY};
 #[cfg(feature = "product-search")]
 use openbitfun_product_domains::product_search::{
     SessionContentSearchRequest, SessionContentSearchResponse, SessionSearchDiagnostic,
@@ -2055,33 +2055,48 @@ impl CoreAgentRuntimeCompatibility {
                 turn.session_id, permit.session_id
             )));
         }
-        if self
-            .is_externally_projected_session(&permit.storage_path, &permit.session_id)
-            .await?
-        {
-            // No Runtime history branch exists to validate against: the external
-            // agent owns the conversation and the projection is the only writer.
-            return self
-                .persistence
-                .save_dialog_turn(&permit.storage_path, turn)
-                .await;
-        }
-        let session = self
-            .coordinator
-            .get_session_manager()
-            .get_session(&permit.session_id)
-            .ok_or_else(|| {
-                OpenBitFunError::OutcomeUnknown(format!(
-                    "Session must be loaded before saving a projected Turn: session_id={}",
-                    permit.session_id
-                ))
-            })?;
-        let expected_turn_id = session.dialog_turn_ids.get(turn.turn_index);
-        if expected_turn_id != Some(&turn.turn_id) {
-            return Err(OpenBitFunError::Validation(format!(
-                "Turn does not belong to the active Session history branch: session_id={}, turn_index={}, turn_id={}",
-                permit.session_id, turn.turn_index, turn.turn_id
-            )));
+        let metadata = self
+            .load_persisted_session_metadata(&permit.storage_path, &permit.session_id)
+            .await?;
+        let externally_projected = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.custom_metadata.as_ref())
+            .and_then(|custom| custom.get(SESSION_PROVIDER_METADATA_KEY))
+            .and_then(serde_json::Value::as_str)
+            == Some(SESSION_PROVIDER_ACP);
+        if externally_projected {
+            // A delegated external agent's turns are still recorded by the
+            // Runtime that ran them, so a stale projection must not overwrite
+            // them. Otherwise no Runtime history branch exists to validate
+            // against: the external agent owns the conversation and the
+            // projection is the only writer.
+            let runtime_records_turns = metadata
+                .as_ref()
+                .is_some_and(|metadata| metadata.session_kind == SessionKind::Subagent);
+            if !runtime_records_turns {
+                return self
+                    .persistence
+                    .save_dialog_turn(&permit.storage_path, turn)
+                    .await;
+            }
+        } else {
+            let session = self
+                .coordinator
+                .get_session_manager()
+                .get_session(&permit.session_id)
+                .ok_or_else(|| {
+                    OpenBitFunError::OutcomeUnknown(format!(
+                        "Session must be loaded before saving a projected Turn: session_id={}",
+                        permit.session_id
+                    ))
+                })?;
+            let expected_turn_id = session.dialog_turn_ids.get(turn.turn_index);
+            if expected_turn_id != Some(&turn.turn_id) {
+                return Err(OpenBitFunError::Validation(format!(
+                    "Turn does not belong to the active Session history branch: session_id={}, turn_index={}, turn_id={}",
+                    permit.session_id, turn.turn_index, turn.turn_id
+                )));
+            }
         }
         let mut projected = turn.clone();
         if let Some(persisted) = self
@@ -5407,5 +5422,42 @@ mod tests {
             matches!(error, OpenBitFunError::OutcomeUnknown(_)),
             "unexpected error: {error}"
         );
+
+        // A delegated external agent's turn is recorded by the Runtime that ran
+        // it, so a projection that missed its completion cannot reopen it.
+        let delegated_session_id = "acp_delegated_child";
+        let mut delegated_metadata = acp_metadata.clone();
+        delegated_metadata.session_id = delegated_session_id.to_string();
+        delegated_metadata.session_kind = SessionKind::Subagent;
+        persistence
+            .save_session_metadata(&storage_path, &delegated_metadata)
+            .await
+            .expect("delegated metadata");
+        let mut completed = DialogTurnData::new(
+            format!("{delegated_session_id}-turn-0"),
+            0,
+            delegated_session_id.to_string(),
+            UserMessageData {
+                id: format!("{delegated_session_id}-user-0"),
+                content: "hello".to_string(),
+                timestamp: 1,
+                metadata: None,
+            },
+        );
+        completed.status = TurnStatus::Completed;
+        persistence
+            .save_dialog_turn(&storage_path, &completed)
+            .await
+            .expect("runtime turn");
+
+        save_first_turn(delegated_session_id)
+            .await
+            .expect("a stale projection is ignored, not rejected");
+        let turns = persistence
+            .load_session_turns(&storage_path, delegated_session_id)
+            .await
+            .expect("delegated turns");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].status, TurnStatus::Completed);
     }
 }

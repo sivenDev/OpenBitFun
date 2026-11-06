@@ -9401,8 +9401,12 @@ export class FlowChatStore {
 
     try {
       const existingSession = this.state.sessions.get(sessionId);
-      const isAcpSession = existingSession?.mode?.startsWith('acp:') ||
-        existingSession?.config.agentType?.startsWith('acp:');
+      // A standalone ACP session is owned by the external agent, so only its
+      // turn files exist. A delegated ACP child runs in the Runtime, which is
+      // the only source that knows whether its turn is still running.
+      const isAcpSession = existingSession?.sessionKind !== 'subagent' && (
+        existingSession?.mode?.startsWith('acp:') ||
+        existingSession?.config.agentType?.startsWith('acp:'));
       let turns: DialogTurnData[] | undefined;
       let restoredSessionInfo: AgentSessionInfo | undefined;
       let contextRestoreState: SessionContextRestoreState = 'ready';

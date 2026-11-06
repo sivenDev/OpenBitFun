@@ -4648,6 +4648,56 @@ describe('FlowChatStore historical session hydration state', () => {
     expect(apiMocks.restoreSessionWithTurns).not.toHaveBeenCalled();
   });
 
+  it('keeps a running delegated ACP child turn live instead of reading it as cancelled', async () => {
+    apiMocks.restoreSessionView.mockResolvedValueOnce({
+      session: {
+        sessionId: 'acp-child',
+        sessionName: 'ACP child',
+        agentType: 'acp:test',
+        state: 'Processing',
+        turnCount: 1,
+        createdAt: 1,
+      },
+      turns: [{
+        ...createPersistedTurn(0, 'acp-child'),
+        modelRounds: [{
+          id: 'round-0',
+          turnId: 'turn-0',
+          roundIndex: 0,
+          timestamp: 1,
+          textItems: [],
+          toolItems: [],
+          thinkingItems: [],
+          startTime: 1,
+          status: 'streaming',
+        }],
+        status: 'inprogress',
+      }],
+      contextRestoreState: 'ready',
+    });
+    flowChatStore.setState(() => ({
+      sessions: new Map([
+        ['acp-child', createSession({
+          sessionId: 'acp-child',
+          isHistorical: true,
+          historyState: 'metadata-only',
+          sessionKind: 'subagent',
+          parentSessionId: 'parent',
+          mode: 'acp:test',
+          config: { agentType: 'acp:test' },
+        })],
+      ]),
+      activeSessionId: 'acp-child',
+    }));
+
+    await flowChatStore.loadSessionHistory('acp-child');
+
+    expect(apiMocks.restoreSessionView).toHaveBeenCalled();
+    const turn = flowChatStore.getState().sessions.get('acp-child')?.dialogTurns[0];
+    expect(turn?.status).not.toBe('cancelled');
+    expect(turn?.modelRounds[0]?.status).not.toBe('cancelled');
+  });
+
   it('uses view-restored turns without reading the turn files a second time', async () => {
     const visibleOutput = 'complete visible output '.repeat(64);
     const restoredTurn = {
