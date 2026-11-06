@@ -1732,22 +1732,14 @@ impl AcpClientService {
     ) -> Result<RequestPermissionResponse, Error> {
         let session_id = request.session_id.to_string();
         let permission_mode = self.permission_mode_for_session(&session_id);
-        match permission_mode {
-            AcpClientPermissionMode::AllowOnce => {
-                return Ok(select_permission_by_kind(
-                    &request,
-                    PermissionOptionKind::AllowOnce,
-                    true,
-                ));
-            }
-            AcpClientPermissionMode::RejectOnce => {
-                return Ok(select_permission_by_kind(
-                    &request,
-                    PermissionOptionKind::RejectOnce,
-                    false,
-                ));
-            }
-            AcpClientPermissionMode::Ask => {}
+        let delegated = self.has_permission_broker(&session_id);
+        if let Some(approve) = client_permission_answer(permission_mode, delegated) {
+            let preferred = if approve {
+                PermissionOptionKind::AllowOnce
+            } else {
+                PermissionOptionKind::RejectOnce
+            };
+            return Ok(select_permission_by_kind(&request, preferred, approve));
         }
 
         if let Some(response) = self.broker_permission_request(&session_id, &request).await {
@@ -1833,6 +1825,13 @@ impl AcpClientService {
 
     pub(crate) fn clear_permission_broker(&self, openbitfun_session_id: &str) {
         self.permission_brokers.remove(openbitfun_session_id);
+    }
+
+    /// Whether prompts of the ACP session go to a delegated turn's broker.
+    fn has_permission_broker(&self, acp_session_id: &str) -> bool {
+        self.session_owners
+            .get(acp_session_id)
+            .is_some_and(|owner| self.permission_brokers.contains_key(owner.value()))
     }
 
     fn permission_mode_for_session(&self, session_id: &str) -> AcpClientPermissionMode {
@@ -2961,6 +2960,19 @@ fn permission_request_payload(
     payload
 }
 
+/// The answer the client's own permission mode gives without asking anyone:
+/// `Some(true)` approves, `Some(false)` rejects. A delegated turn answers to
+/// its OpenBitFun session's policy, which carries the session's mode and the
+/// parent's ceiling, so the client's auto-allow must not widen it there; an
+/// auto-reject only narrows and still applies.
+fn client_permission_answer(mode: AcpClientPermissionMode, delegated: bool) -> Option<bool> {
+    match mode {
+        AcpClientPermissionMode::RejectOnce => Some(false),
+        AcpClientPermissionMode::AllowOnce if !delegated => Some(true),
+        AcpClientPermissionMode::AllowOnce | AcpClientPermissionMode::Ask => None,
+    }
+}
+
 pub(super) fn select_permission_by_kind(
     request: &RequestPermissionRequest,
     preferred: PermissionOptionKind,
@@ -3056,6 +3068,20 @@ mod tests {
                 permission_mode: AcpClientPermissionMode::Ask,
             },
         ))
+    }
+
+    #[test]
+    fn delegated_turns_ignore_the_client_auto_allow_but_not_its_auto_reject() {
+        use AcpClientPermissionMode::{AllowOnce, Ask, RejectOnce};
+
+        // A session the user opened directly keeps the client's mode.
+        assert_eq!(client_permission_answer(AllowOnce, false), Some(true));
+        assert_eq!(client_permission_answer(RejectOnce, false), Some(false));
+        assert_eq!(client_permission_answer(Ask, false), None);
+        // A delegated turn asks its session's policy unless the client rejects.
+        assert_eq!(client_permission_answer(AllowOnce, true), None);
+        assert_eq!(client_permission_answer(RejectOnce, true), Some(false));
+        assert_eq!(client_permission_answer(Ask, true), None);
     }
 
     #[test]
