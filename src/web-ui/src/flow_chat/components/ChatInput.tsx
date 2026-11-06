@@ -2631,7 +2631,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       );
     }
 
-    if (!effectiveTargetSessionId || isAcpTargetSession || isDelegatedTarget) {
+    // A dispatch, including a shared assistant, carries its own submission
+    // permission mode; it has no persisted session mode on this host to read.
+    if (!effectiveTargetSessionId || isAcpTargetSession || isDelegatedTarget
+      || caps.sessionScopedApproval) {
       setSessionPermissionMode(null);
       setSessionPermissionModeUnread(false);
       setArmedTurnPermissionMode(null);
@@ -2704,6 +2707,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     isBtwDraftTarget,
     isAcpTargetSession,
     isDelegatedTarget,
+    caps.sessionScopedApproval,
     t,
   ]);
 
