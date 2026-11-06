@@ -369,6 +369,14 @@ pub struct SessionManager {
     /// removed with that Session; they are never serialized into public config.
     transient_session_ids: Arc<DashMap<String, ()>>,
 
+    /// When this process last loaded each in-memory Session or picked it up
+    /// for a turn. Idle eviction counts from the later of this and
+    /// `last_activity_at`: a Session restored from disk carries the activity
+    /// time it was saved with, which can be hours old, and evicting it on the
+    /// next tick would pull it out from under the turn that loaded it. Never
+    /// persisted, so it does not reorder Session lists.
+    session_accessed_at: Arc<DashMap<String, SystemTime>>,
+
     /// Authoritative temporary history survives context compression until explicit closure.
     transient_turns: Arc<DashMap<String, TransientSessionHistory>>,
 
@@ -542,6 +550,7 @@ impl SessionManager {
     #[cfg(test)]
     pub(crate) fn evict_loaded_session_for_test(&self, session_id: &str) {
         self.sessions.remove(session_id);
+        self.session_accessed_at.remove(session_id);
         self.transient_session_ids.remove(session_id);
         self.transient_turns.remove(session_id);
         self.clear_turn_settlement_results(session_id);
@@ -1049,8 +1058,18 @@ impl SessionManager {
         time::interval_at(time::Instant::now() + interval, interval)
     }
 
-    fn is_session_expired(session: &Session, now: SystemTime, timeout: Duration) -> bool {
-        now.duration_since(session.last_activity_at)
+    fn is_session_expired(
+        session: &Session,
+        session_accessed_at: &DashMap<String, SystemTime>,
+        now: SystemTime,
+        timeout: Duration,
+    ) -> bool {
+        let idle_since = session_accessed_at
+            .get(&session.session_id)
+            .map_or(session.last_activity_at, |accessed_at| {
+                (*accessed_at).max(session.last_activity_at)
+            });
+        now.duration_since(idle_since)
             .map(|idle_duration| idle_duration > timeout)
             .unwrap_or(false)
     }
@@ -1058,6 +1077,7 @@ impl SessionManager {
     fn collect_expired_session_candidates(
         sessions: &DashMap<String, Session>,
         transient_session_ids: &DashMap<String, ()>,
+        session_accessed_at: &DashMap<String, SystemTime>,
         now: SystemTime,
         timeout: Duration,
     ) -> Vec<SessionCleanupCandidate> {
@@ -1073,7 +1093,7 @@ impl SessionManager {
                         session,
                         transient_session_ids,
                     )
-                    || !Self::is_session_expired(session, now, timeout)
+                    || !Self::is_session_expired(session, session_accessed_at, now, timeout)
                 {
                     return None;
                 }
@@ -1089,23 +1109,31 @@ impl SessionManager {
     fn cleanup_candidate_matches_session(
         session: &Session,
         candidate: &SessionCleanupCandidate,
+        session_accessed_at: &DashMap<String, SystemTime>,
         now: SystemTime,
         timeout: Duration,
     ) -> bool {
         matches!(session.state, SessionState::Idle)
             && Self::same_session_version(session, candidate.updated_at, candidate.last_activity_at)
-            && Self::is_session_expired(session, now, timeout)
+            && Self::is_session_expired(session, session_accessed_at, now, timeout)
     }
 
     fn cleanup_snapshot_for_candidate(
         sessions: &DashMap<String, Session>,
         candidate: &SessionCleanupCandidate,
+        session_accessed_at: &DashMap<String, SystemTime>,
         now: SystemTime,
         timeout: Duration,
     ) -> Option<Session> {
         sessions.get(&candidate.session_id).and_then(|session| {
-            Self::cleanup_candidate_matches_session(&session, candidate, now, timeout)
-                .then(|| session.clone())
+            Self::cleanup_candidate_matches_session(
+                &session,
+                candidate,
+                session_accessed_at,
+                now,
+                timeout,
+            )
+            .then(|| session.clone())
         })
     }
 
@@ -2075,6 +2103,7 @@ impl SessionManager {
             sessions: Arc::new(DashMap::new()),
             active_turn_permission_modes: Arc::new(DashMap::new()),
             transient_session_ids: Arc::new(DashMap::new()),
+            session_accessed_at: Arc::new(DashMap::new()),
             transient_turns: Arc::new(DashMap::new()),
             turn_settlement_results: Arc::new(DashMap::new()),
             turn_settlement_result_order: Arc::new(Mutex::new(VecDeque::new())),
@@ -2584,6 +2613,7 @@ impl SessionManager {
         let sessions = self.sessions.clone();
         let active_turn_permission_modes = self.active_turn_permission_modes.clone();
         let transient_session_ids = self.transient_session_ids.clone();
+        let session_accessed_at = self.session_accessed_at.clone();
         let transient_turns = self.transient_turns.clone();
         let turn_settlement_results = self.turn_settlement_results.clone();
         let turn_settlement_result_order = self.turn_settlement_result_order.clone();
@@ -2622,6 +2652,7 @@ impl SessionManager {
                 sessions,
                 active_turn_permission_modes,
                 transient_session_ids,
+                session_accessed_at,
                 transient_turns,
                 turn_settlement_results,
                 turn_settlement_result_order,
@@ -5080,6 +5111,15 @@ impl SessionManager {
         }
     }
 
+    /// Records that this process is using an in-memory Session, which keeps
+    /// idle eviction away from it without changing its persisted activity time.
+    pub(crate) fn note_session_accessed(&self, session_id: &str) {
+        if self.sessions.contains_key(session_id) {
+            self.session_accessed_at
+                .insert(session_id.to_string(), SystemTime::now());
+        }
+    }
+
     async fn resolve_session_cleanup_workspace_path(
         &self,
         session_storage_path: &Path,
@@ -5355,6 +5395,7 @@ impl SessionManager {
         )
         .await?;
         self.sessions.remove(session_id);
+        self.session_accessed_at.remove(session_id);
         self.transient_session_ids.remove(session_id);
         self.clear_turn_settlement_results(session_id);
         self.release_active_session_reservation(session_id);
@@ -5405,6 +5446,7 @@ impl SessionManager {
         if self.sessions.remove(session_id).is_none() {
             return Ok(false);
         }
+        self.session_accessed_at.remove(session_id);
         self.clear_turn_settlement_results(session_id);
         self.release_active_session_reservation(session_id);
         self.active_turn_permission_modes.remove(session_id);
@@ -5591,6 +5633,7 @@ impl SessionManager {
             session_id
         );
         self.sessions.remove(session_id);
+        self.session_accessed_at.remove(session_id);
         self.transient_session_ids.remove(session_id);
         self.clear_turn_settlement_results(session_id);
         self.release_active_session_reservation(session_id);
@@ -6699,6 +6742,8 @@ impl SessionManager {
         // 4. Add to memory (will overwrite if already exists)
         self.sessions
             .insert(session_id.to_string(), session.clone());
+        self.session_accessed_at
+            .insert(session_id.to_string(), SystemTime::now());
         if let Some(permit) = active_session_permit {
             self.commit_active_session_reservation(session_id, permit);
         }
@@ -10634,6 +10679,7 @@ impl SessionManager {
         let sessions = self.sessions.clone();
         let active_turn_permission_modes = self.active_turn_permission_modes.clone();
         let transient_session_ids = self.transient_session_ids.clone();
+        let session_accessed_at = self.session_accessed_at.clone();
         let active_session_permits = self.active_session_permits.clone();
         let timeout = self.config.session_idle_timeout;
         let persistence = self.persistence_manager.clone();
@@ -10662,6 +10708,7 @@ impl SessionManager {
                 let candidates = Self::collect_expired_session_candidates(
                     &sessions,
                     &transient_session_ids,
+                    &session_accessed_at,
                     now,
                     timeout,
                 );
@@ -10677,6 +10724,7 @@ impl SessionManager {
                     let Some(session) = Self::cleanup_snapshot_for_candidate(
                         &sessions,
                         &candidate,
+                        &session_accessed_at,
                         cleanup_now,
                         timeout,
                     ) else {
@@ -10707,6 +10755,7 @@ impl SessionManager {
                             if Self::cleanup_snapshot_for_candidate(
                                 &sessions,
                                 &candidate,
+                                &session_accessed_at,
                                 SystemTime::now(),
                                 timeout,
                             )
@@ -10737,12 +10786,14 @@ impl SessionManager {
                             Self::cleanup_candidate_matches_session(
                                 session,
                                 &candidate,
+                                &session_accessed_at,
                                 removal_now,
                                 timeout,
                             )
                         })
                         .is_some()
                     {
+                        session_accessed_at.remove(&candidate.session_id);
                         active_session_permits.remove(&candidate.session_id);
                         session_write_locks.remove(&candidate.session_id);
                         active_turn_permission_modes.remove(&candidate.session_id);
@@ -11104,6 +11155,7 @@ mod tests {
         let candidates = SessionManager::collect_expired_session_candidates(
             &sessions,
             &transient_session_ids,
+            &DashMap::new(),
             now,
             Duration::from_secs(60),
         );
@@ -11121,6 +11173,7 @@ mod tests {
         assert!(SessionManager::collect_expired_session_candidates(
             &sessions,
             &transient_session_ids,
+            &DashMap::new(),
             now,
             Duration::MAX,
         )
@@ -11144,6 +11197,7 @@ mod tests {
         let candidate = SessionManager::collect_expired_session_candidates(
             &sessions,
             &transient_session_ids,
+            &DashMap::new(),
             now,
             Duration::from_secs(60),
         )
@@ -11162,6 +11216,7 @@ mod tests {
         assert!(SessionManager::cleanup_snapshot_for_candidate(
             &sessions,
             &candidate,
+            &DashMap::new(),
             now,
             Duration::from_secs(60),
         )
@@ -11171,6 +11226,7 @@ mod tests {
                 SessionManager::cleanup_candidate_matches_session(
                     session,
                     &candidate,
+                    &DashMap::new(),
                     now,
                     Duration::from_secs(60),
                 )
@@ -11183,6 +11239,56 @@ mod tests {
                 .state,
             SessionState::Processing { .. }
         ));
+    }
+
+    #[test]
+    fn idle_eviction_counts_from_when_this_process_last_used_the_session() {
+        let now = SystemTime::now();
+        let timeout = Duration::from_secs(60);
+        // Restored from disk with the activity time it was saved with.
+        let mut session = Session::new(
+            "Restored".to_string(),
+            "Standard".to_string(),
+            SessionConfig::default(),
+        );
+        session.last_activity_at = now - Duration::from_secs(10 * 60 * 60);
+        let session_id = session.session_id.clone();
+        let sessions = DashMap::new();
+        sessions.insert(session_id.clone(), session);
+        let transient_session_ids = DashMap::new();
+        let session_accessed_at = DashMap::new();
+        session_accessed_at.insert(session_id.clone(), now - Duration::from_secs(5));
+
+        assert!(SessionManager::collect_expired_session_candidates(
+            &sessions,
+            &transient_session_ids,
+            &session_accessed_at,
+            now,
+            timeout,
+        )
+        .is_empty());
+
+        // Selected before a turn picked it up: the recheck sees the new use.
+        session_accessed_at.insert(session_id.clone(), now - Duration::from_secs(120));
+        let candidate = SessionManager::collect_expired_session_candidates(
+            &sessions,
+            &transient_session_ids,
+            &session_accessed_at,
+            now,
+            timeout,
+        )
+        .into_iter()
+        .next()
+        .expect("unused Session should be selected");
+        session_accessed_at.insert(session_id.clone(), now);
+        assert!(SessionManager::cleanup_snapshot_for_candidate(
+            &sessions,
+            &candidate,
+            &session_accessed_at,
+            now,
+            timeout,
+        )
+        .is_none());
     }
 
     #[test]

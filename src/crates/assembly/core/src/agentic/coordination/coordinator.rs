@@ -7151,6 +7151,9 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
                     .await?
             }
         };
+        // The Session stays Idle until the turn below is admitted, which can
+        // take a while; keep idle eviction from unloading it in the meantime.
+        self.session_manager.note_session_accessed(&session_id);
         ensure_session_accepts_conversation(&session)?;
         self.ensure_session_runtime_ownership(&session_id, None)?;
         if session.kind == SessionKind::Subagent
