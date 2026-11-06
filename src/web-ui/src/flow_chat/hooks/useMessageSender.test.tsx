@@ -270,6 +270,9 @@ describe('useMessageSender', () => {
           contexts: [],
           pendingLargePastes: { '[Pasted text #1]': 'expanded paste content' },
         },
+        userMessageMetadata: {
+          largePastes: { '[Pasted text #1]': 'expanded paste content' },
+        },
       }),
     );
   });

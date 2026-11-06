@@ -353,10 +353,10 @@ function sameDispatchTargetIdentity(
 }
 
 const METADATA_LIST_RECENT_DEDUPE_TTL_MS = 1000;
-const HISTORICAL_SESSION_INITIAL_REMOTE_TAIL_TURN_COUNT = 3;
-const HISTORICAL_SESSION_INITIAL_LOCAL_TAIL_TURN_COUNT = 3;
+const HISTORICAL_SESSION_INITIAL_REMOTE_TAIL_TURN_COUNT = 1;
+const HISTORICAL_SESSION_INITIAL_LOCAL_TAIL_TURN_COUNT = 1;
 /** Turns a session keeps in memory when the history budget evicts it. */
-const RESIDENT_TAIL_TURN_COUNT = HISTORICAL_SESSION_INITIAL_LOCAL_TAIL_TURN_COUNT;
+const RESIDENT_TAIL_TURN_COUNT = 3;
 const HISTORICAL_SESSION_FULL_HISTORY_IDLE_TIMEOUT_MS = 1500;
 const HISTORICAL_SESSION_PREVIOUS_WINDOW_TURN_COUNT = 12;
 const PEER_SESSION_REFRESH_TAIL_TURN_COUNT = 3;
@@ -878,14 +878,14 @@ const ROUND_TIMING_KEYS = [
 ] as const;
 
 /**
- * Keep live `ModelRoundCompleted` timing that a settled record lacks.
+ * Keep live metrics that an older host's settled checkpoint lacks.
  *
  * Hosts that predate journal-carried round timing rebuild the last round of a
  * Turn without it (duration persisted as 0), because their completion write
  * usually lands before this client's checkpoint of that event. Adopting such a
  * record would erase the TTFT and output rate this window already measured.
  */
-function preserveLiveRoundTiming(current: DialogTurn, persisted: DialogTurn): DialogTurn {
+function preserveLiveTurnMetrics(current: DialogTurn, persisted: DialogTurn): DialogTurn {
   let changed = false;
   const modelRounds = persisted.modelRounds.map(persistedRound => {
     const currentRound = current.modelRounds.find(round => round.id === persistedRound.id);
@@ -909,7 +909,16 @@ function preserveLiveRoundTiming(current: DialogTurn, persisted: DialogTurn): Di
     return { ...persistedRound, ...patch };
   });
 
-  return changed ? { ...persisted, modelRounds } : persisted;
+  // Usage is cumulative within one Turn. Older hosts finish its content and
+  // timing while retaining a checkpoint from an earlier model request. Keep a
+  // more complete live aggregate intact; adding the two would double-count.
+  const tokenUsage = current.tokenUsage && (
+    !persisted.tokenUsage
+    || current.tokenUsage.totalTokens > persisted.tokenUsage.totalTokens
+  ) ? current.tokenUsage : persisted.tokenUsage;
+  return changed || tokenUsage !== persisted.tokenUsage
+    ? { ...persisted, modelRounds, tokenUsage }
+    : persisted;
 }
 
 /**
@@ -4089,6 +4098,22 @@ export class FlowChatStore {
     sessionId: string,
     options?: FullHistoryHydrationReleaseOptions
   ): boolean {
+    this.activeSurface.relaySessionHistory.get(sessionId)?.markPresented();
+    const session = this.state.sessions.get(sessionId);
+    // Warm one adjacent range without changing the rendered tail. The native
+    // history shell intentionally leaves blank space below a short last Turn;
+    // cached older Turns are presented only when the reader asks for them.
+    if (getActiveSurfaceId() === 'local' && session?.isPartial && resourceBudget.canPrefetch()
+      && session.turnCatalog?.sessionId === sessionId && this.state.activeSessionId === sessionId) {
+      const first = canonicalSessionTurns(session)[0];
+      const firstOrdinal = session.turnCatalog.entries.find(entry => entry.turnId === first?.id)?.ordinal;
+      if (firstOrdinal !== undefined && firstOrdinal > 0) {
+        void this.loadSessionTurnWindow(sessionId, firstOrdinal - 1, { before: 0, after: 1, source: 'prefetch' })
+          .catch(error => {
+            if (!isSurfaceChangedError(error)) log.debug('Adjacent session history prefetch stopped', { sessionId, error });
+          });
+      }
+    }
     let released = false;
     for (const request of this.fullHistoryHydrationRequests.values()) {
       if (!this.ownedByActiveSurface(request) || request.sessionId !== sessionId) {
@@ -6084,6 +6109,7 @@ export class FlowChatStore {
     if (surfaceId === getActiveSurfaceId()) {
       this.notifyListeners();
     }
+    this.notifySurfaceSessions(surfaceId, 'discarded');
     return removedSessionIds;
   }
 
@@ -8098,23 +8124,23 @@ export class FlowChatStore {
     return false;
   }
 
-  private surfaceSessionListeners = new Set<(surfaceId: DeviceSurfaceId) => void>();
+  private surfaceSessionListeners = new Set<(surfaceId: DeviceSurfaceId, change: 'updated' | 'discarded') => void>();
 
   /** Sessions of any surface's container, for background-device navigation. */
   public getSurfaceSessions(surfaceId: DeviceSurfaceId): ReadonlyMap<string, Session> {
     return this.surfaceContainers.get(surfaceId)?.state.sessions ?? EMPTY_SESSION_MAP;
   }
 
-  /** Fires when a surface's sessions change: background seeding and active-state updates. */
-  public subscribeSurfaceSessions(listener: (surfaceId: DeviceSurfaceId) => void): () => void {
+  /** Directory projections also need to know when their container was disposed. */
+  public subscribeSurfaceSessions(listener: (surfaceId: DeviceSurfaceId, change: 'updated' | 'discarded') => void): () => void {
     this.surfaceSessionListeners.add(listener);
     return () => { this.surfaceSessionListeners.delete(listener); };
   }
 
-  private notifySurfaceSessions(surfaceId: DeviceSurfaceId): void {
+  private notifySurfaceSessions(surfaceId: DeviceSurfaceId, change: 'updated' | 'discarded' = 'updated'): void {
     for (const listener of Array.from(this.surfaceSessionListeners)) {
       try {
-        listener(surfaceId);
+        listener(surfaceId, change);
       } catch (error) {
         log.warn('Surface session listener threw', { error });
       }
@@ -8202,21 +8228,25 @@ export class FlowChatStore {
    * metadata path (model context window, state machines) before they are
    * opened. Untouched seeds only; a session that already has history stays.
    */
-  public async promoteSeededSessions(): Promise<void> {
+  public async promoteSeededSessions(targetSessionId?: string): Promise<void> {
     const container = this.activeSurface;
+    const scope = getActiveSurfaceScope();
     const byWorkspace = new Map<string, SeededSessionRecord[]>();
     for (const [sessionId, record] of container.seededSessions) {
+      if (targetSessionId !== undefined && sessionId !== targetSessionId) continue;
       if (!this.isRebuildableSeed(sessionId)) continue;
       const group = byWorkspace.get(record.workspaceId) ?? [];
       group.push(record);
       byWorkspace.set(record.workspaceId, group);
     }
     for (const records of byWorkspace.values()) {
+      scope.assertCurrent('promote device catalog sessions');
       const [first] = records;
       await this.processPersistedSessionMetadataList(
         records.map(record => record.metadata), first.workspacePath, first.remoteConnectionId, first.remoteSshHost,
       );
     }
+    scope.assertCurrent('finish device catalog session promotion');
   }
 
   /**
@@ -8914,7 +8944,7 @@ export class FlowChatStore {
           if (adopted === turns) {
             adopted = [...turns];
           }
-          adopted[index] = preserveLiveRoundTiming(adopted[index], snapshotTurn);
+          adopted[index] = preserveLiveTurnMetrics(adopted[index], snapshotTurn);
         }
         return adopted;
       };
@@ -8991,7 +9021,7 @@ export class FlowChatStore {
         ) {
           mergedTurns[existingIndex] = isRuntimeReplayTurn
             ? snapshotTurn
-            : preserveLiveRoundTiming(mergedTurns[existingIndex], snapshotTurn);
+            : preserveLiveTurnMetrics(mergedTurns[existingIndex], snapshotTurn);
           turnsChanged = true;
         }
       }
@@ -9177,7 +9207,7 @@ export class FlowChatStore {
         return prev;
       }
       const current = session.dialogTurns[turnIndex];
-      const reconciled = preserveLiveRoundTiming(
+      const reconciled = preserveLiveTurnMetrics(
         current,
         preserveClientDerivedDisplayItems(current, incoming),
       );
@@ -9298,12 +9328,24 @@ export class FlowChatStore {
       limit?: number;
       includeInternal?: boolean;
       deferFullHistoryUntilActive?: boolean;
+      /** Retain a speculative last-Turn read without loading older history. */
+      retainInactiveTail?: boolean;
       /** A background source refresh must not replace a view after drafting starts. */
       shouldApply?: () => boolean;
     }
   ): Promise<void> {
     const traceStartedAt = nowMs();
     const initialSession = this.state.sessions.get(sessionId);
+    const prewarmStillApplies = (): boolean => {
+      if (options?.retainInactiveTail !== true) return true;
+      const session = this.state.sessions.get(sessionId);
+      return session?.isHistorical === true
+        && session.dialogTurns === initialSession?.dialogTurns
+        && session.config === initialSession?.config
+        && session.workspaceId === initialSession?.workspaceId
+        && session.remoteConnectionId === initialSession?.remoteConnectionId
+        && session.remoteSshHost === initialSession?.remoteSshHost;
+    };
     const remoteConnectionId = initialSession?.remoteConnectionId;
     const remoteSshHost = initialSession?.remoteSshHost;
     const remote = isRemoteTraceContext(remoteConnectionId, remoteSshHost);
@@ -9378,6 +9420,11 @@ export class FlowChatStore {
       if (!open) this.setSessionHistoryState(sessionId, 'hydrating');
       await this.loadRelaySessionHistory(sessionId);
       scope.assertCurrent('load relay session history');
+      startupTrace.markPhase('historical_session_hydrate_end', {
+        remote: true, sessionId, sessionTraceId, surfaceId: scope.surfaceId,
+        turnCount: this.state.sessions.get(sessionId)?.dialogTurns.length ?? 0,
+        durationMs: elapsedMs(traceStartedAt),
+      });
       return;
     }
     const suppressInitialHydratingState =
@@ -9388,7 +9435,7 @@ export class FlowChatStore {
       initialSession.historyState === 'metadata-only';
     let hydratingStateNotified = false;
     const notifyHydratingState = (): void => {
-      if (options?.shouldApply) return;
+      if (options?.shouldApply || options?.retainInactiveTail) return;
       if (suppressInitialHydratingState) {
         return;
       }
@@ -9585,7 +9632,7 @@ export class FlowChatStore {
       // machine they are about to drive is shared, so a stale hydrate must stop
       // here rather than commit into whichever surface is rendered now.
       scope.assertCurrent('loadSessionHistory');
-      if (options?.shouldApply && !options.shouldApply()) return;
+      if (!prewarmStillApplies() || (options?.shouldApply && !options.shouldApply())) return;
       // A local restore may have started just before the observer bound this
       // session. Re-check ownership after every restore await and before any
       // commit or state-machine mutation so that late empty history cannot
@@ -9605,6 +9652,7 @@ export class FlowChatStore {
 
       const skipStaleLocalHydrateCommit =
         !remote &&
+        options?.retainInactiveTail !== true &&
         options?.deferFullHistoryUntilActive === true &&
         this.state.activeSessionId !== sessionId;
       if (skipStaleLocalHydrateCommit) {
@@ -9698,7 +9746,7 @@ export class FlowChatStore {
           ) {
             return existing;
           }
-          return loaded;
+          return existing ? preserveLiveTurnMetrics(existing, loaded) : loaded;
         });
 
         const updatedSession = {
@@ -9839,6 +9887,8 @@ export class FlowChatStore {
         }
       }
     } catch (error) {
+      if (isSurfaceChangedError(error)) throw error;
+      if (!prewarmStillApplies()) return;
       // The same race can fail instead of resolving. Once dispatch owns the
       // session, that stale local failure must not relabel its projection as a
       // failed historical session or surface an irrelevant restore error.

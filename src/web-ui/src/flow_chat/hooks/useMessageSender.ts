@@ -45,6 +45,7 @@ import type {
   SessionPermissionMode,
 } from '@/infrastructure/api/service-api/AgentAPI';
 import type { PendingLargePasteMap } from '../store/sessionComposerStore';
+import { LARGE_PASTES_METADATA_KEY, pickReferencedLargePastes } from '../utils/largePasteMetadata';
 
 const log = createLogger('FlowChat');
 
@@ -202,12 +203,18 @@ export function useMessageSender(props: UseMessageSenderProps): UseMessageSender
       const assistantMentions = assistantMentionsMetadata(
         presentation ? composerPresentationContexts(presentation) : contexts,
       );
+      const largePastes = pickReferencedLargePastes(
+        options?.composerDraft?.pendingLargePastes,
+        options?.displayMessage?.trim() || trimmedMessage,
+      );
       const userMessageMetadata =
-        presentation || sessionReferences.length > 0 || assistantMentions.length > 0 || turnPermissionMode
+        presentation || sessionReferences.length > 0 || assistantMentions.length > 0
+          || turnPermissionMode || largePastes
           ? {
               ...(presentation
                 ? { composerPresentation: presentation }
                 : {}),
+              ...(largePastes ? { [LARGE_PASTES_METADATA_KEY]: largePastes } : {}),
               ...(sessionReferences.length > 0 ? { sessionReferences } : {}),
               ...(assistantMentions.length > 0 ? { assistantMentions } : {}),
               // Read by the coordinator as the turn layer of

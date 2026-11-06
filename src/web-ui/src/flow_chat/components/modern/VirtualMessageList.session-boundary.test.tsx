@@ -12,6 +12,7 @@ import { finishSubmittedMessageScrollIntent, registerSubmittedMessageScrollInten
 import { readingLinePxForViewport, tailSpacerPxForViewport } from './flowChatTailFollow';
 import { ONE_SHOT_NAVIGATION_HOLD_MS } from './flowChatViewportOwnership';
 import { VirtualMessageList, type VirtualMessageListRef } from './VirtualMessageList';
+import { HistorySessionLoadingBoundary } from './HistorySessionLoadingBoundary';
 import type { FlowChatViewportOwnerApi } from './useFlowChatViewportOwner';
 import { FlowChatVolatileContext } from './FlowChatContext';
 import { useFlowGroupState } from './useFlowGroupState';
@@ -49,6 +50,7 @@ const mocks = vi.hoisted(() => ({
   isFollowingOutput: false,
   followsNow: false,
   scheduleFollowToLatest: vi.fn(),
+  shiftFollowLayout: vi.fn(() => false),
   startAtTailOnMount: true,
   virtualizerStartsAtTail: false,
   estimateWidth: undefined as number | undefined,
@@ -223,7 +225,8 @@ vi.mock('../../store/modernFlowChatStore', () => {
 vi.mock('../../trajectory/trajectoryPanel', () => ({ openTrajectoryPanel: mocks.trajectoryPanel }));
 
 vi.mock('../../hooks/useActiveSessionState', () => ({
-  useActiveSessionState: () => ({ isProcessing: false }),
+  // This suite supplies top-origin virtual bounds for the live layout.
+  useActiveSessionState: () => ({ isProcessing: true }),
 }));
 
 vi.mock('../../store/chatInputStateStore', () => ({
@@ -248,6 +251,7 @@ vi.mock('./useFlowChatFollowOutput', () => ({
       enterFollowOutput: mocks.enterFollowOutput,
       exitFollowOutput: mocks.exitFollowOutput,
       scheduleFollowToLatest: mocks.scheduleFollowToLatest,
+      shiftLayout: mocks.shiftFollowLayout,
       isFollowingOutputNow: () => mocks.followsNow,
       // Nothing streams here, so the frame loop is never correcting: the band is
       // judged on the viewport itself, exactly as it is for a resting transcript.
@@ -401,6 +405,7 @@ describe('VirtualMessageList natural scroll contract', () => {
     mocks.handleUserScrollIntent.mockReset();
     mocks.handleFollowScroll.mockReset();
     mocks.scheduleFollowToLatest.mockReset();
+    mocks.shiftFollowLayout.mockReset().mockReturnValue(false);
     mocks.startAtTailOnMount = true;
     mocks.placeSubmittedMessage = null;
     mocks.viewportOwner = null;
@@ -513,6 +518,18 @@ describe('VirtualMessageList natural scroll contract', () => {
       expect(scroller.scrollTop).toBe(880);
       expect(rows[0].getBoundingClientRect().top).toBe(100);
     } finally { restore(); }
+  });
+
+  it('passes a measured displacement refused by follow ownership back to its follower', () => {
+    act(() => root.render(<VirtualMessageList />));
+    mocks.viewportOwner!.claim('follow-output');
+    mocks.shiftFollowLayout.mockReturnValue(true);
+    act(() => { expect(mocks.shiftMeasurement!(-120)).toBe(true); });
+    expect(mocks.shiftFollowLayout).toHaveBeenCalledWith(-120);
+    mocks.shiftFollowLayout.mockClear();
+    mocks.viewportOwner!.claim('user-gesture');
+    act(() => { expect(mocks.shiftMeasurement!(80)).toBe(true); });
+    expect(mocks.shiftFollowLayout).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('restores the unfaded start after scroll round trips with synchronous virtualizer commits=%s', async commitDuringScroll => {
@@ -644,6 +661,37 @@ describe('VirtualMessageList natural scroll contract', () => {
     mocks.followsNow = true;
     mocks.viewportOwner!.claim('follow-output');
     expect(mocks.reconcileOpeningMeasurement?.()).toBe(false);
+  });
+
+  it('presents a warm long Turn as soon as its tail settles with the question above the viewport', async () => {
+    const restoreLayout = fakeLayout({ clientHeight: 600, scrollHeight: 600, turnTopFromScrollerTop: 0 });
+    const presented = vi.fn();
+    mocks.items = [userMessage('turn-1', 'message-1', 'Question'), modelRound('turn-1', 'round-1', 'Answer')];
+    try {
+      HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+        if (this.dataset.itemType === 'user-message') return new DOMRect(0, -1_000, 600, 40);
+        if (this.dataset.itemType === 'model-round') return new DOMRect(0, -900, 600, 1_450);
+        return new DOMRect(0, 0, 600, 600);
+      };
+      act(() => root.render(
+        <HistorySessionLoadingBoundary identity="local:session-1" loading={false} hasTranscript
+          disabled={false} intent={false} label="Loading conversation" onPresentationChange={presented}>
+          <VirtualMessageList />
+        </HistorySessionLoadingBoundary>,
+      ));
+      expect(presented).toHaveBeenLastCalledWith('local:session-1', false);
+      for (let frame = 1; frame <= 2; frame += 1) {
+        const pending = [...animationFrames.values()];
+        animationFrames.clear();
+        await act(async () => { pending.forEach(callback => callback(frame * 16)); });
+      }
+      expect(container.querySelector('[data-open-viewport-settled="true"]')).not.toBeNull();
+      expect(presented).toHaveBeenLastCalledWith('local:session-1', true);
+      expect(container.querySelector('[data-history-loading-phase="loading"]')).toBeNull();
+      expect(container.querySelector<HTMLElement>('[data-item-type="user-message"]')!.getBoundingClientRect().bottom).toBeLessThan(0);
+    } finally {
+      restoreLayout();
+    }
   });
 
   it('keeps button activation and consumed keys out of scroll intent, while transcript navigation still scrolls', async () => {
@@ -1931,6 +1979,7 @@ describe('VirtualMessageList natural scroll contract', () => {
       const render = (history = false) => root.render(
         <VirtualMessageList
           presentationMode={history ? 'history-window' : 'tail'}
+          viewportMode="live-tail"
           historyWindow={history ? {
             startOrdinal: 36, endOrdinalExclusive: 46, targetTurnId: null, mode: 'history-window',
           } : null}
@@ -2188,7 +2237,7 @@ describe('VirtualMessageList natural scroll contract', () => {
       Object.defineProperty(scroller, 'scrollTop', {
         configurable: true,
         writable: true,
-        value: 400,
+        value: -1000, // Native end origin; persisted top offset remains 400.
       });
 
       const snapshot = listRef.current?.captureViewportSnapshot();
@@ -2209,7 +2258,7 @@ describe('VirtualMessageList natural scroll contract', () => {
       });
 
       expect(restored).toBe(true);
-      expect(scroller.scrollTop).toBe(540);
+      expect(scroller.scrollTop).toBe(-860);
     } finally {
       restoreLayout();
     }
@@ -2308,6 +2357,7 @@ describe('VirtualMessageList natural scroll contract', () => {
 
   it('materializes and restores a saved reading position without starting tail follow', async () => {
     const listRef = React.createRef<VirtualMessageListRef>();
+    const presented = vi.fn();
     const initialViewportSnapshot = {
       sessionId: 'session-1',
       presentationMode: 'tail' as const,
@@ -2327,10 +2377,13 @@ describe('VirtualMessageList natural scroll contract', () => {
     const restoreLayout = fakeLayout(layout);
     try {
       act(() => root.render(
-        <VirtualMessageList
-          ref={listRef}
-          initialViewportSnapshot={initialViewportSnapshot}
-        />,
+        <HistorySessionLoadingBoundary identity="local:session-1" loading={false} hasTranscript
+          disabled={false} intent={false} label="Loading conversation" onPresentationChange={presented}>
+          <VirtualMessageList
+            ref={listRef}
+            initialViewportSnapshot={initialViewportSnapshot}
+          />
+        </HistorySessionLoadingBoundary>,
       ));
       const scroller = container.querySelector<HTMLElement>('[data-flowchat-scroller]')!;
       scroller.getBoundingClientRect = () => (
@@ -2340,8 +2393,10 @@ describe('VirtualMessageList natural scroll contract', () => {
       expect(mocks.startAtTailOnMount).toBe(false);
       expect(mocks.virtualizerStartsAtTail).toBe(false);
       expect(scroller.scrollTop).toBe(140);
+      expect(presented).toHaveBeenLastCalledWith('local:session-1', false);
       await settleOpenReveal();
       expect(container.querySelector('[data-open-viewport-settled="true"]')).not.toBeNull();
+      expect(presented).toHaveBeenLastCalledWith('local:session-1', true);
     } finally {
       restoreLayout();
     }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flowChatStore, mergeModelRoundAttemptDiagnostics } from './FlowChatStore';
 import { sessionToVirtualItems } from './modernFlowChatStore';
+import { getTurnOutputDurationMs, getTurnUsageMetrics } from '../utils/turnUsageMetrics';
 import { buildModelRoundItemGroups } from '../components/modern/modelRoundItemGrouping';
 import { getVirtualItemFlowGroups } from '../grouping/selectors';
 import { convertDialogTurnToBackendFormat } from '../services/flow-chat-manager/PersistenceModule';
@@ -4856,10 +4857,10 @@ describe('FlowChatStore historical session hydration state', () => {
       expect(apiMocks.restoreSessionView).toHaveBeenNthCalledWith(
         1,
         'history-1',
-        'test-workspace-2',
+        fixtureWorkspaceId('D:/workspace/OpenBitFun'),
         expect.any(String),
         undefined,
-        3,
+        1,
       );
       expect(
         flowChatStore.getState().sessions.get('history-1')?.dialogTurns.map(turn => turn.userMessage.content)
@@ -4880,7 +4881,7 @@ describe('FlowChatStore historical session hydration state', () => {
       expect(apiMocks.restoreSessionView).toHaveBeenNthCalledWith(
         2,
         'history-1',
-        'test-workspace-2',
+        fixtureWorkspaceId('D:/workspace/OpenBitFun'),
         expect.stringContaining('full'),
         undefined,
         undefined,
@@ -5167,6 +5168,171 @@ describe('FlowChatStore historical session hydration state', () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it.each(['settled', 'in-flight'])('reuses a %s local prewarm through the real open path', async timing => {
+    vi.useFakeTimers();
+    try {
+      const { prewarmHistoricalSession, switchChatSession, pendingHistoryLoadKey } =
+        await import('../services/flow-chat-manager/SessionModule');
+      const session = createSession({
+        sessionId: 'history-1', isHistorical: true, historyState: 'metadata-only',
+      });
+      flowChatStore.setState(() => ({
+        sessions: new Map([[session.sessionId, session]]), activeSessionId: null,
+      }));
+      const restored = createDeferred<any>();
+      apiMocks.restoreSessionView.mockReturnValueOnce(restored.promise);
+      const context = {
+        flowChatStore, pendingHistoryLoads: new Map(),
+      } as unknown as import('../services/flow-chat-manager/types').FlowChatContext;
+      prewarmHistoricalSession(context, session.sessionId);
+      const pending = context.pendingHistoryLoads.get(pendingHistoryLoadKey(session.sessionId));
+      expect(pending).toBeDefined();
+      expect(flowChatStore.getState().sessions.get(session.sessionId)?.historyState).toBe('metadata-only');
+
+      const open = timing === 'in-flight' ? switchChatSession(context, session.sessionId) : null;
+      restored.resolve({
+        session: {
+          sessionId: session.sessionId, sessionName: 'Saved session',
+          agentType: 'Standard', state: 'Idle', turnCount: 5, createdAt: 1,
+        },
+        turns: [{
+          turnId: 'saved-tail', turnIndex: 4, sessionId: session.sessionId,
+          timestamp: 1, startTime: 1, status: 'completed', modelRounds: [],
+          userMessage: { id: 'saved-message', content: 'Saved prompt', timestamp: 1 },
+        }],
+        contextRestoreState: 'pending', isPartial: true,
+        loadedTurnCount: 1, totalTurnCount: 5,
+      });
+      await pending;
+      if (timing === 'settled') {
+        expect(flowChatStore.getState().activeSessionId).toBeNull();
+        expect(flowChatStore.hasPendingSessionHistoryCompletion(session.sessionId)).toBe(false);
+        await vi.runOnlyPendingTimersAsync();
+        expect(apiMocks.restoreSessionView).toHaveBeenCalledTimes(1);
+        await switchChatSession(context, session.sessionId);
+      } else {
+        await open;
+      }
+      expect(flowChatStore.getState().activeSessionId).toBe(session.sessionId);
+      expect(flowChatStore.getState().sessions.get(session.sessionId)).toMatchObject({
+        historyState: 'ready', isHistorical: false, loadedTurnCount: 1, totalTurnCount: 5,
+        dialogTurns: [expect.objectContaining({ id: 'saved-tail' })],
+      });
+      expect(apiMocks.restoreSessionView).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a prewarm invalidated by changed config before a programmatic open', async () => {
+    vi.useFakeTimers();
+    try {
+      const { prewarmHistoricalSession, switchChatSession } =
+        await import('../services/flow-chat-manager/SessionModule');
+      const session = createSession({
+        sessionId: 'history-1', isHistorical: true, historyState: 'metadata-only',
+      });
+      flowChatStore.setState(() => ({
+        sessions: new Map([[session.sessionId, session]]), activeSessionId: null,
+      }));
+      const first = createDeferred<any>();
+      const result = {
+        session: { sessionId: session.sessionId, agentType: 'Standard', state: 'Idle' },
+        turns: [{
+          turnId: 'saved-tail', turnIndex: 0, sessionId: session.sessionId,
+          timestamp: 1, startTime: 1, status: 'completed', modelRounds: [],
+          userMessage: { id: 'saved-message', content: 'Saved prompt', timestamp: 1 },
+        }],
+        contextRestoreState: 'pending',
+      };
+      apiMocks.restoreSessionView.mockReturnValueOnce(first.promise).mockResolvedValueOnce(result);
+      const context = {
+        flowChatStore, pendingHistoryLoads: new Map(),
+      } as unknown as import('../services/flow-chat-manager/types').FlowChatContext;
+      prewarmHistoricalSession(context, session.sessionId);
+      flowChatStore.setState(() => ({
+        sessions: new Map([[session.sessionId, { ...session, config: { ...session.config, modelName: 'updated' } }]]),
+        activeSessionId: null,
+      }));
+      const open = switchChatSession(context, session.sessionId);
+      first.resolve(result);
+      await open;
+      expect(apiMocks.restoreSessionView).toHaveBeenCalledTimes(2);
+      expect(flowChatStore.getState().activeSessionId).toBe(session.sessionId);
+      expect(flowChatStore.getState().sessions.get(session.sessionId)).toMatchObject({
+        historyState: 'ready', dialogTurns: [expect.objectContaining({ id: 'saved-tail' })],
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a prewarm from a previous device activation without changing the new surface', async () => {
+    const session = createSession({
+      sessionId: 'history-1', isHistorical: true, historyState: 'metadata-only',
+    });
+    flowChatStore.setState(() => ({
+      sessions: new Map([[session.sessionId, session]]), activeSessionId: null,
+    }));
+    const restored = createDeferred<any>();
+    apiMocks.restoreSessionView.mockReturnValueOnce(restored.promise);
+    const load = flowChatStore.loadSessionHistory(session.sessionId, {
+      deferFullHistoryUntilActive: true, retainInactiveTail: true,
+    });
+    await flushAsyncWork();
+    try {
+      activateSurface('peer:another-device');
+      const replacement = createSession({ sessionId: session.sessionId, title: 'Peer session' });
+      flowChatStore.setState(() => ({ sessions: new Map([[session.sessionId, replacement]]) }));
+      restored.resolve({
+        session: { sessionId: session.sessionId, agentType: 'Standard', state: 'Idle' },
+        turns: [], contextRestoreState: 'pending',
+      });
+      await expect(load).rejects.toMatchObject({ isSurfaceChangedError: true });
+      expect(flowChatStore.getState().sessions.get(session.sessionId)).toBe(replacement);
+    } finally {
+      activateSurface(LOCAL_SURFACE_ID);
+    }
+  });
+
+  it.each(['live-content', 'workspace', 'failure'])('discards a stale prewarm after %s without resetting execution', async change => {
+    const session = createSession({
+      sessionId: 'history-1', isHistorical: true, historyState: 'metadata-only',
+    });
+    flowChatStore.setState(() => ({
+      sessions: new Map([[session.sessionId, session]]), activeSessionId: null,
+    }));
+    const restored = createDeferred<any>();
+    apiMocks.restoreSessionView.mockReturnValueOnce(restored.promise);
+    const load = flowChatStore.loadSessionHistory(session.sessionId, {
+      deferFullHistoryUntilActive: true, retainInactiveTail: true,
+    });
+    await flushAsyncWork();
+    const replacement = change === 'workspace'
+      ? { ...session, workspaceId: 'another-workspace' }
+      : { ...session, isHistorical: false, historyState: 'ready' as const,
+          dialogTurns: [{ id: 'live-turn' } as any] };
+    flowChatStore.setState(() => ({
+      sessions: new Map([[session.sessionId, replacement]]), activeSessionId: session.sessionId,
+    }));
+    stateMachineManagerMock.getOrCreate.mockClear();
+    stateMachineManagerMock.reset.mockClear();
+    if (change === 'failure') {
+      restored.reject(new Error('request timed out'));
+    } else {
+      restored.resolve({
+        session: { sessionId: session.sessionId, agentType: 'Standard', state: 'Idle' },
+        turns: [], contextRestoreState: 'pending',
+      });
+    }
+    await load;
+    expect(flowChatStore.getState().sessions.get(session.sessionId)).toBe(replacement);
+    expect(stateMachineManagerMock.getOrCreate).not.toHaveBeenCalled();
+    expect(stateMachineManagerMock.reset).not.toHaveBeenCalled();
   });
 
   it('skips committing stale local history hydrate when switching away before restore finishes', async () => {
@@ -5582,10 +5748,10 @@ describe('FlowChatStore historical session hydration state', () => {
     expect(apiMocks.restoreSessionView).toHaveBeenNthCalledWith(
       1,
       'history-remote',
-      'test-workspace-2',
+      fixtureWorkspaceId('D:/workspace/OpenBitFun'),
       expect.any(String),
       undefined,
-      3,
+      1,
     );
   });
 
@@ -6561,6 +6727,36 @@ describe('FlowChatStore historical session hydration state', () => {
       presentation?.range,
     );
     expect(apiMocks.loadSessionTurnWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['local', 'ssh'])('opens %s history with one Turn and warms an adjacent range only after paint without replacing the tail', async location => {
+    const catalog = createTurnCatalog(100);
+    const session = createSession({ sessionId: 'history-1', isHistorical: true, historyState: 'metadata-only',
+      ...(location === 'ssh' ? { remoteConnectionId: 'ssh-host', remoteSshHost: 'host.example' } : {}),
+    });
+    apiMocks.restoreSessionView.mockResolvedValueOnce({
+      session: { sessionId: 'history-1', sessionName: 'History', agentType: 'Standard', state: 'Idle', turnCount: 100, createdAt: 1 },
+      turns: [createPersistedTurn(99)], turnCatalog: catalog, contextRestoreState: 'pending',
+      isPartial: true, loadedTurnCount: 1, totalTurnCount: 100,
+    });
+    apiMocks.loadSessionTurnWindow.mockResolvedValueOnce({
+      status: 'ready', catalogRevision: catalog.revision, totalTurnCount: 100,
+      startOrdinal: 98, endOrdinalExclusive: 100, targetTurnId: 'turn-98',
+      turns: [98, 99].map(index => createPersistedTurn(index)),
+    });
+    flowChatStore.setState(() => ({ sessions: new Map([[session.sessionId, session]]), activeSessionId: session.sessionId }));
+    await flowChatStore.loadSessionHistory(session.sessionId);
+    expect(apiMocks.restoreSessionView).toHaveBeenCalledWith(session.sessionId, session.workspaceId, expect.any(String), undefined, 1);
+    expect(apiMocks.loadSessionTurnWindow).not.toHaveBeenCalled();
+    const tail = flowChatStore.getState().sessions.get(session.sessionId)!.dialogTurns;
+    expect(tail.map(turn => turn.id)).toEqual(['turn-99']);
+    flowChatStore.releaseSessionHistoryCompletionAfterInitialPaint(session.sessionId);
+    await flushAsyncWork();
+    expect(apiMocks.loadSessionTurnWindow).toHaveBeenCalledTimes(1);
+    expect(apiMocks.loadSessionTurnWindow).toHaveBeenCalledWith(expect.objectContaining({ targetStorageTurnIndex: 98, before: 0, after: 1 }));
+    expect(flowChatStore.getState().sessions.get(session.sessionId)!.dialogTurns).toBe(tail);
+    expect(flowChatStore.getSessionHistoryViewState(session.sessionId)?.activeRange).toBeNull();
+    expect(flowChatStore.hasPendingSessionHistoryCompletion(session.sessionId)).toBe(false);
   });
 
 
@@ -7984,6 +8180,54 @@ describe('FlowChatStore reconcile snapshot content safety', () => {
     ).toMatchObject({ content: 'OpenBitFun is an agentic IDE…' });
   });
 
+  it.each([
+    ['settlement', undefined, 334],
+    ['settlement', 97, 334],
+    ['settlement', 450, 450],
+    ['peer-refresh', 97, 334],
+    ['peer-refresh', 450, 450],
+  ] as const)('keeps complete turn usage across %s with host output %s', async (path, hostOutput, expectedOutput) => {
+    await hydrateSessionWithContent();
+    flowChatStore.setState(prev => {
+      const session = prev.sessions.get('history-1')!;
+      const turn = session.dialogTurns[0];
+      const first = { ...turn.modelRounds[0], durationMs: 1792, streamDurationMs: 324, ttftMs: 1461 };
+      const second = { ...first, id: 'round-1', index: 1, durationMs: 2458, streamDurationMs: 877, ttftMs: 1573 };
+      return { sessions: new Map(prev.sessions).set('history-1', {
+        ...session, dialogTurns: [{ ...turn, status: 'completed', tokenUsage: undefined, modelRounds: [first, second] }],
+      }) };
+    });
+    flowChatStore.updateTokenUsage('history-1', { inputTokens: 28928, outputTokens: 97, totalTokens: 29025 }, 'turn-0');
+    flowChatStore.updateTokenUsage('history-1', { inputTokens: 42794, outputTokens: 237, totalTokens: 43031 }, 'turn-0');
+    expect(flowChatStore.getState().sessions.get('history-1')!.dialogTurns[0].tokenUsage?.outputTokens).toBe(334);
+    const hostInput = hostOutput === 97 ? 28928 : 71722;
+    apiMocks.restoreSessionView.mockResolvedValueOnce({
+      session: hostSession(),
+      turns: [{
+        ...createPersistedTurn(0),
+        modelRounds: [
+          { ...HYDRATED_ROUND, durationMs: 1792, streamDurationMs: 324, ttftMs: 1461 },
+          { ...HYDRATED_ROUND, id: 'round-1', roundIndex: 1, durationMs: 2458, streamDurationMs: 877, ttftMs: 1573 },
+        ],
+        endTime: 4250,
+        tokenUsage: hostOutput === undefined ? undefined : {
+          inputTokens: hostInput, outputTokens: hostOutput, totalTokens: hostInput + hostOutput, timestamp: Date.now() + 1000,
+        },
+      }],
+      contextRestoreState: 'ready',
+    });
+    if (path === 'settlement') {
+      await expect(flowChatStore.reconcileSettledDialogTurn('history-1', 'turn-0')).resolves.toBe(true);
+    } else {
+      peerModeFlagMock.active = true;
+      await flowChatStore.refreshPeerSessionSnapshot('history-1', { requireActiveSession: false });
+    }
+    const restored = flowChatStore.getState().sessions.get('history-1')!.dialogTurns[0];
+    expect(restored.tokenUsage?.outputTokens).toBe(expectedOutput);
+    expect(getTurnUsageMetrics(restored.tokenUsage, getTurnOutputDurationMs(restored.modelRounds)).outputRate)
+      .toBeCloseTo(expectedOutput / 4.25);
+  });
+
   it('repairs a settled local or Peer projection from the host tail', async () => {
     await hydrateSessionWithContent();
     const completeContent = 'OpenBitFun is an agentic IDE… with a complete persisted response.';
@@ -8753,12 +8997,13 @@ describe('FlowChatStore device surfaces', () => {
       // Known history and paging state survive; nothing claims a complete empty transcript.
       expect(session().historyState).toBe('failed');
       expect(session().isPartial).toBe(true);
-      expect(texts('peer-overdue')).toHaveLength(2);
+      expect(texts('peer-overdue')).toHaveLength(1);
       // The stalled read is closed, so its late page cannot mark it ready.
       expect(apiMocks.relayReady).toBeNull();
 
       // The retry receives the late page from the host cache and recovers.
       apiMocks.subscribeRelaySession.mockImplementationOnce(async () => {
+        apiMocks.relayRecord?.(itemRecord('peer-overdue', 0, 1));
         apiMocks.relayRecord?.(itemRecord('peer-overdue', 0, 2));
         apiMocks.relayReady?.({ sessionId: 'peer-overdue', hasMore: false, oldestSeq: 1, cursor: 9 });
         return 'peer-overdue-retry';
@@ -8768,16 +9013,36 @@ describe('FlowChatStore device surfaces', () => {
       expect(texts('peer-overdue')).toHaveLength(3);
     });
 
-    it('applies each drained page in one pass', async () => {
+    it('keeps an incomplete historical Turn out of the replica and publishes all its items together', async () => {
+      activateSurface(PEER_SURFACE_ID);
+      seedSession('peer-atomic');
+      vi.useFakeTimers();
+      try {
+        apiMocks.subscribeRelaySession.mockResolvedValueOnce('peer-atomic-subscription');
+        const opening = flowChatStore.loadRelaySessionHistory('peer-atomic');
+        await vi.advanceTimersByTimeAsync(0);
+        apiMocks.relayRecord?.(itemRecord('peer-atomic', 0, 0));
+        await vi.advanceTimersByTimeAsync(1000);
+        // Runtime/mailbox controls may flush while a page is crossing the bridge.
+        flowChatStore.settleRelaySessionRecords('peer-atomic');
+        expect(flowChatStore.getState().sessions.get('peer-atomic')!.dialogTurns).toHaveLength(0);
+        apiMocks.relayRecord?.(itemRecord('peer-atomic', 0, 1));
+        apiMocks.relayReady?.({ sessionId: 'peer-atomic', hasMore: false, oldestSeq: 1, cursor: 2 });
+        await opening;
+        expect(texts('peer-atomic')).toHaveLength(2);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('applies each admitted whole-Turn batch in one pass', async () => {
       activateSurface(PEER_SURFACE_ID);
       seedSession('peer-drain');
       const pages = 6;
       const recordsPerPage = 50;
       const deliver = (page: number) => {
-        // Newest first, as the host reads history backward through one long turn.
+        // Newest Turn first; Rust admits whole Turns before the ready boundary.
         const start = (pages - 1 - page) * recordsPerPage;
         for (let index = 0; index < recordsPerPage; index += 1) {
-          apiMocks.relayRecord?.(itemRecord('peer-drain', 0, start + index));
+          apiMocks.relayRecord?.(itemRecord('peer-drain', pages - 1 - page, index));
         }
         apiMocks.relayReady?.({ sessionId: 'peer-drain', hasMore: page < pages - 1, oldestSeq: start + 1, cursor: pages * recordsPerPage });
       };
@@ -8811,7 +9076,8 @@ describe('FlowChatStore device surfaces', () => {
       snapshot.mockRestore();
       // Ready and catalog bookkeeping add a small constant per page, not per record.
       expect(storeUpdates).toBeLessThanOrEqual(pages * 4);
-      expect(texts('peer-drain')).toHaveLength(pages * recordsPerPage);
+      expect(session().dialogTurns).toHaveLength(pages);
+      for (let turn = 0; turn < pages; turn++) expect(texts('peer-drain', turn)).toHaveLength(recordsPerPage);
     });
 
     it('renders good turns past a failed one, stays failed, and retries the held turn', async () => {
@@ -9413,7 +9679,7 @@ describe('background device session seeding', () => {
     expect([...seeded.keys()]).toEqual(['s-1']);
     expect(seeded.get('s-1')).toMatchObject({ workspaceId: 'peer-ws', historyState: 'metadata-only', dialogTurns: [] });
     expect(flowChatStore.getState().sessions.has('local-1')).toBe(false);
-    expect(listener).toHaveBeenCalledWith('peer-seed');
+    expect(listener).toHaveBeenCalledWith('peer-seed', 'updated');
     // An identical page does not notify again.
     listener.mockClear();
     flowChatStore.subscribeSurfaceSessions(listener);
@@ -9443,6 +9709,19 @@ describe('background device session seeding', () => {
     });
     await flowChatStore.promoteSeededSessions();
     expect(flowChatStore.getState().sessions.get('s-1')?.dialogTurns).toHaveLength(1);
+    workspaceFixtures.delete('peer-ws');
+  });
+
+  it('promotes only the requested seed and leaves other rows available for lazy activation', async () => {
+    workspaceFixtures.set('peer-ws', { id: 'peer-ws', rootPath: '/srv/app', workspaceKind: 'normal' });
+    flowChatStore.seedSurfaceSessions('peer-seed', page([metadata('s-1'), metadata('s-2')]));
+    activateSurface('peer-seed');
+    stateMachineManagerMock.getOrCreate.mockClear();
+    await flowChatStore.promoteSeededSessions('s-2');
+    expect(stateMachineManagerMock.getOrCreate).toHaveBeenCalledWith('s-2');
+    expect(stateMachineManagerMock.getOrCreate).not.toHaveBeenCalledWith('s-1');
+    expect(flowChatStore.hasUnpromotedSeed('s-1')).toBe(true);
+    expect(flowChatStore.hasUnpromotedSeed('s-2')).toBe(false);
     workspaceFixtures.delete('peer-ws');
   });
 

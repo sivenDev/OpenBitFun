@@ -9,6 +9,7 @@ import { requireSessionWorkspaceId } from '../utils/sessionWorkspace';
  */
 
 import { processingStatusManager } from './ProcessingStatusManager';
+import { createAcpStartupRequestId, emitAcpSessionStartup } from './acpSessionStartup';
 import { FlowChatStore } from '../store/FlowChatStore';
 import { useModernFlowChatStore } from '../store/modernFlowChatStore';
 import { usePromptSuggestionStore } from '../store/promptSuggestionStore';
@@ -24,6 +25,7 @@ import {
   type DeviceSurfaceId,
 } from '@/infrastructure/peer-device/deviceSurface';
 import type { WorkspaceInfo } from '@/shared/types';
+import { getDeviceOpenIntent, selectsDeviceSession } from '@/infrastructure/peer-device/deviceOpenIntent';
 import type { Session } from '../types/flow-chat';
 import {
   compareSessionsForDisplay,
@@ -41,7 +43,7 @@ import type {
 } from './flow-chat-manager/types';
 import {
   saveAllInProgressTurns,
-  immediateSaveDialogTurn,
+  saveDialogTurnConfirmed,
   createChatSession as createChatSessionModule,
   createSharedAssistantSession as createSharedAssistantSessionModule,
   type SharedAssistantSessionTarget,
@@ -104,6 +106,7 @@ type FlowChatSendMessageOptions = Pick<
 const EVENT_LISTENER_RETRY_MS = 2000;
 
 export class FlowChatManager {
+  private acpCreationRequests = new Map<string, Promise<string>>();
   private static instance: FlowChatManager | null = null;
   private context: FlowChatContext;
   private eventListenerInitialized = false;
@@ -227,6 +230,7 @@ export class FlowChatManager {
     preferredMode?: string
   ): Promise<boolean> {
     const scope = getActiveSurfaceScope();
+    const explicitOpen = getDeviceOpenIntent();
     try {
       await this.initializeEventListeners();
       if (this.disposed) {
@@ -298,6 +302,16 @@ export class FlowChatManager {
         initialMetadataPage.sessions.length > 0;
       const isCurrentInitializationRequest = () =>
         this.latestInitializationRequestKey === requestKey;
+      // A device open owns session selection. Loading the previous tab here
+      // races its requested session (or new draft) for the same Relay link.
+      if (selectsDeviceSession(explicitOpen, scope.surfaceId)
+        || selectsDeviceSession(getDeviceOpenIntent(), scope.surfaceId)) {
+        if (isCurrentInitializationRequest()) {
+          this.context.currentWorkspaceId = workspaceId;
+          this.context.currentWorkspacePath = workspacePath;
+        }
+        return hasHistoricalSessions;
+      }
       const activeSession = state.activeSessionId
         ? state.sessions.get(state.activeSessionId) ?? null
         : null;
@@ -637,23 +651,39 @@ export class FlowChatManager {
 
   async createAcpChatSession(clientId: string, config: SessionConfig = {}): Promise<string> {
     const surfaceScope = getActiveSurfaceScope();
-    const titleDescriptor = createDefaultSessionTitleDescriptor((key, options) => i18nService.t(key, options));
-    // The workspace ID is the session's identity; the path is the ACP
-    // client's execution root and is only kept as an IO projection.
-    const workspaceId = requireSessionWorkspaceId({ config });
-    const workspacePath =
-      config.workspacePath?.trim() ||
-      this.context.currentWorkspacePath?.trim();
-    if (!workspacePath) {
-      throw new Error('Workspace path is required to create an ACP session');
-    }
+    const key = surfaceScope.key(surfaceScope.epoch, config.workspaceId, config.workspacePath,
+      config.remoteConnectionId, config.remoteSshHost, clientId);
+    const existing = this.acpCreationRequests.get(key);
+    if (existing) return existing;
+    // Install the in-flight entry before the lifecycle event can trigger another caller.
+    const pending = Promise.resolve().then(() => this.createAcpChatSessionOnce(clientId, config, surfaceScope))
+      .finally(() => this.acpCreationRequests.delete(key));
+    this.acpCreationRequests.set(key, pending);
+    return pending;
+  }
 
-    window.dispatchEvent(new CustomEvent('openbitfun:acp-session-creation', {
-      detail: { phase: 'start', clientId, action: 'create' },
-    }));
+  private async createAcpChatSessionOnce(
+    clientId: string, config: SessionConfig, surfaceScope: ReturnType<typeof getActiveSurfaceScope>,
+  ): Promise<string> {
+    surfaceScope.assertCurrent('create ACP session');
+    const startup = {
+      requestId: createAcpStartupRequestId(), clientId, action: 'create' as const,
+      scope: surfaceScope, workspaceId: config.workspaceId,
+      retry: async () => {
+        surfaceScope.assertCurrent('retry ACP session creation');
+        return this.createAcpChatSession(clientId, config);
+      },
+    };
+    emitAcpSessionStartup({ ...startup, phase: 'start' });
 
     let succeeded = false;
+    let failure: string | undefined;
     try {
+      const titleDescriptor = createDefaultSessionTitleDescriptor((key, options) => i18nService.t(key, options));
+      // The workspace ID owns identity; the path is only an execution projection.
+      const workspaceId = requireSessionWorkspaceId({ config });
+      const workspacePath = config.workspacePath?.trim() || this.context.currentWorkspacePath?.trim();
+      if (!workspacePath) throw new Error('Workspace path is required to create an ACP session');
       const response = await ACPClientAPI.createFlowSession({
         clientId,
         workspaceId,
@@ -688,10 +718,11 @@ export class FlowChatManager {
 
       succeeded = true;
       return response.sessionId;
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+      throw error;
     } finally {
-      window.dispatchEvent(new CustomEvent('openbitfun:acp-session-creation', {
-        detail: { phase: 'finish', clientId, action: 'create', succeeded },
-      }));
+      emitAcpSessionStartup({ ...startup, phase: 'finish', succeeded, error: failure });
     }
   }
 
@@ -883,7 +914,7 @@ export class FlowChatManager {
    * Used when tool call data is updated after the turn has completed (e.g. mermaid code fix).
    */
   public async saveDialogTurn(sessionId: string, turnId: string): Promise<void> {
-    return immediateSaveDialogTurn(this.context, sessionId, turnId, true);
+    return saveDialogTurnConfirmed(this.context, sessionId, turnId);
   }
 
   addDialogTurn(sessionId: string, dialogTurn: DialogTurn): void {

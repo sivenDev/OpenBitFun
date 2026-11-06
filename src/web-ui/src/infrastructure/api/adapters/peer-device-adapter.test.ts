@@ -21,7 +21,65 @@ import {
 import { TauriTransportAdapter } from './tauri-adapter';
 import { isSurfaceChangedError } from '@/infrastructure/peer-device/deviceSurface';
 
+describe('peer command refusal lifetime', () => {
+  it('remembers a registry refusal for this host and retries after a new handshake', async () => {
+    const rpc = vi.fn().mockResolvedValue(JSON.stringify({ resp: 'host_invoke_result', ok: false,
+      error: "command 'get_session_file_diff_stats' is not supported on CLI peer host: the CLI peer host has no handler for this command" }));
+    const adapter = new PeerDeviceTransportAdapter('peer-a', rpc);
+    for (const sessionId of ['first', 'second']) {
+      await expect(adapter.request('get_session_file_diff_stats', { request: { sessionId } })).rejects.toThrow('has no handler');
+    }
+    expect(rpc).toHaveBeenCalledTimes(1);
+    adapter.setHostCapabilities({});
+    rpc.mockResolvedValue(JSON.stringify({ resp: 'host_invoke_result', ok: true, value: { files: 2 } }));
+    await expect(adapter.request('get_session_file_diff_stats', { request: { sessionId: 'second' } })).resolves.toEqual({ files: 2 });
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['Permission denied', 'Session not found', 'Storage unavailable'])('does not remember request-dependent failure %s', async error => {
+    const rpc = vi.fn().mockResolvedValue(JSON.stringify({ resp: 'host_invoke_result', ok: false, error }));
+    const adapter = new PeerDeviceTransportAdapter('peer-a', rpc);
+    await expect(adapter.request('get_session_file_diff_stats', {})).rejects.toThrow(error);
+    await expect(adapter.request('get_session_file_diff_stats', {})).rejects.toThrow(error);
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not carry a late refusal into the next host generation', async () => {
+    const pending = createDeferred<string>();
+    const rpc = vi.fn().mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(JSON.stringify({ resp: 'host_invoke_result', ok: true, value: {} }));
+    const adapter = new PeerDeviceTransportAdapter('peer-a', rpc);
+    const request = adapter.request('get_session_file_diff_stats', {});
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalledOnce());
+    adapter.setHostCapabilities({});
+    pending.resolve(JSON.stringify({ resp: 'host_invoke_result', ok: false,
+      error: "command 'get_session_file_diff_stats' is unknown to this OpenBitFun CLI peer host version" }));
+    await expect(request).rejects.toThrow('unknown');
+    await expect(adapter.request('get_session_file_diff_stats', {})).resolves.toEqual({});
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('smart routing host capability', () => {
+  it('negotiates library setting reads and writes without falling back to local config', async () => {
+    const rpc = vi.fn().mockResolvedValue(JSON.stringify({ resp: 'host_invoke_result', ok: true, value: 'future.collection' }));
+    const adapter = new PeerDeviceTransportAdapter('peer', rpc);
+    const requests = [
+      ['get_config', { request: { path: 'ai.generative_ui_library' } }],
+      ['get_configs', { request: { paths: ['ai.generative_ui_library'] } }],
+      ['set_config', { request: { path: 'ai.generative_ui_library', value: 'future.collection' } }],
+      ['reset_config', { request: { path: 'ai.generative_ui_library' } }],
+    ] as const;
+    for (const [command, args] of requests) await expect(adapter.request(command, args)).rejects.toThrow('gen_ui_libraries_v1');
+    expect(rpc).not.toHaveBeenCalled();
+    await expect(adapter.request('product_control_invoke', { request: { capabilityId: 'setting.tools.execution', optionId: 'genui-library', action: 'configure', value: 'future.collection' } })).rejects.toThrow('gen_ui_libraries_v1');
+    adapter.setHostCapabilities({ supportsGenUiLibrariesV1: true });
+    for (const [command, args] of requests) await adapter.request(command, args);
+    expect(rpc).toHaveBeenCalledTimes(requests.length);
+    adapter.setHostCapabilities({ supportsGenUiLibrariesV1: false });
+    await expect(adapter.request('get_config', requests[0][1])).rejects.toThrow('gen_ui_libraries_v1');
+    expect(rpc).toHaveBeenCalledTimes(requests.length);
+  });
   it('rejects unsupported routing reads and mutations before RPC', async () => {
     const rpc = vi.fn();
     const adapter = new PeerDeviceTransportAdapter('peer-1', rpc);

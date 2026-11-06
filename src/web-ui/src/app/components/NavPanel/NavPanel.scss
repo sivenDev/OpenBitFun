@@ -1350,10 +1350,11 @@ $_section-header-height: 22px;
   }
 
   &:hover,
+  &:active,
   &:focus-visible,
   &.is-open {
     color: var(--openbitfun-color-content-primary);
-    background: var(--openbitfun-color-action-quiet-hover);
+    @include shell-surfaces.navigation-hover-feedback;
   }
 
   &:focus-visible {
@@ -1465,14 +1466,19 @@ $_section-header-height: 22px;
     block-size: var(--openbitfun-control-icon-size-md);
   }
 
-  &:hover {
-    color: var(--openbitfun-color-content-primary);
-    background: var(--openbitfun-color-action-quiet-hover);
+  // The footer owns navigation feedback on the button itself. Keep IconButton's
+  // hover overlay from covering that shared surface with a second background.
+  &::before {
+    background: transparent;
   }
 
-  &.is-active {
+  &:hover,
+  &:active,
+  &:focus-visible,
+  &.is-active,
+  &.is-hover-open {
     color: var(--openbitfun-color-content-primary);
-    background: var(--openbitfun-color-action-quiet-hover);
+    @include shell-surfaces.navigation-hover-feedback;
   }
 
   &:focus-visible {
@@ -1531,12 +1537,6 @@ $_section-header-height: 22px;
   position: relative;
 }
 
-// Hover-open subtle glow on the main button
-.openbitfun-nav-panel__footer-btn--icon.is-hover-open {
-  color: var(--openbitfun-color-content-primary);
-  background: var(--openbitfun-color-action-quiet-hover);
-}
-
 .openbitfun-nav-panel__footer-backdrop {
   position: fixed;
   inset: 0;
@@ -1561,14 +1561,6 @@ $_section-header-height: 22px;
 // Device overview — one compact model, local and connected states
 // ──────────────────────────────────────────────
 
-// The light that fills the card is the displayed device's state; registering it
-// lets the whole surface cross-fade between devices instead of snapping.
-@property --_device-overview-light {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: transparent;
-}
-
 .openbitfun-device-overview {
   // The card sizes to its content, so the artwork, name, action and device list
   // always render whole. Only the device list scrolls, and only when the window
@@ -1577,10 +1569,8 @@ $_section-header-height: 22px;
   --_device-overview-inline-size: min(312px, calc(100vw - 16px));
   --_device-overview-stage-size: 120px;
   --_device-overview-inset: var(--openbitfun-space-4);
-  // Silver until a device is under control: this device and a device not yet
-  // connected share one neutral light; only a live connection turns green.
+  // Local and disconnected devices use neutral controls; a live connection is green.
   --_device-overview-light: var(--openbitfun-color-content-secondary);
-  --_device-overview-light-strength: 16%;
   position: fixed;
   z-index: var(--openbitfun-layer-popover);
   width: var(--_device-overview-inline-size);
@@ -1589,24 +1579,10 @@ $_section-header-height: 22px;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background:
-    radial-gradient(
-      120% 78% at 50% 0%,
-      color-mix(in srgb, var(--_device-overview-light) var(--_device-overview-light-strength), transparent),
-      transparent 74%
-    ),
-    radial-gradient(
-      90% 55% at 100% 100%,
-      color-mix(in srgb, var(--_device-overview-light) calc(var(--_device-overview-light-strength) / 3), transparent),
-      transparent 70%
-    ),
-    var(--openbitfun-color-surface-raised);
-  transition: --_device-overview-light var(--openbitfun-motion-duration-slow) var(--openbitfun-motion-easing-standard);
+  background: var(--openbitfun-color-surface-raised);
+  // Switch state color once. Interpolating an inherited custom property forces
+  // style recalculation throughout the card on every animation frame.
   animation: openbitfun-nav-popover-in 150ms cubic-bezier(0.23, 1, 0.32, 1) both;
-
-  :where([data-color-scheme='dark']) & {
-    --_device-overview-light-strength: 26%;
-  }
 
   &[data-control-state='active'] {
     --_device-overview-light: var(--openbitfun-color-status-success-content);
@@ -1838,17 +1814,40 @@ $_section-header-height: 22px;
 }
 
 .openbitfun-device-overview__page-dot {
-  inline-size: 5px;
+  position: relative;
+  inline-size: 14px;
   block-size: 5px;
-  border-radius: var(--openbitfun-radius-pill);
-  background: color-mix(in srgb, var(--openbitfun-color-content-primary) 22%, transparent);
-  transition:
-    inline-size var(--openbitfun-motion-duration-fast) var(--openbitfun-motion-easing-standard),
-    background-color var(--openbitfun-motion-duration-fast) var(--openbitfun-motion-easing-standard);
+  // Fixed slots keep the flex row out of layout during every page change.
+  // The small dot remains circular; a separate pill fades and scales over it.
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    margin-inline: auto;
+    border-radius: var(--openbitfun-radius-pill);
+  }
 
-  &[data-active='true'] {
-    inline-size: 14px;
+  &::before {
+    inline-size: 5px;
+    background: color-mix(in srgb, var(--openbitfun-color-content-primary) 22%, transparent);
+  }
+
+  &::after {
     background: var(--openbitfun-color-content-secondary);
+    opacity: 0;
+    transform: scaleX(0.357143);
+  }
+
+  [data-preview-motion='true'] &::after {
+    transition:
+      transform var(--openbitfun-motion-duration-fast) var(--openbitfun-motion-easing-standard),
+      opacity var(--openbitfun-motion-duration-fast) var(--openbitfun-motion-easing-standard);
+  }
+
+  &[data-active='true']::after {
+    opacity: 1;
+    transform: scaleX(1);
   }
 }
 
@@ -1878,9 +1877,9 @@ $_section-header-height: 22px;
   flex: 0 0 var(--openbitfun-control-height-sm);
   pointer-events: auto;
   color: var(--openbitfun-color-content-secondary);
-  // Soft glass with no outline: the card has one edge, its own.
+  // The stage has an opaque background; sampling it with backdrop-filter adds
+  // compositing work during the artwork transition without changing the tint.
   background: color-mix(in srgb, var(--openbitfun-color-content-primary) 7%, transparent);
-  backdrop-filter: var(--openbitfun-effect-blur-subtle);
   transition:
     color var(--openbitfun-motion-duration-fast) var(--openbitfun-motion-easing-standard),
     background-color var(--openbitfun-motion-duration-fast) var(--openbitfun-motion-easing-standard);
@@ -1937,7 +1936,7 @@ $_section-header-height: 22px;
   }
 }
 
-// A soft top-lit fill reads as a material rather than a flat cut-out.
+// A single neutral fill keeps the device silhouette legible on the solid card.
 .openbitfun-device-overview__artwork-glyph {
   position: relative;
   justify-self: center;
@@ -1945,11 +1944,7 @@ $_section-header-height: 22px;
   height: 56%;
   margin-block-end: var(--openbitfun-space-2);
   aspect-ratio: 140 / 78;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--openbitfun-color-content-primary) 72%, transparent),
-    color-mix(in srgb, var(--openbitfun-color-content-primary) 42%, transparent)
-  );
+  background: var(--openbitfun-color-content-secondary);
   mask: url('./assets/device.svg') center / contain no-repeat;
 }
 
@@ -2030,20 +2025,6 @@ $_section-header-height: 22px;
     opacity: 0;
     transform: scale(2.6);
   }
-}
-
-// This machine's home mark sits where other devices have their action: the
-// same tinted glass disc, as a status rather than a button.
-.openbitfun-device-overview__local-mark {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  inline-size: var(--openbitfun-control-height-md);
-  block-size: var(--openbitfun-control-height-md);
-  border-radius: var(--openbitfun-radius-pill);
-  background: color-mix(in srgb, var(--_device-overview-light) 20%, transparent);
-  color: color-mix(in srgb, var(--_device-overview-light) 72%, var(--openbitfun-color-content-primary));
 }
 
 // Renaming sits right after the name: a small quiet pencil that brightens
@@ -2133,18 +2114,8 @@ $_section-header-height: 22px;
   box-sizing: border-box;
 }
 
-.openbitfun-device-overview__device-status {
-  display: flex;
-  flex: 0 1 auto;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-}
-
-// The action is one round button lit by the same state light as the card: a
-// tinted glass disc with a ring. Disconnecting is neutral rather than wearing
-// the green of the link it ends.
-.openbitfun-device-overview__connection-status {
+// One eye control reflects the device's sidebar visibility.
+.openbitfun-device-overview__visibility-control {
   --_device-overview-action-tone: var(--_device-overview-light);
   --_icon-button-size: var(--openbitfun-control-height-md);
   --_icon-button-icon-size: 16px;
@@ -2169,15 +2140,6 @@ $_section-header-height: 22px;
     --_icon-button-background-hover: var(--_icon-button-background);
     --_icon-button-background-active: var(--_icon-button-background);
     cursor: not-allowed;
-  }
-
-  // An incompatible device keeps its warning mark legible.
-  [data-control-state='incompatible'] > &[aria-disabled='true'] {
-    --_icon-button-content: var(--openbitfun-color-status-warning-content);
-  }
-
-  [data-control-state='active'] > & {
-    --_device-overview-action-tone: var(--openbitfun-color-content-secondary);
   }
 }
 
@@ -3016,8 +2978,7 @@ $_section-header-height: 22px;
 
 @media (hover: hover) and (pointer: fine) {
   .openbitfun-nav-panel__top-action-btn:hover,
-  .openbitfun-nav-panel__item:hover,
-  .openbitfun-nav-panel__footer-btn--icon:hover {
+  .openbitfun-nav-panel__item:hover {
     @include shell-surfaces.navigation-hover-feedback;
   }
 
@@ -3043,7 +3004,7 @@ $_section-header-height: 22px;
   }
 
   .openbitfun-nav-panel__top-action-sublist,
-  .openbitfun-device-overview__page-dot {
+  .openbitfun-device-overview .openbitfun-device-overview__page-dot::after {
     transition: none;
   }
 }

@@ -112,6 +112,20 @@ deliberate layout transitions or animate virtualized content. Rely on CI for
 full lint, build, and broad test coverage unless the local change specifically
 needs it.
 
+For capability catalog entries and their localized global-search labels:
+
+```bash
+pnpm run capabilities:generate && pnpm run capabilities:check && pnpm run capabilities:test
+pnpm run website:test
+pnpm --dir src/web-ui run test:run src/app/global-search/providers/interactiveCapabilitySearchProvider.test.ts
+pnpm run i18n:audit
+```
+
+Every new catalog item also needs a label under `search.capabilities` in each
+locale's `scenes/capabilities.json`; the catalog generator does not write these
+resources. The shared search acceptance corpus exercises both the Playbook and
+Web UI, including the matched sub-capability.
+
 For Agent creation, hidden internal IDs, editing, and surface-switch draft fences:
 
 ```bash
@@ -206,6 +220,16 @@ also run the focused state contracts:
 ```bash
 pnpm --dir src/web-ui run test:run src/app/services/sessionSceneLifecycle.test.ts src/flow_chat/services/sessionActivation.test.ts src/flow_chat/services/storeSync.test.ts src/app/stores/sceneStore.test.ts
 ```
+
+For ACP creation feedback, retries, metadata loading and cross-version fallback:
+
+```bash
+pnpm --dir src/web-ui run test:run src/app/layout/AcpSessionNotifications.test.tsx src/flow_chat/services/FlowChatManager.test.ts src/infrastructure/api/service-api/ACPClientAPI.test.ts src/flow_chat/components/ModelSelectorAcpMode.test.tsx src/flow_chat/hooks/useAcpSlashCommands.test.ts
+```
+
+These DOM/API fixtures cover delayed startup, duplicate creation, visible errors,
+retry, old-host metadata and simulated SSH/Peer identities. They do not establish
+native rendering, real provider latency or live remote behavior.
 
 For top session tabs (one per session, kept per device), selection and reconciliation:
 
@@ -387,6 +411,17 @@ pnpm --dir src/web-ui run test:run src/app/components/panels/content-canvas/edit
 ```
 
 These local DOM/store fixtures do not establish native rendering or live remote behavior.
+
+For device preview motion, linked sidebar visibility controls, and controller-owned theme selection:
+
+```bash
+pnpm --dir src/web-ui run test:run src/app/components/NavPanel/components/DeviceStatusControl.test.tsx src/app/components/NavPanel/sections/devices/DeviceWorkspaceSections.test.tsx src/app/components/RemoteConnectDialog/AccountPanel.test.tsx src/app/navigation/deviceVisibilityPreferences.test.ts src/infrastructure/appearance/runtime/AppearanceService.test.ts
+```
+
+These DOM/store and transport fixtures cover interrupted motion, reduced motion,
+legacy preference loading, visibility across device activation, and local theme
+reads/writes during simulated Peer switches. They do not establish native
+WebView frame rate or live SSH, Remote Control, Peer Device or Detached Dispatch behavior.
 
 For workspace icon editing, host capability gates, persistence requests and device-switch fences:
 

@@ -9,6 +9,7 @@ import {
   hydrateSessionHistoryForDetail,
   pendingHistoryLoadKey,
   preloadHistoricalSessionForOpen,
+  prewarmHistoricalSession,
   reloadSessionTitle,
   retryCreateBackendSession,
   resolveAgentTypeForSessionCreation,
@@ -1050,6 +1051,24 @@ describe('SessionModule historical session coordination', () => {
     );
   });
 
+  it.each(['local', 'peer'])('retains a paged %s tail on reopen without downloading the whole conversation', async surface => {
+    activateSurface(surface);
+    const session = createSession({
+      isHistorical: false, historyState: 'ready', isPartial: true,
+      dialogTurns: [{ id: 'tail', userMessage: { id: 'user-tail', content: 'Latest', timestamp: 1 },
+        modelRounds: [{ items: [{ type: 'text', text: 'Answer' }] }], status: 'completed' } as any],
+      loadedTurnCount: 1, totalTurnCount: 100,
+    });
+    if (surface === 'local') session.turnCatalog = {
+      sessionId: session.sessionId, revision: 'catalog', totalTurnCount: 100, entries: [],
+    } as any;
+    const { context, flowChatStore } = createContext(session, { activeSessionId: 'other' });
+    await switchChatSession(context, session.sessionId);
+    expect(flowChatStore.switchSession).toHaveBeenCalledWith(session.sessionId);
+    expect(flowChatStore.ensureSessionFullHistory).not.toHaveBeenCalled();
+    expect(flowChatStore.loadSessionHistory).not.toHaveBeenCalled();
+  });
+
   it('touches only the latest active session during rapid switches', async () => {
     const firstSession = createSession({
       sessionId: 'history-1',
@@ -1157,6 +1176,23 @@ describe('SessionModule historical session coordination', () => {
 
     load.resolve();
     await load.promise;
+  });
+
+  it('upgrades an active-only preload when a local prewarm must retain its inactive tail', async () => {
+    const firstLoad = createDeferred<void>();
+    const { context, flowChatStore } = createContext(createSession());
+    context.pendingHistoryLoads.set(pendingHistoryLoadKey('history-other'), Promise.resolve());
+    flowChatStore.loadSessionHistory.mockReturnValueOnce(firstLoad.promise);
+    preloadHistoricalSessionForOpen(context, 'history-1');
+    prewarmHistoricalSession(context, 'history-1');
+    expect(flowChatStore.loadSessionHistory).toHaveBeenCalledTimes(1);
+    firstLoad.resolve();
+    await firstLoad.promise;
+    await vi.waitFor(() => expect(flowChatStore.loadSessionHistory).toHaveBeenCalledTimes(2));
+    expect(flowChatStore.loadSessionHistory).toHaveBeenLastCalledWith('history-1', {
+      includeInternal: undefined, deferFullHistoryUntilActive: true, retainInactiveTail: true,
+    });
+    expect(flowChatStore.switchSession).not.toHaveBeenCalled();
   });
 
   it('deduplicates concurrent detail hydration and includes internal child output', async () => {

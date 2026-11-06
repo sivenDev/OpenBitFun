@@ -3,6 +3,7 @@ import { translateAgentIdentityCommand, translateAgentIdentityFields, translateA
 import { ITransportAdapter, type TransportRequestTiming } from './base';
 import { TauriTransportAdapter } from './tauri-adapter';
 import { getDeviceOpenIntent, useDeviceOpenIntent } from '@/infrastructure/peer-device/deviceOpenIntent';
+import { classifyPeerHostRefusal } from '@/infrastructure/peer-device/peerHostRefusal';
 import {
   SurfaceChangedError,
   getActiveSurfaceScope,
@@ -71,7 +72,13 @@ const HIGH_PRIORITY_COMMANDS = new Set([
   'get_available_modes',
   'get_agent_profile_config',
   'start_dialog_turn',
+  'ensure_coordinator_session',
+  'get_session_model_target',
+  'update_session_model',
+  'update_session_model_target',
+  'manage_dialog_queue',
   'cancel_dialog_turn',
+  'computer_use_control_stop',
   // Per-tool interrupt (Terminal cards) is interactive and time-sensitive: a
   // long-running shell command keeps producing side effects until the cancel
   // reaches the host. It must take the reserved high-priority slot, not queue
@@ -245,6 +252,7 @@ const LOW_PRIORITY_EXACT = new Set([
   'notify_cron_host_ready',
   'list_miniapps',
   'miniapp_worker_list_running',
+  'computer_use_control_status',
 ]);
 
 export function peerInvokePriorityFor(command: string): PeerInvokePriority {
@@ -344,6 +352,7 @@ export interface PeerDeviceTransportHooks {
   supportsSshNoneAuthV1?: boolean;
   supportsSshPortScopedIdentityV1?: boolean;
   supportsWholeSessionCopyV1?: boolean;
+  supportsGenUiLibrariesV1?: boolean;
   supportsModelRoutingV1?: boolean;
   supportsModelPoolSelectionV1?: boolean;
   supportsBtwModelPoolSelectionV1?: boolean;
@@ -449,6 +458,8 @@ export class PeerDeviceTransportAdapter implements ITransportAdapter {
   };
   /** Every request whose caller promise has not settled — queued or in flight. */
   private readonly pending = new Set<QueuedPeerRequest>();
+  private readonly refusedCommands = new Map<string, PeerProductCommandError>();
+  private capabilityGeneration = 0;
 
   constructor(
     private readonly targetDeviceId: string,
@@ -488,6 +499,7 @@ export class PeerDeviceTransportAdapter implements ITransportAdapter {
       | 'supportsSshNoneAuthV1'
       | 'supportsSshPortScopedIdentityV1'
       | 'supportsWholeSessionCopyV1'
+      | 'supportsGenUiLibrariesV1'
       | 'supportsModelRoutingV1'
       | 'supportsModelPoolSelectionV1'
       | 'supportsBtwModelPoolSelectionV1'
@@ -497,6 +509,8 @@ export class PeerDeviceTransportAdapter implements ITransportAdapter {
     >,
   ): void {
     this.hooks = { ...this.hooks, ...capabilities };
+    this.capabilityGeneration += 1;
+    this.refusedCommands.clear();
   }
 
   /**
@@ -576,7 +590,17 @@ export class PeerDeviceTransportAdapter implements ITransportAdapter {
         'whole_session_copy_v1_unsupported: The connected Peer host does not support whole-session copying',
       );
     }
-
+    const productRequest = params?.request;
+    if (action === 'product_control_invoke' && productRequest?.capabilityId === 'setting.tools.execution'
+      && productRequest?.optionId === 'genui-library' && this.hooks.supportsGenUiLibrariesV1 !== true) {
+      throw new Error('This peer does not advertise gen_ui_libraries_v1; component library settings are unsupported');
+    }
+    const configRequest = (params as { request?: { path?: string; paths?: string[] } } | undefined)?.request;
+    if (['get_config', 'get_configs', 'set_config', 'reset_config'].includes(action)
+      && (configRequest?.path === 'ai.generative_ui_library' || configRequest?.paths?.includes('ai.generative_ui_library'))
+      && this.hooks.supportsGenUiLibrariesV1 !== true) {
+      throw new Error('This peer does not advertise gen_ui_libraries_v1; component library settings are unsupported');
+    }
     if (
       action === 'rollback_session_to_turn' &&
       this.hooks.supportsTargetedSessionRollback !== true
@@ -946,6 +970,9 @@ export class PeerDeviceTransportAdapter implements ITransportAdapter {
     issuedBindingEpoch: number,
   ): Promise<T> {
     const invokeStartedAt = nowMs();
+    const refusal = this.refusedCommands.get(action);
+    if (refusal) throw refusal;
+    const capabilityGeneration = this.capabilityGeneration;
     const priority = peerInvokePriorityFor(action);
     const commandJson = JSON.stringify({
       cmd: 'host_invoke',
@@ -981,9 +1008,15 @@ export class PeerDeviceTransportAdapter implements ITransportAdapter {
       if (envelope.resp === 'host_invoke_result') {
         if (!envelope.ok) {
           // Product failure on the peer — do not count as transport loss.
-          throw new PeerProductCommandError(
+          const error = new PeerProductCommandError(
             envelope.error || `Peer command '${action}' failed`,
           );
+          // Registry refusals describe the entire command on this host. A
+          // resource, permission or transport failure never enters this cache.
+          if (capabilityGeneration === this.capabilityGeneration && classifyPeerHostRefusal(error)) {
+            this.refusedCommands.set(action, error);
+          }
+          throw error;
         }
         this.hooks.onHostInvokeSuccess?.();
         return translateAgentIdentityResponse(action, envelope.value, params, 'canonical') as T;

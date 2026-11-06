@@ -133,6 +133,7 @@ async function hydrateHistoricalSession(
     allowNonHistorical?: boolean;
     includeInternal?: boolean;
     deferFullHistoryUntilActive?: boolean;
+    retainInactiveTail?: boolean;
   },
 ): Promise<void> {
   const surfaceScope = getActiveSurfaceScope();
@@ -146,7 +147,9 @@ async function hydrateHistoricalSession(
     const requiresStrongerHydrate =
       (options?.includeInternal === true && existingCapabilities?.includeInternal !== true) ||
       (options?.deferFullHistoryUntilActive === false &&
-        existingCapabilities?.deferFullHistoryUntilActive !== false) ||
+        existingCapabilities?.deferFullHistoryUntilActive !== false &&
+        existingCapabilities?.retainInactiveTail !== true) ||
+      (options?.retainInactiveTail === true && existingCapabilities?.retainInactiveTail !== true) ||
       existingCapabilities?.workspaceId !== workspaceId;
     startupTrace.markPhase('historical_session_hydrate_reused');
     recordHistorySessionDiagnosticEvent(sessionId, 'hydrate_reused_pending', {
@@ -178,15 +181,19 @@ async function hydrateHistoricalSession(
     }
     const retryStillRelevant = options?.isRetryStillRelevant?.() !== false;
     const shouldRetryActiveStale = shouldRetryActiveStaleHydrate(context, sessionId);
+    const shouldRetryUncommittedPrewarm = options?.deferFullHistoryUntilActive === false
+      && existingCapabilities?.retainInactiveTail === true
+      && shouldHydrateHistoricalSessionBeforeSwitch(context.flowChatStore.getState().sessions.get(sessionId));
     recordHistorySessionDiagnosticEvent(sessionId, 'hydrate_reused_settled', {
       retryActiveStaleReuse: options?.retryActiveStaleReuse === true,
       retryStillRelevant,
       shouldRetryActiveStale,
     });
     if (
-      options?.retryActiveStaleReuse === true &&
-      retryStillRelevant &&
-      shouldRetryActiveStale
+      retryStillRelevant && (
+        (options?.retryActiveStaleReuse === true && shouldRetryActiveStale)
+        || shouldRetryUncommittedPrewarm
+      )
     ) {
       if (context.pendingHistoryLoads.get(pendingKey) === existing) {
         context.pendingHistoryLoads.delete(pendingKey);
@@ -195,7 +202,7 @@ async function hydrateHistoricalSession(
         sessionId,
       });
       recordHistorySessionDiagnosticEvent(sessionId, 'hydrate_retry_active_stale_reuse_started');
-      await hydrateHistoricalSession(context, sessionId, notifyOnError);
+      await hydrateHistoricalSession(context, sessionId, notifyOnError, options);
     } else if (options?.retryActiveStaleReuse === true) {
       recordHistorySessionDiagnosticEvent(sessionId, 'hydrate_retry_active_stale_reuse_skipped', {
         reason: retryStillRelevant ? 'active_stale_condition_not_met' : 'switch_superseded',
@@ -234,6 +241,7 @@ async function hydrateHistoricalSession(
     await context.flowChatStore.loadSessionHistory(sessionId, {
         includeInternal: options?.includeInternal,
         deferFullHistoryUntilActive,
+        ...(options?.retainInactiveTail ? { retainInactiveTail: true } : {}),
       });
     surfaceScope.assertCurrent('finish historical session hydration');
     if (session.externalHistory?.mode === 'follow') {
@@ -249,6 +257,7 @@ async function hydrateHistoricalSession(
     promise: loadPromise,
     includeInternal: options?.includeInternal === true,
     deferFullHistoryUntilActive: options?.deferFullHistoryUntilActive ?? true,
+    retainInactiveTail: options?.retainInactiveTail === true,
     workspaceId,
   });
 
@@ -330,10 +339,11 @@ function shouldHydrateHistoricalSessionBeforeSwitch(session: Session | undefined
 }
 
 function shouldCompletePartialHistoryAfterSwitch(session: Session | undefined): boolean {
-  // A live session can retain only its restored tail while still being marked
-  // non-historical. Completing it after an explicit switch restores the
-  // assistant rounds that cannot come from the user-only turn catalog.
-  return session?.isHistorical !== true
+  // Only legacy local hosts without a Turn-window catalog need this fallback.
+  // Opening a paged local or peer tail must not drain all history in the background.
+  return getActiveSurfaceScope().surfaceId === 'local'
+    && session?.turnCatalog?.sessionId !== session?.sessionId
+    && session?.isHistorical !== true
     && session?.historyState === 'ready'
     && session.isPartial === true
     && session.externalHistory?.mode !== 'follow';
@@ -377,7 +387,7 @@ export function preloadHistoricalSessionForOpen(
 
 /**
  * Start reading a session the pointer rests on, before it is clicked: its tail
- * (a few turns) is usually in memory by the time the click lands, so the open
+ * (one complete Turn) can be in memory by the time the click lands, so the open
  * shows the transcript at once instead of a loading state. The same bounded
  * hydrate the open would run; nothing is selected or activated.
  */
@@ -386,11 +396,10 @@ export function prewarmHistoricalSession(context: FlowChatContext, sessionId: st
   // Another device's history is a live relay subscription, not a cheap read:
   // hovering across rows must not open one per row.
   if (!isLocalSurface(scope.surfaceId)) return;
-  if (Array.from(context.pendingHistoryLoads.keys()).some(key => pendingHistoryLoadSessionId(key, scope) === sessionId)) return;
   const session = context.flowChatStore.getState().sessions.get(sessionId);
   if (!session || session.externalHistory?.mode === 'follow') return;
   if (!shouldHydrateHistoricalSessionBeforeSwitch(session)) return;
-  void hydrateHistoricalSession(context, sessionId, false).catch(error => {
+  void hydrateHistoricalSession(context, sessionId, false, { retainInactiveTail: true }).catch(error => {
     if (isSurfaceChangedError(error)) return;
     log.debug('Historical session prewarm failed', { sessionId, error });
   });

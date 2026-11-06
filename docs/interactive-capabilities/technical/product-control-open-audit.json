@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "generatedFrom": "src/shared/interactive-capabilities/catalog.json",
-  "catalogDigest": "063065dc4d6f508c17ee0039692ae71554c41689790ba4f3eb2f8882351cf696",
-  "count": 208,
+  "catalogDigest": "e50964c15f253d1da075afbae2b527aa5be9e779e0e0bcf5a1e3bd7de2ad1002",
+  "count": 203,
   "reasonCounts": {
     "externalAuth": 4,
     "secretEntry": 5,
-    "unstructuredInteraction": 173,
+    "unstructuredInteraction": 168,
     "visualSelection": 26
   },
   "entries": [
@@ -1426,88 +1426,6 @@
         "command:miniapp_market_withdraw_submission",
         "command:miniapp_market_list_submissions",
         "command:miniapp_render_slide_page"
-      ]
-    },
-    {
-      "capabilityId": "feature.canvas",
-      "itemId": "artifact-open",
-      "titleZh": "从会话工具结果加载并打开持久化 Canvas 产物",
-      "titleEn": "Load and open persistent Canvas artifacts from session tool results",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“从会话工具结果加载并打开持久化 Canvas 产物”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Load and open persistent Canvas artifacts from session tool results” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "session"
-      },
-      "evidence": [
-        "command:load_canvas_artifact"
-      ]
-    },
-    {
-      "capabilityId": "feature.canvas",
-      "itemId": "state",
-      "titleZh": "在重新打开或刷新 Canvas 时加载和保存交互状态",
-      "titleEn": "Load and save interactive state when a Canvas is reopened or refreshed",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“在重新打开或刷新 Canvas 时加载和保存交互状态”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Load and save interactive state when a Canvas is reopened or refreshed” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "session"
-      },
-      "evidence": [
-        "command:load_canvas_state",
-        "command:save_canvas_state"
-      ]
-    },
-    {
-      "capabilityId": "feature.canvas",
-      "itemId": "element-context",
-      "titleZh": "选择 Canvas 内的元素并把元素引用加入会话上下文",
-      "titleEn": "Select an element inside Canvas and add its reference to session context",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“选择 Canvas 内的元素并把元素引用加入会话上下文”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Select an element inside Canvas and add its reference to session context” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "session"
-      },
-      "evidence": [
-        "source:src/web-ui/src/tools/openbitfun-canvas/OpenBitFunCanvasPanel.tsx#createCanvasElementContext"
-      ]
-    },
-    {
-      "capabilityId": "feature.canvas",
-      "itemId": "runtime-errors",
-      "titleZh": "捕获运行错误、上报诊断并请求智能体自动修复",
-      "titleEn": "Capture runtime errors, report diagnostics, and ask the agent to repair them",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“捕获运行错误、上报诊断并请求智能体自动修复”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Capture runtime errors, report diagnostics, and ask the agent to repair them” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "session"
-      },
-      "evidence": [
-        "command:report_canvas_runtime_error",
-        "source:src/web-ui/src/tools/openbitfun-canvas/OpenBitFunCanvasPanel.tsx#canvas-runtime-auto-repair"
-      ]
-    },
-    {
-      "capabilityId": "feature.canvas",
-      "itemId": "export-html",
-      "titleZh": "把当前 Canvas 导出为可独立打开的 HTML 文件",
-      "titleEn": "Export the current Canvas as a standalone HTML file",
-      "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“把当前 Canvas 导出为可独立打开的 HTML 文件”由多个实时状态相关步骤组成，目前没有一个能确定完成整个流程的单一结构化 Command；智能体会打开精确入口，并把后续交互保留在用户可见界面。",
-      "reasonEn": "“Export the current Canvas as a standalone HTML file” spans multiple live-state-dependent steps and currently has no single structured Command that can deterministically complete the whole workflow; the Agent opens the exact entry and keeps the remaining interaction visible to the user.",
-      "presentationTarget": {
-        "kind": "scene",
-        "sceneId": "session"
-      },
-      "evidence": [
-        "source:src/web-ui/src/tools/openbitfun-canvas/canvasHtmlExportService.ts#export async function exportCanvasHtml"
       ]
     },
     {
@@ -3246,11 +3164,11 @@
     {
       "capabilityId": "setting.tools.web-search",
       "itemId": "provider",
-      "titleZh": "在免费 Exa MCP、Exa Search API、Tavily、DeepSeek 与 OpenBitFun Search HTTP Protocol 之间选择运行时服务",
-      "titleEn": "Choose free Exa MCP, Exa Search API, Tavily, DeepSeek, or OpenBitFun Search HTTP Protocol as the runtime provider",
+      "titleZh": "在免费 Exa MCP、Exa Search API、Tavily、DeepSeek、Keenable 与 OpenBitFun Search HTTP Protocol 之间选择运行时服务",
+      "titleEn": "Choose free Exa MCP, Exa Search API, Tavily, DeepSeek, Keenable, or OpenBitFun Search HTTP Protocol as the runtime provider",
       "reasonCode": "unstructuredInteraction",
-      "reasonZh": "“在免费 Exa MCP、Exa Search API、Tavily、DeepSeek 与 OpenBitFun Search HTTP Protocol 之间选择运行时服务”与各服务的配置状态相关，目前没有一个能安全完成选择、检查和保存整个流程的单一结构化 Command；智能体会打开精确设置入口，由用户确认配置。",
-      "reasonEn": "“Choose free Exa MCP, Exa Search API, Tavily, DeepSeek, or OpenBitFun Search HTTP Protocol as the runtime provider” depends on provider-specific configuration state, and no single structured Command can safely complete selection, validation, and saving; the Agent opens the exact settings entry for user confirmation.",
+      "reasonZh": "“在免费 Exa MCP、Exa Search API、Tavily、DeepSeek、Keenable 与 OpenBitFun Search HTTP Protocol 之间选择运行时服务”与各服务的配置状态相关，目前没有一个能安全完成选择、检查和保存整个流程的单一结构化 Command；智能体会打开精确设置入口，由用户确认配置。",
+      "reasonEn": "“Choose free Exa MCP, Exa Search API, Tavily, DeepSeek, Keenable, or OpenBitFun Search HTTP Protocol as the runtime provider” depends on provider-specific configuration state, and no single structured Command can safely complete selection, validation, and saving; the Agent opens the exact settings entry for user confirmation.",
       "presentationTarget": {
         "kind": "settings",
         "pageId": "tools.webSearch"

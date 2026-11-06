@@ -194,9 +194,22 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
   const recordedOutcome = useSyncExternalStore(
     subscribeToFlowChatStore, readRecordedOutcome, readRecordedOutcome,
   );
-  const lifecycle = linkedSession
+  const linkedLifecycle = linkedSession
     ? sessionLineageLifecycleForSession(linkedSession)
-    : lifecycleForOutcome(recordedOutcome) ?? fallbackLifecycle(status);
+    : undefined;
+  const recordedLifecycle = lifecycleForOutcome(recordedOutcome);
+  // A successful spawn receipt completes the launch, not the background task.
+  // Keep the active display until the child's first turn supplies its lifecycle.
+  const launchStarted = (status === 'completed' || status === 'confirmed')
+    && toolItem.toolResult?.success !== false
+    && readToolRecord(toolItem.toolResult?.result).status === 'started';
+  const awaitingFirstTurn = !linkedSession?.dialogTurns.length
+    && (!linkedSession || linkedLifecycle === 'idle');
+  const lifecycle = awaitingFirstTurn && recordedLifecycle
+    ? recordedLifecycle
+    : awaitingFirstTurn && (status === 'running' || launchStarted)
+      ? 'running'
+      : linkedLifecycle ?? recordedLifecycle ?? fallbackLifecycle(status);
   // A call to another device's assistant keeps running while it waits there
   // for that device's owner; its status says for what.
   const remoteHold = lifecycle === 'running' ? linkedSession?.remoteCallHold : undefined;
@@ -243,7 +256,7 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
     || linkedSession?.config?.modelName?.trim()
     || toolItem.subagentModelId?.trim()
     || readString(params, 'model_id', 'modelId')
-    || t('subagentIdentity.preview.unknownModel');
+    || '';
   const isParameterStreaming = Boolean(toolItem.isParamsStreaming)
     || PARAMETER_STREAMING_STATUSES.has(status);
   const displayStatus = isParameterStreaming
@@ -335,12 +348,14 @@ const AgentSpawnCard: React.FC<ToolCardProps> = ({
             description: t('subagentIdentity.preview.description'),
           },
         }}
-        statusLabel={remoteHold
-          ? t(remoteHold.reason === 'shareLimit'
-            ? 'toolCards.taskTool.remoteHoldShareLimit'
-            : 'toolCards.taskTool.remoteHoldOwnerApproval', { device: remoteHold.deviceName })
-          : lifecycle === 'completed' ? undefined
-            : t(`flowChatHeader.agentTreeStatus.${lifecycle === 'finishing' ? 'running' : lifecycle}`)}
+        statusLabel={isParameterStreaming
+          ? t('toolCards.default.preparing')
+          : remoteHold
+            ? t(remoteHold.reason === 'shareLimit'
+              ? 'toolCards.taskTool.remoteHoldShareLimit'
+              : 'toolCards.taskTool.remoteHoldOwnerApproval', { device: remoteHold.deviceName })
+            : lifecycle === 'completed' ? undefined
+              : t(`flowChatHeader.agentTreeStatus.${lifecycle === 'finishing' ? 'running' : lifecycle}`)}
         statusTone={statusTone}
         onOpenAgent={canOpenSession ? handleOpenSession : undefined}
         openAgentLabel={t('toolCards.taskTool.openInPanel')}
