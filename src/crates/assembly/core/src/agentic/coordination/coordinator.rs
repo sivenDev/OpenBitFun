@@ -14348,9 +14348,43 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         parent_session_id: &str,
         agent_id: &str,
     ) -> OpenBitFunResult<String> {
-        self.background_subagent_outcomes
+        match self
+            .background_subagent_outcomes
             .resolve_agent_id(parent_session_id, agent_id)
             .await
+        {
+            Err(OpenBitFunError::Tool(message)) => Err(OpenBitFunError::tool(
+                self.with_direct_child_agents_hint(parent_session_id, message)
+                    .await,
+            )),
+            result => result,
+        }
+    }
+
+    /// A model that names an agent the way the user does (by its UI name)
+    /// gets what it needs to retry with the agent_id in one step.
+    async fn with_direct_child_agents_hint(
+        &self,
+        parent_session_id: &str,
+        message: String,
+    ) -> String {
+        let agents = match self.direct_child_agents(parent_session_id).await {
+            Ok(agents) if !agents.is_empty() => agents,
+            _ => return message,
+        };
+        let locale = crate::service::config::app_language::get_app_language().await;
+        let listed = agents
+            .iter()
+            .map(|agent| {
+                crate::agentic::subagent_names::describe_agent_for_model(
+                    &agent.agent_id,
+                    &agent.child_session_id,
+                    locale,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{message}. Direct child agents: {listed}. Address an agent by its agent_id.")
     }
 
     pub(crate) async fn direct_child_agents(
@@ -23198,6 +23232,41 @@ pub(crate) mod tests {
         assert_eq!(result.status.as_str(), "timed_out");
         assert_eq!(result.pending_bg_task_ids, vec![pending.bg_task_id]);
         assert_eq!(result.missing_bg_task_ids, vec!["bg-missing"]);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_agent_id_lists_the_agents_by_the_names_the_user_sees() {
+        let workspace = tempfile::tempdir().unwrap();
+        crate::service::workspace::legacy_compat::register_local_fixture_blocking(workspace.path());
+        let (coordinator, _) = test_coordinator();
+        let child =
+            agent_lifecycle_child(&coordinator, workspace.path(), "parent", Default::default())
+                .await;
+        let agent_id = coordinator
+            .existing_agent_id_for_subagent_session("parent", &child.session_id)
+            .await
+            .unwrap()
+            .expect("the child has an agent id");
+        let name = crate::agentic::subagent_names::subagent_display_name(
+            &child.session_id,
+            crate::service::config::app_language::get_app_language().await,
+        )
+        .expect("every child has a UI name");
+
+        let message = coordinator
+            .resolve_agent_id("parent", name)
+            .await
+            .expect_err("a UI name is not an agent id")
+            .to_string();
+        assert!(message.contains(&format!("Agent was not found: {name}")));
+        assert!(message.contains(&format!("{agent_id} (shown to the user as \"{name}\")")));
+        // A parent without children keeps the plain error.
+        let message = coordinator
+            .resolve_agent_id("empty-parent", name)
+            .await
+            .expect_err("no children")
+            .to_string();
+        assert!(!message.contains("Direct child agents"));
     }
 
     #[tokio::test]

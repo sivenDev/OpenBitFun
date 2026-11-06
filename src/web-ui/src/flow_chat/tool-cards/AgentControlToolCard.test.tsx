@@ -10,8 +10,10 @@ import {
 import { AgentControlToolCard } from './AgentControlToolCard';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import type { SharedWithMe } from '@/infrastructure/api/service-api/LanShareAPI';
-import flowChatEn from '../../locales/en-US/flow-chat.json';
-import flowChatZh from '../../locales/zh-CN/flow-chat.json';
+import { SHARED_TERMS_BY_LOCALE } from '@/infrastructure/i18n/presets/generatedLocaleContract';
+
+const namesEn = SHARED_TERMS_BY_LOCALE['en-US'].subagentNames;
+const namesZh = SHARED_TERMS_BY_LOCALE['zh-CN'].subagentNames;
 
 const mocks = vi.hoisted(() => ({
   openBtwSessionInAuxPane: vi.fn(),
@@ -39,8 +41,8 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', () => ({
   useI18n: () => ({
     currentLanguage: mocks.locale,
     t: (key: string, options?: Record<string, unknown>) => {
-      if (key.startsWith('subagentIdentity.names.')) {
-        const names = (mocks.locale === 'zh-CN' ? flowChatZh : flowChatEn).subagentIdentity.names;
+      if (key.startsWith('shared:subagentNames.')) {
+        const names = (mocks.locale === 'zh-CN' ? namesZh : namesEn);
         return names[key.split('.').at(-1) as keyof typeof names];
       }
       if (key === 'flowChatHeader.agentTreeStatus.running') return 'Running';
@@ -242,8 +244,8 @@ describeWithJsdom('AgentControlToolCard', () => {
       expect(button.hasAttribute('aria-expanded')).toBe(false);
       expect(card.querySelector('[data-openbitfun-part="expandedCollapse"]')).toBeNull();
       expect(card.querySelectorAll('button')).toHaveLength(1);
-      const nameId = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof flowChatEn.subagentIdentity.names;
-      expect(card.textContent).toContain(flowChatEn.subagentIdentity.names[nameId]);
+      const nameId = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof namesEn;
+      expect(card.textContent).toContain(namesEn[nameId]);
       expect(card.querySelector('[data-openbitfun-part="agentStatus"]')?.getAttribute('data-status')).toBe('running');
       expect(button.getAttribute('aria-label')).toContain('Running');
       expect(card.textContent).not.toContain('Inspect the parser flow');
@@ -366,7 +368,7 @@ describeWithJsdom('AgentControlToolCard', () => {
     expect(container.querySelector('[data-openbitfun-avatar-id]')?.getAttribute('data-openbitfun-avatar-id'))
       .toBe(resolveSubagentAvatarPresentation('child-session').avatarId);
     expect(container.querySelector('[data-openbitfun-part="agentSummary"]')?.textContent)
-      .toBe(flowChatEn.subagentIdentity.names.cloudHopper);
+      .toBe(namesEn.cloudHopper);
   });
 
   it('shows a delivered instruction independently of the running child and retains its pane action', async () => {
@@ -379,7 +381,7 @@ describeWithJsdom('AgentControlToolCard', () => {
     expect(card.getAttribute('data-openbitfun-status')).toBe('completed');
     expect(card.getAttribute('data-operation')).toBe('send');
     expect(card.querySelector('[data-openbitfun-part="source"]')?.textContent).toBe('toolCards.interaction.currentSession');
-    expect(card.querySelector('[data-openbitfun-part="target"] [data-overflow-content]')?.textContent).toBe(flowChatEn.subagentIdentity.names.cloudHopper);
+    expect(card.querySelector('[data-openbitfun-part="target"] [data-overflow-content]')?.textContent).toBe(namesEn.cloudHopper);
     expect(card.querySelector('[data-openbitfun-part="target"] [data-openbitfun-avatar-id]')).not.toBeNull();
     expect(card.querySelector('[data-openbitfun-part="processing"]')).toBeNull();
     expect(card.textContent).not.toContain('Continue with the parser fix');
@@ -446,14 +448,14 @@ describeWithJsdom('AgentControlToolCard', () => {
     ));
     await renderCard();
     const name = () => container.querySelector('[data-openbitfun-part="agentSummary"]')?.textContent;
-    expect(name()).toBe(flowChatEn.subagentIdentity.names.cloudHopper);
+    expect(name()).toBe(namesEn.cloudHopper);
     mocks.includeChildSession = true;
     await act(async () => { for (const listener of mocks.listeners) listener(); });
-    expect(name()).toBe(flowChatEn.subagentIdentity.names.cloudHopper);
+    expect(name()).toBe(namesEn.cloudHopper);
     mocks.locale = 'zh-CN';
     await renderCard();
-    expect(name()).toBe(flowChatZh.subagentIdentity.names.cloudHopper);
-    expect(container.textContent).not.toContain(flowChatEn.subagentIdentity.names.cloudHopper);
+    expect(name()).toBe(namesZh.cloudHopper);
+    expect(container.textContent).not.toContain(namesEn.cloudHopper);
     expect(container.querySelector('[lang]')?.getAttribute('lang')).toBe('zh-CN');
   });
 
@@ -519,7 +521,7 @@ describeWithJsdom('AgentControlToolCard', () => {
     const popup = await revealPreview();
     expect(document.querySelectorAll('[role="tooltip"]')).toHaveLength(1);
     expect(popup.dataset.openbitfunInteractive).toBe('true');
-    expect(popup.querySelector('[data-openbitfun-part="previewName"]')?.textContent).toBe(flowChatEn.subagentIdentity.names.cloudHopper);
+    expect(popup.querySelector('[data-openbitfun-part="previewName"]')?.textContent).toBe(namesEn.cloudHopper);
     expect(popup.querySelector('[data-openbitfun-component="subagent-avatar"]')).toBeTruthy();
     expect(popup.querySelector('[data-openbitfun-part="previewAgentType"]')?.textContent).toBe('SwarmWorker');
     expect(popup.querySelector('[data-openbitfun-part="previewModel"]')?.textContent).toBe('Test model');

@@ -11,6 +11,9 @@ import { resolveSubagentAvatarPresentation, resolveSubagentNameKey } from '../su
 import { AgentWaitToolCard } from './AgentWaitToolCard';
 import { shouldShowAgentWaitSteeringHint } from './agentWaitSteeringHint';
 import flowChatEn from '../../locales/en-US/flow-chat.json';
+import { SHARED_TERMS_BY_LOCALE } from '@/infrastructure/i18n/presets/generatedLocaleContract';
+
+const namesEn = SHARED_TERMS_BY_LOCALE['en-US'].subagentNames;
 
 const { getState, openBtwSessionInAuxPane, storeListeners } = vi.hoisted(() => ({
   getState: vi.fn(),
@@ -31,8 +34,8 @@ vi.mock('@/infrastructure/i18n/hooks/useI18n', async () => {
   const { createTestI18nT } = await import('@/test/i18nTestUtils');
   return {
     useI18n: () => ({
-      t: (key: string, options?: Record<string, unknown>) => key.startsWith('subagentIdentity.names.')
-        ? flowChatEn.subagentIdentity.names[key.split('.').at(-1) as keyof typeof flowChatEn.subagentIdentity.names]
+      t: (key: string, options?: Record<string, unknown>) => key.startsWith('shared:subagentNames.')
+        ? namesEn[key.split('.').at(-1) as keyof typeof namesEn]
         : createTestI18nT('flow-chat')(key, options),
       formatNumber: (value: number) => String(value),
     }),
@@ -124,7 +127,7 @@ describe('AgentWaitToolCard', () => {
       sessionKind: 'subagent', title: 'Internal worker label',
       dialogTurns: [{ modelRounds: [{ items: [launchedTask, unrelatedTask] }] }] as unknown as Session['dialogTurns'],
     })]]) });
-    const nameKey = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof flowChatEn.subagentIdentity.names;
+    const nameKey = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof namesEn;
     const html = renderToStaticMarkup(
       <ToolCapsulePresentationProvider value={{
         label: 'Wait for subagents', description: 'Wait for subagents · running',
@@ -135,7 +138,7 @@ describe('AgentWaitToolCard', () => {
     );
 
     expect(html).toContain(`data-openbitfun-avatar-id="${resolveSubagentAvatarPresentation('child-session').avatarId}"`);
-    expect(html).toContain(flowChatEn.subagentIdentity.names[nameKey]);
+    expect(html).toContain(namesEn[nameKey]);
     expect(html).toContain(flowChatEn.toolCards.interaction.currentSession);
     expect(html).toContain(`data-openbitfun-avatar-id="${resolveSubagentAvatarPresentation('session-1').avatarId}"`);
     expect(html).not.toContain('Internal worker label');
@@ -157,9 +160,9 @@ describe('AgentWaitToolCard', () => {
       ['child-session', session({ sessionId: 'child-session', sessionKind: 'subagent', parentSessionId: 'session-1', parentToolCallId: 'launch' })],
     ]) });
     const html = renderToStaticMarkup(<AgentWaitToolCard toolItem={item()} config={config} sessionId="session-1" />);
-    const nameKey = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof flowChatEn.subagentIdentity.names;
+    const nameKey = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof namesEn;
     expect(html).toContain(`data-openbitfun-avatar-id="${resolveSubagentAvatarPresentation('child-session').avatarId}"`);
-    expect(html).toContain(flowChatEn.subagentIdentity.names[nameKey]);
+    expect(html).toContain(namesEn[nameKey]);
     expect(html).toContain('data-openbitfun-part="target"');
     expect(html).not.toContain('lucide-bot');
   });
@@ -223,8 +226,8 @@ describe('AgentWaitToolCard', () => {
       expect(target.querySelector('[data-openbitfun-component="subagent-hatch"]')).toBe(hatch);
       expect(hatch?.getAttribute('data-phase')).toBe('ready');
       expect(target.disabled).toBe(false);
-      const resolvedNameKey = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof flowChatEn.subagentIdentity.names;
-      expect(target.querySelector('[data-overflow-content]')?.textContent).toBe(flowChatEn.subagentIdentity.names[resolvedNameKey]);
+      const resolvedNameKey = resolveSubagentNameKey('child-session').split('.').at(-1) as keyof typeof namesEn;
+      expect(target.querySelector('[data-overflow-content]')?.textContent).toBe(namesEn[resolvedNameKey]);
       expect(target.querySelector('[data-openbitfun-avatar-id]')?.getAttribute('data-openbitfun-avatar-id'))
         .toBe(resolveSubagentAvatarPresentation('child-session').avatarId);
       act(() => target.click());

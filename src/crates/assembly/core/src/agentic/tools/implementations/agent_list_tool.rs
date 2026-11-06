@@ -1,4 +1,5 @@
 use crate::agentic::coordination::get_global_coordinator;
+use crate::agentic::subagent_names::{describe_agent_for_model, subagent_display_name};
 use crate::agentic::tools::framework::{
     PermissionIntent, Tool, ToolRenderOptions, ToolResult, ToolUseContext, ValidationResult,
 };
@@ -25,21 +26,26 @@ impl AgentListTool {
         include_reserved: bool,
     ) -> OpenBitFunResult<Vec<ToolResult>> {
         let agents = coordinator.direct_child_agents(session_id).await?;
+        let locale = crate::service::config::app_language::get_app_language().await;
         let mut assistant_text = format!("Found {} direct child agent(s).", agents.len());
-        for agent in &agents {
-            assistant_text.push_str(&format!(
-                "\n- {}: {}",
-                agent.agent_id,
-                agent.status.as_str()
-            ));
-        }
         let agents = agents
             .into_iter()
             .map(|agent| {
-                json!({
+                // The user knows agents by the name the UI shows, not their id.
+                let display_name = subagent_display_name(&agent.child_session_id, locale);
+                assistant_text.push_str(&format!(
+                    "\n- {}: {}",
+                    describe_agent_for_model(&agent.agent_id, &agent.child_session_id, locale),
+                    agent.status.as_str()
+                ));
+                let mut entry = json!({
                     "agent_id": agent.agent_id,
                     "status": agent.status.as_str(),
-                })
+                });
+                if let Some(display_name) = display_name {
+                    entry["display_name"] = json!(display_name);
+                }
+                entry
             })
             .collect::<Vec<_>>();
         let mut data = json!({ "agents": agents });
@@ -93,7 +99,7 @@ impl Tool for AgentListTool {
     }
 
     async fn description(&self) -> OpenBitFunResult<String> {
-        Ok("List direct child agents and their latest status.".to_string())
+        Ok("List direct child agents and their latest status. display_name is the name the user sees for an agent; address agents by agent_id.".to_string())
     }
 
     fn short_description(&self) -> String {
@@ -123,6 +129,7 @@ impl Tool for AgentListTool {
                         "type": "object",
                         "properties": {
                             "agent_id": {"type": "string"},
+                            "display_name": {"type": "string"},
                             "status": {"type": "string"}
                         },
                         "required": ["agent_id", "status"],
@@ -243,12 +250,14 @@ mod tests {
             for agent in agents {
                 let agent_id = agent["agent_id"].as_str().unwrap();
                 let status = agent["status"].as_str().unwrap();
+                let display_name = agent["display_name"]
+                    .as_str()
+                    .expect("each agent carries the name the user sees");
                 assert!(
-                    model_text
-                        .lines()
-                        .skip(1)
-                        .any(|line| line.contains(agent_id) && line.contains(status)),
-                    "model output must identify each agent and its status: {model_text}"
+                    model_text.lines().skip(1).any(|line| line.contains(agent_id)
+                        && line.contains(display_name)
+                        && line.contains(status)),
+                    "model output must identify each agent, its UI name and its status: {model_text}"
                 );
             }
         }
@@ -350,9 +359,18 @@ mod tests {
             else {
                 panic!("expected list result")
             };
+            let display_name = crate::agentic::subagent_names::subagent_display_name(
+                &active.session_id,
+                crate::service::config::app_language::get_app_language().await,
+            )
+            .unwrap();
             assert_eq!(
                 data["agents"],
-                serde_json::json!([{"agent_id": active_id, "status": "completed"}])
+                serde_json::json!([{
+                    "agent_id": active_id,
+                    "display_name": display_name,
+                    "status": "completed",
+                }])
             );
             let text = result_for_assistant.unwrap();
             assert!(text.contains(&active_id));

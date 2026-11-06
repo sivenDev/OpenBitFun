@@ -58,5 +58,37 @@
   },
   "sessions": {
     "new": "New Session"
+  },
+  "subagentNames": {
+    "bouncyBean": "Bouncy Bean",
+    "cheekyBao": "Cheeky Bao",
+    "sneakyMochi": "Sneaky Mochi",
+    "zoomingPotato": "Zooming Potato",
+    "curiousOtter": "Curious Otter",
+    "discoPenguin": "Disco Penguin",
+    "noodleNinja": "Noodle Ninja",
+    "bubbleBandit": "Bubble Bandit",
+    "sleepyTaco": "Sleepy Taco",
+    "pixelRascal": "Pixel Rascal",
+    "jellyRocket": "Jelly Rocket",
+    "wobblyPudding": "Wobbly Pudding",
+    "waffleWizard": "Waffle Wizard",
+    "sneezingDragon": "Sneezing Dragon",
+    "giggleFox": "Giggle Fox",
+    "turboSnail": "Turbo Snail",
+    "marshmallowPirate": "Marshmallow Pirate",
+    "pogoPanda": "Pogo Panda",
+    "toastDetective": "Toast Detective",
+    "zigzagDuck": "Zigzag Duck",
+    "mangoGoblin": "Mango Goblin",
+    "biscuitBandit": "Biscuit Bandit",
+    "cometHamster": "Comet Hamster",
+    "captainDucky": "Captain Ducky",
+    "hiccupSeal": "Hiccup Seal",
+    "popcornImp": "Popcorn Imp",
+    "wobbleCorgi": "Wobble Corgi",
+    "ninjaPeach": "Ninja Peach",
+    "cloudHopper": "Cloud Hopper",
+    "moonBunny": "Moon Bunny"
   }
 }

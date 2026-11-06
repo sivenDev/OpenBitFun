@@ -224,6 +224,156 @@ pub const GENERATED_SHARED_TERMS: &[GeneratedSharedTermEntry] = &[
     },
     GeneratedSharedTermEntry {
         locale: LocaleId::ZhCN,
+        key: "subagentNames.biscuitBandit",
+        value: "饼饼",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.bouncyBean",
+        value: "豆豆",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.bubbleBandit",
+        value: "泡泡",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.captainDucky",
+        value: "小黄鸭",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.cheekyBao",
+        value: "包包",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.cloudHopper",
+        value: "朵朵",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.cometHamster",
+        value: "星星",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.curiousOtter",
+        value: "小水獭",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.discoPenguin",
+        value: "鹅鹅",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.giggleFox",
+        value: "笑笑",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.hiccupSeal",
+        value: "圆圆",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.jellyRocket",
+        value: "果冻",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.mangoGoblin",
+        value: "芒果",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.marshmallowPirate",
+        value: "棉花糖",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.moonBunny",
+        value: "兔兔",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.ninjaPeach",
+        value: "桃桃",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.noodleNinja",
+        value: "小面条",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.pixelRascal",
+        value: "点点",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.pogoPanda",
+        value: "团团",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.popcornImp",
+        value: "爆米花",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.sleepyTaco",
+        value: "卷卷",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.sneakyMochi",
+        value: "糯糯",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.sneezingDragon",
+        value: "龙龙",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.toastDetective",
+        value: "吐司",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.turboSnail",
+        value: "慢慢",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.waffleWizard",
+        value: "松饼",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.wobbleCorgi",
+        value: "摇摇",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.wobblyPudding",
+        value: "布丁",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.zigzagDuck",
+        value: "鸭鸭",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
+        key: "subagentNames.zoomingPotato",
+        value: "土豆",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhCN,
         key: "tools.edit",
         value: "编辑",
     },
@@ -434,6 +584,156 @@ pub const GENERATED_SHARED_TERMS: &[GeneratedSharedTermEntry] = &[
     },
     GeneratedSharedTermEntry {
         locale: LocaleId::ZhTW,
+        key: "subagentNames.biscuitBandit",
+        value: "餅餅",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.bouncyBean",
+        value: "豆豆",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.bubbleBandit",
+        value: "泡泡",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.captainDucky",
+        value: "小黃鴨",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.cheekyBao",
+        value: "包包",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.cloudHopper",
+        value: "朵朵",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.cometHamster",
+        value: "星星",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.curiousOtter",
+        value: "小水獺",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.discoPenguin",
+        value: "鵝鵝",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.giggleFox",
+        value: "笑笑",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.hiccupSeal",
+        value: "圓圓",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.jellyRocket",
+        value: "果凍",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.mangoGoblin",
+        value: "芒果",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.marshmallowPirate",
+        value: "棉花糖",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.moonBunny",
+        value: "兔兔",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.ninjaPeach",
+        value: "桃桃",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.noodleNinja",
+        value: "小麵條",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.pixelRascal",
+        value: "點點",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.pogoPanda",
+        value: "團團",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.popcornImp",
+        value: "爆米花",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.sleepyTaco",
+        value: "捲捲",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.sneakyMochi",
+        value: "糯糯",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.sneezingDragon",
+        value: "龍龍",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.toastDetective",
+        value: "吐司",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.turboSnail",
+        value: "慢慢",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.waffleWizard",
+        value: "鬆餅",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.wobbleCorgi",
+        value: "搖搖",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.wobblyPudding",
+        value: "布丁",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.zigzagDuck",
+        value: "鴨鴨",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
+        key: "subagentNames.zoomingPotato",
+        value: "馬鈴薯",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::ZhTW,
         key: "tools.edit",
         value: "編輯",
     },
@@ -641,6 +941,156 @@ pub const GENERATED_SHARED_TERMS: &[GeneratedSharedTermEntry] = &[
         locale: LocaleId::EnUS,
         key: "statuses.running",
         value: "Running",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.biscuitBandit",
+        value: "Biscuit Bandit",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.bouncyBean",
+        value: "Bouncy Bean",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.bubbleBandit",
+        value: "Bubble Bandit",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.captainDucky",
+        value: "Captain Ducky",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.cheekyBao",
+        value: "Cheeky Bao",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.cloudHopper",
+        value: "Cloud Hopper",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.cometHamster",
+        value: "Comet Hamster",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.curiousOtter",
+        value: "Curious Otter",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.discoPenguin",
+        value: "Disco Penguin",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.giggleFox",
+        value: "Giggle Fox",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.hiccupSeal",
+        value: "Hiccup Seal",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.jellyRocket",
+        value: "Jelly Rocket",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.mangoGoblin",
+        value: "Mango Goblin",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.marshmallowPirate",
+        value: "Marshmallow Pirate",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.moonBunny",
+        value: "Moon Bunny",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.ninjaPeach",
+        value: "Ninja Peach",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.noodleNinja",
+        value: "Noodle Ninja",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.pixelRascal",
+        value: "Pixel Rascal",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.pogoPanda",
+        value: "Pogo Panda",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.popcornImp",
+        value: "Popcorn Imp",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.sleepyTaco",
+        value: "Sleepy Taco",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.sneakyMochi",
+        value: "Sneaky Mochi",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.sneezingDragon",
+        value: "Sneezing Dragon",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.toastDetective",
+        value: "Toast Detective",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.turboSnail",
+        value: "Turbo Snail",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.waffleWizard",
+        value: "Waffle Wizard",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.wobbleCorgi",
+        value: "Wobble Corgi",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.wobblyPudding",
+        value: "Wobbly Pudding",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.zigzagDuck",
+        value: "Zigzag Duck",
+    },
+    GeneratedSharedTermEntry {
+        locale: LocaleId::EnUS,
+        key: "subagentNames.zoomingPotato",
+        value: "Zooming Potato",
     },
     GeneratedSharedTermEntry {
         locale: LocaleId::EnUS,

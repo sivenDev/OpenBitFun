@@ -5,6 +5,7 @@ import { TaskToolDisplay } from './TaskToolDisplay';
 import { useLanShareStore } from '@/infrastructure/lan-share/lanShareStore';
 import type { FlowToolItem, ToolCardConfig } from '../types/flow-chat';
 import flowChatEn from '../../locales/en-US/flow-chat.json';
+import { SHARED_TERMS_BY_LOCALE } from '@/infrastructure/i18n/presets/generatedLocaleContract';
 
 const mocks = vi.hoisted(() => ({
   openBtwSessionInAuxPane: vi.fn(),
@@ -23,8 +24,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/infrastructure/i18n/hooks/useI18n', () => {
   const t = (key: string, options?: Record<string, unknown>) => {
-    if (key.startsWith('subagentIdentity.names.')) {
-      return flowChatEn.subagentIdentity.names[key.split('.').at(-1) as keyof typeof flowChatEn.subagentIdentity.names];
+    if (key.startsWith('shared:subagentNames.')) {
+      const names = SHARED_TERMS_BY_LOCALE['en-US'].subagentNames;
+      return names[key.split('.').at(-1) as keyof typeof names];
     }
     if (key === 'toolCards.taskTool.headerLine') {
       return `${options?.agentType} agent: ${options?.description}`;
