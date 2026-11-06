@@ -8,6 +8,7 @@ use openbitfun_agent_runtime::sdk::{
     AgentSessionModelSelection, AgentSessionModelSelectionUpdateRequest,
     AgentSessionRestoreRequest, AgentTurnCancellationRequest, AgentTurnSettlementRequest,
     PermissionReply, PermissionReplySource, PermissionRequest, PermissionRequestEvent,
+    RuntimeError,
 };
 use openbitfun_agent_runtime::thread_goal::{ThreadGoalRunDisposition, ThreadGoalRunTracker};
 use openbitfun_events::{project_agentic_frontend_event, AgenticEvent};
@@ -371,150 +372,169 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
     let mut guard_tick = tokio::time::interval(share_guard::GUARD_INTERVAL);
     guard_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    let (terminal_state, terminal_error) = loop {
-        if let Some(request) = initial_permissions.pop_front() {
-            if event_scope.permission_targets_job(&request)
-                && handled_permissions.insert(request.request_id.clone())
-            {
-                if let Some(reason) = handle_permission(
-                    store,
-                    job_id,
-                    &agent_runtime,
-                    &job.request.session_id,
-                    &turn_id,
-                    request,
-                    effective_policy,
-                )
-                .await?
+    let turn_loop: Result<(DispatchJobState, Option<String>)> = async {
+        Ok(loop {
+            if let Some(request) = initial_permissions.pop_front() {
+                if event_scope.permission_targets_job(&request)
+                    && handled_permissions.insert(request.request_id.clone())
                 {
-                    break (DispatchJobState::Failed, Some(reason));
+                    if let Some(reason) = handle_permission(
+                        store,
+                        job_id,
+                        &agent_runtime,
+                        &job.request.session_id,
+                        &turn_id,
+                        request,
+                        effective_policy,
+                    )
+                    .await?
+                    {
+                        break (DispatchJobState::Failed, Some(reason));
+                    }
                 }
+                continue;
             }
-            continue;
-        }
 
-        tokio::select! {
-            received = event_rx.recv() => {
-                let envelope = match received {
-                    Ok(envelope) => envelope,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_event_stream_lagged").await;
-                        break (
-                            DispatchJobState::Failed,
-                            Some(format!("dispatch event stream lost {skipped} events; the turn was cancelled")),
-                        );
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_event_stream_closed").await;
-                        break (
-                            DispatchJobState::Failed,
-                            Some("dispatch event stream closed before the turn settled".to_string()),
-                        );
-                    }
-                };
-                let mut goal_disposition = None;
-                if let AgenticEvent::ThreadGoalUpdated { session_id: owner, goal } = &envelope.event {
-                    if owner == &job.request.session_id {
-                        goal_disposition = goal_run.observe_goal(goal.clone().map(serde_json::from_value).transpose()?);
-                    }
-                }
-                if let AgenticEvent::DialogTurnStarted { session_id: owner, turn_id: next_turn, user_message_metadata, .. } = &envelope.event {
-                    if owner == &job.request.session_id && goal_run.accept_continuation(user_message_metadata.as_ref()) {
-                        store.advance_goal_turn(job_id, &turn_id, next_turn)?;
-                        turn_id = next_turn.clone();
-                        event_scope.turn_id = turn_id.clone();
-                    }
-                }
-                if !event_scope.admit(&envelope.event) {
-                    continue;
-                }
-                let projection = project_agentic_frontend_event(envelope.event.clone())
-                    .map(|projected| (projected.event_name, projected.payload));
-                let raw = serde_json::to_value(&envelope)
-                    .context("serialize dispatch Agent event")?;
-                store.append_event(
-                    job_id,
-                    &DispatchEvent::agent_event(raw, projection),
-                )?;
-                if let Some(disposition) = goal_disposition {
-                    match disposition {
-                        ThreadGoalRunDisposition::Complete => break (DispatchJobState::Succeeded, None),
-                        ThreadGoalRunDisposition::Stopped(status) => break (DispatchJobState::Failed, Some(format!("Thread goal stopped with status {status:?}; the objective is not complete"))),
-                        ThreadGoalRunDisposition::Continue => {}
-                    }
-                }
-                if let Some(outcome) = terminal_outcome(&envelope.event, &turn_id) {
-                    if outcome.0 == DispatchJobState::Succeeded && turn_kind == DispatchTurnKind::Prompt {
-                        match goal_run.after_successful_turn() {
-                            ThreadGoalRunDisposition::Continue => continue,
-                            ThreadGoalRunDisposition::Complete => {}
-                            ThreadGoalRunDisposition::Stopped(status) => break (DispatchJobState::Failed, Some(format!("Thread goal stopped with status {status:?}; the objective is not complete"))),
+            tokio::select! {
+                received = event_rx.recv() => {
+                    let envelope = match received {
+                        Ok(envelope) => envelope,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_event_stream_lagged").await;
+                            break (
+                                DispatchJobState::Failed,
+                                Some(format!("dispatch event stream lost {skipped} events; the turn was cancelled")),
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_event_stream_closed").await;
+                            break (
+                                DispatchJobState::Failed,
+                                Some("dispatch event stream closed before the turn settled".to_string()),
+                            );
+                        }
+                    };
+                    let mut goal_disposition = None;
+                    if let AgenticEvent::ThreadGoalUpdated { session_id: owner, goal } = &envelope.event {
+                        if owner == &job.request.session_id {
+                            goal_disposition = goal_run.observe_goal(goal.clone().map(serde_json::from_value).transpose()?);
                         }
                     }
-                    break outcome;
-                }
-            }
-            received = permission_rx.recv() => {
-                let event = match received {
-                    Ok(event) => event,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_permission_stream_lagged").await;
-                        break (
-                            DispatchJobState::Failed,
-                            Some(format!("dispatch permission stream lost {skipped} requests; the turn was cancelled")),
-                        );
+                    if let AgenticEvent::DialogTurnStarted { session_id: owner, turn_id: next_turn, user_message_metadata, .. } = &envelope.event {
+                        if owner == &job.request.session_id && goal_run.accept_continuation(user_message_metadata.as_ref()) {
+                            store.advance_goal_turn(job_id, &turn_id, next_turn)?;
+                            turn_id = next_turn.clone();
+                            event_scope.turn_id = turn_id.clone();
+                        }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_permission_stream_closed").await;
-                        break (
-                            DispatchJobState::Failed,
-                            Some("dispatch permission stream closed before the turn settled".to_string()),
-                        );
+                    if !event_scope.admit(&envelope.event) {
+                        continue;
                     }
-                };
-                let PermissionRequestEvent::Asked { request } = event else {
-                    continue;
-                };
-                if !event_scope.permission_targets_job(&request)
-                    || !handled_permissions.insert(request.request_id.clone())
-                {
-                    continue;
+                    let projection = project_agentic_frontend_event(envelope.event.clone())
+                        .map(|projected| (projected.event_name, projected.payload));
+                    let raw = serde_json::to_value(&envelope)
+                        .context("serialize dispatch Agent event")?;
+                    store.append_event(
+                        job_id,
+                        &DispatchEvent::agent_event(raw, projection),
+                    )?;
+                    if let Some(disposition) = goal_disposition {
+                        match disposition {
+                            ThreadGoalRunDisposition::Complete => break (DispatchJobState::Succeeded, None),
+                            ThreadGoalRunDisposition::Stopped(status) => break (DispatchJobState::Failed, Some(format!("Thread goal stopped with status {status:?}; the objective is not complete"))),
+                            ThreadGoalRunDisposition::Continue => {}
+                        }
+                    }
+                    if let Some(outcome) = terminal_outcome(&envelope.event, &turn_id) {
+                        if outcome.0 == DispatchJobState::Succeeded && turn_kind == DispatchTurnKind::Prompt {
+                            match goal_run.after_successful_turn() {
+                                ThreadGoalRunDisposition::Continue => continue,
+                                ThreadGoalRunDisposition::Complete => {}
+                                ThreadGoalRunDisposition::Stopped(status) => break (DispatchJobState::Failed, Some(format!("Thread goal stopped with status {status:?}; the objective is not complete"))),
+                            }
+                        }
+                        break outcome;
+                    }
                 }
-                if let Some(reason) = handle_permission(
-                    store,
-                    job_id,
-                    &agent_runtime,
-                    &job.request.session_id,
-                    &turn_id,
-                    request,
-                    effective_policy,
-                )
-                .await?
-                {
-                    break (DispatchJobState::Failed, Some(reason));
+                received = permission_rx.recv() => {
+                    let event = match received {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_permission_stream_lagged").await;
+                            break (
+                                DispatchJobState::Failed,
+                                Some(format!("dispatch permission stream lost {skipped} requests; the turn was cancelled")),
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_permission_stream_closed").await;
+                            break (
+                                DispatchJobState::Failed,
+                                Some("dispatch permission stream closed before the turn settled".to_string()),
+                            );
+                        }
+                    };
+                    let PermissionRequestEvent::Asked { request } = event else {
+                        continue;
+                    };
+                    if !event_scope.permission_targets_job(&request)
+                        || !handled_permissions.insert(request.request_id.clone())
+                    {
+                        continue;
+                    }
+                    if let Some(reason) = handle_permission(
+                        store,
+                        job_id,
+                        &agent_runtime,
+                        &job.request.session_id,
+                        &turn_id,
+                        request,
+                        effective_policy,
+                    )
+                    .await?
+                    {
+                        break (DispatchJobState::Failed, Some(reason));
+                    }
+                }
+                _ = guard_tick.tick(), if guard.is_some() => {
+                    let stop = match guard.as_ref() {
+                        Some(guard) => guard.stop_reason().await,
+                        None => None,
+                    };
+                    if let Some(reason) = stop {
+                        cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_share_guard").await;
+                        break (DispatchJobState::Failed, Some(reason));
+                    }
+                }
+                _ = mailbox_tick.tick() => {
+                    if let Some(outcome) = process_mailboxes(
+                        store,
+                        job_id,
+                        &agent_runtime,
+                        &job.request.session_id,
+                        &turn_id,
+                    ).await? {
+                        break outcome;
+                    }
                 }
             }
-            _ = guard_tick.tick(), if guard.is_some() => {
-                let stop = match guard.as_ref() {
-                    Some(guard) => guard.stop_reason().await,
-                    None => None,
-                };
-                if let Some(reason) = stop {
-                    cancel_turn(&agent_runtime, &job.request.session_id, &turn_id, "dispatch_share_guard").await;
-                    break (DispatchJobState::Failed, Some(reason));
-                }
-            }
-            _ = mailbox_tick.tick() => {
-                if let Some(outcome) = process_mailboxes(
-                    store,
-                    job_id,
-                    &agent_runtime,
-                    &job.request.session_id,
-                    &turn_id,
-                ).await? {
-                    break outcome;
-                }
-            }
+        })
+    }
+    .await;
+    // An error here would otherwise end the process with the turn still
+    // running: its subagents orphaned and a tool call left without a result
+    // in the saved history. Cancel it so it settles like any other failure.
+    let (terminal_state, terminal_error) = match turn_loop {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            cancel_turn(
+                &agent_runtime,
+                &job.request.session_id,
+                &turn_id,
+                "dispatch_worker_error",
+            )
+            .await;
+            (DispatchJobState::Failed, Some(format!("{error:#}")))
         }
     };
 
@@ -555,9 +575,47 @@ async fn run_inner(store: &DispatchStore, job_id: &str) -> Result<()> {
             ),
         }
     }
+    record_settling_events(store, job_id, &mut event_rx, &mut event_scope);
     store.mark_state(job_id, terminal_state, Some(&turn_id), terminal_error)?;
     store.clear_pending_permissions(job_id);
     Ok(())
+}
+
+/// Records the events the turn emitted after the loop stopped watching it. A
+/// turn the worker cancelled ends its tools and subagents only while settling,
+/// and a controller that never sees those endings keeps showing them running.
+fn record_settling_events(
+    store: &DispatchStore,
+    job_id: &str,
+    event_rx: &mut openbitfun_agent_runtime::sdk::AgentEventReceiver,
+    event_scope: &mut JobEventScope,
+) {
+    loop {
+        let envelope = match event_rx.try_recv() {
+            Ok(envelope) => envelope,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                tracing::warn!("Dispatch settling events lost: job_id={job_id}, skipped={skipped}");
+                continue;
+            }
+            Err(_) => break,
+        };
+        if !event_scope.admit(&envelope.event) {
+            continue;
+        }
+        let projection = project_agentic_frontend_event(envelope.event.clone())
+            .map(|projected| (projected.event_name, projected.payload));
+        let recorded = serde_json::to_value(&envelope)
+            .context("serialize dispatch Agent event")
+            .and_then(|raw| {
+                store.append_event(job_id, &DispatchEvent::agent_event(raw, projection))
+            });
+        if let Err(error) = recorded {
+            tracing::warn!(
+                "Failed to record dispatch settling event: job_id={job_id}, error={error:#}"
+            );
+            break;
+        }
+    }
 }
 
 fn shared_assistant_calls(
@@ -676,20 +734,29 @@ async fn process_mailboxes(
     }
 
     for answer in store.list_permission_answers(job_id)? {
-        runtime
+        let applied = runtime
             .respond_permission_with_source(
                 &answer.request_id,
                 answer.reply.clone(),
                 PermissionReplySource::User,
             )
-            .await
-            .map_err(|error| anyhow!(error.into_message()))
-            .with_context(|| {
-                format!(
-                    "apply remote dispatch permission response {}",
-                    answer.request_id
-                )
-            })?;
+            .await;
+        let outcome = settle_permission_answer(applied, || {
+            permission_still_pending(runtime, &answer.request_id)
+        })
+        .map_err(|error| anyhow!(error.into_message()))
+        .with_context(|| {
+            format!(
+                "apply remote dispatch permission response {}",
+                answer.request_id
+            )
+        })?;
+        if outcome == PermissionAnswerOutcome::Outlived {
+            tracing::warn!(
+                "Dispatch permission answer arrived after its request settled: job_id={job_id}, request_id={}",
+                answer.request_id
+            );
+        }
         store.mark_permission_resolved(job_id, &answer)?;
         store.append_event(
             job_id,
@@ -722,6 +789,42 @@ async fn process_mailboxes(
         )?;
     }
     Ok(None)
+}
+
+/// What a remote answer did to its permission request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermissionAnswerOutcome {
+    Applied,
+    /// The request settled before the answer arrived: an external agent
+    /// withdrew it after a sibling request was rejected, or its turn ended.
+    /// Nothing waits on it any more, so the job goes on.
+    Outlived,
+}
+
+fn settle_permission_answer(
+    applied: Result<(), RuntimeError>,
+    still_pending: impl FnOnce() -> bool,
+) -> Result<PermissionAnswerOutcome, RuntimeError> {
+    match applied {
+        Ok(()) => Ok(PermissionAnswerOutcome::Applied),
+        Err(_) if !still_pending() => Ok(PermissionAnswerOutcome::Outlived),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `request_id` still waits for an answer. An unreadable pending set
+/// counts as pending so a real failure is never mistaken for a stale answer.
+fn permission_still_pending(
+    runtime: &openbitfun_agent_runtime::sdk::AgentRuntime,
+    request_id: &str,
+) -> bool {
+    runtime
+        .pending_permission_requests()
+        .map_or(true, |pending| {
+            pending
+                .iter()
+                .any(|request| request.request_id == request_id)
+        })
 }
 
 async fn cancel_turn(
@@ -1109,6 +1212,63 @@ mod tests {
         let plain = job("Standard", true);
         assert!(!runs_assistant(&plain));
         assert_eq!(session_agent_type(&plain.request), "Standard");
+    }
+
+    #[test]
+    fn a_cancelled_turn_reports_its_settling_events_to_the_controller() {
+        use openbitfun_events::{AgenticEventEnvelope, AgenticEventPriority};
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = DispatchStore::open(dir.path().to_path_buf()).unwrap();
+        store
+            .create_job(job("Standard", false).request, "title".to_string())
+            .unwrap();
+        let mut scope = JobEventScope::new("session-1".to_string(), "turn-1".to_string());
+        let (sender, mut receiver) = tokio::sync::broadcast::channel(8);
+        for session_id in ["session-1", "other-session"] {
+            sender
+                .send(AgenticEventEnvelope::new(
+                    AgenticEvent::DialogTurnCancelled {
+                        session_id: session_id.to_string(),
+                        turn_id: "turn-1".to_string(),
+                    },
+                    AgenticEventPriority::Critical,
+                ))
+                .unwrap();
+        }
+
+        record_settling_events(&store, "job-1", &mut receiver, &mut scope);
+
+        let recorded: Vec<_> = store
+            .read_events("job-1", 0)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter_map(|event| match event {
+                DispatchEvent::AgentEvent { event, .. } => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(recorded.len(), 1, "only the job's own turn: {recorded:?}");
+        assert!(recorded[0].to_string().contains("session-1"));
+    }
+
+    #[test]
+    fn an_answer_outliving_its_request_does_not_fail_the_job() {
+        let missing = || Err(RuntimeError::PermissionRequest("not found".to_string()));
+
+        assert_eq!(
+            settle_permission_answer(Ok(()), || unreachable!("applied answers skip the check"))
+                .unwrap(),
+            PermissionAnswerOutcome::Applied
+        );
+        // The agent withdrew the request after a sibling was rejected.
+        assert_eq!(
+            settle_permission_answer(missing(), || false).unwrap(),
+            PermissionAnswerOutcome::Outlived
+        );
+        // The request still waits, so the failure is real.
+        assert!(settle_permission_answer(missing(), || true).is_err());
     }
 
     #[test]
