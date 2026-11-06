@@ -36,7 +36,8 @@ use tokio::sync::{oneshot, Mutex, RwLock};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::adapter_store::{
-    npx_adapter_launch, AdapterInstallError, AdapterLaunch, AdapterStore, InstalledAdapter,
+    npx_adapter_launch, AdapterInstallError, AdapterLaunch, AdapterLease, AdapterStore,
+    InstalledAdapter,
 };
 use super::builtin_clients::{
     builtin_acp_client_preset, builtin_client_ids, default_config_for_builtin_client,
@@ -194,7 +195,14 @@ struct AcpClientConnection {
     sessions: DashMap<String, Arc<Mutex<AcpRemoteSession>>>,
     cancel_handles: DashMap<String, AcpCancelHandle>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
-    child: Mutex<Option<Child>>,
+    child: Mutex<Option<LocalAgentProcess>>,
+}
+
+/// A local agent process and the adapter install it runs out of, which stays on
+/// disk until the process is gone.
+struct LocalAgentProcess {
+    child: Child,
+    _adapter_lease: Option<AdapterLease>,
 }
 
 struct AcpRemoteSession {
@@ -829,8 +837,8 @@ impl AcpClientService {
         if let Some(tx) = client.shutdown_tx.lock().await.take() {
             let _ = tx.send(());
         }
-        if let Some(child) = client.child.lock().await.take() {
-            terminate_child_process_tree(connection_id, child).await;
+        if let Some(process) = client.child.lock().await.take() {
+            terminate_child_process_tree(connection_id, process.child).await;
         }
         *client.connection.write().await = None;
         *client.agent_capabilities.write().await = None;
@@ -1841,7 +1849,7 @@ impl AcpClientService {
         config: &AcpClientConfig,
     ) -> OpenBitFunResult<(
         ByteStreams<AcpOutgoingStream, AcpIncomingStream>,
-        Child,
+        LocalAgentProcess,
         StderrTail,
     )> {
         // An agent whose runtime OpenBitFun ships (dsh) needs it in place before the
@@ -1850,7 +1858,8 @@ impl AcpClientService {
         {
             ensure_bundled_profile(profile).await?;
         }
-        let config = &self.local_adapter_launch(client_id, config).await?;
+        let (config, adapter_lease) = self.local_adapter_launch(client_id, config).await?;
+        let config = &config;
 
         let program = resolve_configured_command(&config.command, &config.env);
         let mut command = openbitfun_core::util::process_manager::create_tokio_command(&program);
@@ -1901,7 +1910,10 @@ impl AcpClientService {
 
         Ok((
             ByteStreams::new(Box::pin(stdin.compat_write()), Box::pin(stdout.compat())),
-            child,
+            LocalAgentProcess {
+                child,
+                _adapter_lease: adapter_lease,
+            },
             stderr_tail,
         ))
     }
@@ -1915,7 +1927,7 @@ impl AcpClientService {
         remote_connection_id: Option<&str>,
     ) -> OpenBitFunResult<(
         ByteStreams<AcpOutgoingStream, AcpIncomingStream>,
-        Option<Child>,
+        Option<LocalAgentProcess>,
         StderrTail,
     )> {
         match remote_connection_id {
@@ -1926,7 +1938,7 @@ impl AcpClientService {
             None => self
                 .start_local_transport(client_id, connection_id, config)
                 .await
-                .map(|(transport, child, stderr_tail)| (transport, Some(child), stderr_tail)),
+                .map(|(transport, process, stderr_tail)| (transport, Some(process), stderr_tail)),
         }
     }
 
@@ -2017,26 +2029,31 @@ impl AcpClientService {
 
     /// The launch to spawn locally: an npx adapter launch runs the adapter the
     /// store has installed, installing it first, so the handshake timeout that
-    /// follows never covers a download.
+    /// follows never covers a download. The lease keeps that install on disk
+    /// for as long as the process runs.
     async fn local_adapter_launch(
         &self,
         client_id: &str,
         config: &AcpClientConfig,
-    ) -> OpenBitFunResult<AcpClientConfig> {
+    ) -> OpenBitFunResult<(AcpClientConfig, Option<AdapterLease>)> {
         let Some(launch) = adapter_launch(client_id, config) else {
-            return Ok(config.clone());
+            return Ok((config.clone(), None));
         };
-        let result = self
+        let (result, lease) = match self
             .adapter_store
             .ensure_installed(&launch, &config.env)
-            .await;
+            .await
+        {
+            Ok(leased) => (Ok(leased.adapter), Some(leased.lease)),
+            Err(error) => (Err(error), None),
+        };
         match launch_with_installed_adapter(client_id, config, &launch, result)? {
             Some(installed) => {
                 self.adapter_store
                     .update_in_background(client_id, launch, config.env.clone());
-                Ok(installed)
+                Ok((installed, lease))
             }
-            None => Ok(config.clone()),
+            None => Ok((config.clone(), None)),
         }
     }
 

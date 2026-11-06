@@ -14,18 +14,23 @@
 //! ```text
 //! <root>/<spec key>/current         name of the install launches use
 //! <root>/<spec key>/install-<id>/   an `npm install --prefix` tree
+//! <root>/<spec key>/install-<id>/.openbitfun-lease
 //! ```
 //!
 //! Every install gets a fresh directory and `current` is replaced atomically, so
-//! an adapter that is already running never sees its files change. The previous
-//! install is kept for the sessions still running it; older ones are pruned.
+//! an adapter that is already running never sees its files change. Each running
+//! adapter, and each install in progress, holds a shared lock on its install's
+//! lease file. An install that is no longer current is removed as soon as nobody
+//! holds that lock, in this or any other OpenBitFun process, so the store keeps
+//! one install unless a session started before an update is still running.
 
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use log::{debug, info, warn};
 use openbitfun_core::service::remote_ssh::{SSHCommandOptions, SSHConnectionManager};
 use openbitfun_core::util::errors::OpenBitFunError;
@@ -40,11 +45,12 @@ use super::requirements::{
 
 const CURRENT_FILE: &str = "current";
 const INSTALL_DIR_PREFIX: &str = "install-";
+const LEASE_FILE: &str = ".openbitfun-lease";
 const INSTALL_FLAGS: &[&str] = &["--no-audit", "--no-fund", "--omit=dev"];
 /// How often launches of an adapter that follows a tag ask for a newer release.
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const UPDATE_LOOKUP_TIMEOUT: Duration = Duration::from_secs(60);
-/// An install directory without a usable adapter this old is a crashed install.
+/// An install directory this old without a lease file is a crashed install.
 const ABANDONED_INSTALL_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 /// The store root on an SSH host, as its shell expands it.
 const REMOTE_STORE_ROOT: &str = "$HOME/.openbitfun/acp-adapters";
@@ -171,6 +177,51 @@ pub(crate) struct InstalledAdapter {
     pub(crate) version: Option<String>,
 }
 
+/// Keeps an install on disk while it is held: by the adapter process running
+/// out of it, or by the install writing it. Dropping the last lease on an install
+/// that is no longer current removes it.
+#[derive(Debug)]
+pub(crate) struct AdapterLease {
+    file: Option<File>,
+    entry: PathBuf,
+    install: String,
+}
+
+impl AdapterLease {
+    /// Releases the install without the cleanup a drop would schedule, for a
+    /// caller that removes it itself.
+    fn discard(mut self) {
+        self.file = None;
+        self.install.clear();
+    }
+}
+
+impl Drop for AdapterLease {
+    fn drop(&mut self) {
+        if self.install.is_empty() {
+            return;
+        }
+        // Close the lock first: Windows cannot delete a file that is still open.
+        drop(self.file.take());
+        let entry = std::mem::take(&mut self.entry);
+        let install = std::mem::take(&mut self.install);
+        let remove = move || {
+            remove_install_if_unused(&entry, &install, current_install(&entry).as_deref());
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn_blocking(remove)),
+            Err(_) => remove(),
+        }
+    }
+}
+
+/// An installed adapter, held for the launch about to run it.
+#[derive(Debug)]
+pub(crate) struct LeasedAdapter {
+    pub(crate) adapter: InstalledAdapter,
+    pub(crate) lease: AdapterLease,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum AdapterInstallError {
     /// The install outlasted [`ADAPTER_DOWNLOAD_TIMEOUT`].
@@ -203,6 +254,9 @@ pub(crate) struct AdapterStore {
     entry_locks: DashMap<String, Arc<Mutex<()>>>,
     /// When each local or remote entry last asked the registry for a release.
     update_checks: DashMap<String, Instant>,
+    /// Entries this process has already cleaned up after launches that ended
+    /// without removing what they left behind (a crash, a locked Windows file).
+    swept_entries: DashSet<String>,
 }
 
 impl AdapterStore {
@@ -211,6 +265,7 @@ impl AdapterStore {
             root,
             entry_locks: DashMap::new(),
             update_checks: DashMap::new(),
+            swept_entries: DashSet::new(),
         }
     }
 
@@ -237,8 +292,7 @@ impl AdapterStore {
     /// The install launches of this spec use, if the store has one.
     pub(crate) fn installed(&self, launch: &AdapterLaunch) -> Option<InstalledAdapter> {
         let entry = self.root.join(launch.store_key());
-        let current = std::fs::read_to_string(entry.join(CURRENT_FILE)).ok()?;
-        installed_in(&entry.join(current.trim()), launch)
+        installed_in(&entry.join(current_install(&entry)?), launch)
     }
 
     /// The installed adapter, installing the spec first when the store has none.
@@ -246,11 +300,21 @@ impl AdapterStore {
         &self,
         launch: &AdapterLaunch,
         env: &HashMap<String, String>,
-    ) -> Result<InstalledAdapter, AdapterInstallError> {
-        let lock = self.entry_lock(&launch.store_key());
+    ) -> Result<LeasedAdapter, AdapterInstallError> {
+        let key = launch.store_key();
+        let lock = self.entry_lock(&key);
         let _guard = lock.lock().await;
-        if let Some(installed) = self.installed(launch) {
-            return Ok(installed);
+        let entry = self.root.join(&key);
+        if self.swept_entries.insert(key) {
+            let sweep_entry = entry.clone();
+            drop(tokio::task::spawn_blocking(move || {
+                remove_unused_installs(&sweep_entry)
+            }));
+        }
+        if let Some(leased) =
+            current_install(&entry).and_then(|install| lease_install(&entry, &install, launch))
+        {
+            return Ok(leased);
         }
         self.install(launch, env).await
     }
@@ -274,7 +338,7 @@ impl AdapterStore {
                 return Ok(current);
             }
         }
-        self.install(launch, env).await
+        Ok(self.install(launch, env).await?.adapter)
     }
 
     /// Looks for a newer release after a launch, at most once per
@@ -308,34 +372,24 @@ impl AdapterStore {
         &self,
         launch: &AdapterLaunch,
         env: &HashMap<String, String>,
-    ) -> Result<InstalledAdapter, AdapterInstallError> {
+    ) -> Result<LeasedAdapter, AdapterInstallError> {
         let entry = self.root.join(launch.store_key());
         let name = format!("{INSTALL_DIR_PREFIX}{}", uuid::Uuid::new_v4().simple());
-        let directory = entry.join(&name);
         let started_at = Instant::now();
-        let result = install_into(&directory, launch, env).await;
-        let installed = match result {
-            Ok(installed) => installed,
-            Err(error) => {
-                let _ = tokio::fs::remove_dir_all(&directory).await;
-                return Err(error);
-            }
-        };
+        // The install is leased from the start, so a store cleanup in another
+        // process cannot take it for a crashed one while npm is still writing.
+        let leased = install_into(&entry, &name, launch, env).await?;
         // Freshly installed is as current as a registry check would make it.
         self.update_checks
             .insert(launch.store_key(), Instant::now());
 
-        let previous = std::fs::read_to_string(entry.join(CURRENT_FILE))
-            .ok()
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty());
-        if let Some(previous_install) = previous
-            .as_deref()
-            .and_then(|previous| installed_in(&entry.join(previous), launch))
-            .filter(|current| current.version == installed.version)
+        if let Some(current) = current_install(&entry)
+            .and_then(|current| lease_install(&entry, &current, launch))
+            .filter(|current| current.adapter.version == leased.adapter.version)
         {
-            let _ = tokio::fs::remove_dir_all(&directory).await;
-            return Ok(previous_install);
+            // Not current, so dropping its last lease removes it.
+            drop(leased);
+            return Ok(current);
         }
 
         write_current(&entry, &name)
@@ -344,39 +398,64 @@ impl AdapterStore {
         info!(
             "ACP adapter installed: spec={} version={:?} duration_ms={}",
             launch.spec,
-            installed.version,
+            leased.adapter.version,
             started_at.elapsed().as_millis()
         );
-        prune_installs(&entry, launch, &name, previous.as_deref()).await;
-        Ok(installed)
+        let sweep_entry = entry.clone();
+        drop(tokio::task::spawn_blocking(move || {
+            remove_unused_installs(&sweep_entry)
+        }));
+        Ok(leased)
     }
 }
 
 async fn install_into(
-    directory: &Path,
+    entry: &Path,
+    name: &str,
     launch: &AdapterLaunch,
     env: &HashMap<String, String>,
-) -> Result<InstalledAdapter, AdapterInstallError> {
+) -> Result<LeasedAdapter, AdapterInstallError> {
     let failed = |error: std::io::Error| AdapterInstallError::Failed(error.to_string());
-    tokio::fs::create_dir_all(directory).await.map_err(failed)?;
-    // Without a manifest of its own, npm would install into an enclosing project.
-    tokio::fs::write(directory.join("package.json"), "{\"private\":true}\n")
+    let directory = entry.join(name);
+    let lease = match tokio::fs::create_dir_all(&directory)
         .await
-        .map_err(failed)?;
-    let prefix = directory.to_string_lossy();
-    run_npm(
-        launch,
-        env,
-        launch.install_args(&prefix),
-        ADAPTER_DOWNLOAD_TIMEOUT,
-    )
-    .await?;
-    installed_in(directory, launch).ok_or_else(|| {
-        AdapterInstallError::Failed(format!(
-            "npm finished without installing the '{}' executable",
-            launch.bin
-        ))
-    })
+        .and_then(|()| take_lease(entry, name))
+    {
+        Ok(lease) => lease,
+        Err(error) => {
+            let _ = tokio::fs::remove_dir_all(&directory).await;
+            return Err(failed(error));
+        }
+    };
+    let result = async {
+        // Without a manifest of its own, npm would install into an enclosing project.
+        tokio::fs::write(directory.join("package.json"), "{\"private\":true}\n")
+            .await
+            .map_err(failed)?;
+        let prefix = directory.to_string_lossy();
+        run_npm(
+            launch,
+            env,
+            launch.install_args(&prefix),
+            ADAPTER_DOWNLOAD_TIMEOUT,
+        )
+        .await?;
+        installed_in(&directory, launch).ok_or_else(|| {
+            AdapterInstallError::Failed(format!(
+                "npm finished without installing the '{}' executable",
+                launch.bin
+            ))
+        })
+    }
+    .await;
+    match result {
+        Ok(adapter) => Ok(LeasedAdapter { adapter, lease }),
+        Err(error) => {
+            lease.discard();
+            let _ = tokio::fs::remove_dir_all(&directory).await;
+            Err(error)
+        }
+    }
 }
 
 fn installed_in(directory: &Path, launch: &AdapterLaunch) -> Option<InstalledAdapter> {
@@ -413,45 +492,103 @@ async fn write_current(entry: &Path, name: &str) -> std::io::Result<()> {
     result
 }
 
-/// Keeps the current install and the one before it, which sessions started
-/// earlier may still be running. Directories without a usable adapter are left
-/// alone unless they are old enough to be a crashed install rather than one in
-/// progress in another OpenBitFun process.
-async fn prune_installs(
-    entry: &Path,
-    launch: &AdapterLaunch,
-    current: &str,
-    previous: Option<&str>,
-) {
-    let Ok(mut entries) = tokio::fs::read_dir(entry).await else {
+/// The install `current` names, if any.
+fn current_install(entry: &Path) -> Option<String> {
+    let current = std::fs::read_to_string(entry.join(CURRENT_FILE)).ok()?;
+    Some(current.trim().to_string()).filter(|name| !name.is_empty())
+}
+
+/// Opens an install's lease file, creating it for installs made before leases.
+fn open_lease_file(entry: &Path, install: &str) -> std::io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(entry.join(install).join(LEASE_FILE))
+}
+
+fn take_lease(entry: &Path, install: &str) -> std::io::Result<AdapterLease> {
+    let file = open_lease_file(entry, install)?;
+    file.lock_shared()?;
+    Ok(AdapterLease {
+        file: Some(file),
+        entry: entry.to_path_buf(),
+        install: install.to_string(),
+    })
+}
+
+/// Leases a complete install for a launch.
+fn lease_install(entry: &Path, install: &str, launch: &AdapterLaunch) -> Option<LeasedAdapter> {
+    let directory = entry.join(install);
+    // Checked before the lease, which would otherwise create its file in a
+    // directory that is already gone.
+    installed_in(&directory, launch)?;
+    let lease = take_lease(entry, install).ok()?;
+    // A cleanup elsewhere can remove the install between the check and the lock.
+    let adapter = installed_in(&directory, launch)?;
+    Some(LeasedAdapter { adapter, lease })
+}
+
+/// Removes every install but the current one that nothing holds.
+fn remove_unused_installs(entry: &Path) {
+    let Ok(items) = std::fs::read_dir(entry) else {
         return;
     };
-    while let Ok(Some(item)) = entries.next_entry().await {
+    let current = current_install(entry);
+    for item in items.flatten() {
         let name = item.file_name().to_string_lossy().into_owned();
-        if !name.starts_with(INSTALL_DIR_PREFIX)
-            || name == current
-            || Some(name.as_str()) == previous
-        {
-            continue;
+        remove_install_if_unused(entry, &name, current.as_deref());
+    }
+}
+
+/// Removes `install` unless it is current or held. An install directory without
+/// a lease file is either being created or left by a crash; only age tells
+/// them apart.
+fn remove_install_if_unused(entry: &Path, install: &str, current: Option<&str>) {
+    if !install.starts_with(INSTALL_DIR_PREFIX) || Some(install) == current {
+        return;
+    }
+    let directory = entry.join(install);
+    let lease_path = directory.join(LEASE_FILE);
+    let held = if lease_path.exists() {
+        let Ok(file) = OpenOptions::new().read(true).write(true).open(&lease_path) else {
+            return;
+        };
+        if file.try_lock().is_err() {
+            return;
         }
-        let path = item.path();
-        let abandoned = item
-            .metadata()
-            .await
+        Some(file)
+    } else {
+        let abandoned = std::fs::metadata(&directory)
             .and_then(|metadata| metadata.modified())
             .ok()
             .and_then(|modified| SystemTime::now().duration_since(modified).ok())
             .is_some_and(|age| age >= ABANDONED_INSTALL_AGE);
-        if installed_in(&path, launch).is_some() || abandoned {
-            if let Err(error) = tokio::fs::remove_dir_all(&path).await {
-                // An adapter that is still running can hold its files open.
-                debug!(
-                    "Skipped pruning ACP adapter install: path={} error={}",
-                    path.display(),
-                    error
-                );
-            }
+        if !abandoned {
+            return;
         }
+        None
+    };
+    // Unix removes the install while still holding it, so nothing can lease it
+    // halfway through. Windows cannot delete a file that is open.
+    #[cfg(windows)]
+    drop(held);
+    let result = std::fs::remove_dir_all(&directory);
+    #[cfg(not(windows))]
+    drop(held);
+    match result {
+        Ok(()) => debug!(
+            "Removed unused ACP adapter install: path={}",
+            directory.display()
+        ),
+        // A Windows adapter that is still exiting holds its files open; the
+        // next launch of this entry sweeps it again.
+        Err(error) => debug!(
+            "Skipped removing ACP adapter install: path={} error={}",
+            directory.display(),
+            error
+        ),
     }
 }
 
@@ -916,6 +1053,19 @@ ln -s ../@agentclientprotocol/claude-agent-acp/cli.js "$prefix/node_modules/.bin
         names
     }
 
+    /// Install removal runs on a blocking thread after the event that allows it.
+    #[cfg(unix)]
+    fn eventually(condition: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        condition()
+    }
+
     #[cfg(unix)]
     #[test]
     fn store_installs_once_then_follows_new_releases() {
@@ -930,11 +1080,13 @@ ln -s ../@agentclientprotocol/claude-agent-acp/cli.js "$prefix/node_modules/.bin
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
 
         assert_eq!(store.installed(&launch), None);
-        let first = runtime
+        // Held for the rest of the test, like a session that keeps running.
+        let running = runtime
             .block_on(
                 store.ensure_installed(&launch, &fake_npm_env(&bin_directory, "1.0.0", "1.0.0")),
             )
             .expect("first install");
+        let first = running.adapter.clone();
         assert_eq!(first.version.as_deref(), Some("1.0.0"));
         assert!(Path::new(&first.bin).is_file());
         assert_eq!(store.installed(&launch), Some(first.clone()));
@@ -944,10 +1096,11 @@ ln -s ../@agentclientprotocol/claude-agent-acp/cli.js "$prefix/node_modules/.bin
             ("PATH".to_string(), bin_directory.display().to_string()),
             ("FAKE_NPM_FAIL".to_string(), "1".to_string()),
         ]);
-        assert_eq!(
-            runtime.block_on(store.ensure_installed(&launch, &failing)),
-            Ok(first.clone())
-        );
+        let relaunch = runtime
+            .block_on(store.ensure_installed(&launch, &failing))
+            .expect("installed launch");
+        assert_eq!(relaunch.adapter, first);
+        drop(relaunch);
         assert_eq!(
             runtime
                 .block_on(store.update(&launch, &fake_npm_env(&bin_directory, "1.0.0", "1.0.0"))),
@@ -955,23 +1108,67 @@ ln -s ../@agentclientprotocol/claude-agent-acp/cli.js "$prefix/node_modules/.bin
         );
         assert_eq!(install_dirs(&entry).len(), 1);
 
-        // A new release becomes current; the install it replaces stays for the
-        // sessions still running it.
+        // A new release becomes current; the install it replaces stays while a
+        // session still runs it, and goes when that session ends.
         let second = runtime
             .block_on(store.update(&launch, &fake_npm_env(&bin_directory, "1.1.0", "1.1.0")))
             .expect("update");
         assert_eq!(second.version.as_deref(), Some("1.1.0"));
         assert_eq!(store.installed(&launch), Some(second.clone()));
+        std::thread::sleep(Duration::from_millis(200));
         assert!(Path::new(&first.bin).is_file());
+        runtime.block_on(async { drop(running) });
+        assert!(eventually(|| !Path::new(&first.bin).exists()));
+        assert_eq!(install_dirs(&entry).len(), 1);
 
-        // The one before that goes.
+        // An install nothing runs goes as soon as it is replaced.
         let third = runtime
             .block_on(store.update(&launch, &fake_npm_env(&bin_directory, "1.2.0", "1.2.0")))
             .expect("second update");
         assert_eq!(third.version.as_deref(), Some("1.2.0"));
-        assert!(!Path::new(&first.bin).exists());
-        assert!(Path::new(&second.bin).is_file());
-        assert_eq!(install_dirs(&entry).len(), 2);
+        assert!(eventually(|| install_dirs(&entry).len() == 1));
+        assert!(Path::new(&third.bin).is_file());
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn first_launch_in_a_process_sweeps_what_earlier_ones_left() {
+        let scratch = scratch_directory("sweep");
+        let bin_directory = scratch.join("bin");
+        std::fs::create_dir_all(&bin_directory).expect("bin directory");
+        write_fake_npm(&bin_directory);
+        let config = default_config_for_builtin_client("claude-code").expect("builtin config");
+        let launch = npx_adapter_launch(&config, &claude_adapter()).expect("npx launch");
+        let entry = scratch.join("store").join(launch.store_key());
+        let env = fake_npm_env(&bin_directory, "1.0.0", "1.0.0");
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime
+            .block_on(AdapterStore::new(scratch.join("store")).ensure_installed(&launch, &env))
+            .expect("first install");
+
+        // Left by a process that exited while running it, and one that another
+        // process is writing right now, before its lease file exists.
+        let left_behind = entry.join(format!("{INSTALL_DIR_PREFIX}left-behind"));
+        std::fs::create_dir_all(&left_behind).expect("left-behind install");
+        std::fs::write(left_behind.join(LEASE_FILE), "").expect("left-behind lease");
+        let in_progress = entry.join(format!("{INSTALL_DIR_PREFIX}in-progress"));
+        std::fs::create_dir_all(&in_progress).expect("in-progress install");
+        // Held by another process.
+        let held = entry.join(format!("{INSTALL_DIR_PREFIX}held"));
+        std::fs::create_dir_all(&held).expect("held install");
+        let held_lease = take_lease(&entry, &format!("{INSTALL_DIR_PREFIX}held")).expect("lease");
+
+        let store = AdapterStore::new(scratch.join("store"));
+        let leased = runtime
+            .block_on(store.ensure_installed(&launch, &env))
+            .expect("installed launch");
+        assert!(eventually(|| !left_behind.exists()));
+        assert!(in_progress.is_dir());
+        assert!(held.is_dir());
+        assert!(Path::new(&leased.adapter.bin).is_file());
+        held_lease.discard();
 
         let _ = std::fs::remove_dir_all(&scratch);
     }
