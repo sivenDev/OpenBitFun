@@ -3,6 +3,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -63,8 +64,8 @@ use super::requirements::{
     ADAPTER_DOWNLOAD_TIMEOUT,
 };
 use super::session_options::{
-    model_config_id, session_options_from_state, AcpAvailableCommand, AcpSessionContextUsage,
-    AcpSessionOptions,
+    current_mode_value, mode_config_id_offering, model_config_id, session_options_from_state,
+    AcpAvailableCommand, AcpSessionContextUsage, AcpSessionOptions,
 };
 use super::session_persistence::AcpSessionPersistence;
 pub use super::session_persistence::CreateAcpFlowSessionRecordResponse;
@@ -172,6 +173,9 @@ pub struct AcpClientService {
     clients: DashMap<String, Arc<AcpClientConnection>>,
     pending_permissions: DashMap<String, PendingPermission>,
     session_permission_modes: DashMap<String, AcpClientPermissionMode>,
+    /// ACP session id -> whether the agent is in its mode that asks before
+    /// acting. Shared with the session, whose lock a running prompt holds.
+    sessions_in_ask_mode: DashMap<String, Arc<AtomicBool>>,
     /// ACP session id -> owning OpenBitFun session id, so permission requests
     /// can be attributed to the session (and its parent) that issued them.
     session_owners: DashMap<String, String>,
@@ -212,6 +216,10 @@ struct AcpRemoteSession {
     context_usage: Option<AcpSessionContextUsage>,
     available_commands: Vec<AcpAvailableCommand>,
     discard_pending_updates_before_next_prompt: bool,
+    /// The client's mode that asks before acting; see `BuiltinAcpClientPreset`.
+    ask_mode: Option<&'static str>,
+    /// Whether `config_options` currently select `ask_mode`.
+    in_ask_mode: Arc<AtomicBool>,
 }
 
 struct ResolvedClientSession {
@@ -241,6 +249,8 @@ impl AcpRemoteSession {
             context_usage: None,
             available_commands: Vec::new(),
             discard_pending_updates_before_next_prompt: false,
+            ask_mode: None,
+            in_ask_mode: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -264,6 +274,7 @@ impl AcpClientService {
             clients: DashMap::new(),
             pending_permissions: DashMap::new(),
             session_permission_modes: DashMap::new(),
+            sessions_in_ask_mode: DashMap::new(),
             session_owners: DashMap::new(),
             permission_brokers: DashMap::new(),
         }))
@@ -910,6 +921,7 @@ impl AcpClientService {
                 };
 
                 self.session_permission_modes.remove(&remote_session_id);
+                self.sessions_in_ask_mode.remove(&remote_session_id);
                 self.session_owners.remove(&remote_session_id);
                 let connection = cancel_handle
                     .as_ref()
@@ -1142,7 +1154,7 @@ impl AcpClientService {
                 .block_task()
                 .await
                 .map_err(protocol_error)?;
-            session.config_options = response.config_options;
+            replace_config_options(&mut session, response.config_options);
             if let Some(session_storage_path) = session_storage_path.as_deref() {
                 self.session_persistence
                     .update_model_id(session_storage_path, &request.session_id, &request.model_id)
@@ -1214,7 +1226,7 @@ impl AcpClientService {
             .block_task()
             .await
             .map_err(protocol_error)?;
-        session.config_options = response.config_options;
+        replace_config_options(&mut session, response.config_options);
 
         Ok(session_options_from_state(
             session.models.as_ref(),
@@ -1666,6 +1678,8 @@ impl AcpClientService {
         );
         self.session_permission_modes
             .insert(remote_session_id.clone(), client.config.permission_mode);
+        self.sessions_in_ask_mode
+            .insert(remote_session_id.clone(), session.in_ask_mode.clone());
         self.session_owners
             .insert(remote_session_id.clone(), openbitfun_session_id.to_string());
         if let Some(session_storage_path) = session_storage_path {
@@ -1680,10 +1694,19 @@ impl AcpClientService {
                 .await?;
         }
         session.models = models;
-        session.config_options = config_options;
+        session.ask_mode =
+            builtin_acp_client_preset(&client.client_id).and_then(|preset| preset.ask_mode);
+        replace_config_options(session, config_options);
         session.discard_pending_updates_before_next_prompt =
             matches!(strategy, AcpRemoteSessionStrategy::Load);
+        let connection = active.connection();
         session.active = Some(active);
+        // A loaded or resumed session keeps the mode it was left in.
+        if matches!(strategy, AcpRemoteSessionStrategy::New)
+            && self.permission_brokers.contains_key(openbitfun_session_id)
+        {
+            start_delegated_session_in_ask_mode(session, &connection, &remote_session_id).await;
+        }
         Ok(())
     }
 
@@ -1732,8 +1755,11 @@ impl AcpClientService {
     ) -> Result<RequestPermissionResponse, Error> {
         let session_id = request.session_id.to_string();
         let permission_mode = self.permission_mode_for_session(&session_id);
-        let delegated = self.has_permission_broker(&session_id);
-        if let Some(approve) = client_permission_answer(permission_mode, delegated) {
+        // A delegated turn's prompts belong to its session's policy, and an
+        // agent in its ask mode was put there to have someone answer.
+        let auto_allow_suspended =
+            self.has_permission_broker(&session_id) || self.session_in_ask_mode(&session_id);
+        if let Some(approve) = client_permission_answer(permission_mode, auto_allow_suspended) {
             let preferred = if approve {
                 PermissionOptionKind::AllowOnce
             } else {
@@ -1832,6 +1858,12 @@ impl AcpClientService {
         self.session_owners
             .get(acp_session_id)
             .is_some_and(|owner| self.permission_brokers.contains_key(owner.value()))
+    }
+
+    fn session_in_ask_mode(&self, acp_session_id: &str) -> bool {
+        self.sessions_in_ask_mode
+            .get(acp_session_id)
+            .is_some_and(|in_ask_mode| in_ask_mode.load(Ordering::Relaxed))
     }
 
     fn permission_mode_for_session(&self, session_id: &str) -> AcpClientPermissionMode {
@@ -2805,6 +2837,48 @@ fn update_session_config_options(session: &mut AcpRemoteSession, events: &[AcpCl
         return;
     };
 
+    replace_config_options(session, options);
+}
+
+/// Delegated work answers to the owning OpenBitFun session's permission
+/// policy, which only sees what the agent asks about. An agent left in a mode
+/// that approves on its own would bypass that policy.
+async fn start_delegated_session_in_ask_mode(
+    session: &mut AcpRemoteSession,
+    connection: &ConnectionTo<Agent>,
+    remote_session_id: &str,
+) {
+    let Some(ask_mode) = session.ask_mode else {
+        return;
+    };
+    if session.in_ask_mode.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(config_id) = mode_config_id_offering(&session.config_options, ask_mode) else {
+        return;
+    };
+    match connection
+        .send_request(SetSessionConfigOptionRequest::new(
+            remote_session_id.to_string(),
+            config_id,
+            SessionConfigOptionValue::value_id(ask_mode.to_string()),
+        ))
+        .block_task()
+        .await
+    {
+        Ok(response) => replace_config_options(session, response.config_options),
+        Err(error) => warn!(
+            "Failed to start delegated ACP session in its ask mode: session_id={}, mode={}, error={}",
+            remote_session_id, ask_mode, error
+        ),
+    }
+}
+
+fn replace_config_options(session: &mut AcpRemoteSession, options: Vec<SessionConfigOption>) {
+    let in_ask_mode = session
+        .ask_mode
+        .is_some_and(|ask_mode| current_mode_value(&options).as_deref() == Some(ask_mode));
+    session.in_ask_mode.store(in_ask_mode, Ordering::Relaxed);
     session.config_options = options;
 }
 
@@ -2961,14 +3035,18 @@ fn permission_request_payload(
 }
 
 /// The answer the client's own permission mode gives without asking anyone:
-/// `Some(true)` approves, `Some(false)` rejects. A delegated turn answers to
-/// its OpenBitFun session's policy, which carries the session's mode and the
-/// parent's ceiling, so the client's auto-allow must not widen it there; an
-/// auto-reject only narrows and still applies.
-fn client_permission_answer(mode: AcpClientPermissionMode, delegated: bool) -> Option<bool> {
+/// `Some(true)` approves, `Some(false)` rejects. The client's auto-allow is
+/// suspended for a delegated turn, which answers to its OpenBitFun session's
+/// policy (the session's mode and the parent's ceiling), and for an agent in
+/// its ask mode, whose prompts someone chose to answer. An auto-reject only
+/// narrows and still applies.
+fn client_permission_answer(
+    mode: AcpClientPermissionMode,
+    auto_allow_suspended: bool,
+) -> Option<bool> {
     match mode {
         AcpClientPermissionMode::RejectOnce => Some(false),
-        AcpClientPermissionMode::AllowOnce if !delegated => Some(true),
+        AcpClientPermissionMode::AllowOnce if !auto_allow_suspended => Some(true),
         AcpClientPermissionMode::AllowOnce | AcpClientPermissionMode::Ask => None,
     }
 }
@@ -3071,17 +3149,50 @@ mod tests {
     }
 
     #[test]
-    fn delegated_turns_ignore_the_client_auto_allow_but_not_its_auto_reject() {
+    fn suspended_auto_allow_asks_but_auto_reject_still_rejects() {
         use AcpClientPermissionMode::{AllowOnce, Ask, RejectOnce};
 
         // A session the user opened directly keeps the client's mode.
         assert_eq!(client_permission_answer(AllowOnce, false), Some(true));
         assert_eq!(client_permission_answer(RejectOnce, false), Some(false));
         assert_eq!(client_permission_answer(Ask, false), None);
-        // A delegated turn asks its session's policy unless the client rejects.
+        // A delegated turn, or an agent in its ask mode, asks unless the
+        // client rejects.
         assert_eq!(client_permission_answer(AllowOnce, true), None);
         assert_eq!(client_permission_answer(RejectOnce, true), Some(false));
         assert_eq!(client_permission_answer(Ask, true), None);
+    }
+
+    #[test]
+    fn follows_whether_the_agent_mode_is_the_client_ask_mode() {
+        use agent_client_protocol::schema::{
+            SessionConfigOptionCategory, SessionConfigSelectOption,
+        };
+        let mode_options = |current: &str| {
+            vec![SessionConfigOption::select(
+                "mode",
+                "Mode",
+                current.to_string(),
+                vec![
+                    SessionConfigSelectOption::new("default", "Manual"),
+                    SessionConfigSelectOption::new("auto", "Auto"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::Mode)]
+        };
+
+        let mut session = AcpRemoteSession::new();
+        session.ask_mode = Some("default");
+        let shared = session.in_ask_mode.clone();
+        replace_config_options(&mut session, mode_options("auto"));
+        assert!(!shared.load(Ordering::Relaxed));
+        replace_config_options(&mut session, mode_options("default"));
+        assert!(shared.load(Ordering::Relaxed));
+
+        // A client without a known ask mode never suspends its auto-allow.
+        let mut session = AcpRemoteSession::new();
+        replace_config_options(&mut session, mode_options("default"));
+        assert!(!session.in_ask_mode.load(Ordering::Relaxed));
     }
 
     #[test]

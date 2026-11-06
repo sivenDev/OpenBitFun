@@ -256,6 +256,47 @@ pub(super) fn model_config_id(config_options: &[SessionConfigOption]) -> Option<
     model_config_option(config_options).map(|option| option.id.to_string())
 }
 
+/// The agent's own permission mode selector, when it declares one.
+fn mode_config_select(
+    config_options: &[SessionConfigOption],
+) -> Option<(
+    &SessionConfigOption,
+    &agent_client_protocol::schema::SessionConfigSelect,
+)> {
+    config_options.iter().find_map(|option| match &option.kind {
+        SessionConfigKind::Select(select)
+            if matches!(option.category, Some(SessionConfigOptionCategory::Mode)) =>
+        {
+            Some((option, select))
+        }
+        _ => None,
+    })
+}
+
+/// The value the agent's mode selector currently holds.
+pub(super) fn current_mode_value(config_options: &[SessionConfigOption]) -> Option<String> {
+    mode_config_select(config_options).map(|(_, select)| select.current_value.to_string())
+}
+
+/// The mode selector's config id when it offers `value`.
+pub(super) fn mode_config_id_offering(
+    config_options: &[SessionConfigOption],
+    value: &str,
+) -> Option<String> {
+    let (option, select) = mode_config_select(config_options)?;
+    let offered = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options
+            .iter()
+            .any(|option| option.value.to_string() == value),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .any(|option| option.value.to_string() == value),
+        _ => false,
+    };
+    offered.then(|| option.id.to_string())
+}
+
 fn model_option_from_model_info(model: &ModelInfo) -> AcpSessionModelOption {
     let id = model.model_id.to_string();
     AcpSessionModelOption {
@@ -542,5 +583,38 @@ mod tests {
             AcpAvailableCommand::from(AvailableCommand::new("compact", "Compact the context"));
         assert_eq!(converted.name, "compact");
         assert!(converted.input_hint.is_none());
+    }
+
+    #[test]
+    fn reads_the_mode_selector_only_from_the_mode_category() {
+        use agent_client_protocol::schema::SessionConfigSelectOption;
+
+        let mode = SessionConfigOption::select(
+            "mode",
+            "Mode",
+            "auto",
+            vec![
+                SessionConfigSelectOption::new("default", "Manual"),
+                SessionConfigSelectOption::new("auto", "Auto"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Mode);
+        let model = SessionConfigOption::select(
+            "model",
+            "Model",
+            "default",
+            vec![SessionConfigSelectOption::new("default", "Default")],
+        )
+        .category(SessionConfigOptionCategory::Model);
+        let options = vec![model.clone(), mode];
+
+        assert_eq!(current_mode_value(&options).as_deref(), Some("auto"));
+        assert_eq!(
+            mode_config_id_offering(&options, "default").as_deref(),
+            Some("mode")
+        );
+        assert_eq!(mode_config_id_offering(&options, "plan"), None);
+        // A model value named like a mode is not a mode.
+        assert_eq!(current_mode_value(&[model]), None);
     }
 }

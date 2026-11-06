@@ -24,6 +24,11 @@ pub(crate) struct BuiltinAcpClientPreset {
     /// before launching it. `None` — every preset but dsh — means the CLI is
     /// self-contained and the command runs as-is.
     pub(crate) bundled_profile: Option<&'static str>,
+    /// The agent's own mode in which it asks before editing files or running
+    /// commands. Delegated sessions start in it so the owning OpenBitFun
+    /// session's policy answers those prompts, and a session in it never has
+    /// its prompts auto-answered. `None` leaves the agent's mode alone.
+    pub(crate) ask_mode: Option<&'static str>,
 }
 
 /// The profile directory OpenBitFun materializes for DeepSeek Harness. See
@@ -40,6 +45,7 @@ const BUILTIN_ACP_CLIENT_PRESETS: &[BuiltinAcpClientPreset] = &[
         adapter_package: None,
         adapter_bin: None,
         bundled_profile: None,
+        ask_mode: None,
     },
     // DeepSeek Harness (dsh) — the harness has no ACP entry point of its own,
     // so OpenBitFun ships one as a dsh PROFILE (packages/dsh-acp) and launches it
@@ -55,6 +61,7 @@ const BUILTIN_ACP_CLIENT_PRESETS: &[BuiltinAcpClientPreset] = &[
         adapter_package: None,
         adapter_bin: None,
         bundled_profile: Some(DSH_BUNDLED_PROFILE),
+        ask_mode: None,
     },
     // Oh My Pi (omp) — a terminal coding agent that speaks ACP natively via
     // `omp acp` (no adapter needed, like opencode). User-managed: omp targets
@@ -71,6 +78,7 @@ const BUILTIN_ACP_CLIENT_PRESETS: &[BuiltinAcpClientPreset] = &[
         adapter_package: None,
         adapter_bin: None,
         bundled_profile: None,
+        ask_mode: None,
     },
     BuiltinAcpClientPreset {
         id: "claude-code",
@@ -81,6 +89,8 @@ const BUILTIN_ACP_CLIENT_PRESETS: &[BuiltinAcpClientPreset] = &[
         adapter_package: Some(CLAUDE_ACP_PACKAGE),
         adapter_bin: Some("claude-agent-acp"),
         bundled_profile: None,
+        // claude-agent-acp's "Manual": "Always ask before making changes".
+        ask_mode: Some("default"),
     },
     BuiltinAcpClientPreset {
         id: "codex",
@@ -91,6 +101,7 @@ const BUILTIN_ACP_CLIENT_PRESETS: &[BuiltinAcpClientPreset] = &[
         adapter_package: Some(CODEX_ACP_PACKAGE),
         adapter_bin: Some("codex-acp"),
         bundled_profile: None,
+        ask_mode: None,
     },
 ];
 
