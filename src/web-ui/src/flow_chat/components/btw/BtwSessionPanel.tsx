@@ -14,6 +14,7 @@ import {useFlowChatViewportOwner} from '../modern/useFlowChatViewportOwner';
 import {RuntimeStatusSlot} from '../modern/RuntimeStatusSlot';
 import {pendingPermissionToolCallIdsForSession} from '../modern/permissionRequestRouting';
 import {usePermissionRequests} from '../modern/usePermissionRequests';
+import {useFlowChatToolActions} from '../modern/useFlowChatToolActions';
 import {useFlowGroupState} from '../modern/useFlowGroupState';
 import {ChatInputApprovalBand} from '../ChatInputApprovalBand';
 import {ScrollToBottomButton} from '@/flow_chat';
@@ -376,9 +377,15 @@ const BtwSessionPanelContent: React.FC<BtwSessionPanelProps & { viewState: BtwPa
     });
   }, []);
 
+  // An external agent's permission prompt renders on the child's own tool
+  // card, so the panel must be able to answer it.
+  const { handleToolConfirm, handleToolReject } = useFlowChatToolActions();
+
   const contextValue = useMemo(() => ({
     onFileViewRequest: handleFileViewRequest,
     onTabOpen: handleTabOpen,
+    onToolConfirm: handleToolConfirm,
+    onToolReject: handleToolReject,
     sessionId: childSessionId,
     activeSessionOverride: childSession ?? null,
     allowUserMessageRollback: false,
@@ -395,6 +402,8 @@ const BtwSessionPanelContent: React.FC<BtwSessionPanelProps & { viewState: BtwPa
     childSessionId,
     handleFileViewRequest,
     handleTabOpen,
+    handleToolConfirm,
+    handleToolReject,
     onExploreGroupToggle,
     onExpandGroup,
     onExpandAllInTurn,

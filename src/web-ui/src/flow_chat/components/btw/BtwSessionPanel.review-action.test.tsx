@@ -52,10 +52,11 @@ vi.mock('../modern/VirtualItemRenderer', async () => {
   const { useFlowChatContext } = await import('../modern/FlowChatContext');
   return {
     VirtualItemRenderer: () => {
-      const { allowTranscriptExport } = useFlowChatContext();
+      const { allowTranscriptExport, onToolConfirm, onToolReject } = useFlowChatContext();
       return ReactModule.createElement('div', {
         'data-testid': 'virtual-item-renderer',
         'data-allow-transcript-export': String(allowTranscriptExport),
+        'data-answers-tool-prompts': String(Boolean(onToolConfirm && onToolReject)),
       });
     },
   };
@@ -1060,6 +1061,17 @@ describe('BtwSessionPanel review action bar integration', () => {
     expect(header?.textContent).not.toContain('Checking a specific concern');
     expect(container.textContent).not.toContain('Internal reviewer title');
     expect(container.querySelector('[data-testid="btw-session-panel-origin-button"]')).toBeTruthy();
+  });
+
+  it('lets the child panel answer a permission prompt on its own tool cards', async () => {
+    panelMocks.virtualItems = [{ type: 'model-round', turnId: 'turn-1' }];
+
+    await act(async () => {
+      root.render(<BtwSessionPanel childSessionId="deep-review-child" parentSessionId="parent-session" />);
+    });
+
+    expect(container.querySelector('[data-testid="virtual-item-renderer"]')
+      ?.getAttribute('data-answers-tool-prompts')).toBe('true');
   });
 
   it('disables transcript export actions for the filtered Review-check projection', async () => {
