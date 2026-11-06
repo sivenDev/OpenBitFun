@@ -276,6 +276,7 @@ $nursery-scene-gutter: clamp(var(--openbitfun-space-4), 3cqi, var(--openbitfun-s
     display: inline-flex;
     align-items: center;
     gap: var(--openbitfun-space-1);
+    pointer-events: auto;
   }
 }
 
